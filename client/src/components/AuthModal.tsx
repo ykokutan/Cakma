@@ -10,7 +10,7 @@ interface AuthModalProps {
 const AVATAR_OPTIONS = ['🛡️', '🚀', '🎮', '⚡', '🎧', '👾', '🐱', '🐺', '🔥', '💻'];
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false }) => {
-  const { login, register, currentServerHost, resetToMainServer } = useSocket();
+  const { login, register, currentServerHost, isDedicatedServer, resetToMainServer } = useSocket();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -102,7 +102,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                 Sunucu: <b className="text-white font-mono">{currentServerHost}</b>
               </span>
             </div>
-            {currentServerHost !== 'localhost:4000' && (
+            {isDedicatedServer && (
               <button
                 type="button"
                 onClick={resetToMainServer}

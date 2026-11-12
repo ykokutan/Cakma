@@ -119,6 +119,7 @@ interface SocketContextType {
   connectToDedicatedServer: (hostWithPort: string) => void;
   resetToMainServer: () => void;
   currentServerHost: string;
+  isDedicatedServer: boolean;
 
   // Store & User Licenses
   storeSettings: StoreSettings | null;
@@ -272,6 +273,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Enumerate Audio Devices
   const refreshAudioDevices = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      console.warn('Ses aygıtları: navigator.mediaDevices bu ortamda (güvensiz HTTP bağlamı veya desteklenmeyen tarayıcı) mevcut değil.');
+      return;
+    }
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const inputs = devices.filter(d => d.kind === 'audioinput');
@@ -293,9 +298,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     refreshAudioDevices();
-    navigator.mediaDevices.ondevicechange = () => {
-      refreshAudioDevices();
-    };
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+      try {
+        navigator.mediaDevices.ondevicechange = () => {
+          refreshAudioDevices();
+        };
+      } catch {}
+    }
   }, [refreshAudioDevices]);
 
   // Helper to get or request audio stream with current settings
@@ -305,6 +314,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => t.stop());
       localStreamRef.current = null;
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      alert('Mikrofon erişimi için güvenli bağlantı (HTTPS veya localhost) gereklidir. Tarayıcınız HTTP üzerinden mikrofon iznine izin vermiyor.');
+      return null;
     }
 
     try {
@@ -1238,7 +1252,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const resetToMainServer = () => {
     localStorage.removeItem('dc_dedicated_server_host');
-    setCurrentServerHost('localhost:4000');
+    const isDevVite = typeof window !== 'undefined' && window.location.port === '5173';
+    const defaultHost = (!isDevVite && typeof window !== 'undefined' && window.location.host)
+      ? window.location.host
+      : 'localhost:4000';
+    setCurrentServerHost(defaultHost);
     cleanupWebRTC();
     window.location.reload();
   };
@@ -1440,6 +1458,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const startScreenShare = async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+      alert('Ekran paylaşımı için güvenli bağlantı (HTTPS veya localhost) gereklidir.');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { cursor: 'always' } as any,
@@ -1610,6 +1632,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         connectToDedicatedServer,
         resetToMainServer,
         currentServerHost,
+        isDedicatedServer: Boolean(localStorage.getItem('dc_dedicated_server_host')),
 
         // Store & User Licenses
         storeSettings,

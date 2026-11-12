@@ -9,7 +9,7 @@ interface CreateServerModalProps {
 const SERVER_EMOJIS = ['🎮', '⚡', '🚀', '🔥', '🛡️', '⚔️', '👾', '🎧', '☕', '🌟'];
 
 export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose }) => {
-  const { createServer, connectToDedicatedServer, currentServerHost } = useSocket();
+  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer } = useSocket();
   const [tab, setTab] = useState<'create' | 'direct'>('create');
   const [serverName, setServerName] = useState('');
   const [serverIcon, setServerIcon] = useState('🎮');
@@ -29,7 +29,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
     onClose();
   };
 
-  const isDedicatedActive = currentServerHost !== 'localhost:4000';
+  const isDedicatedActive = isDedicatedServer;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xl flex items-center justify-center p-4">
@@ -152,7 +152,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
                 <span>Şu an özel sunucudasınız: <b>{currentServerHost}</b></span>
                 <button
                   type="button"
-                  onClick={() => connectToDedicatedServer('localhost:4000')}
+                  onClick={() => resetToMainServer()}
                   className="px-2.5 py-1 rounded-lg bg-amber-500 text-black font-bold text-[10px] flex items-center gap-1"
                 >
                   <RotateCcw className="w-3 h-3" />

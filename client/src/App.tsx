@@ -22,6 +22,7 @@ const MainLayout: React.FC = () => {
     currentUser,
     isAuthenticated,
     currentServerHost,
+    isDedicatedServer,
     resetToMainServer
   } = useSocket();
   const [showMembers, setShowMembers] = useState(true);
@@ -48,7 +49,7 @@ const MainLayout: React.FC = () => {
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
       {/* Dedicated Server Banner Indicator */}
-      {currentServerHost !== 'localhost:4000' && (
+      {isDedicatedServer && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 animate-fade-in pointer-events-auto">
           <div className="ios-glass px-4 py-1.5 rounded-full border border-amber-500/40 bg-black/60 text-xs flex items-center gap-3 backdrop-blur-xl shadow-2xl">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
