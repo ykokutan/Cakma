@@ -1145,6 +1145,13 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
     }
 
+    if (foundAccount.isBanned) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
+      });
+    }
+
     // Verify password with secure scrypt (supports legacy plain text with auto-upgrade)
     const isPasswordValid = verifyPassword(password, foundAccount.password);
     if (isPasswordValid && !foundAccount.password.startsWith('scrypt$')) {
@@ -1212,6 +1219,14 @@ io.on('connection', (socket: Socket) => {
     const foundAccount = registeredAccounts.get(verifiedUsername.toLowerCase());
     if (!foundAccount) {
       return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Hesap bulunamadı.' });
+    }
+
+    if (foundAccount.isBanned) {
+      return socket.emit('auth_response', {
+        success: false,
+        tokenExpired: true,
+        error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
+      });
     }
 
     const user: User = {
@@ -2930,7 +2945,10 @@ io.on('connection', (socket: Socket) => {
         role: acc.role,
         avatar: acc.avatar,
         status: Array.from(activeUsers.values()).some(u => u.username === acc.username) ? 'online' : 'offline',
-        createdAt: acc.createdAt
+        createdAt: acc.createdAt,
+        walletBalance: acc.walletBalance ?? 0,
+        isBanned: Boolean(acc.isBanned),
+        bannedReason: acc.bannedReason || ''
       })),
       servers,
       auditLogs,
@@ -2950,6 +2968,166 @@ io.on('connection', (socket: Socket) => {
     saveConnectionLogs(connectionLogs);
     addAuditLog('BAGLANTI_LOGLARI_TEMIZLENDI', `${requester.username} bağlantı ve IP geçmişini temizledi.`, 'warn');
     socket.emit('admin_action_success', 'Bağlantı ve IP kayıtları temizlendi.');
+  });
+
+  // Admin: Clear audit logs
+  socket.on('admin_clear_audit_logs', () => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    auditLogs.length = 0;
+    saveAuditLogs(auditLogs);
+    addAuditLog('DENETIM_GUNLUGU_TEMIZLENDI', `${requester.username} denetim günlüklerini temizledi.`, 'warn');
+    socket.emit('admin_action_success', 'Denetim günlükleri temizlendi.');
+  });
+
+  // Admin: Update user wallet balance
+  socket.on('admin_update_wallet', ({ targetUsername, amount, mode }: { targetUsername: string; amount: number; mode?: 'set' | 'add' }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    const acc = registeredAccounts.get((targetUsername || '').toLowerCase());
+    if (!acc) {
+      return socket.emit('admin_action_error', 'Hedef kullanıcı hesabı bulunamadı.');
+    }
+
+    const numAmount = Number(amount);
+    if (!Number.isFinite(numAmount)) {
+      return socket.emit('admin_action_error', 'Geçerli bir tutar giriniz.');
+    }
+
+    const nextBalance = mode === 'add'
+      ? Math.max(0, Math.round((acc.walletBalance || 0) + numAmount))
+      : Math.max(0, Math.round(numAmount));
+
+    acc.walletBalance = nextBalance;
+    saveAccounts(registeredAccounts);
+
+    for (const [sockId, u] of activeUsers.entries()) {
+      if (u.username.toLowerCase() === acc.username.toLowerCase()) {
+        u.walletBalance = nextBalance;
+        io.to(sockId).emit('user_updated', u);
+      }
+    }
+
+    addAuditLog('BAKIYE_GUNCELLEME', `${requester.username}, "${acc.username}" kullanıcısının cüzdan bakiyesini ₺${nextBalance} olarak güncelledi.`, 'info');
+    socket.emit('admin_action_success', `"${acc.username}" bakiyesi ₺${nextBalance} olarak güncellendi.`);
+  });
+
+  // Admin: Ban user account
+  socket.on('admin_ban_user', ({ targetUsername, reason }: { targetUsername: string; reason?: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    const acc = registeredAccounts.get((targetUsername || '').toLowerCase());
+    if (!acc) {
+      return socket.emit('admin_action_error', 'Hedef kullanıcı hesabı bulunamadı.');
+    }
+    if (acc.username.toLowerCase() === requester.username.toLowerCase()) {
+      return socket.emit('admin_action_error', 'Kendi yönetici hesabınızı yasaklayamazsınız.');
+    }
+
+    const cleanReason = sanitizeText((reason || 'Yönetici tarafından sistemden yasaklandı.').trim()).slice(0, 160);
+    acc.isBanned = true;
+    acc.bannedReason = cleanReason;
+    saveAccounts(registeredAccounts);
+
+    for (const [sockId, u] of activeUsers.entries()) {
+      if (u.username.toLowerCase() === acc.username.toLowerCase()) {
+        io.to(sockId).emit('kicked_by_admin', { reason: `Hesabınız yasaklandı: ${cleanReason}` });
+        const targetSock = io.sockets.sockets.get(sockId);
+        if (targetSock) targetSock.disconnect(true);
+      }
+    }
+
+    addAuditLog('KULLANICI_YASAKLANDI', `${requester.username}, "${acc.username}" hesabını yasakladı. Sebep: ${cleanReason}`, 'warn');
+    socket.emit('admin_action_success', `"${acc.username}" hesabı yasaklandı.`);
+  });
+
+  // Admin: Unban user account
+  socket.on('admin_unban_user', ({ targetUsername }: { targetUsername: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    const acc = registeredAccounts.get((targetUsername || '').toLowerCase());
+    if (!acc) {
+      return socket.emit('admin_action_error', 'Hedef kullanıcı hesabı bulunamadı.');
+    }
+
+    acc.isBanned = false;
+    acc.bannedReason = '';
+    saveAccounts(registeredAccounts);
+
+    addAuditLog('YASAK_KALDIRILDI', `${requester.username}, "${acc.username}" hesabının yasağını kaldırdı.`, 'info');
+    socket.emit('admin_action_success', `"${acc.username}" hesabının yasağı kaldırıldı.`);
+  });
+
+  // Admin: Reset user password
+  socket.on('admin_reset_user_password', ({ targetUsername, newPassword }: { targetUsername: string; newPassword: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    const acc = registeredAccounts.get((targetUsername || '').toLowerCase());
+    if (!acc) {
+      return socket.emit('admin_action_error', 'Hedef kullanıcı hesabı bulunamadı.');
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return socket.emit('admin_action_error', 'Yeni şifre en az 6 karakter olmalıdır.');
+    }
+
+    acc.password = hashPassword(newPassword);
+    saveAccounts(registeredAccounts);
+
+    addAuditLog('SIFRE_SIFIRLANDI', `${requester.username}, "${acc.username}" kullanıcısının şifresini sıfırladı.`, 'auth');
+    socket.emit('admin_action_success', `"${acc.username}" kullanıcısının şifresi sıfırlandı.`);
+  });
+
+  // Admin: Create channel in any server
+  socket.on('admin_create_channel', ({ serverId, name, type }: { serverId: string; name: string; type: 'text' | 'voice' }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    const srv = servers.find(s => s.id === serverId);
+    if (!srv) {
+      return socket.emit('admin_action_error', 'Hedef sunucu bulunamadı.');
+    }
+    const cleanName = sanitizeText((name || '').trim()).slice(0, 40);
+    if (!cleanName) {
+      return socket.emit('admin_action_error', 'Kanal adı boş olamaz.');
+    }
+
+    const newChannel: Channel = {
+      id: `ch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: cleanName,
+      type: type === 'voice' ? 'voice' : 'text',
+      serverId: srv.id,
+    };
+    srv.channels.push(newChannel);
+    saveServers(servers);
+    io.emit('server_updated', srv);
+    addAuditLog('KANAL_OLUSTURULDU', `${requester.username}, "${srv.name}" sunucusunda #${cleanName} kanalını oluşturdu.`, 'info');
+    socket.emit('admin_action_success', `"${srv.name}" içinde #${cleanName} kanalı oluşturuldu.`);
+  });
+
+  // Admin: Delete entire server (except default-server)
+  socket.on('admin_delete_server', ({ serverId }: { serverId: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    if (serverId === 'default-server' || serverId === 'direct-messages') {
+      return socket.emit('admin_action_error', 'Ana topluluk sunucusu silinemez.');
+    }
+
+    const idx = servers.findIndex(s => s.id === serverId);
+    if (idx === -1) {
+      return socket.emit('admin_action_error', 'Sunucu bulunamadı.');
+    }
+
+    const [removed] = servers.splice(idx, 1);
+    saveServers(servers);
+    io.emit('server_deleted', serverId);
+    addAuditLog('SUNUCU_SILINDI', `${requester.username}, "${removed.name}" sunucusunu sildi.`, 'warn');
+    socket.emit('admin_action_success', `"${removed.name}" sunucusu silindi.`);
   });
 
   // Admin: Change user role

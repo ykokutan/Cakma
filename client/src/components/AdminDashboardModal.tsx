@@ -56,6 +56,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     adminExtendLicense,
     adminUpdateStoreSettings,
     adminClearConnectionLogs,
+    adminUpdateWallet,
+    adminBanUser,
+    adminUnbanUser,
+    adminResetUserPassword,
+    adminCreateChannel,
+    adminDeleteServer,
+    adminClearAuditLogs,
+    adminFeedback,
     storeSettings,
     generatedLicense,
     clearGeneratedLicense,
@@ -70,6 +78,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [announcementSent, setAnnouncementSent] = useState(false);
   const [copiedServerId, setCopiedServerId] = useState<string | null>(null);
   const [connSearchQuery, setConnSearchQuery] = useState('');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userFilter, setUserFilter] = useState<'all' | 'online' | 'banned' | 'admin'>('all');
+  const [newChannelInputs, setNewChannelInputs] = useState<Record<string, { name: string; type: 'text' | 'voice' }>>({});
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [logTypeFilter, setLogTypeFilter] = useState<'all' | 'info' | 'warn' | 'voice' | 'auth'>('all');
 
   // License Generator State
   const [licCustomer, setLicCustomer] = useState('');
@@ -311,6 +324,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
             </button>
           </div>
         </header>
+
+        {/* Live Admin Action Feedback Banner */}
+        {adminFeedback && (
+          <div
+            className={`px-6 py-2 text-xs font-semibold flex items-center justify-between border-b shrink-0 animate-fade-in ${
+              adminFeedback.type === 'success'
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+            }`}
+          >
+            <span>{adminFeedback.message}</span>
+          </div>
+        )}
 
         {/* Navigation Tabs */}
         <div className="flex items-center gap-1.5 px-6 py-2.5 border-b border-white/[0.06] bg-black/30 overflow-x-auto shrink-0 scrollbar-none">
@@ -716,37 +742,95 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
           )}
 
           {/* TAB 3: USER MANAGEMENT */}
-          {activeTab === 'users' && (
+          {activeTab === 'users' && (() => {
+            const allUsers = adminData?.registeredUsers || [];
+            const filteredUsers = allUsers.filter((u) => {
+              const isOnline = onlineUsers.some((o) => o.username.toLowerCase() === u.username.toLowerCase());
+              if (userFilter === 'online' && !isOnline) return false;
+              if (userFilter === 'banned' && !u.isBanned) return false;
+              if (userFilter === 'admin' && u.role !== 'admin') return false;
+              if (userSearchQuery.trim()) {
+                const q = userSearchQuery.toLowerCase();
+                return u.username.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+              }
+              return true;
+            });
+
+            return (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Kayıtlı Kullanıcı Hesapları ({adminData?.registeredUsers.length || 0})
-                </h3>
-                <span className="text-xs text-white/40">Sistem yetkilerini yönetin ve kullanıcıları denetleyin</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Kayıtlı Kullanıcı Hesapları ({filteredUsers.length} / {allUsers.length})
+                  </h3>
+                  <span className="text-[11px] text-white/40">Yetki, bakiye, şifre sıfırlama ve yasaklama yönetimi</span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      placeholder="Kullanıcı veya e-posta ara..."
+                      className="pl-8 pr-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 outline-none focus:ring-1 focus:ring-amber-500 w-48"
+                    />
+                  </div>
+                  <div className="flex bg-white/5 p-0.5 rounded-xl border border-white/10 text-[11px]">
+                    {[
+                      { id: 'all', label: 'Tümü' },
+                      { id: 'online', label: 'Çevrimiçi' },
+                      { id: 'admin', label: 'Admin' },
+                      { id: 'banned', label: 'Yasaklı' },
+                    ].map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setUserFilter(f.id as any)}
+                        className={`px-2.5 py-1 rounded-lg font-semibold transition ${
+                          userFilter === f.id ? 'bg-amber-500 text-black' : 'text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 overflow-hidden bg-white/[0.02]">
+              <div className="rounded-2xl border border-white/10 overflow-x-auto bg-white/[0.02]">
                 <table className="w-full text-left text-xs text-white/80">
                   <thead className="bg-white/5 text-[11px] font-semibold text-white/40 uppercase border-b border-white/10">
                     <tr>
                       <th className="px-4 py-3">Kullanıcı</th>
                       <th className="px-4 py-3">E-Posta</th>
                       <th className="px-4 py-3">Rol</th>
+                      <th className="px-4 py-3">Bakiye</th>
                       <th className="px-4 py-3">Durum</th>
-                      <th className="px-4 py-3">Kayıt Tarihi</th>
-                      <th className="px-4 py-3 text-right">Eylemler</th>
+                      <th className="px-4 py-3 text-right">Kontroller</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/[0.06]">
-                    {adminData?.registeredUsers.map((u) => {
+                    {filteredUsers.map((u) => {
                       const onlineUser = onlineUsers.find((o) => o.username.toLowerCase() === u.username.toLowerCase());
                       const isOnline = !!onlineUser;
 
                       return (
-                        <tr key={u.id} className="hover:bg-white/[0.03] transition">
+                        <tr key={u.id} className={`hover:bg-white/[0.03] transition ${u.isBanned ? 'bg-rose-500/[0.04]' : ''}`}>
                           <td className="px-4 py-3 flex items-center gap-2.5">
                             <span className="text-base">{u.avatar || '👤'}</span>
-                            <span className="font-semibold text-white">{u.username}</span>
+                            <div>
+                              <div className="font-semibold text-white flex items-center gap-1.5">
+                                <span>{u.username}</span>
+                                {u.isBanned && (
+                                  <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                    YASAKLI
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-white/30">Kayıt: {u.createdAt || '-'}</div>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-white/50">{u.email}</td>
                           <td className="px-4 py-3">
@@ -761,43 +845,97 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                             )}
                           </td>
                           <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-bold text-emerald-400">₺{u.walletBalance ?? 0}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const val = prompt(`${u.username} için yeni cüzdan bakiyesi (₺):`, String(u.walletBalance ?? 0));
+                                  if (val !== null && val.trim() !== '' && !isNaN(Number(val))) {
+                                    adminUpdateWallet(u.username, Number(val), 'set');
+                                  }
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-semibold transition"
+                                title="Bakiyeyi Düzenle"
+                              >
+                                Düzenle
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
                             <span className={`inline-flex items-center gap-1.5 text-[11px] ${isOnline ? 'text-emerald-400' : 'text-white/30'}`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-white/30'}`} />
                               {isOnline ? 'Çevrimiçi' : 'Çevrimdışı'}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-white/40">{u.createdAt || '-'}</td>
-                          <td className="px-4 py-3 text-right space-x-2">
-                            {u.role === 'admin' ? (
-                              <button
-                                onClick={() => adminChangeRole(u.username, 'user')}
-                                className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-medium transition"
-                                title="Yetkisini standart kullanıcı yap"
-                              >
-                                Standart Yap
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => adminChangeRole(u.username, 'admin')}
-                                className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black text-[11px] font-bold transition border border-amber-500/30"
-                                title="Yönetici (Admin) yetkisi ver"
-                              >
-                                Yönetici Yap
-                              </button>
-                            )}
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {u.role === 'admin' ? (
+                                <button
+                                  onClick={() => adminChangeRole(u.username, 'user')}
+                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-medium transition"
+                                >
+                                  Standart Yap
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => adminChangeRole(u.username, 'admin')}
+                                  className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black text-[10px] font-bold transition border border-amber-500/30"
+                                >
+                                  Yönetici Yap
+                                </button>
+                              )}
 
-                            {isOnline && onlineUser && (
                               <button
+                                type="button"
                                 onClick={() => {
-                                  const reason = prompt(`${u.username} kullanıcısını sunucudan atma sebebi:`, 'Kural ihlali');
-                                  if (reason) adminKickUser(onlineUser.id, reason);
+                                  const newPass = prompt(`${u.username} için yeni şifre (en az 6 karakter):`);
+                                  if (newPass && newPass.length >= 6) {
+                                    adminResetUserPassword(u.username, newPass);
+                                  } else if (newPass !== null) {
+                                    alert('Şifre en az 6 karakter olmalıdır.');
+                                  }
                                 }}
-                                className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white text-[11px] font-medium transition"
-                                title="Sunucudan At"
+                                className="px-2 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-semibold transition border border-indigo-500/20"
+                                title="Şifre Sıfırla"
                               >
-                                Sunucudan At
+                                Şifre
                               </button>
-                            )}
+
+                              {u.isBanned ? (
+                                <button
+                                  type="button"
+                                  onClick={() => adminUnbanUser(u.username)}
+                                  className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-bold transition border border-emerald-500/30"
+                                >
+                                  Yasağı Kaldır
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const reason = prompt(`${u.username} hesabını yasaklama sebebi:`, 'Kural ihlali');
+                                    if (reason !== null) adminBanUser(u.username, reason || 'Kural ihlali');
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white text-[10px] font-bold transition border border-rose-500/30"
+                                >
+                                  Yasakla
+                                </button>
+                              )}
+
+                              {isOnline && onlineUser && (
+                                <button
+                                  onClick={() => {
+                                    const reason = prompt(`${u.username} kullanıcısını sunucudan atma sebebi:`, 'Kural ihlali');
+                                    if (reason) adminKickUser(onlineUser.id, reason);
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white text-[10px] font-medium transition"
+                                  title="Anlık Bağlantıyı Kes"
+                                >
+                                  At
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -806,7 +944,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 </table>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* TAB 4: DEDICATED SERVER LICENSE GENERATOR & TRACKER */}
           {activeTab === 'licenses' && (
@@ -1662,27 +1801,50 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
           {/* TAB 6: SERVERS & CHANNELS */}
           {activeTab === 'servers' && (
             <div className="space-y-5">
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                Aktif Sunucu ve Kanal Mimarisi
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Aktif Sunucu ve Kanal Mimarisi ({adminData?.servers.length || 0} Sunucu)
+                </h3>
+                <span className="text-[11px] text-white/40">Doğrudan kanal ekleyin, silin veya sunucuları yönetin</span>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {adminData?.servers.map((s) => (
+                {adminData?.servers.map((s) => {
+                  const chForm = newChannelInputs[s.id] || { name: '', type: 'text' as const };
+                  return (
                   <div key={s.id} className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <span className="text-2xl">{s.icon || '💬'}</span>
                         <div>
                           <div className="font-bold text-white text-sm">{s.name}</div>
-                          <div className="text-[10px] text-white/40 font-mono">ID: {s.id}</div>
+                          <div className="text-[10px] text-white/40 font-mono">
+                            ID: {s.id} · {s.members?.length || 0} Üye
+                          </div>
                         </div>
                       </div>
-                      <span className="text-xs bg-white/5 px-2 py-0.5 rounded text-white/60">
-                        {s.channels.length} Kanal
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs bg-white/5 px-2 py-0.5 rounded text-white/60">
+                          {s.channels.length} Kanal
+                        </span>
+                        {s.id !== 'default-server' && s.id !== 'direct-messages' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`"${s.name}" sunucusunu kalıcı olarak silmek istediğinize emin misiniz?`)) {
+                                adminDeleteServer(s.id);
+                              }
+                            }}
+                            className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white transition"
+                            title="Sunucuyu Sil"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="space-y-1.5 pt-1">
+                    <div className="space-y-1.5 pt-1 max-h-48 overflow-y-auto pr-1">
                       {s.channels.map((c) => (
                         <div key={c.id} className="p-2 rounded-xl bg-white/5 hover:bg-white/[0.08] flex items-center justify-between text-xs transition">
                           <div className="flex items-center gap-2">
@@ -1692,6 +1854,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                               <Hash className="w-3.5 h-3.5 text-blue-400" />
                             )}
                             <span className="text-white/80 font-medium">{c.name}</span>
+                            {c.slowmodeSeconds && c.slowmodeSeconds > 0 ? (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300">
+                                {c.slowmodeSeconds}s
+                              </span>
+                            ) : null}
                           </div>
 
                           <button
@@ -1708,24 +1875,127 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         </div>
                       ))}
                     </div>
+
+                    {/* Quick Add Channel */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!chForm.name.trim()) return;
+                        adminCreateChannel(s.id, chForm.name.trim(), chForm.type);
+                        setNewChannelInputs((prev) => ({ ...prev, [s.id]: { name: '', type: chForm.type } }));
+                      }}
+                      className="pt-2 border-t border-white/10 flex items-center gap-1.5"
+                    >
+                      <input
+                        type="text"
+                        value={chForm.name}
+                        onChange={(e) =>
+                          setNewChannelInputs((prev) => ({
+                            ...prev,
+                            [s.id]: { ...chForm, name: e.target.value },
+                          }))
+                        }
+                        placeholder="Yeni kanal adı..."
+                        className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder:text-white/30 outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <select
+                        value={chForm.type}
+                        onChange={(e) =>
+                          setNewChannelInputs((prev) => ({
+                            ...prev,
+                            [s.id]: { ...chForm, type: e.target.value as 'text' | 'voice' },
+                          }))
+                        }
+                        className="bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none"
+                      >
+                        <option value="text">Metin</option>
+                        <option value="voice">Ses</option>
+                      </select>
+                      <button
+                        type="submit"
+                        disabled={!chForm.name.trim()}
+                        className="px-2.5 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold transition disabled:opacity-40"
+                      >
+                        Ekle
+                      </button>
+                    </form>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* TAB 7: AUDIT LOGS */}
-          {activeTab === 'logs' && (
+          {activeTab === 'logs' && (() => {
+            const allLogs = adminData?.auditLogs || [];
+            const filteredLogs = allLogs.filter((log) => {
+              if (logTypeFilter !== 'all' && log.type !== logTypeFilter) return false;
+              if (logSearchQuery.trim()) {
+                const q = logSearchQuery.toLowerCase();
+                return log.action.toLowerCase().includes(q) || log.details.toLowerCase().includes(q);
+              }
+              return true;
+            });
+
+            return (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Sistem & Güvenlik Denetim Günlüğü ({adminData?.auditLogs.length || 0})
-                </h3>
-                <span className="text-xs text-white/40">Anlık olarak Socket üzerinden yayınlanır</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Sistem & Güvenlik Denetim Günlüğü ({filteredLogs.length} / {allLogs.length})
+                  </h3>
+                  <span className="text-[11px] text-white/40">Anlık olarak Socket üzerinden yayınlanır</span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={logSearchQuery}
+                      onChange={(e) => setLogSearchQuery(e.target.value)}
+                      placeholder="Loglarda ara..."
+                      className="pl-8 pr-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 outline-none focus:ring-1 focus:ring-amber-500 w-44"
+                    />
+                  </div>
+                  <div className="flex bg-white/5 p-0.5 rounded-xl border border-white/10 text-[11px]">
+                    {[
+                      { id: 'all', label: 'Tümü' },
+                      { id: 'info', label: 'Bilgi' },
+                      { id: 'warn', label: 'Uyarı' },
+                      { id: 'auth', label: 'Yetki' },
+                      { id: 'voice', label: 'Ses' },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setLogTypeFilter(t.id as any)}
+                        className={`px-2 py-1 rounded-lg font-semibold transition ${
+                          logTypeFilter === t.id ? 'bg-amber-500 text-black' : 'text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm('Tüm denetim günlüklerini temizlemek istediğinize emin misiniz?')) {
+                        adminClearAuditLogs();
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 text-[11px] font-bold transition flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Temizle
+                  </button>
+                </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 overflow-hidden bg-black/40 p-3 space-y-2 font-mono text-xs max-h-[460px] overflow-y-auto">
-                {adminData?.auditLogs.map((log) => {
+              <div className="rounded-2xl border border-white/10 overflow-hidden bg-black/40 p-3 space-y-2 font-mono text-xs max-h-[430px] overflow-y-auto">
+                {filteredLogs.map((log) => {
                   let badgeColor = 'bg-blue-500/20 text-blue-300 border-blue-500/30';
                   if (log.type === 'warn') badgeColor = 'bg-amber-500/20 text-amber-300 border-amber-500/30';
                   if (log.type === 'voice') badgeColor = 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
@@ -1741,9 +2011,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     </div>
                   );
                 })}
+                {filteredLogs.length === 0 && (
+                  <div className="py-8 text-center text-white/30 text-xs">Eşleşen denetim kaydı bulunamadı.</div>
+                )}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* TAB 8: BROADCAST ANNOUNCEMENT */}
           {activeTab === 'broadcast' && (

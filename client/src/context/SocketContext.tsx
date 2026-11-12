@@ -158,6 +158,14 @@ interface SocketContextType {
   adminExtendLicense: (licenseId: string, addDays: number) => void;
   adminUpdateStoreSettings: (settings: StoreSettings) => void;
   adminClearConnectionLogs: () => void;
+  adminUpdateWallet: (targetUsername: string, amount: number, mode?: 'set' | 'add') => void;
+  adminBanUser: (targetUsername: string, reason?: string) => void;
+  adminUnbanUser: (targetUsername: string) => void;
+  adminResetUserPassword: (targetUsername: string, newPassword: string) => void;
+  adminCreateChannel: (serverId: string, name: string, type: 'text' | 'voice') => void;
+  adminDeleteServer: (serverId: string) => void;
+  adminClearAuditLogs: () => void;
+  adminFeedback: { type: 'success' | 'error'; message: string } | null;
   generatedLicense: IssuedLicense | null;
   clearGeneratedLicense: () => void;
   connectToDedicatedServer: (hostWithPort: string) => void;
@@ -362,6 +370,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [typingUsers, setTypingUsers] = useState<Record<string, string[]>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold'>(() => {
     return (localStorage.getItem('dc_ui_theme') as any) || 'vision-dark';
   });
@@ -1534,6 +1543,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAdminData(prev => prev ? { ...prev, auditLogs: [log, ...prev.auditLogs] } : null);
     });
 
+    newSocket.on('admin_action_success', (msg: string) => {
+      setAdminFeedback({ type: 'success', message: msg });
+      newSocket.emit('admin_request_data');
+      setTimeout(() => setAdminFeedback(null), 4000);
+    });
+
+    newSocket.on('admin_action_error', (msg: string) => {
+      setAdminFeedback({ type: 'error', message: msg });
+      setTimeout(() => setAdminFeedback(null), 5000);
+    });
+
     newSocket.on('system_announcement', (announcement) => {
       setSystemAnnouncement(announcement);
     });
@@ -2027,6 +2047,34 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const adminClearConnectionLogs = () => {
     socket?.emit('admin_clear_connection_logs');
+  };
+
+  const adminUpdateWallet = (targetUsername: string, amount: number, mode: 'set' | 'add' = 'set') => {
+    socket?.emit('admin_update_wallet', { targetUsername, amount, mode });
+  };
+
+  const adminBanUser = (targetUsername: string, reason?: string) => {
+    socket?.emit('admin_ban_user', { targetUsername, reason });
+  };
+
+  const adminUnbanUser = (targetUsername: string) => {
+    socket?.emit('admin_unban_user', { targetUsername });
+  };
+
+  const adminResetUserPassword = (targetUsername: string, newPassword: string) => {
+    socket?.emit('admin_reset_user_password', { targetUsername, newPassword });
+  };
+
+  const adminCreateChannel = (serverId: string, name: string, type: 'text' | 'voice') => {
+    socket?.emit('admin_create_channel', { serverId, name, type });
+  };
+
+  const adminDeleteServer = (serverId: string) => {
+    socket?.emit('admin_delete_server', { serverId });
+  };
+
+  const adminClearAuditLogs = () => {
+    socket?.emit('admin_clear_audit_logs');
   };
 
   const fetchMyLicenses = async () => {
@@ -2785,6 +2833,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminExtendLicense,
         adminUpdateStoreSettings,
         adminClearConnectionLogs,
+        adminUpdateWallet,
+        adminBanUser,
+        adminUnbanUser,
+        adminResetUserPassword,
+        adminCreateChannel,
+        adminDeleteServer,
+        adminClearAuditLogs,
+        adminFeedback,
         generatedLicense,
         clearGeneratedLicense,
         connectToDedicatedServer,

@@ -60,6 +60,8 @@ export interface User {
   activity?: UserActivity;
   level?: number;
   xp?: number;
+  isBanned?: boolean;
+  bannedReason?: string;
 }
 
 export interface RegisteredAccount {
@@ -80,6 +82,8 @@ export interface RegisteredAccount {
   activity?: UserActivity;
   level?: number;
   xp?: number;
+  isBanned?: boolean;
+  bannedReason?: string;
 }
 
 export interface MessageAttachment {
