@@ -430,25 +430,25 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       )}
 
       {/* iOS Profile Bar (Control Center Glass Pill) */}
-      <footer className="h-16 px-3 border-t border-white/[0.06] flex items-center justify-between bg-black/20">
+      <footer className="h-16 px-2.5 border-t border-white/[0.06] flex items-center justify-between bg-black/20 gap-1">
         <div
           onClick={isAuthenticated && currentUser ? () => onOpenProfile(currentUser) : onOpenAuth}
-          className="flex items-center gap-2.5 p-1 rounded-xl hover:bg-white/[0.08] cursor-pointer transition max-w-[120px]"
+          className="flex items-center gap-2 p-1 rounded-xl hover:bg-white/[0.08] cursor-pointer transition min-w-0 flex-1"
           title={isAuthenticated ? 'Profilimi Görüntüle ve Düzenle' : 'Giriş Yap'}
         >
-          <div className="relative">
+          <div className="relative shrink-0">
             <div
-              className={`w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-base transition-all ${
+              className={`w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm transition-all ${
                 isSpeaking ? 'ios-halo-subtle' : ''
               }`}
             >
               {currentUser?.avatar || '🎮'}
             </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black" />
+            <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-black" />
           </div>
-          <div className="leading-tight truncate">
-            <div className="text-xs font-semibold text-white truncate flex items-center gap-1">
-              <span>{currentUser?.username || 'Giriş Yap'}</span>
+          <div className="leading-tight min-w-0 truncate">
+            <div className="text-xs font-semibold text-white truncate">
+              {currentUser?.username || 'Giriş Yap'}
             </div>
             <div className="text-[10px] text-white/40 truncate">
               {currentUser?.role === 'admin' ? '🛡️ Yönetici' : `#${currentUser?.id?.slice(0, 4) || '0001'}`}
@@ -457,55 +457,55 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         </div>
 
         {/* Buttons */}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={toggleMute}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+            className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center transition ${
               isMuted
                 ? 'bg-red-500/20 text-red-400'
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title={isMuted ? 'Mikrofonu Aç' : 'Sustur'}
           >
-            {isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
           </button>
 
           <button
             onClick={toggleDeafen}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+            className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center transition ${
               isDeafened
                 ? 'bg-red-500/20 text-red-400'
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title={isDeafened ? 'Sağırlaştırmayı Kaldır' : 'Kulaklığı Kapat'}
           >
-            <Headphones className="w-4 h-4" />
+            <Headphones className="w-3.5 h-3.5" />
           </button>
 
           <button
             onClick={() => setIsActivityModalOpen(true)}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+            className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center transition ${
               currentUser?.activity
                 ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40 animate-pulse'
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title="Oyun / Aktivite Durumunu Ayarla"
           >
-            <Gamepad2 className="w-4 h-4" />
+            <Gamepad2 className="w-3.5 h-3.5" />
           </button>
 
           <button
             onClick={onOpenSettings}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition"
+            className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition"
             title="Ayarlar"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-3.5 h-3.5" />
           </button>
 
           {isAuthenticated ? (
             <button
               onClick={logout}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-red-400/70 hover:bg-red-500/20 hover:text-red-400 transition ml-0.5"
+              className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 transition shadow-sm"
               title="Çıkış Yap"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -513,7 +513,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           ) : (
             <button
               onClick={onOpenAuth}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-blue-400 hover:bg-blue-500/20 transition ml-0.5"
+              className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-blue-500/20 hover:bg-blue-500 text-blue-300 hover:text-white border border-blue-500/30 transition"
               title="Giriş Yap / Kaydol"
             >
               <LogIn className="w-3.5 h-3.5" />

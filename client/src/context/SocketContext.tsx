@@ -3,6 +3,15 @@ import { io, Socket } from 'socket.io-client';
 import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 
+export interface RadioBotState {
+  isPlaying: boolean;
+  mode?: 'radio' | 'youtube';
+  stationId?: string;
+  youtubeId?: string;
+  youtubeTitle?: string;
+  volume: number;
+}
+
 interface SocketContextType {
   socket: Socket | null;
   currentUser: User | null;
@@ -150,11 +159,11 @@ interface SocketContextType {
     paymentMethod?: 'wallet' | 'credit_card' | 'bank_transfer' | 'crypto';
   }) => Promise<{ success: boolean; license?: IssuedLicense; error?: string }>;
 
-  // Soundboard, Radio & Activities
+  // Soundboard, Radio, YouTube & Activities
   playSoundboard: (soundId: string) => void;
   activeSoundboardEffect: { soundId: string; username: string } | null;
-  radioBotState: { isPlaying: boolean; stationId: string; volume: number };
-  syncRadioState: (state: { isPlaying: boolean; stationId: string; volume: number }) => void;
+  radioBotState: RadioBotState;
+  syncRadioState: (state: Partial<RadioBotState>) => void;
   updateUserActivity: (activity: UserActivity | null) => void;
 
   // Reactions, Pinned & Polls
@@ -202,8 +211,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Soundboard, Radio & Activities State
   const [activeSoundboardEffect, setActiveSoundboardEffect] = useState<{ soundId: string; username: string } | null>(null);
-  const [radioBotState, setRadioBotState] = useState<{ isPlaying: boolean; stationId: string; volume: number }>({
+  const [radioBotState, setRadioBotState] = useState<RadioBotState>({
     isPlaying: false,
+    mode: 'radio',
     stationId: 'lofi',
     volume: 0.5
   });
@@ -697,8 +707,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 2500);
     });
 
-    newSocket.on('voice_radio_synced', ({ isPlaying, stationId, volume }: any) => {
-      setRadioBotState({ isPlaying, stationId, volume });
+    newSocket.on('voice_radio_synced', (state: any) => {
+      setRadioBotState(prev => ({ ...prev, ...state }));
     });
 
     newSocket.on('channel_created', ({ serverId, channel }: { serverId: string; channel: Channel }) => {
@@ -1515,8 +1525,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('voice_soundboard_play', { channelId: connectedVoiceChannelId, soundId });
   }, [socket, connectedVoiceChannelId]);
 
-  const syncRadioState = useCallback((state: { isPlaying: boolean; stationId: string; volume: number }) => {
-    setRadioBotState(state);
+  const syncRadioState = useCallback((state: Partial<RadioBotState>) => {
+    setRadioBotState(prev => ({ ...prev, ...state }));
     if (!socket || !connectedVoiceChannelId) return;
     socket.emit('voice_radio_state', { channelId: connectedVoiceChannelId, ...state });
   }, [socket, connectedVoiceChannelId]);

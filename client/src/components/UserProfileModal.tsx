@@ -17,6 +17,7 @@ import {
   UserCheck,
   Clock,
   Gamepad2,
+  LogOut,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -55,6 +56,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
     sendFriendRequest,
     acceptFriendRequest,
     removeFriend,
+    logout,
   } = useSocket();
 
   const isMe = currentUser?.id === user.id || currentUser?.username.toLowerCase() === user.username.toLowerCase();
@@ -176,8 +178,23 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
               />
             </div>
 
-            {/* Action Buttons (DM / Call / Friend) if other user */}
-            {!isMe && (
+            {/* Action Buttons: If me show Logout, if other user show DM / Call / Friend */}
+            {isMe ? (
+              <div className="flex items-center gap-2 pb-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    onClose();
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-red-500/15 hover:bg-red-500 border border-red-500/30 text-red-400 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                  title="Hesaptan Çıkış Yap"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Çıkış Yap</span>
+                </button>
+              </div>
+            ) : (
               <div className="flex items-center gap-2 pb-1">
                 {/* Friend Status Button */}
                 {isFriend ? (

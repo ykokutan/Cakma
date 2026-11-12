@@ -11,6 +11,7 @@ import {
   Headphones,
   RefreshCw,
   VolumeX,
+  LogOut,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -50,6 +51,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     toggleMicTest,
     micVolumeLevel,
     refreshAudioDevices,
+    logout,
+    isAuthenticated,
   } = useSocket();
 
   const [username, setUsername] = useState(currentUser?.username || '');
@@ -113,9 +116,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </button>
           </div>
 
-          <div className="text-[11px] text-white/30 px-2 space-y-1">
-            <div className="font-semibold text-white/50">Studio Pro Audio</div>
-            <div>WebRTC Opus 48kHz HD</div>
+          <div className="space-y-3 pt-3 border-t border-white/[0.06]">
+            {isAuthenticated && (
+              <button
+                type="button"
+                onClick={() => {
+                  logout();
+                  onClose();
+                }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 transition shadow-sm"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Hesaptan Çıkış Yap</span>
+              </button>
+            )}
+
+            <div className="text-[11px] text-white/30 px-2 space-y-1">
+              <div className="font-semibold text-white/50">Studio Pro Audio</div>
+              <div>WebRTC Opus 48kHz HD</div>
+            </div>
           </div>
         </div>
 

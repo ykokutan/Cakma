@@ -825,15 +825,12 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
-  // Synchronized Radio / Music Bot in Voice Channel
-  socket.on('voice_radio_state', ({ channelId, isPlaying, stationId, volume }: any) => {
+  // Synchronized Radio & YouTube Music Bot in Voice Channel
+  socket.on('voice_radio_state', (payload: any) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
-    io.to(channelId).emit('voice_radio_synced', {
-      channelId,
-      isPlaying,
-      stationId,
-      volume,
+    io.to(payload.channelId).emit('voice_radio_synced', {
+      ...payload,
       initiatedBy: user.username
     });
   });
