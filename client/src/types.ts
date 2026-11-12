@@ -152,18 +152,56 @@ export interface SystemStats {
   totalDedicatedServersCount?: number;
 }
 
+export type ServerPermission =
+  | 'manage_server'
+  | 'manage_roles'
+  | 'manage_channels'
+  | 'kick_members'
+  | 'ban_members'
+  | 'send_messages'
+  | 'attach_files'
+  | 'connect_voice'
+  | 'speak_voice'
+  | 'mute_members'
+  | 'priority_speaker';
+
+export interface ServerRole {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  permissions: ServerPermission[];
+  isDefault?: boolean;
+}
+
+export interface ServerMember {
+  userId: string;
+  username: string;
+  avatar: string;
+  roleIds: string[];
+  joinedAt: string;
+  isOwner?: boolean;
+}
+
 export interface Channel {
   id: string;
   name: string;
   type: 'text' | 'voice';
   serverId: string;
+  allowedRoleIds?: string[];
 }
 
 export interface Server {
   id: string;
   name: string;
   icon?: string;
+  description?: string;
+  ownerId: string;
   channels: Channel[];
+  roles: ServerRole[];
+  members: ServerMember[];
+  afkChannelId?: string | null;
+  bitrateKbps?: number;
 }
 
 export interface Message {

@@ -12,6 +12,7 @@ import { AdminDashboardModal } from './components/AdminDashboardModal';
 import { LicenseStoreModal } from './components/LicenseStoreModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { DirectCallModal } from './components/DirectCallModal';
+import { ServerSettingsModal } from './components/ServerSettingsModal';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -20,6 +21,7 @@ const MainLayout: React.FC = () => {
     systemAnnouncement,
     dismissAnnouncement,
     currentUser,
+    activeServer,
     isAuthenticated,
     currentServerHost,
     isDedicatedServer,
@@ -27,6 +29,7 @@ const MainLayout: React.FC = () => {
   } = useSocket();
   const [showMembers, setShowMembers] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
   const [isStoreOpen, setIsStoreOpen] = useState(false);
@@ -103,6 +106,7 @@ const MainLayout: React.FC = () => {
           setCreateChannelModal({ isOpen: true, type })
         }
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenServerSettings={() => setIsServerSettingsOpen(true)}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
         onOpenStore={() => setIsStoreOpen(true)}
@@ -151,6 +155,13 @@ const MainLayout: React.FC = () => {
 
       {isCreateServerOpen && (
         <CreateServerModal onClose={() => setIsCreateServerOpen(false)} />
+      )}
+
+      {isServerSettingsOpen && activeServer && (
+        <ServerSettingsModal
+          server={activeServer}
+          onClose={() => setIsServerSettingsOpen(false)}
+        />
       )}
 
       {createChannelModal.isOpen && (

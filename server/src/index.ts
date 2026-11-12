@@ -9,8 +9,8 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { initialServers, initialMessages } from './mockData.js';
-import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser } from './types.js';
+import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
+import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 
 const app = express();
@@ -142,6 +142,29 @@ const messages: Record<string, Message[]> = { ...initialMessages };
 
 // Dedicated Servers Registry (Reported by standalone licensed servers)
 const dedicatedServersRegistry = new Map<string, DedicatedServerInfo>();
+
+function ensureUserInServers(user: User) {
+  servers.forEach(srv => {
+    if (!srv.members) srv.members = [];
+    if (!srv.roles) srv.roles = getDefaultRoles();
+    const existing = srv.members.find(m => m.userId === user.id || m.username.toLowerCase() === user.username.toLowerCase());
+    if (!existing) {
+      const isOwner = srv.ownerId === user.id;
+      srv.members.push({
+        userId: user.id,
+        username: user.username,
+        avatar: user.avatar,
+        roleIds: isOwner ? ['role-owner', 'role-admin'] : ['role-everyone'],
+        joinedAt: new Date().toLocaleDateString('tr-TR'),
+        isOwner
+      });
+    } else {
+      existing.userId = user.id;
+      existing.avatar = user.avatar;
+      existing.username = user.username;
+    }
+  });
+}
 
 // Persistent Issued Licenses Registry (Admin generated & Store purchased)
 const issuedLicenses = new Map<string, IssuedLicense>();
@@ -592,6 +615,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    ensureUserInServers(user);
 
     socket.emit('auth_response', { success: true, user });
     socket.emit('init_data', {
@@ -646,6 +670,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    ensureUserInServers(user);
     addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı.`, 'auth');
 
     socket.emit('auth_response', { success: true, user });
@@ -977,11 +1002,30 @@ io.on('connection', (socket: Socket) => {
 
   // Server Creation
   socket.on('create_server', ({ name, icon }: { name: string; icon?: string }) => {
+    const user = activeUsers.get(socket.id);
+    const ownerId = user ? user.id : `usr-${Date.now()}`;
     const newServerId = `server-${Date.now()}`;
+    const roles = getDefaultRoles();
+    const members: ServerMember[] = user ? [
+      {
+        userId: user.id,
+        username: user.username,
+        avatar: user.avatar,
+        roleIds: ['role-owner', 'role-admin'],
+        joinedAt: new Date().toLocaleDateString('tr-TR'),
+        isOwner: true
+      }
+    ] : [];
+
     const newServer: Server = {
       id: newServerId,
       name,
       icon: icon || '⚡',
+      description: '',
+      ownerId,
+      bitrateKbps: 128,
+      roles,
+      members,
       channels: [
         { id: `ch-text-${Date.now()}-1`, name: 'genel', type: 'text', serverId: newServerId },
         { id: `ch-voice-${Date.now()}-2`, name: 'Genel Ses', type: 'voice', serverId: newServerId },
@@ -989,8 +1033,215 @@ io.on('connection', (socket: Socket) => {
     };
 
     servers.push(newServer);
-    addAuditLog('SUNUCU_OLUSTURULDU', `Yeni sunucu olusturuldu: ${name}`);
+    addAuditLog('SUNUCU_OLUSTURULDU', `Yeni sunucu olusturuldu: ${name} (Sahip: ${user?.username || 'Bilinmiyor'})`);
     io.emit('server_created', newServer);
+  });
+
+  // Helper to check user permission in server
+  function checkServerPermission(user: User, server: Server, permission: ServerPermission): boolean {
+    if (server.ownerId === user.id) return true;
+    if (user.role === 'admin') return true;
+    const member = server.members?.find(m => m.userId === user.id);
+    if (!member) return false;
+    if (member.isOwner) return true;
+
+    for (const rId of member.roleIds) {
+      const role = server.roles.find(r => r.id === rId);
+      if (role && role.permissions.includes(permission)) return true;
+    }
+    const defaultRole = server.roles.find(r => r.isDefault);
+    if (defaultRole && defaultRole.permissions.includes(permission)) return true;
+    return false;
+  }
+
+  // Update Server Settings
+  socket.on('update_server_settings', ({ serverId, name, icon, description, afkChannelId, bitrateKbps }: {
+    serverId: string;
+    name?: string;
+    icon?: string;
+    description?: string;
+    afkChannelId?: string | null;
+    bitrateKbps?: number;
+  }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'manage_server')) {
+      return socket.emit('server_action_error', { message: 'Bu ayarları değiştirmek için Sunucu Yönetimi yetkiniz yok.' });
+    }
+
+    if (name) s.name = name.trim();
+    if (icon) s.icon = icon;
+    if (description !== undefined) s.description = description;
+    if (afkChannelId !== undefined) s.afkChannelId = afkChannelId;
+    if (bitrateKbps !== undefined) s.bitrateKbps = bitrateKbps;
+
+    addAuditLog('SUNUCU_GUNCELLENDI', `${s.name} sunucu ayarlari guncellendi (Yetkili: ${user.username})`);
+    io.emit('server_updated', s);
+  });
+
+  // Create Server Role
+  socket.on('create_server_role', ({ serverId, name, color, permissions }: {
+    serverId: string;
+    name: string;
+    color: string;
+    permissions: ServerPermission[];
+  }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'manage_roles')) {
+      return socket.emit('server_action_error', { message: 'Rol oluşturmak için Rolleri Yönet yetkiniz yok.' });
+    }
+
+    if (!s.roles) s.roles = getDefaultRoles();
+
+    const newRole: ServerRole = {
+      id: `role-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+      name: name.trim() || 'Yeni Rol',
+      color: color || '#3b82f6',
+      position: s.roles.length + 1,
+      permissions: permissions || ['send_messages', 'connect_voice', 'speak_voice']
+    };
+
+    s.roles.push(newRole);
+    addAuditLog('ROL_OLUSTURULDU', `${s.name} sunucusunda yeni rol olusturuldu: ${newRole.name}`);
+    io.emit('server_updated', s);
+  });
+
+  // Update Server Role
+  socket.on('update_server_role', ({ serverId, roleId, name, color, permissions, position }: {
+    serverId: string;
+    roleId: string;
+    name: string;
+    color: string;
+    permissions: ServerPermission[];
+    position?: number;
+  }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'manage_roles')) {
+      return socket.emit('server_action_error', { message: 'Rol düzenlemek için Rolleri Yönet yetkiniz yok.' });
+    }
+
+    if (!s.roles) s.roles = getDefaultRoles();
+    const role = s.roles.find(r => r.id === roleId);
+    if (!role) return;
+
+    role.name = name.trim() || role.name;
+    role.color = color || role.color;
+    role.permissions = permissions;
+    if (position !== undefined) role.position = position;
+
+    io.emit('server_updated', s);
+  });
+
+  // Delete Server Role
+  socket.on('delete_server_role', ({ serverId, roleId }: { serverId: string; roleId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'manage_roles')) {
+      return socket.emit('server_action_error', { message: 'Rol silmek için yetkiniz yok.' });
+    }
+
+    if (!s.roles) s.roles = getDefaultRoles();
+    const role = s.roles.find(r => r.id === roleId);
+    if (!role || role.isDefault || role.id === 'role-owner') {
+      return socket.emit('server_action_error', { message: 'Bu rol korumalıdır ve silinemez.' });
+    }
+
+    s.roles = s.roles.filter(r => r.id !== roleId);
+    if (s.members) {
+      s.members.forEach(m => {
+        m.roleIds = m.roleIds.filter(id => id !== roleId);
+      });
+    }
+
+    io.emit('server_updated', s);
+  });
+
+  // Toggle Member Role
+  socket.on('toggle_member_role', ({ serverId, targetUserId, roleId }: { serverId: string; targetUserId: string; roleId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'manage_roles')) {
+      return socket.emit('server_action_error', { message: 'Üyelere rol atamak için yetkiniz yok.' });
+    }
+
+    if (!s.members) s.members = [];
+    let member = s.members.find(m => m.userId === targetUserId);
+    if (!member) {
+      let targetUser: User | undefined;
+      for (const u of activeUsers.values()) {
+        if (u.id === targetUserId) { targetUser = u; break; }
+      }
+      if (targetUser) {
+        member = {
+          userId: targetUser.id,
+          username: targetUser.username,
+          avatar: targetUser.avatar,
+          roleIds: [],
+          joinedAt: new Date().toLocaleDateString('tr-TR')
+        };
+        s.members.push(member);
+      } else {
+        return;
+      }
+    }
+
+    if (member.roleIds.includes(roleId)) {
+      member.roleIds = member.roleIds.filter(id => id !== roleId);
+    } else {
+      member.roleIds.push(roleId);
+    }
+
+    io.emit('server_updated', s);
+  });
+
+  // Kick Member
+  socket.on('kick_server_member', ({ serverId, targetUserId }: { serverId: string; targetUserId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'kick_members')) {
+      return socket.emit('server_action_error', { message: 'Üyeyi atmak için yetkiniz yok.' });
+    }
+    if (targetUserId === s.ownerId) {
+      return socket.emit('server_action_error', { message: 'Sunucu sahibini atamazsınız!' });
+    }
+
+    if (s.members) {
+      s.members = s.members.filter(m => m.userId !== targetUserId);
+    }
+    addAuditLog('UYE_ATILDI', `${targetUserId} sunucudan atildi (Yetkili: ${user.username})`, 'warn');
+    io.emit('server_updated', s);
+  });
+
+  // Delete Server
+  socket.on('delete_server', ({ serverId }: { serverId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const sIdx = servers.findIndex(srv => srv.id === serverId);
+    if (sIdx === -1) return;
+    const s = servers[sIdx];
+
+    if (s.ownerId !== user.id && user.role !== 'admin') {
+      return socket.emit('server_action_error', { message: 'Yalnızca sunucu sahibi veya Sistem Yöneticisi sunucuyu silebilir!' });
+    }
+
+    const sName = s.name;
+    servers.splice(sIdx, 1);
+    addAuditLog('SUNUCU_SILINDI', `${sName} sunucusu silindi (Silen: ${user.username})`, 'warn');
+    io.emit('server_deleted', { serverId });
   });
 
   // Voice Channel Join

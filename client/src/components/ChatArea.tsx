@@ -77,6 +77,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     ? activeDMUser || onlineUsers.find((u) => u.id !== currentUser?.id)
     : null;
 
+  const getAuthorColor = (authorUsername: string): string => {
+    if (!activeServer || !activeServer.roles || !activeServer.members) return '#94a3b8';
+    const member = activeServer.members.find(
+      (m) => m.username.toLowerCase() === authorUsername.toLowerCase()
+    );
+    if (!member || !member.roleIds || member.roleIds.length === 0) return '#94a3b8';
+    const userRoles = activeServer.roles
+      .filter((r) => member.roleIds.includes(r.id) && !r.isDefault)
+      .sort((a, b) => a.position - b.position);
+    return userRoles.length > 0 ? userRoles[0].color : '#94a3b8';
+  };
+
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() && pendingAttachments.length === 0) return;
@@ -329,7 +341,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     <button
                       type="button"
                       onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                      className="text-[11px] font-medium text-white/60 hover:text-white cursor-pointer transition"
+                      style={{ color: getAuthorColor(msg.author.username) }}
+                      className="text-[11px] font-bold hover:underline cursor-pointer transition"
                     >
                       {isMe ? 'Sen' : msg.author.username}
                     </button>

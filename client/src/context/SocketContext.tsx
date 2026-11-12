@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser } from '../types';
+import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission } from '../types';
 
 interface SocketContextType {
   socket: Socket | null;
@@ -76,6 +76,17 @@ interface SocketContextType {
   createServer: (name: string, icon?: string) => void;
   createChannel: (name: string, type: 'text' | 'voice') => void;
   updateProfile: (username: string, avatar: string) => void;
+
+  // Server Roles & Detailed Settings
+  updateServerSettings: (data: { serverId: string; name?: string; icon?: string; description?: string; afkChannelId?: string | null; bitrateKbps?: number; }) => void;
+  createServerRole: (data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => void;
+  updateServerRole: (data: { serverId: string; roleId: string; name: string; color: string; permissions: ServerPermission[]; position?: number; }) => void;
+  deleteServerRole: (serverId: string, roleId: string) => void;
+  toggleMemberRole: (serverId: string, targetUserId: string, roleId: string) => void;
+  kickServerMember: (serverId: string, targetUserId: string) => void;
+  deleteServer: (serverId: string) => void;
+  hasServerPermission: (permission: ServerPermission) => boolean;
+  getServerMemberHighestRole: (member: ServerMember, server: Server) => ServerRole | null;
 
   // Auth Handlers
   login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -254,6 +265,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     id: 'direct-messages',
     name: 'Direkt Mesajlar',
     icon: '💬',
+    ownerId: 'system',
+    roles: [],
+    members: [],
     channels: [
       {
         id: dmChannelId,
@@ -640,6 +654,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('server_created', (newServer: Server) => {
       setServers(prev => [...prev, newServer]);
+    });
+
+    newSocket.on('server_updated', (updatedServer: Server) => {
+      setServers(prev => prev.map(s => s.id === updatedServer.id ? updatedServer : s));
+    });
+
+    newSocket.on('server_deleted', ({ serverId }: { serverId: string }) => {
+      setServers(prev => prev.filter(s => s.id !== serverId));
+    });
+
+    newSocket.on('server_action_error', ({ message }: { message: string }) => {
+      alert(message);
     });
 
     newSocket.on('user_connected', (newUser: User) => {
@@ -1521,6 +1547,58 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('update_user_state', { username, avatar });
   };
 
+  const updateServerSettings = useCallback((data: { serverId: string; name?: string; icon?: string; description?: string; afkChannelId?: string | null; bitrateKbps?: number; }) => {
+    socket?.emit('update_server_settings', data);
+  }, [socket]);
+
+  const createServerRole = useCallback((data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => {
+    socket?.emit('create_server_role', data);
+  }, [socket]);
+
+  const updateServerRole = useCallback((data: { serverId: string; roleId: string; name: string; color: string; permissions: ServerPermission[]; position?: number; }) => {
+    socket?.emit('update_server_role', data);
+  }, [socket]);
+
+  const deleteServerRole = useCallback((serverId: string, roleId: string) => {
+    socket?.emit('delete_server_role', { serverId, roleId });
+  }, [socket]);
+
+  const toggleMemberRole = useCallback((serverId: string, targetUserId: string, roleId: string) => {
+    socket?.emit('toggle_member_role', { serverId, targetUserId, roleId });
+  }, [socket]);
+
+  const kickServerMember = useCallback((serverId: string, targetUserId: string) => {
+    socket?.emit('kick_server_member', { serverId, targetUserId });
+  }, [socket]);
+
+  const deleteServer = useCallback((serverId: string) => {
+    socket?.emit('delete_server', { serverId });
+  }, [socket]);
+
+  const hasServerPermission = useCallback((permission: ServerPermission): boolean => {
+    if (!currentUser || !activeServer) return false;
+    if (activeServer.ownerId === currentUser.id || currentUser.role === 'admin') return true;
+    const member = activeServer.members?.find(m => m.userId === currentUser.id || m.username === currentUser.username);
+    if (!member) return false;
+    if (member.isOwner) return true;
+
+    for (const rId of member.roleIds) {
+      const role = activeServer.roles?.find(r => r.id === rId);
+      if (role && role.permissions.includes(permission)) return true;
+    }
+    const defaultRole = activeServer.roles?.find(r => r.isDefault);
+    if (defaultRole && defaultRole.permissions.includes(permission)) return true;
+    return false;
+  }, [currentUser, activeServer]);
+
+  const getServerMemberHighestRole = useCallback((member: ServerMember, server: Server): ServerRole | null => {
+    if (!server.roles || !member.roleIds || member.roleIds.length === 0) return null;
+    const userRoles = server.roles
+      .filter(r => member.roleIds.includes(r.id) && !r.isDefault)
+      .sort((a, b) => a.position - b.position);
+    return userRoles.length > 0 ? userRoles[0] : null;
+  }, []);
+
   return (
     <SocketContext.Provider
       value={{
@@ -1597,6 +1675,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         createServer,
         createChannel,
         updateProfile,
+
+        // Server Roles & Detailed Settings
+        updateServerSettings,
+        createServerRole,
+        updateServerRole,
+        deleteServerRole,
+        toggleMemberRole,
+        kickServerMember,
+        deleteServer,
+        hasServerPermission,
+        getServerMemberHighestRole,
 
         // Auth
         login,

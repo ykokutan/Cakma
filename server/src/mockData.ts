@@ -1,10 +1,71 @@
-import { Server, Message } from './types.js';
+import { Server, Message, ServerRole } from './types.js';
+
+export function getDefaultRoles(): ServerRole[] {
+  return [
+    {
+      id: 'role-owner',
+      name: 'Sunucu Sahibi',
+      color: '#f59e0b',
+      position: 1,
+      permissions: [
+        'manage_server', 'manage_roles', 'manage_channels',
+        'kick_members', 'ban_members', 'send_messages', 'attach_files',
+        'connect_voice', 'speak_voice', 'mute_members', 'priority_speaker'
+      ]
+    },
+    {
+      id: 'role-admin',
+      name: 'Yönetici',
+      color: '#ef4444',
+      position: 2,
+      permissions: [
+        'manage_server', 'manage_roles', 'manage_channels',
+        'kick_members', 'ban_members', 'send_messages', 'attach_files',
+        'connect_voice', 'speak_voice', 'mute_members', 'priority_speaker'
+      ]
+    },
+    {
+      id: 'role-mod',
+      name: 'Moderatör',
+      color: '#3b82f6',
+      position: 3,
+      permissions: [
+        'manage_channels', 'kick_members', 'mute_members',
+        'send_messages', 'attach_files', 'connect_voice', 'speak_voice', 'priority_speaker'
+      ]
+    },
+    {
+      id: 'role-vip',
+      name: 'VIP Üye',
+      color: '#a855f7',
+      position: 4,
+      permissions: [
+        'send_messages', 'attach_files', 'connect_voice', 'speak_voice', 'priority_speaker'
+      ]
+    },
+    {
+      id: 'role-everyone',
+      name: '@everyone',
+      color: '#94a3b8',
+      position: 99,
+      isDefault: true,
+      permissions: [
+        'send_messages', 'attach_files', 'connect_voice', 'speak_voice'
+      ]
+    }
+  ];
+}
 
 export const initialServers: Server[] = [
   {
     id: 'server-1',
     name: 'Ana Topluluk',
     icon: '🎮',
+    description: 'Resmi Discord & TeamSpeak Birleşik Ana Topluluk Sunucusu',
+    ownerId: 'usr-admin-system',
+    bitrateKbps: 128,
+    roles: getDefaultRoles(),
+    members: [],
     channels: [
       { id: 'ch-text-genel', name: 'genel-sohbet', type: 'text', serverId: 'server-1' },
       { id: 'ch-text-duyuru', name: 'duyurular', type: 'text', serverId: 'server-1' },
@@ -19,6 +80,12 @@ export const initialServers: Server[] = [
     id: 'server-2',
     name: 'TeamSpeak HQ',
     icon: '🎧',
+    description: 'TeamSpeak Düşük Gecikmeli Taktik ve Dereceli Ses Odaları',
+    ownerId: 'usr-admin-system',
+    bitrateKbps: 256,
+    roles: getDefaultRoles(),
+    members: [],
+    afkChannelId: 'ch-voice-ts-afk',
     channels: [
       { id: 'ch-ts-genel', name: 'lobi-metin', type: 'text', serverId: 'server-2' },
       { id: 'ch-ts-taktik', name: 'taktik-paylasim', type: 'text', serverId: 'server-2' },

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { User } from '../types';
 import {
@@ -21,11 +21,13 @@ import {
   MessageCircle,
   Phone,
   Users,
+  Sliders,
 } from 'lucide-react';
 
 interface ChannelSidebarProps {
   onOpenCreateChannel: (type: 'text' | 'voice') => void;
   onOpenSettings: () => void;
+  onOpenServerSettings: () => void;
   onOpenAuth: () => void;
   onOpenAdminDashboard: () => void;
   onOpenStore: () => void;
@@ -35,11 +37,13 @@ interface ChannelSidebarProps {
 export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   onOpenCreateChannel,
   onOpenSettings,
+  onOpenServerSettings,
   onOpenAuth,
   onOpenAdminDashboard,
   onOpenStore,
   onOpenProfile,
 }) => {
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const {
     activeServer,
     activeChannel,
@@ -82,17 +86,58 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   return (
     <aside className="w-64 ios-glass-sidebar flex flex-col shrink-0 select-none">
       {/* iOS Server Header Card */}
-      <header className="h-14 px-4 border-b border-white/[0.06] flex items-center justify-between font-semibold text-white/90 shadow-sm hover:bg-white/[0.04] cursor-pointer transition">
+      <header
+        onClick={() => activeServer.id !== 'direct-messages' && setIsDropdownOpen(!isDropdownOpen)}
+        className="h-14 px-4 border-b border-white/[0.06] flex items-center justify-between font-semibold text-white/90 shadow-sm hover:bg-white/[0.04] cursor-pointer transition select-none"
+      >
         <div className="flex items-center gap-2 truncate">
           {activeServer.id === 'direct-messages' ? (
             <MessageCircle className="w-4 h-4 text-blue-400 shrink-0" />
-          ) : null}
-          <span className="truncate tracking-tight">{activeServer.name}</span>
+          ) : (
+            <span className="text-base shrink-0">{activeServer.icon || '💬'}</span>
+          )}
+          <span className="truncate tracking-tight font-bold text-sm">{activeServer.name}</span>
         </div>
-        <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center">
-          <ChevronDown className="w-3.5 h-3.5 text-white/60" />
-        </div>
+        {activeServer.id !== 'direct-messages' && (
+          <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center">
+            <ChevronDown className={`w-3.5 h-3.5 text-white/60 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+          </div>
+        )}
       </header>
+
+      {/* Server Header Dropdown Menu */}
+      {isDropdownOpen && activeServer.id !== 'direct-messages' && (
+        <div className="mx-3 mt-2 p-1.5 rounded-2xl bg-[#18191f]/95 backdrop-blur-xl border border-white/10 shadow-2xl space-y-1 animate-fade-in z-30">
+          <button
+            type="button"
+            onClick={() => {
+              setIsDropdownOpen(false);
+              onOpenServerSettings();
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Sliders className="w-3.5 h-3.5 text-blue-400" />
+              <span>Sunucu Ayarları</span>
+            </div>
+            <span className="text-[10px] text-white/40">Roller & Detay</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsDropdownOpen(false);
+              onOpenCreateChannel('text');
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            <div className="flex items-center gap-2">
+              <Plus className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Kanal Oluştur</span>
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* Channels List or DMs List */}
       {activeServer.id === 'direct-messages' ? (
