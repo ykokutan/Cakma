@@ -1750,7 +1750,7 @@ io.on('connection', (socket: Socket) => {
 
     const isSafeImageMedia = (val: string) => {
       if (val.startsWith('data:image/')) {
-        return /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(val) && val.length <= 2_800_000;
+        return /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=\r\n]+$/.test(val) && val.length <= 3_500_000;
       }
       if (val.startsWith('https://') || val.startsWith('http://')) {
         return val.length <= 600 && !/[<>"']/.test(val);

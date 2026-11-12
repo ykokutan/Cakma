@@ -55,9 +55,10 @@ const STATUS_PRESETS = [
 
 const AVATAR_PRESETS = ['🛡️', '👑', '🚀', '💎', '⚡', '🎮', '🎧', '🤖', '🦊', '🐱', '🔥', '🌟'];
 
-export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose }) => {
+export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUser, onClose }) => {
   const {
     currentUser,
+    onlineUsers,
     openDirectMessage,
     startDirectCall,
     updateProfileDetails,
@@ -74,7 +75,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
     timeoutMember,
   } = useSocket();
 
-  const isMe = currentUser?.id === user.id || currentUser?.username.toLowerCase() === user.username.toLowerCase();
+  const isMe = currentUser?.id === propUser.id || currentUser?.username.toLowerCase() === propUser.username.toLowerCase();
+  const user = isMe && currentUser
+    ? currentUser
+    : (onlineUsers.find((u) => u.id === propUser.id || u.username.toLowerCase() === propUser.username.toLowerCase()) || propUser);
   const isBlocked = Boolean(currentUser?.blockedUsers?.includes(user.username));
   const canTimeout = Boolean(
     !isMe &&
@@ -137,14 +141,25 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
 
   const handleSaveProfile = () => {
     setUploadError(null);
+    const finalAvatar =
+      avatarUrlInput.trim().startsWith('http://') || avatarUrlInput.trim().startsWith('https://')
+        ? avatarUrlInput.trim()
+        : editAvatar;
+    const finalBannerImage =
+      bannerUrlInput.trim().startsWith('http://') || bannerUrlInput.trim().startsWith('https://')
+        ? bannerUrlInput.trim()
+        : editBannerImage;
+
     updateProfileDetails({
       statusMessage: editStatusMessage,
       bio: editBio,
       bannerColor: editBannerColor,
-      bannerImage: editBannerImage,
-      avatar: editAvatar,
+      bannerImage: finalBannerImage,
+      avatar: finalAvatar,
       status: editStatus,
     });
+    setAvatarUrlInput('');
+    setBannerUrlInput('');
     setIsEditing(false);
     setProfileSavedFeedback(true);
     setTimeout(() => setProfileSavedFeedback(false), 2500);
