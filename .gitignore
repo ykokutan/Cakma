@@ -22,3 +22,10 @@ Thumbs.db
 
 # Rust / Tauri build artifacts (if building desktop client)
 client/src-tauri/target/
+
+# Persistent Application Databases (Users, servers, channels, messages, licenses)
+data/
+server/data/
+*/data/
+*.tmp-*
+

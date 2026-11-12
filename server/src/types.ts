@@ -52,6 +52,22 @@ export interface User {
   friends?: string[];
 }
 
+export interface RegisteredAccount {
+  id: string;
+  username: string;
+  email: string;
+  password: string;
+  avatar: string;
+  role: 'admin' | 'user';
+  createdAt: string;
+  walletBalance: number;
+  statusMessage?: string;
+  bannerColor?: string;
+  bio?: string;
+  badges?: UserBadge[];
+  friends: string[];
+}
+
 export interface MessageAttachment {
   id: string;
   name: string;

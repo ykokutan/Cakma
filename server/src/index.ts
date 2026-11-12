@@ -10,8 +10,17 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission } from './types.js';
+import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
+import {
+  loadAccounts, saveAccounts,
+  loadServers, saveServers,
+  loadMessages, saveMessages,
+  loadLicenses, saveLicenses,
+  loadStoreSettings, saveStoreSettings,
+  loadAuditLogs, saveAuditLogs,
+  loadFriendRequests, saveFriendRequests
+} from './storage.js';
 
 const app = express();
 app.use(cors());
@@ -28,22 +37,6 @@ const io = new SocketIOServer(server, {
 const PORT = Number(process.env.PORT) || 4000;
 const SERVER_START_TIME = Date.now();
 
-// Registered Users Database (Persistent in-memory)
-interface RegisteredAccount {
-  id: string;
-  username: string;
-  email: string;
-  password: string; // Plain/hashed
-  avatar: string;
-  role: 'admin' | 'user';
-  createdAt: string;
-  walletBalance: number;
-  statusMessage?: string;
-  bannerColor?: string;
-  bio?: string;
-  badges?: UserBadge[];
-  friends: string[];
-}
 
 export function getUserBadges(role: string, username: string, hasDedicatedServer: boolean = false): UserBadge[] {
   const badges: UserBadge[] = [];
@@ -91,8 +84,8 @@ export function getUserBadges(role: string, username: string, hasDedicatedServer
   return badges;
 }
 
-const registeredAccounts = new Map<string, RegisteredAccount>();
-const pendingFriendRequests = new Map<string, FriendRequest>();
+const registeredAccounts = loadAccounts();
+const pendingFriendRequests = loadFriendRequests();
 
 function getFriendsData(username: string): { friends: FriendUser[]; incomingRequests: FriendRequest[]; outgoingRequests: FriendRequest[] } {
   const account = registeredAccounts.get(username.toLowerCase());
@@ -137,16 +130,17 @@ function getFriendsData(username: string): { friends: FriendUser[]; incomingRequ
 
 // Active online users mapped by socket.id
 const activeUsers = new Map<string, User>();
-const servers: Server[] = [...initialServers];
-const messages: Record<string, Message[]> = { ...initialMessages };
+const servers: Server[] = loadServers(initialServers);
+const messages: Record<string, Message[]> = loadMessages(initialMessages);
 
 // Dedicated Servers Registry (Reported by standalone licensed servers)
 const dedicatedServersRegistry = new Map<string, DedicatedServerInfo>();
 
 function ensureUserInServers(user: User) {
+  let changed = false;
   servers.forEach(srv => {
-    if (!srv.members) srv.members = [];
-    if (!srv.roles) srv.roles = getDefaultRoles();
+    if (!srv.members) { srv.members = []; changed = true; }
+    if (!srv.roles) { srv.roles = getDefaultRoles(); changed = true; }
     const existing = srv.members.find(m => m.userId === user.id || m.username.toLowerCase() === user.username.toLowerCase());
     if (!existing) {
       const isOwner = srv.ownerId === user.id;
@@ -158,35 +152,44 @@ function ensureUserInServers(user: User) {
         joinedAt: new Date().toLocaleDateString('tr-TR'),
         isOwner
       });
+      changed = true;
     } else {
-      existing.userId = user.id;
-      existing.avatar = user.avatar;
-      existing.username = user.username;
+      if (existing.userId !== user.id || existing.avatar !== user.avatar || existing.username !== user.username) {
+        existing.userId = user.id;
+        existing.avatar = user.avatar;
+        existing.username = user.username;
+        changed = true;
+      }
     }
   });
+  if (changed) {
+    saveServers(servers);
+  }
 }
 
 // Persistent Issued Licenses Registry (Admin generated & Store purchased)
-const issuedLicenses = new Map<string, IssuedLicense>();
-
-const initialLicenseKey = 'LIC-eyJsaWNlbnNlZSI6IkNTMiAmIFZhbG9yYW50IFRvcGx1bHVndSIsIm1heFNsb3RzIjo2NCwiZXhwaXJlc0F0IjoiMjAyOC0xMi0zMVQyMzo1OTo1OS4wMDBaIiwidGllciI6IlBybyIsImlzc3VlZEF0IjoiMjAyNi0xMS0xMVQyMjo1MToxNC42ODVaIn0=.b1d1018b51675e4d8efb0480e5d7727a2d10996d32ae8888efd0b2c215bc9b08';
-issuedLicenses.set('lic-init-1', {
-  id: 'lic-init-1',
-  licenseKey: initialLicenseKey,
-  licensee: 'CS2 & Valorant Toplulugu',
-  assignedUsername: 'admin',
-  maxSlots: 64,
-  tier: 'Pro',
-  status: 'active',
-  issuedAt: '2026-11-11T22:51:14.685Z',
-  expiresAt: '2028-12-31T23:59:59.000Z',
-  price: 249,
-  source: 'admin',
-  activeServerHost: 'localhost:4001'
-});
+const issuedLicenses = loadLicenses();
+if (issuedLicenses.size === 0) {
+  const initialLicenseKey = 'LIC-eyJsaWNlbnNlZSI6IkNTMiAmIFZhbG9yYW50IFRvcGx1bHVndSIsIm1heFNsb3RzIjo2NCwiZXhwaXJlc0F0IjoiMjAyOC0xMi0zMVQyMzo1OTo1OS4wMDBaIiwidGllciI6IlBybyIsImlzc3VlZEF0IjoiMjAyNi0xMS0xMVQyMjo1MToxNC42ODVaIn0=.b1d1018b51675e4d8efb0480e5d7727a2d10996d32ae8888efd0b2c215bc9b08';
+  issuedLicenses.set('lic-init-1', {
+    id: 'lic-init-1',
+    licenseKey: initialLicenseKey,
+    licensee: 'CS2 & Valorant Toplulugu',
+    assignedUsername: 'admin',
+    maxSlots: 64,
+    tier: 'Pro',
+    status: 'active',
+    issuedAt: '2026-11-11T22:51:14.685Z',
+    expiresAt: '2028-12-31T23:59:59.000Z',
+    price: 249,
+    source: 'admin',
+    activeServerHost: 'localhost:4001'
+  });
+  saveLicenses(issuedLicenses);
+}
 
 // Store Settings & Pricing (Admin configurable)
-const storeSettings: StoreSettings = {
+const defaultStoreSettings: StoreSettings = {
   isOpen: true,
   closedReason: 'Mağazamız planlı bakım çalışması nedeniyle geçici olarak hizmete kapalıdır. Lütfen daha sonra tekrar deneyiniz.',
   currencySymbol: '₺',
@@ -226,24 +229,18 @@ const storeSettings: StoreSettings = {
     { id: 'crypto', name: 'Kripto Para (USDT/BTC)', enabled: false, icon: 'Coins', description: 'TRC20 / ERC20 ağı ile anonim hızlı ödeme.' },
   ]
 };
+const storeSettings: StoreSettings = loadStoreSettings(defaultStoreSettings);
 
 // Audit Logs
-const auditLogs: AuditLog[] = [
+const auditLogs: AuditLog[] = loadAuditLogs([
   {
     id: 'log-init-1',
     action: 'SUNUCU_BASLATILDI',
     details: 'Discord/TeamSpeak Hibrit Backend ve WebRTC Sunucusu baslatildi.',
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     type: 'info'
-  },
-  {
-    id: 'log-init-2',
-    action: 'ADMIN_HESAP_HAZIR',
-    details: 'Varsayilan Sistem Yoneticisi hesabi (admin / admin123) aktif edildi.',
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    type: 'auth'
   }
-];
+]);
 
 function addAuditLog(action: string, details: string, type: 'info' | 'warn' | 'voice' | 'auth' = 'info') {
   const newLog: AuditLog = {
@@ -255,6 +252,7 @@ function addAuditLog(action: string, details: string, type: 'info' | 'warn' | 'v
   };
   auditLogs.unshift(newLog);
   if (auditLogs.length > 200) auditLogs.pop(); // Keep last 200 logs
+  saveAuditLogs(auditLogs);
 
   // Notify any active admin panels listening
   io.emit('admin_new_log', newLog);
@@ -592,6 +590,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     registeredAccounts.set(cleanUsername.toLowerCase(), newAccount);
+    saveAccounts(registeredAccounts);
     addAuditLog('YENI_KAYIT', `Yeni kullanıcı kaydoldu: ${cleanUsername} (${role})`, 'auth');
 
     // Create session user
@@ -733,6 +732,7 @@ io.on('connection', (socket: Socket) => {
       messages[channelId] = [];
     }
     messages[channelId].push(newMessage);
+    saveMessages(messages);
 
     io.emit('new_message', newMessage);
   });
@@ -753,6 +753,7 @@ io.on('connection', (socket: Socket) => {
       if (bio !== undefined) acc.bio = bio;
       if (bannerColor !== undefined) acc.bannerColor = bannerColor;
       if (avatar !== undefined) acc.avatar = avatar;
+      saveAccounts(registeredAccounts);
     }
 
     io.emit('user_updated', user);
@@ -856,6 +857,8 @@ io.on('connection', (socket: Socket) => {
         senderAccount.friends.push(targetAccount.username.toLowerCase());
         targetAccount.friends.push(sender.username.toLowerCase());
         pendingFriendRequests.delete(req.id);
+        saveAccounts(registeredAccounts);
+        saveFriendRequests(pendingFriendRequests);
 
         socket.emit('friend_request_response', { success: true, message: `${targetAccount.username} ile arkadaş oldunuz!` });
         socket.emit('friends_data', getFriendsData(sender.username));
@@ -882,6 +885,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     pendingFriendRequests.set(newReq.id, newReq);
+    saveFriendRequests(pendingFriendRequests);
     socket.emit('friend_request_response', { success: true, message: `${targetAccount.username} adlı kullanıcıya arkadaşlık isteği gönderildi!` });
     socket.emit('friends_data', getFriendsData(sender.username));
 
@@ -916,6 +920,8 @@ io.on('connection', (socket: Socket) => {
       }
 
       pendingFriendRequests.delete(requestId);
+      saveAccounts(registeredAccounts);
+      saveFriendRequests(pendingFriendRequests);
 
       socket.emit('friends_data', getFriendsData(user.username));
 
@@ -935,6 +941,7 @@ io.on('connection', (socket: Socket) => {
     const req = pendingFriendRequests.get(requestId);
     if (req) {
       pendingFriendRequests.delete(requestId);
+      saveFriendRequests(pendingFriendRequests);
       socket.emit('friends_data', getFriendsData(user.username));
 
       for (const [sId, u] of activeUsers.entries()) {
@@ -952,6 +959,7 @@ io.on('connection', (socket: Socket) => {
     const req = pendingFriendRequests.get(requestId);
     if (req) {
       pendingFriendRequests.delete(requestId);
+      saveFriendRequests(pendingFriendRequests);
       socket.emit('friends_data', getFriendsData(user.username));
 
       for (const [sId, u] of activeUsers.entries()) {
@@ -972,6 +980,7 @@ io.on('connection', (socket: Socket) => {
     if (userAccount && targetAccount) {
       userAccount.friends = (userAccount.friends || []).filter(f => f.toLowerCase() !== targetUsername.toLowerCase());
       targetAccount.friends = (targetAccount.friends || []).filter(f => f.toLowerCase() !== user.username.toLowerCase());
+      saveAccounts(registeredAccounts);
 
       socket.emit('friends_data', getFriendsData(user.username));
 
@@ -996,6 +1005,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     targetServer.channels.push(newChannel);
+    saveServers(servers);
     addAuditLog('KANAL_OLUSTURULDU', `${targetServer.name} sunucusunda #${newChannel.name} (${type}) olusturuldu.`);
     io.emit('channel_created', { serverId, channel: newChannel });
   });
@@ -1033,6 +1043,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     servers.push(newServer);
+    saveServers(servers);
     addAuditLog('SUNUCU_OLUSTURULDU', `Yeni sunucu olusturuldu: ${name} (Sahip: ${user?.username || 'Bilinmiyor'})`);
     io.emit('server_created', newServer);
   });
@@ -1076,6 +1087,7 @@ io.on('connection', (socket: Socket) => {
     if (description !== undefined) s.description = description;
     if (afkChannelId !== undefined) s.afkChannelId = afkChannelId;
     if (bitrateKbps !== undefined) s.bitrateKbps = bitrateKbps;
+    saveServers(servers);
 
     addAuditLog('SUNUCU_GUNCELLENDI', `${s.name} sunucu ayarlari guncellendi (Yetkili: ${user.username})`);
     io.emit('server_updated', s);
@@ -1107,6 +1119,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     s.roles.push(newRole);
+    saveServers(servers);
     addAuditLog('ROL_OLUSTURULDU', `${s.name} sunucusunda yeni rol olusturuldu: ${newRole.name}`);
     io.emit('server_updated', s);
   });
@@ -1136,6 +1149,7 @@ io.on('connection', (socket: Socket) => {
     role.color = color || role.color;
     role.permissions = permissions;
     if (position !== undefined) role.position = position;
+    saveServers(servers);
 
     io.emit('server_updated', s);
   });
@@ -1162,6 +1176,7 @@ io.on('connection', (socket: Socket) => {
         m.roleIds = m.roleIds.filter(id => id !== roleId);
       });
     }
+    saveServers(servers);
 
     io.emit('server_updated', s);
   });
@@ -1202,6 +1217,7 @@ io.on('connection', (socket: Socket) => {
     } else {
       member.roleIds.push(roleId);
     }
+    saveServers(servers);
 
     io.emit('server_updated', s);
   });
@@ -1222,6 +1238,7 @@ io.on('connection', (socket: Socket) => {
     if (s.members) {
       s.members = s.members.filter(m => m.userId !== targetUserId);
     }
+    saveServers(servers);
     addAuditLog('UYE_ATILDI', `${targetUserId} sunucudan atildi (Yetkili: ${user.username})`, 'warn');
     io.emit('server_updated', s);
   });
@@ -1240,6 +1257,7 @@ io.on('connection', (socket: Socket) => {
 
     const sName = s.name;
     servers.splice(sIdx, 1);
+    saveServers(servers);
     addAuditLog('SUNUCU_SILINDI', `${sName} sunucusu silindi (Silen: ${user.username})`, 'warn');
     io.emit('server_deleted', { serverId });
   });
@@ -1401,6 +1419,7 @@ io.on('connection', (socket: Socket) => {
     const acc = registeredAccounts.get(targetUsername.toLowerCase());
     if (acc) {
       acc.role = newRole;
+      saveAccounts(registeredAccounts);
       addAuditLog('YETKI_DEGISTIRILDI', `${targetUsername} kullanicisinin rolu [${newRole}] yapildi (Yetkili: ${requester.username})`, 'warn');
 
       // Update online user if active
@@ -1446,6 +1465,7 @@ io.on('connection', (socket: Socket) => {
     const chIndex = targetServer.channels.findIndex(c => c.id === channelId);
     if (chIndex !== -1) {
       const removedCh = targetServer.channels.splice(chIndex, 1)[0];
+      saveServers(servers);
       addAuditLog('KANAL_SILINDI', `${targetServer.name} sunucusundan #${removedCh.name} kanali silindi.`, 'warn');
       io.emit('channel_deleted', { serverId, channelId });
       socket.emit('admin_action_success', 'Kanal başarıyla silindi.');
@@ -1496,6 +1516,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     issuedLicenses.set(newLicense.id, newLicense);
+    saveLicenses(issuedLicenses);
 
     addAuditLog('LISANS_URETILDI', `Musteri: ${cleanLicensee} | Atanan Kullanici: ${targetUsername} | Slot: ${slots} (${selectedTier}) (Yetkili: ${requester.username})`, 'warn');
 
@@ -1511,6 +1532,7 @@ io.on('connection', (socket: Socket) => {
     const lic = issuedLicenses.get(licenseId);
     if (lic) {
       lic.status = 'revoked';
+      saveLicenses(issuedLicenses);
       addAuditLog('LISANS_IPTAL_EDILDI', `Lisans iptal edildi: "${lic.licensee}" (${lic.assignedUsername}) - Sebep: ${reason || 'Yönetici kararı'}`, 'warn');
       io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
       socket.emit('admin_action_success', `"${lic.licensee}" lisansı iptal edildi.`);
@@ -1598,6 +1620,7 @@ io.on('connection', (socket: Socket) => {
     if (lic.status === 'expired') {
       lic.status = 'active';
     }
+    saveLicenses(issuedLicenses);
 
     addAuditLog(
       'LISANS_UZATILDI',
@@ -1625,6 +1648,7 @@ io.on('connection', (socket: Socket) => {
     const lic = issuedLicenses.get(licenseId);
     if (lic) {
       lic.status = 'active';
+      saveLicenses(issuedLicenses);
       addAuditLog('LISANS_AKTIFLESTIRILDI', `Lisans yeniden aktifleştirildi: "${lic.licensee}"`, 'info');
       io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
       socket.emit('admin_action_success', `"${lic.licensee}" lisansı aktif duruma getirildi.`);
@@ -1637,6 +1661,7 @@ io.on('connection', (socket: Socket) => {
     if (!requester || requester.role !== 'admin') return;
 
     Object.assign(storeSettings, newSettings);
+    saveStoreSettings(storeSettings);
     addAuditLog(
       'MAGAZA_AYARLARI_GUNCEL',
       `Mağaza ayarları güncellendi. Satış: ${storeSettings.isOpen ? 'AÇIK' : 'KAPALI (BAKIM)'} | İndirim: %${storeSettings.discountPercentage}`,
@@ -1723,6 +1748,7 @@ io.on('connection', (socket: Socket) => {
 
       account.walletBalance -= totalPrice;
       user.walletBalance = account.walletBalance;
+      saveAccounts(registeredAccounts);
       socket.emit('user_updated', user);
     }
 
@@ -1747,6 +1773,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     issuedLicenses.set(newLicense.id, newLicense);
+    saveLicenses(issuedLicenses);
 
     addAuditLog(
       'MAGAZA_SATIS',
@@ -1816,6 +1843,7 @@ io.on('connection', (socket: Socket) => {
       }
       account.walletBalance -= finalPrice;
       user.walletBalance = account.walletBalance;
+      saveAccounts(registeredAccounts);
       socket.emit('user_updated', user);
     }
 
@@ -1836,6 +1864,7 @@ io.on('connection', (socket: Socket) => {
     if (lic.status === 'expired') {
       lic.status = 'active';
     }
+    saveLicenses(issuedLicenses);
 
     addAuditLog(
       'LISANS_MAGAZA_UZATILDI',
