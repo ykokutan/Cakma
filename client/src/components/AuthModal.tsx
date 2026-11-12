@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { LogIn, UserPlus, Shield, X, AlertCircle, Sparkles, RefreshCw } from 'lucide-react';
+import { LogIn, UserPlus, Shield, X, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -39,26 +39,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
         } else {
           setErrorMessage(res.error || 'Giriş başarısız oldu.');
         }
-      }
-    } catch {
-      setErrorMessage('Sunucu ile bağlantı kurulamadı.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickDemo = async (role: 'admin' | 'user') => {
-    setLoading(true);
-    setErrorMessage('');
-    try {
-      const res = role === 'admin'
-        ? await login('admin', 'admin123')
-        : await login('ahmet', '123456');
-
-      if (res.success) {
-        onClose();
-      } else {
-        setErrorMessage(res.error || 'Giriş yapılamadı.');
       }
     } catch {
       setErrorMessage('Sunucu ile bağlantı kurulamadı.');
@@ -147,35 +127,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
             </div>
           )}
 
-          {/* Quick Demo Login Pills */}
-          {!isRegister && (
-            <div className="space-y-1.5">
-              <div className="text-[10px] font-semibold text-white/40 uppercase tracking-wider">
-                Hızlı Test Girişi (Tek Tık):
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleQuickDemo('admin')}
-                  className="px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/30 hover:border-amber-500/60 text-amber-300 hover:text-white text-xs font-medium transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <Shield className="w-3.5 h-3.5" />
-                  {loading ? 'Giriş...' : 'Yönetici (Admin)'}
-                </button>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleQuickDemo('user')}
-                  className="px-3 py-2 rounded-xl bg-blue-500/15 border border-blue-500/30 hover:border-blue-500/60 text-blue-300 hover:text-white text-xs font-medium transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {loading ? 'Giriş...' : 'Kullanıcı (Ahmet)'}
-                </button>
-              </div>
-            </div>
-          )}
-
           {isRegister && (
             <div>
               <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
@@ -207,7 +158,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder={isRegister ? 'Orn: ahmet_kaya' : 'admin veya ahmet'}
+              placeholder={isRegister ? 'Örn: kullanıcı_adınız' : 'Kullanıcı adınız veya E-Posta'}
               className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
             />
           </div>

@@ -65,7 +65,7 @@ export function getUserBadges(role: string, username: string, hasDedicatedServer
       color: 'from-orange-500 to-amber-400'
     });
   }
-  if (role === 'admin' || username.toLowerCase() === 'ahmet') {
+  if (role === 'admin') {
     badges.push({
       id: 'badge-vip',
       name: 'VIP Destekçi',
@@ -93,39 +93,6 @@ export function getUserBadges(role: string, username: string, hasDedicatedServer
 
 const registeredAccounts = new Map<string, RegisteredAccount>();
 const pendingFriendRequests = new Map<string, FriendRequest>();
-
-// Default initial accounts for testing
-registeredAccounts.set('admin', {
-  id: 'usr-admin-001',
-  username: 'admin',
-  email: 'admin@system.local',
-  password: 'admin123',
-  avatar: '🛡️',
-  role: 'admin',
-  createdAt: new Date().toLocaleDateString('tr-TR'),
-  walletBalance: 2500,
-  statusMessage: '🎮 Platform Yönetiminde',
-  bannerColor: 'from-indigo-600 via-purple-600 to-pink-600',
-  bio: 'Sistem & Dedicated Altyapı Baş Yöneticisi. Discord & TeamSpeak birleşik ses platformu.',
-  badges: getUserBadges('admin', 'admin', true),
-  friends: ['ahmet']
-});
-
-registeredAccounts.set('ahmet', {
-  id: 'usr-user-002',
-  username: 'Ahmet',
-  email: 'ahmet@ornek.com',
-  password: '123456',
-  avatar: '🚀',
-  role: 'user',
-  createdAt: new Date().toLocaleDateString('tr-TR'),
-  walletBalance: 1000,
-  statusMessage: '🎧 Müzik Dinliyor (Lo-Fi)',
-  bannerColor: 'from-blue-600 via-cyan-600 to-teal-500',
-  bio: 'Gamer & Ses Tutkunu. Düşük gecikmeli sesli odalarda takılıyor.',
-  badges: getUserBadges('user', 'ahmet', false),
-  friends: ['admin']
-});
 
 function getFriendsData(username: string): { friends: FriendUser[]; incomingRequests: FriendRequest[]; outgoingRequests: FriendRequest[] } {
   const account = registeredAccounts.get(username.toLowerCase());

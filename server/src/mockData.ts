@@ -48,11 +48,11 @@ export const initialMessages: Record<string, Message[]> = {
       serverId: 'server-1',
       channelId: 'ch-text-genel',
       author: {
-        id: 'user-demo',
-        username: 'Ahmet (Geliştirici)',
-        avatar: '🚀'
+        id: 'bot-1',
+        username: 'Sistem Botu',
+        avatar: '🤖'
       },
-      content: 'Ses kanalları WebRTC ile çalışıyor! Sol panelden ses odalarına tıklayarak bağlanabilirsiniz. Mikrofon ve kulaklık kontrolleri sol altta.',
+      content: 'Ses kanalları WebRTC ile çalışıyor! Sol panelden ses odalarına tıklayarak bağlanabilirsiniz. Mikrofon ve kulaklık kontrolleri sol altta yer alır.',
       timestamp: new Date(Date.now() - 1800000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]

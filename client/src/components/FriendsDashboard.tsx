@@ -217,7 +217,7 @@ export const FriendsDashboard: React.FC<FriendsDashboardProps> = ({ onOpenProfil
                 type="text"
                 value={addUsernameInput}
                 onChange={(e) => setAddUsernameInput(e.target.value)}
-                placeholder="Bir kullanıcı adı girin (Örn: ahmet, admin)..."
+                placeholder="Arkadaş olarak eklemek istediğiniz kullanıcı adı..."
                 className="flex-1 bg-transparent px-3 text-sm text-white placeholder-white/30 outline-none"
               />
               <button
