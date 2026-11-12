@@ -1130,10 +1130,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.log('Connected to backend:', newSocket.id);
       newSocket.emit('get_store_settings');
       newSocket.emit('get_my_licenses');
-      if (savedAuth) {
+      const currentSavedAuth = localStorage.getItem('dc_clone_auth');
+      if (currentSavedAuth) {
         try {
-          const creds = JSON.parse(savedAuth);
-          newSocket.emit('auth_login', { usernameOrEmail: creds.username, password: creds.password });
+          const creds = JSON.parse(currentSavedAuth);
+          if (creds.token) {
+            newSocket.emit('auth_token_login', { token: creds.token });
+          } else if (creds.username && creds.password) {
+            newSocket.emit('auth_login', { usernameOrEmail: creds.username, password: creds.password });
+          } else {
+            setIsAuthenticated(false);
+          }
         } catch {
           setIsAuthenticated(false);
         }
@@ -1142,10 +1149,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    newSocket.on('auth_response', (res: { success: boolean; user?: User; error?: string }) => {
+    newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; tokenExpired?: boolean; error?: string }) => {
       if (res.success && res.user) {
+        if (res.token) {
+          localStorage.setItem('dc_clone_auth', JSON.stringify({
+            token: res.token,
+            username: res.user.username,
+            avatar: res.user.avatar
+          }));
+        }
         setCurrentUser(res.user);
         setIsAuthenticated(true);
+      } else if (res.tokenExpired) {
+        localStorage.removeItem('dc_clone_auth');
+        setIsAuthenticated(false);
+        setCurrentUser(null);
       } else if (res.error && (res.error.includes('LİSANS') || res.error.includes('LISANS'))) {
         alert(`⛔ Giriş Engellendi:\n\n${res.error}\n\nAna sunucuya yönlendiriliyorsunuz.`);
         resetToMainServer();
@@ -1763,12 +1781,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 5000);
 
       socket.emit('auth_login', { usernameOrEmail, password });
-      socket.once('auth_response', (res: { success: boolean; user?: User; error?: string }) => {
+      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; error?: string }) => {
         if (answered) return;
         answered = true;
         clearTimeout(timer);
         if (res.success && res.user) {
-          localStorage.setItem('dc_clone_auth', JSON.stringify({ username: usernameOrEmail, password, avatar: res.user.avatar }));
+          localStorage.setItem('dc_clone_auth', JSON.stringify({ token: res.token, username: res.user.username, avatar: res.user.avatar }));
           setCurrentUser(res.user);
           setIsAuthenticated(true);
           resolve({ success: true });
@@ -1792,12 +1810,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 5000);
 
       socket.emit('auth_register', data);
-      socket.once('auth_response', (res: { success: boolean; user?: User; error?: string }) => {
+      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; error?: string }) => {
         if (answered) return;
         answered = true;
         clearTimeout(timer);
         if (res.success && res.user) {
-          localStorage.setItem('dc_clone_auth', JSON.stringify({ username: data.username, password: data.password, avatar: data.avatar }));
+          localStorage.setItem('dc_clone_auth', JSON.stringify({ token: res.token, username: res.user.username, avatar: res.user.avatar }));
           setCurrentUser(res.user);
           setIsAuthenticated(true);
           resolve({ success: true });

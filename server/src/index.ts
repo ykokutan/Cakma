@@ -765,6 +765,40 @@ app.get('/api/dedicated/verify-license', (req, res) => {
 
 // Master REST API Key Auth Middleware
 const MASTER_API_KEY = process.env.MASTER_API_KEY || 'cakma_master_sec_2026';
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash('sha256').update(MASTER_API_KEY + '_session_secret').digest('hex');
+
+const soundboardCooldowns = new Map<string, number>();
+
+export function generateSessionToken(username: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    u: username,
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+export function verifySessionToken(token: string): string | null {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  try {
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    if (!parsed.u || !parsed.exp || parsed.exp < Date.now()) {
+      return null;
+    }
+    return parsed.u;
+  } catch {
+    return null;
+  }
+}
 
 function requireMasterAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers['authorization'];
@@ -1000,7 +1034,7 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    const cleanUsername = sanitizeText(username?.trim()).slice(0, 32);
+    const cleanUsername = sanitizeText(username?.trim()).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, 32);
     const cleanEmail = email?.trim()?.toLowerCase().slice(0, 64);
 
     if (!cleanUsername || cleanUsername.length < 3 || !password || password.length < 4) {
@@ -1011,9 +1045,13 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('auth_response', { success: false, error: 'Bu kullanıcı adı zaten alınmış.' });
     }
 
-    // Role assignment: if username is "admin" or first user, assign admin
+    // Role assignment: only the very first account on a fresh DB becomes admin; prevent admin hijacking
     const isFirstUser = registeredAccounts.size === 0;
-    const role = (cleanUsername.toLowerCase() === 'admin' || isFirstUser) ? 'admin' : 'user';
+    const reservedAdminNames = ['admin', 'administrator', 'system', 'root', 'sistem'];
+    if (!isFirstUser && reservedAdminNames.includes(cleanUsername.toLowerCase())) {
+      return socket.emit('auth_response', { success: false, error: 'Bu kullanıcı adı sistem tarafından ayrılmıştır.' });
+    }
+    const role = isFirstUser ? 'admin' : 'user';
 
     // Hash password with cryptographically secure scrypt
     const hashedPassword = hashPassword(password);
@@ -1063,7 +1101,8 @@ io.on('connection', (socket: Socket) => {
     ensureUserInServers(user);
     recordUserConnection(socket, user.username, user.role);
 
-    socket.emit('auth_response', { success: true, user });
+    const token = generateSessionToken(user.username);
+    socket.emit('auth_response', { success: true, user, token });
     socket.emit('init_data', {
       currentUser: user,
       servers,
@@ -1148,7 +1187,8 @@ io.on('connection', (socket: Socket) => {
     addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı (IP: ${clientIp}).`, 'auth');
     recordUserConnection(socket, user.username, user.role);
 
-    socket.emit('auth_response', { success: true, user });
+    const token = generateSessionToken(user.username);
+    socket.emit('auth_response', { success: true, user, token });
     socket.emit('init_data', {
       currentUser: user,
       servers,
@@ -1157,6 +1197,54 @@ io.on('connection', (socket: Socket) => {
     });
     socket.emit('friends_data', getFriendsData(user.username));
 
+    socket.broadcast.emit('user_connected', user);
+  });
+
+  // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz)
+  socket.on('auth_token_login', ({ token }: { token: string }) => {
+    const clientIp = getClientIp(socket);
+    const verifiedUsername = verifySessionToken(token);
+    if (!verifiedUsername) {
+      return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' });
+    }
+
+    const foundAccount = registeredAccounts.get(verifiedUsername.toLowerCase());
+    if (!foundAccount) {
+      return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Hesap bulunamadı.' });
+    }
+
+    const user: User = {
+      id: socket.id,
+      username: foundAccount.username,
+      email: foundAccount.email,
+      role: foundAccount.role,
+      avatar: foundAccount.avatar,
+      status: 'online',
+      isMuted: false,
+      isDeafened: false,
+      isSpeaking: false,
+      createdAt: foundAccount.createdAt,
+      walletBalance: foundAccount.walletBalance,
+      statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
+      bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
+      bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
+      badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
+      friends: foundAccount.friends || []
+    };
+
+    activeUsers.set(socket.id, user);
+    ensureUserInServers(user);
+    recordUserConnection(socket, user.username, user.role);
+
+    const refreshedToken = generateSessionToken(user.username);
+    socket.emit('auth_response', { success: true, user, token: refreshedToken });
+    socket.emit('init_data', {
+      currentUser: user,
+      servers,
+      onlineUsers: Array.from(activeUsers.values()),
+      messages
+    });
+    socket.emit('friends_data', getFriendsData(user.username));
     socket.broadcast.emit('user_connected', user);
   });
 
@@ -1476,10 +1564,18 @@ io.on('connection', (socket: Socket) => {
     io.emit('poll_updated', { channelId, messageId, poll: msg.poll });
   });
 
-  // Soundboard in Voice Channel
+  // Soundboard in Voice Channel (Scoped to active room & 2s anti-spam cooldown)
   socket.on('voice_soundboard_play', ({ channelId, soundId }: { channelId: string; soundId: string }) => {
     const user = activeUsers.get(socket.id);
-    if (!user) return;
+    if (!user || user.currentVoiceChannelId !== channelId) return;
+
+    const now = Date.now();
+    const lastPlayed = soundboardCooldowns.get(user.id) || 0;
+    if (now - lastPlayed < 2000) {
+      return;
+    }
+    soundboardCooldowns.set(user.id, now);
+
     io.to(channelId).emit('voice_soundboard_played', {
       userId: user.id,
       username: user.username,
@@ -1489,10 +1585,10 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
-  // Synchronized Radio & YouTube Music Bot in Voice Channel
+  // Synchronized Radio & YouTube Music Bot in Voice Channel (Scoped to active room)
   socket.on('voice_radio_state', (payload: any) => {
     const user = activeUsers.get(socket.id);
-    if (!user) return;
+    if (!user || !payload?.channelId || user.currentVoiceChannelId !== payload.channelId) return;
     io.to(payload.channelId).emit('voice_radio_synced', {
       ...payload,
       initiatedBy: user.username
@@ -2334,17 +2430,22 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_webcam_update', { userId: socket.id, active });
   });
 
-  // Whiteboard Canvas Relay
+  // Whiteboard Canvas Relay (Scoped to user's active voice channel)
   socket.on('whiteboard_draw', (data: any) => {
-    socket.broadcast.emit('whiteboard_draw', data);
+    const user = activeUsers.get(socket.id);
+    if (!user || !user.currentVoiceChannelId) return;
+    socket.to(user.currentVoiceChannelId).emit('whiteboard_draw', data);
   });
   socket.on('whiteboard_clear', () => {
-    socket.broadcast.emit('whiteboard_clear');
+    const user = activeUsers.get(socket.id);
+    if (!user || !user.currentVoiceChannelId) return;
+    socket.to(user.currentVoiceChannelId).emit('whiteboard_clear');
   });
 
-  // 1. Watch Together (YouTube Sineması)
+  // 1. Watch Together (YouTube Sineması - Scoped to active voice room)
   socket.on('watch_together_start', ({ channelId, videoId, title }: { channelId: string; videoId: string; title: string }) => {
     const user = activeUsers.get(socket.id);
+    if (!user || user.currentVoiceChannelId !== channelId) return;
     const roomState: WatchTogetherState = {
       channelId,
       active: true,
@@ -2352,14 +2453,16 @@ io.on('connection', (socket: Socket) => {
       title: title || 'YouTube Video',
       isPlaying: true,
       currentTime: 0,
-      startedBy: user ? user.username : 'Biri'
+      startedBy: user.username
     };
     watchTogetherRooms.set(channelId, roomState);
     io.to(channelId).emit('watch_together_update', roomState);
-    addAuditLog('WATCH_TOGETHER', `${user?.username || 'Biri'} ${channelId} odasinda YouTube sinemasi baslatti: "${title}"`);
+    addAuditLog('WATCH_TOGETHER', `${user.username} ${channelId} odasinda YouTube sinemasi baslatti: "${title}"`);
   });
 
   socket.on('watch_together_action', ({ channelId, action, currentTime }: { channelId: string; action: 'play' | 'pause' | 'seek'; currentTime: number }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || user.currentVoiceChannelId !== channelId) return;
     const roomState = watchTogetherRooms.get(channelId);
     if (!roomState) return;
     if (action === 'play') roomState.isPlaying = true;
@@ -2369,6 +2472,8 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('watch_together_stop', ({ channelId }: { channelId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || user.currentVoiceChannelId !== channelId) return;
     watchTogetherRooms.delete(channelId);
     io.to(channelId).emit('watch_together_ended');
   });
