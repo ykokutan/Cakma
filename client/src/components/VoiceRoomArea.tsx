@@ -93,6 +93,8 @@ export const VoiceRoomArea: React.FC = () => {
     activeSoundboardEffect,
     radioBotState,
     syncRadioState,
+    ping,
+    openDiagnostics,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
@@ -154,10 +156,15 @@ export const VoiceRoomArea: React.FC = () => {
               Ekran Yayını Aktif
             </span>
           )}
-          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10">
-            <Activity className="w-3.5 h-3.5 text-emerald-400" />
-            16 ms · Ultra HD Opus
-          </span>
+          <button
+            onClick={openDiagnostics}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 hover:bg-emerald-500/10 border border-white/10 hover:border-emerald-500/30 text-white/80 hover:text-emerald-300 transition cursor-pointer"
+            title="Bağlantı ve Ağ Teşhisi (Detaylı Bilgi)"
+          >
+            <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span className="font-mono">{ping} ms</span>
+            <span>· Ultra HD Opus</span>
+          </button>
         </div>
       </header>
 
@@ -248,7 +255,7 @@ export const VoiceRoomArea: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    <span className="text-[11px] font-medium text-white/90 max-w-[80px] truncate">
+                    <span className="text-[11px] font-medium text-white/90 max-w-[130px] truncate">
                       {user.username}
                     </span>
                   </div>
@@ -299,7 +306,7 @@ export const VoiceRoomArea: React.FC = () => {
 
                   {/* Username & Live Siri / Voice Status */}
                   <div className="text-center space-y-1">
-                    <div className="font-semibold text-white text-sm tracking-tight truncate max-w-[150px]">
+                    <div className="font-semibold text-white text-sm tracking-tight truncate max-w-[220px]">
                       {user.username} {isThisMe && <span className="text-white/40 text-xs">(Sen)</span>}
                     </div>
 

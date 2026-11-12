@@ -556,6 +556,15 @@ setInterval(() => {
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
 
+  // Real-time Ping & Network Measurement Check
+  socket.on('ping_check', (_ts: number, callback: any) => {
+    if (typeof callback === 'function') {
+      callback(Date.now());
+    } else {
+      socket.emit('pong_reply', { clientTimestamp: _ts, serverTime: Date.now() });
+    }
+  });
+
   // 1. REGISTER (Kayıt Olma)
   socket.on('auth_register', ({ username, email, password, avatar }: any) => {
     const cleanUsername = username?.trim();

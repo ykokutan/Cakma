@@ -13,6 +13,7 @@ import { LicenseStoreModal } from './components/LicenseStoreModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { DirectCallModal } from './components/DirectCallModal';
 import { ServerSettingsModal } from './components/ServerSettingsModal';
+import { ConnectionDiagnosticsModal } from './components/ConnectionDiagnosticsModal';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -25,7 +26,9 @@ const MainLayout: React.FC = () => {
     isAuthenticated,
     currentServerHost,
     isDedicatedServer,
-    resetToMainServer
+    resetToMainServer,
+    isDiagnosticsOpen,
+    setIsDiagnosticsOpen,
   } = useSocket();
   const [showMembers, setShowMembers] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -135,6 +138,12 @@ const MainLayout: React.FC = () => {
           onClose={() => setSelectedProfileUser(null)}
         />
       )}
+
+      {/* Network & Voice Connection Diagnostics Modal */}
+      <ConnectionDiagnosticsModal
+        isOpen={isDiagnosticsOpen}
+        onClose={() => setIsDiagnosticsOpen(false)}
+      />
 
       {/* Modallar */}
       {isSettingsOpen && (

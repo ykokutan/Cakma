@@ -23,6 +23,7 @@ import {
   Users,
   Sliders,
   Gamepad2,
+  Activity,
 } from 'lucide-react';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 
@@ -69,13 +70,15 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     startDirectCall,
     incomingFriendRequests,
     updateUserActivity,
+    openDiagnostics,
+    ping,
   } = useSocket();
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
 
   if (!activeServer) {
     return (
-      <div className="w-64 ios-glass-sidebar flex flex-col items-center justify-center p-4 text-white/40 text-xs">
+      <div className="w-72 ios-glass-sidebar flex flex-col items-center justify-center p-4 text-white/40 text-xs">
         Bir sunucu seçin
       </div>
     );
@@ -89,7 +92,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   );
 
   return (
-    <aside className="w-64 ios-glass-sidebar flex flex-col shrink-0 select-none">
+    <aside className="w-72 ios-glass-sidebar flex flex-col shrink-0 select-none">
       {/* iOS Server Header Card */}
       <header
         onClick={() => activeServer.id !== 'direct-messages' && setIsDropdownOpen(!isDropdownOpen)}
@@ -377,21 +380,31 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
       {/* Connected Voice Capsule */}
       {connectedVoiceChannel && (
-        <div className="mx-3 mb-2 px-3 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 backdrop-blur-md flex items-center justify-between">
+        <div
+          onClick={openDiagnostics}
+          className="mx-3 mb-2 px-3 py-2.5 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 backdrop-blur-md flex items-center justify-between cursor-pointer transition group"
+          title="Bağlantı ve Ağ Teşhisi Detaylarını Aç"
+        >
           <div className="flex items-center gap-2.5 truncate">
             <Radio className="w-4 h-4 text-emerald-400 animate-pulse shrink-0" />
             <div className="truncate">
-              <div className="text-emerald-400 font-semibold text-xs truncate">
-                Ses Bağlantısı Açık
+              <div className="text-emerald-400 font-semibold text-xs truncate flex items-center gap-1.5">
+                <span>Ses Bağlantısı Açık</span>
+                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded font-mono font-bold">
+                  {ping}ms
+                </span>
               </div>
-              <div className="text-white/50 text-[10px] truncate">
-                {connectedVoiceChannel.name}
+              <div className="text-white/50 text-[10px] truncate group-hover:text-white/70 transition">
+                {connectedVoiceChannel.name} · Teşhis & Ping
               </div>
             </div>
           </div>
           <button
-            onClick={leaveVoiceChannel}
-            className="w-7 h-7 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white flex items-center justify-center transition"
+            onClick={(e) => {
+              e.stopPropagation();
+              leaveVoiceChannel();
+            }}
+            className="w-7 h-7 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white flex items-center justify-center transition shrink-0"
             title="Ayrıl"
           >
             <PhoneOff className="w-3.5 h-3.5" />
@@ -429,40 +442,74 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         </button>
       )}
 
-      {/* iOS Profile Bar (Control Center Glass Pill) */}
-      <footer className="h-16 px-2.5 border-t border-white/[0.06] flex items-center justify-between bg-black/20 gap-1">
-        <div
-          onClick={isAuthenticated && currentUser ? () => onOpenProfile(currentUser) : onOpenAuth}
-          className="flex items-center gap-2 p-1 rounded-xl hover:bg-white/[0.08] cursor-pointer transition min-w-0 flex-1"
-          title={isAuthenticated ? 'Profilimi Görüntüle ve Düzenle' : 'Giriş Yap'}
-        >
-          <div className="relative shrink-0">
-            <div
-              className={`w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm transition-all ${
-                isSpeaking ? 'ios-halo-subtle' : ''
-              }`}
+      {/* iOS Profile Bar (2-Tier Spacious Glass Panel) */}
+      <footer className="p-2.5 border-t border-white/[0.08] bg-black/40 flex flex-col gap-2 shrink-0">
+        {/* Tier 1: User Profile & Dedicated Logout Button */}
+        <div className="flex items-center justify-between gap-2">
+          <div
+            onClick={isAuthenticated && currentUser ? () => onOpenProfile(currentUser) : onOpenAuth}
+            className="flex items-center gap-2.5 p-1 rounded-xl hover:bg-white/[0.08] cursor-pointer transition min-w-0 flex-1 group"
+            title={isAuthenticated ? 'Profilimi Görüntüle ve Düzenle' : 'Giriş Yap'}
+          >
+            <div className="relative shrink-0">
+              <div
+                className={`w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-base transition-all ${
+                  isSpeaking ? 'ios-halo-subtle' : ''
+                }`}
+              >
+                {currentUser?.avatar || '🎮'}
+              </div>
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black shadow" />
+            </div>
+
+            <div className="leading-tight min-w-0 flex-1">
+              <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                <span className="truncate group-hover:text-blue-400 transition">
+                  {currentUser?.username || 'Giriş Yap'}
+                </span>
+                {currentUser?.role === 'admin' ? (
+                  <span className="text-[9px] bg-amber-500/20 text-amber-300 font-bold px-1.5 py-0.2 rounded border border-amber-500/30 shrink-0">
+                    ADMIN
+                  </span>
+                ) : (
+                  <span className="text-[9px] bg-blue-500/20 text-blue-300 font-medium px-1.5 py-0.2 rounded border border-blue-500/30 shrink-0">
+                    Üye
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-white/50 truncate font-medium">
+                {currentUser?.statusMessage || `#${currentUser?.id?.slice(0, 4) || '0001'}`}
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Logout / Login Button */}
+          {isAuthenticated ? (
+            <button
+              onClick={logout}
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 transition shadow-sm shrink-0"
+              title="Çıkış Yap"
             >
-              {currentUser?.avatar || '🎮'}
-            </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-black" />
-          </div>
-          <div className="leading-tight min-w-0 truncate">
-            <div className="text-xs font-semibold text-white truncate">
-              {currentUser?.username || 'Giriş Yap'}
-            </div>
-            <div className="text-[10px] text-white/40 truncate">
-              {currentUser?.role === 'admin' ? '🛡️ Yönetici' : `#${currentUser?.id?.slice(0, 4) || '0001'}`}
-            </div>
-          </div>
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <button
+              onClick={onOpenAuth}
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-blue-500/20 hover:bg-blue-500 text-blue-300 hover:text-white border border-blue-500/30 transition shrink-0"
+              title="Giriş Yap / Kaydol"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
-        {/* Buttons */}
-        <div className="flex items-center gap-1 shrink-0">
+        {/* Tier 2: Controls Toolbar */}
+        <div className="flex items-center justify-between gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/[0.06]">
           <button
             onClick={toggleMute}
-            className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center transition ${
+            className={`flex-1 h-7 rounded-lg flex items-center justify-center transition ${
               isMuted
-                ? 'bg-red-500/20 text-red-400'
+                ? 'bg-red-500/25 text-red-400 border border-red-500/30'
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title={isMuted ? 'Mikrofonu Aç' : 'Sustur'}
@@ -472,9 +519,9 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
           <button
             onClick={toggleDeafen}
-            className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center transition ${
+            className={`flex-1 h-7 rounded-lg flex items-center justify-center transition ${
               isDeafened
-                ? 'bg-red-500/20 text-red-400'
+                ? 'bg-red-500/25 text-red-400 border border-red-500/30'
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title={isDeafened ? 'Sağırlaştırmayı Kaldır' : 'Kulaklığı Kapat'}
@@ -484,7 +531,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
           <button
             onClick={() => setIsActivityModalOpen(true)}
-            className={`w-7 h-7 shrink-0 rounded-lg flex items-center justify-center transition ${
+            className={`flex-1 h-7 rounded-lg flex items-center justify-center transition ${
               currentUser?.activity
                 ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40 animate-pulse'
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
@@ -495,30 +542,21 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </button>
 
           <button
+            onClick={openDiagnostics}
+            className="flex-1 h-7 rounded-lg flex items-center justify-center text-emerald-400 hover:bg-emerald-500/20 transition border border-emerald-500/20 gap-1"
+            title={`Bağlantı & Ping Teşhisi (${ping}ms)`}
+          >
+            <Activity className="w-3.5 h-3.5 animate-pulse" />
+            <span className="text-[10px] font-mono font-bold">{ping}ms</span>
+          </button>
+
+          <button
             onClick={onOpenSettings}
-            className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition"
+            className="flex-1 h-7 rounded-lg flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition"
             title="Ayarlar"
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
-
-          {isAuthenticated ? (
-            <button
-              onClick={logout}
-              className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 transition shadow-sm"
-              title="Çıkış Yap"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          ) : (
-            <button
-              onClick={onOpenAuth}
-              className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center bg-blue-500/20 hover:bg-blue-500 text-blue-300 hover:text-white border border-blue-500/30 transition"
-              title="Giriş Yap / Kaydol"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-            </button>
-          )}
         </div>
       </footer>
 
