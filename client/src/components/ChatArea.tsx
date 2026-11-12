@@ -11,6 +11,7 @@ import { ChannelMediaModal } from './ChannelMediaModal';
 import { LeaderboardModal } from './LeaderboardModal';
 import { MiniGamesModal } from './MiniGamesModal';
 import { AdvancedSearchModal } from './AdvancedSearchModal';
+import { AvatarView } from './AvatarView';
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -757,10 +758,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <button
                   type="button"
                   onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shrink-0 shadow select-none cursor-pointer transition hover:scale-105"
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shrink-0 shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden"
                   title={`${msg.author.username} profilini görüntüle`}
                 >
-                  {msg.author.avatar || '👤'}
+                  <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
                 </button>
               )}
 

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { User } from '../types';
+import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
 import {
   X,
   MessageCircle,
@@ -21,6 +22,11 @@ import {
   StickyNote,
   Ban,
   VolumeX,
+  Camera,
+  Upload,
+  Image as ImageIcon,
+  Link2,
+  Trash2,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -85,8 +91,30 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
   const [editStatusMessage, setEditStatusMessage] = useState(user.statusMessage || 'Çevrimiçi');
   const [editBio, setEditBio] = useState(user.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.');
   const [editBannerColor, setEditBannerColor] = useState(user.bannerColor || BANNER_PRESETS[0].class);
+  const [editBannerImage, setEditBannerImage] = useState(user.bannerImage || '');
   const [editAvatar, setEditAvatar] = useState(user.avatar || '🎮');
+  const [editStatus, setEditStatus] = useState<'online' | 'idle' | 'dnd'>(
+    user.status === 'idle' || user.status === 'dnd' ? user.status : 'online'
+  );
+  const [avatarUrlInput, setAvatarUrlInput] = useState('');
+  const [bannerUrlInput, setBannerUrlInput] = useState('');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [profileSavedFeedback, setProfileSavedFeedback] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+
+  const avatarFileRef = useRef<HTMLInputElement>(null);
+  const bannerFileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setEditStatusMessage(user.statusMessage || 'Çevrimiçi');
+    setEditBio(user.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.');
+    setEditBannerColor(user.bannerColor || BANNER_PRESETS[0].class);
+    setEditBannerImage(user.bannerImage || '');
+    setEditAvatar(user.avatar || '🎮');
+    if (user.status === 'online' || user.status === 'idle' || user.status === 'dnd') {
+      setEditStatus(user.status);
+    }
+  }, [user]);
 
   // Private Note state (stored in localStorage per target user)
   const [userNote, setUserNote] = useState('');
@@ -108,13 +136,52 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
   };
 
   const handleSaveProfile = () => {
+    setUploadError(null);
     updateProfileDetails({
       statusMessage: editStatusMessage,
       bio: editBio,
       bannerColor: editBannerColor,
+      bannerImage: editBannerImage,
       avatar: editAvatar,
+      status: editStatus,
     });
     setIsEditing(false);
+    setProfileSavedFeedback(true);
+    setTimeout(() => setProfileSavedFeedback(false), 2500);
+  };
+
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadError(null);
+    const result = await processUploadedImage(file, {
+      maxWidth: 256,
+      maxHeight: 256,
+      maxGifBytes: 1.5 * 1024 * 1024,
+    });
+    if (result.ok) {
+      setEditAvatar(result.dataUrl);
+    } else {
+      setUploadError(result.error);
+    }
+  };
+
+  const handleBannerFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadError(null);
+    const result = await processUploadedImage(file, {
+      maxWidth: 960,
+      maxHeight: 380,
+      maxGifBytes: 2 * 1024 * 1024,
+    });
+    if (result.ok) {
+      setEditBannerImage(result.dataUrl);
+    } else {
+      setUploadError(result.error);
+    }
   };
 
   const handleOpenDM = () => {
@@ -147,28 +214,66 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
   };
 
   const activeBanner = isEditing ? editBannerColor : (user.bannerColor || BANNER_PRESETS[0].class);
+  const activeBannerImage = isEditing ? editBannerImage : (user.bannerImage || '');
   const activeAvatar = isEditing ? editAvatar : (user.avatar || '🎮');
+  const activeStatus = isEditing ? editStatus : user.status;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
       <div
-        className="relative w-full max-w-md rounded-3xl overflow-hidden ios-glass shadow-2xl border border-white/15 text-white animate-scale-up"
+        className="relative w-full max-w-md max-h-[90vh] overflow-y-auto no-scrollbar rounded-3xl ios-glass shadow-2xl border border-white/15 text-white animate-scale-up"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Hidden File Inputs */}
+        <input
+          ref={avatarFileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={handleAvatarFileChange}
+          className="hidden"
+        />
+        <input
+          ref={bannerFileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={handleBannerFileChange}
+          className="hidden"
+        />
+
         {/* Banner */}
-        <div className={`h-32 w-full bg-gradient-to-r ${activeBanner} relative transition-all duration-300`}>
+        <div className={`h-36 w-full bg-gradient-to-r ${activeBanner} relative transition-all duration-300 overflow-hidden`}>
+          {activeBannerImage && (
+            <img
+              src={activeBannerImage}
+              alt="Profil Banner"
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 pointer-events-none" />
+
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/30 hover:bg-black/50 text-white/80 hover:text-white flex items-center justify-center backdrop-blur-md transition"
+            className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white/80 hover:text-white flex items-center justify-center backdrop-blur-md transition"
             title="Kapat"
           >
             <X className="w-4 h-4" />
           </button>
 
+          {profileSavedFeedback && !isEditing && (
+            <div className="absolute top-3 left-3 z-10 px-3 py-1 rounded-full bg-emerald-500/80 text-white text-xs font-bold flex items-center gap-1 backdrop-blur-md shadow-lg">
+              <Check className="w-3.5 h-3.5" />
+              <span>Profil Güncellendi</span>
+            </div>
+          )}
+
           {isMe && !isEditing && (
             <button
-              onClick={() => setIsEditing(true)}
-              className="absolute top-3 left-3 px-3 py-1 rounded-full bg-black/30 hover:bg-black/50 text-white/90 hover:text-white text-xs font-semibold flex items-center gap-1.5 backdrop-blur-md transition border border-white/10"
+              onClick={() => {
+                setUploadError(null);
+                setIsEditing(true);
+              }}
+              className="absolute top-3 left-3 z-10 px-3 py-1 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white text-xs font-semibold flex items-center gap-1.5 backdrop-blur-md transition border border-white/15"
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span>Profili Düzenle</span>
@@ -176,21 +281,50 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
           )}
 
           {isEditing && (
-            <div className="absolute bottom-2 right-3 flex items-center gap-2">
-              <button
-                onClick={() => setIsEditing(false)}
-                className="px-2.5 py-1 rounded-full bg-white/20 hover:bg-white/30 text-white text-xs font-medium backdrop-blur-md transition"
-              >
-                İptal
-              </button>
-              <button
-                onClick={handleSaveProfile}
-                className="px-3 py-1 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold flex items-center gap-1 shadow-lg transition"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>Kaydet</span>
-              </button>
-            </div>
+            <>
+              <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => bannerFileRef.current?.click()}
+                  className="px-2.5 py-1 rounded-full bg-black/55 hover:bg-black/75 text-white text-[11px] font-semibold flex items-center gap-1.5 backdrop-blur-md border border-white/15 transition"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Banner Yükle (GIF/Resim)</span>
+                </button>
+                {editBannerImage && (
+                  <button
+                    type="button"
+                    onClick={() => setEditBannerImage('')}
+                    className="p-1.5 rounded-full bg-rose-500/70 hover:bg-rose-500 text-white backdrop-blur-md transition"
+                    title="Banner Resmini Kaldır"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div className="absolute bottom-2 right-3 z-10 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setIsEditing(false);
+                    setUploadError(null);
+                    setEditAvatar(user.avatar || '🎮');
+                    setEditBannerColor(user.bannerColor || BANNER_PRESETS[0].class);
+                    setEditBannerImage(user.bannerImage || '');
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-black/45 hover:bg-black/65 text-white text-xs font-medium backdrop-blur-md transition border border-white/10"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={handleSaveProfile}
+                  className="px-3 py-1 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold flex items-center gap-1 shadow-lg transition"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Kaydet</span>
+                </button>
+              </div>
+            </>
           )}
         </div>
 
@@ -198,17 +332,28 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
         <div className="relative px-6 pb-6 pt-0 bg-neutral-900/80 backdrop-blur-xl">
           <div className="flex justify-between items-end -mt-12 mb-4">
             {/* Avatar with Halo Indicator */}
-            <div className="relative">
+            <div className="relative group/avatar">
               <div
-                className={`w-24 h-24 rounded-3xl bg-neutral-800 border-4 border-neutral-900 flex items-center justify-center text-4xl shadow-xl transition-all ${
+                onClick={() => isEditing && avatarFileRef.current?.click()}
+                className={`w-24 h-24 rounded-3xl bg-neutral-800 border-4 border-neutral-900 flex items-center justify-center text-4xl shadow-xl transition-all overflow-hidden relative ${
                   user.isSpeaking ? 'ios-halo' : ''
-                }`}
+                } ${isEditing ? 'cursor-pointer ring-2 ring-blue-400/50 hover:ring-blue-400' : ''}`}
               >
-                {activeAvatar}
+                <AvatarView
+                  avatar={activeAvatar}
+                  alt={user.username}
+                  imgClassName="w-full h-full object-cover"
+                />
+                {isEditing && (
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/avatar:opacity-100 flex flex-col items-center justify-center gap-1 transition">
+                    <Camera className="w-5 h-5 text-white" />
+                    <span className="text-[9px] font-bold text-white uppercase">Değiştir</span>
+                  </div>
+                )}
               </div>
               <div
                 className={`absolute bottom-1 right-1 w-5 h-5 rounded-full border-2 border-neutral-900 shadow-md ${getStatusColor(
-                  user.status
+                  activeStatus
                 )}`}
               />
             </div>
@@ -429,8 +574,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
 
             {/* Bio / Hakkında */}
             <div className="space-y-1.5 pt-1">
-              <div className="text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-                Hakkında
+              <div className="flex items-center justify-between text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+                <span>Hakkında</span>
+                {isEditing && (
+                  <span className="font-mono text-[10px] text-white/40">{editBio.length} / 500</span>
+                )}
               </div>
               {!isEditing ? (
                 <p className="text-xs text-white/70 leading-relaxed bg-white/[0.03] p-3 rounded-xl border border-white/5">
@@ -439,6 +587,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
               ) : (
                 <textarea
                   value={editBio}
+                  maxLength={500}
                   onChange={(e) => setEditBio(e.target.value)}
                   rows={2}
                   className="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white outline-none focus:border-blue-500 resize-none"
@@ -480,36 +629,89 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
               </div>
             )}
 
-            {/* Edit Mode Customizers (Banner & Avatar) */}
+            {/* Edit Mode Customizers (Status, Banner & Avatar Upload/GIF/Presets) */}
             {isEditing && (
-              <div className="space-y-3 pt-2 border-t border-white/10">
-                {/* Banner Gradient Chooser */}
+              <div className="space-y-4 pt-3 border-t border-white/10">
+                {uploadError && (
+                  <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+                    {uploadError}
+                  </div>
+                )}
+
+                {/* Online Status Selector */}
                 <div>
-                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider flex items-center gap-1 mb-1.5">
-                    <Palette className="w-3.5 h-3.5" />
-                    Banner Teması
+                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider block mb-1.5">
+                    Çevrimiçi Durumu
                   </label>
-                  <div className="grid grid-cols-5 gap-2">
-                    {BANNER_PRESETS.map((b) => (
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'online', label: 'Çevrimiçi', dot: 'bg-emerald-400' },
+                      { id: 'idle', label: 'Boşta', dot: 'bg-amber-400' },
+                      { id: 'dnd', label: 'Rahatsız Etme', dot: 'bg-red-400' },
+                    ].map((st) => (
                       <button
-                        key={b.id}
+                        key={st.id}
                         type="button"
-                        onClick={() => setEditBannerColor(b.class)}
-                        className={`h-7 rounded-lg bg-gradient-to-r ${b.class} border transition ${
-                          editBannerColor === b.class ? 'ring-2 ring-white border-transparent scale-105' : 'border-white/20'
+                        onClick={() => setEditStatus(st.id as 'online' | 'idle' | 'dnd')}
+                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
+                          editStatus === st.id
+                            ? 'bg-blue-500/20 border-blue-400 text-white'
+                            : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
                         }`}
-                        title={b.name}
-                      />
+                      >
+                        <span className={`w-2 h-2 rounded-full ${st.dot}`} />
+                        <span>{st.label}</span>
+                      </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Avatar Icon Chooser */}
-                <div>
-                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider flex items-center gap-1 mb-1.5">
-                    <Smile className="w-3.5 h-3.5" />
-                    Profil Avatarı
-                  </label>
+                {/* Avatar Upload / URL / Emoji */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider flex items-center gap-1">
+                      <Smile className="w-3.5 h-3.5" />
+                      Profil Resmi (GIF / Resim / Emoji)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => avatarFileRef.current?.click()}
+                      className="px-2.5 py-1 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 text-[10px] font-bold flex items-center gap-1 transition"
+                    >
+                      <Upload className="w-3 h-3" />
+                      <span>Dosya Yükle</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative flex-1">
+                      <Link2 className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="url"
+                        value={avatarUrlInput}
+                        onChange={(e) => setAvatarUrlInput(e.target.value)}
+                        placeholder="Veya GIF / Resim URL yapıştır (https://...)"
+                        className="w-full pl-8 pr-2.5 py-1.5 rounded-xl bg-black/40 border border-white/10 text-[11px] text-white outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = avatarUrlInput.trim();
+                        if (url.startsWith('http://') || url.startsWith('https://')) {
+                          setEditAvatar(url);
+                          setAvatarUrlInput('');
+                          setUploadError(null);
+                        } else {
+                          setUploadError('Geçerli bir http:// veya https:// görsel linki girin.');
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-semibold transition"
+                    >
+                      Uygula
+                    </button>
+                  </div>
+
                   <div className="flex flex-wrap gap-1.5">
                     {AVATAR_PRESETS.map((emoji) => (
                       <button
@@ -522,6 +724,88 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
                       >
                         {emoji}
                       </button>
+                    ))}
+                    {isImageAvatar(editAvatar) && (
+                      <span className="px-2 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[10px] text-emerald-300 font-semibold flex items-center">
+                        Özel Görsel Aktif
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Banner Upload / URL / Gradient Chooser */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider flex items-center gap-1">
+                      <Palette className="w-3.5 h-3.5" />
+                      Banner (GIF / Resim / Gradyan)
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => bannerFileRef.current?.click()}
+                        className="px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-[10px] font-bold flex items-center gap-1 transition"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>Banner Yükle</span>
+                      </button>
+                      {editBannerImage && (
+                        <button
+                          type="button"
+                          onClick={() => setEditBannerImage('')}
+                          className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[10px] font-bold transition"
+                        >
+                          Kaldır
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative flex-1">
+                      <Link2 className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="url"
+                        value={bannerUrlInput}
+                        onChange={(e) => setBannerUrlInput(e.target.value)}
+                        placeholder="Veya Banner GIF / Resim URL (https://...)"
+                        className="w-full pl-8 pr-2.5 py-1.5 rounded-xl bg-black/40 border border-white/10 text-[11px] text-white outline-none focus:border-purple-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = bannerUrlInput.trim();
+                        if (url.startsWith('http://') || url.startsWith('https://')) {
+                          setEditBannerImage(url);
+                          setBannerUrlInput('');
+                          setUploadError(null);
+                        } else {
+                          setUploadError('Geçerli bir http:// veya https:// görsel linki girin.');
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-semibold transition"
+                    >
+                      Uygula
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-1.5">
+                    {BANNER_PRESETS.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => {
+                          setEditBannerColor(b.class);
+                          setEditBannerImage('');
+                        }}
+                        className={`h-7 rounded-lg bg-gradient-to-r ${b.class} border transition ${
+                          !editBannerImage && editBannerColor === b.class
+                            ? 'ring-2 ring-white border-transparent scale-105'
+                            : 'border-white/20'
+                        }`}
+                        title={b.name}
+                      />
                     ))}
                   </div>
                 </div>

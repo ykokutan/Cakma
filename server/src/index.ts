@@ -1184,6 +1184,7 @@ io.on('connection', (socket: Socket) => {
       walletBalance: foundAccount.walletBalance,
       statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
+      bannerImage: foundAccount.bannerImage || '',
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
@@ -1243,6 +1244,7 @@ io.on('connection', (socket: Socket) => {
       walletBalance: foundAccount.walletBalance,
       statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
+      bannerImage: foundAccount.bannerImage || '',
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
@@ -1741,10 +1743,20 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_updated', user);
   });
 
-  // Profile Update (Status message, bio, banner, avatar - with XSS sanitization & size limits)
-  socket.on('update_profile', ({ statusMessage, bio, bannerColor, avatar }: { statusMessage?: string; bio?: string; bannerColor?: string; avatar?: string }) => {
+  // Profile Update (Status message, bio, bannerColor, bannerImage, avatar, status - with XSS sanitization & size limits)
+  socket.on('update_profile', ({ statusMessage, bio, bannerColor, bannerImage, avatar, status }: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
+
+    const isSafeImageMedia = (val: string) => {
+      if (val.startsWith('data:image/')) {
+        return /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(val) && val.length <= 2_800_000;
+      }
+      if (val.startsWith('https://') || val.startsWith('http://')) {
+        return val.length <= 600 && !/[<>"']/.test(val);
+      }
+      return false;
+    };
 
     const acc = registeredAccounts.get(user.username.toLowerCase());
 
@@ -1758,13 +1770,25 @@ io.on('connection', (socket: Socket) => {
       user.bio = cleanBio;
       if (acc) acc.bio = cleanBio;
     }
-    if (bannerColor !== undefined) {
+    if (bannerColor !== undefined && typeof bannerColor === 'string' && bannerColor.length <= 120) {
       user.bannerColor = bannerColor;
       if (acc) acc.bannerColor = bannerColor;
     }
-    if (avatar !== undefined) {
-      user.avatar = avatar;
-      if (acc) acc.avatar = avatar;
+    if (bannerImage !== undefined && typeof bannerImage === 'string') {
+      if (bannerImage === '' || isSafeImageMedia(bannerImage)) {
+        user.bannerImage = bannerImage;
+        if (acc) acc.bannerImage = bannerImage;
+      }
+    }
+    if (avatar !== undefined && typeof avatar === 'string') {
+      const trimmedAvatar = avatar.trim();
+      if (isSafeImageMedia(trimmedAvatar) || (trimmedAvatar.length > 0 && trimmedAvatar.length <= 32)) {
+        user.avatar = trimmedAvatar;
+        if (acc) acc.avatar = trimmedAvatar;
+      }
+    }
+    if (status !== undefined && ['online', 'idle', 'dnd', 'offline'].includes(status)) {
+      user.status = status;
     }
 
     if (acc) {

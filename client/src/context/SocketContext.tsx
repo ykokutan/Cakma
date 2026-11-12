@@ -53,7 +53,7 @@ interface SocketContextType {
   acceptDirectCall: () => void;
   declineDirectCall: () => void;
   endDirectCall: () => void;
-  updateProfileDetails: (details: { statusMessage?: string; bio?: string; bannerColor?: string; avatar?: string }) => void;
+  updateProfileDetails: (details: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => void;
 
   // System Announcement
   systemAnnouncement: { sender: string; message: string; timestamp: string } | null;
@@ -2249,9 +2249,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setDirectCall(null);
   }, [socket, directCall]);
 
-  const updateProfileDetails = useCallback(({ statusMessage, bio, bannerColor, avatar }: { statusMessage?: string; bio?: string; bannerColor?: string; avatar?: string }) => {
+  const updateProfileDetails = useCallback(({ statusMessage, bio, bannerColor, bannerImage, avatar, status }: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => {
     if (!socket) return;
-    socket.emit('update_profile', { statusMessage, bio, bannerColor, avatar });
+    socket.emit('update_profile', { statusMessage, bio, bannerColor, bannerImage, avatar, status });
   }, [socket]);
 
   // Friends System Handlers

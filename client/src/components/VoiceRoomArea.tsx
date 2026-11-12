@@ -6,6 +6,7 @@ import { WhiteboardModal } from './WhiteboardModal';
 import { WatchTogetherModal } from './WatchTogetherModal';
 import { SpatialAudioModal } from './SpatialAudioModal';
 import { MiniGamesModal } from './MiniGamesModal';
+import { AvatarView } from './AvatarView';
 import {
   Mic,
   MicOff,
@@ -527,11 +528,11 @@ export const VoiceRoomArea: React.FC = () => {
                       </div>
                     ) : (
                       <div
-                        className={`w-20 h-20 rounded-full bg-gradient-to-b from-white/15 to-white/5 border border-white/15 flex items-center justify-center text-4xl shadow-2xl transition-all duration-300 ${
+                        className={`w-20 h-20 rounded-full bg-gradient-to-b from-white/15 to-white/5 border border-white/15 flex items-center justify-center text-4xl shadow-2xl transition-all duration-300 overflow-hidden ${
                           speaking ? 'ios-halo scale-105' : ''
                         }`}
                       >
-                        {user.avatar || '🎮'}
+                        <AvatarView avatar={user.avatar} alt={user.username} fallback="🎮" />
                       </div>
                     )}
 

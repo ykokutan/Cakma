@@ -53,6 +53,7 @@ export interface User {
   walletBalance?: number;
   statusMessage?: string;
   bannerColor?: string;
+  bannerImage?: string;
   bio?: string;
   badges?: UserBadge[];
   friends?: string[];
@@ -75,6 +76,7 @@ export interface RegisteredAccount {
   walletBalance: number;
   statusMessage?: string;
   bannerColor?: string;
+  bannerImage?: string;
   bio?: string;
   badges?: UserBadge[];
   friends: string[];

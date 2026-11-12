@@ -36,6 +36,7 @@ import {
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
+import { AvatarView } from './AvatarView';
 
 interface ChannelSidebarProps {
   onOpenCreateChannel: (type: 'text' | 'voice') => void;
@@ -574,11 +575,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           >
             <div className="relative shrink-0">
               <div
-                className={`w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-base transition-all ${
+                className={`w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-base transition-all overflow-hidden ${
                   isSpeaking ? 'ios-halo-subtle' : ''
                 }`}
               >
-                {currentUser?.avatar || '🎮'}
+                <AvatarView avatar={currentUser?.avatar} alt={currentUser?.username} fallback="🎮" />
               </div>
               <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black shadow" />
             </div>

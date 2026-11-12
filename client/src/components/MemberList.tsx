@@ -2,6 +2,7 @@ import React from 'react';
 import { useSocket } from '../context/SocketContext';
 import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2 } from 'lucide-react';
+import { AvatarView } from './AvatarView';
 
 interface MemberListProps {
   onOpenProfile: (user: User) => void;
@@ -122,11 +123,11 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                 >
                   <div className="relative shrink-0">
                     <div
-                      className={`w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-sm transition-all ${
+                      className={`w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-sm transition-all overflow-hidden ${
                         user.isSpeaking ? 'ios-halo-subtle' : ''
                       }`}
                     >
-                      {user.avatar || '🎮'}
+                      <AvatarView avatar={user.avatar} alt={user.username} fallback="🎮" />
                     </div>
                     <div
                       className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black ${getStatusColor(
