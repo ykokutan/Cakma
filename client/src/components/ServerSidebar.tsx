@@ -13,6 +13,12 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
   const [hoveredServerId, setHoveredServerId] = useState<string | null>(null);
 
   const isDMActive = activeServer?.id === 'direct-messages';
+  const isInstalledApp = typeof window !== 'undefined' && (
+    '__TAURI_INTERNALS__' in window ||
+    window.location.hostname === 'tauri.localhost' ||
+    window.location.protocol === 'tauri:' ||
+    window.matchMedia?.('(display-mode: standalone)').matches
+  );
 
   return (
     <nav className="w-[72px] ios-glass-sidebar flex flex-col items-center py-4 gap-3 shrink-0 select-none z-20">
@@ -102,16 +108,18 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
           </button>
         </div>
 
-        {/* Download / Install App Button (Web) */}
-        <div className="relative group flex items-center justify-center w-full">
-          <button
-            onClick={onOpenDownload}
-            className="w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center bg-blue-500/10 hover:bg-blue-500 text-blue-400 hover:text-white border border-blue-500/20 hover:border-transparent hover:scale-105 shadow"
-            title="Uygulamayı İndir / Kur"
-          >
-            <Download className="w-5 h-5" />
-          </button>
-        </div>
+        {/* Download / Install App Button (Web Only) */}
+        {!isInstalledApp && (
+          <div className="relative group flex items-center justify-center w-full">
+            <button
+              onClick={onOpenDownload}
+              className="w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center bg-blue-500/10 hover:bg-blue-500 text-blue-400 hover:text-white border border-blue-500/20 hover:border-transparent hover:scale-105 shadow"
+              title="Uygulamayı İndir / Kur"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
     </nav>
   );
