@@ -4,9 +4,10 @@ import { Plus, Compass, MessageCircle } from 'lucide-react';
 
 interface ServerSidebarProps {
   onOpenCreateServer: () => void;
+  onOpenExplore: () => void;
 }
 
-export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer }) => {
+export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer, onOpenExplore }) => {
   const { servers, activeServer, selectServer } = useSocket();
   const [hoveredServerId, setHoveredServerId] = useState<string | null>(null);
 
@@ -92,8 +93,9 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
         {/* Explore Button */}
         <div className="relative group flex items-center justify-center w-full">
           <button
-            className="w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center bg-white/5 hover:bg-white/15 text-white/60 hover:text-white border border-white/5 hover:scale-105 shadow"
-            title="Keşfet"
+            onClick={onOpenExplore}
+            className="w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center bg-white/5 hover:bg-emerald-500 text-white/60 hover:text-white border border-white/5 hover:border-transparent hover:scale-105 shadow"
+            title="Keşfet & Dedicated Sunucular"
           >
             <Compass className="w-5 h-5" />
           </button>

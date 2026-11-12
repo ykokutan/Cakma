@@ -14,6 +14,7 @@ import { UserProfileModal } from './components/UserProfileModal';
 import { DirectCallModal } from './components/DirectCallModal';
 import { ServerSettingsModal } from './components/ServerSettingsModal';
 import { ConnectionDiagnosticsModal } from './components/ConnectionDiagnosticsModal';
+import { ExploreModal } from './components/ExploreModal';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -38,6 +39,7 @@ const MainLayout: React.FC = () => {
   const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
   const [isStoreOpen, setIsStoreOpen] = useState(false);
   const [isCreateServerOpen, setIsCreateServerOpen] = useState(false);
+  const [isExploreOpen, setIsExploreOpen] = useState(false);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
   const [createChannelModal, setCreateChannelModal] = useState<{
     isOpen: boolean;
@@ -115,7 +117,10 @@ const MainLayout: React.FC = () => {
           isMobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex animate-fade-in' : 'hidden'
         } md:relative md:flex h-full shrink-0`}
       >
-        <ServerSidebar onOpenCreateServer={() => { setIsCreateServerOpen(true); setIsMobileNavOpen(false); }} />
+        <ServerSidebar
+          onOpenCreateServer={() => { setIsCreateServerOpen(true); setIsMobileNavOpen(false); }}
+          onOpenExplore={() => { setIsExploreOpen(true); setIsMobileNavOpen(false); }}
+        />
 
         <ChannelSidebar
           onOpenCreateChannel={(type) => {
@@ -179,6 +184,11 @@ const MainLayout: React.FC = () => {
       {isStoreOpen && (
         <LicenseStoreModal onClose={() => setIsStoreOpen(false)} />
       )}
+
+      <ExploreModal
+        isOpen={isExploreOpen}
+        onClose={() => setIsExploreOpen(false)}
+      />
 
       {isCreateServerOpen && (
         <CreateServerModal onClose={() => setIsCreateServerOpen(false)} />

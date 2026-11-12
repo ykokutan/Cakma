@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import {
   X,
@@ -60,10 +61,13 @@ export const ServerAnalyticsModal: React.FC<ServerAnalyticsModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+  return createPortal(
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-md animate-fade-in"
+    >
       <div
-        className="relative w-full max-w-2xl rounded-3xl overflow-hidden ios-glass shadow-2xl border border-white/15 text-white flex flex-col max-h-[85vh] animate-scale-up"
+        className="relative w-full max-w-2xl rounded-3xl overflow-hidden ios-glass shadow-2xl border border-white/15 text-white flex flex-col max-h-[85vh] animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -270,6 +274,7 @@ export const ServerAnalyticsModal: React.FC<ServerAnalyticsModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

@@ -3011,6 +3011,23 @@ io.on('connection', (socket: Socket) => {
     socket.emit('store_settings_response', storeSettings);
   });
 
+  // Public Explore: List Online Dedicated Servers (without exposing license keys)
+  socket.on('get_public_dedicated_servers', () => {
+    const publicList = Array.from(dedicatedServersRegistry.values())
+      .filter(s => s.status === 'online')
+      .map(s => ({
+        id: s.id,
+        serverName: s.serverName,
+        host: s.host,
+        port: s.port,
+        onlineCount: s.onlineCount,
+        maxSlots: s.maxSlots,
+        tier: s.tier,
+        status: s.status
+      }));
+    socket.emit('public_dedicated_servers_list', publicList);
+  });
+
   // Store: Lisans Satın Alma (Dinamik Fiyat, Kampanya & Çoklu Ödeme Yöntemi)
   socket.on('store_purchase_license', ({ serverName, maxSlots, expireDays, tier, paymentMethod }: any) => {
     const user = activeUsers.get(socket.id);
