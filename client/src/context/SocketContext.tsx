@@ -196,6 +196,18 @@ interface SocketContextType {
   isDiagnosticsOpen: boolean;
   setIsDiagnosticsOpen: (val: boolean) => void;
   openDiagnostics: () => void;
+
+  // Per-User Audio Controls
+  userVolumes: Record<string, number>;
+  setUserVolume: (userId: string, volume: number) => void;
+  userLocalMutes: Record<string, boolean>;
+  toggleUserLocalMute: (userId: string) => void;
+
+  // Voice Room Recorder
+  isVoiceRecording: boolean;
+  voiceRecordingSeconds: number;
+  startVoiceRecording: () => Promise<void>;
+  stopVoiceRecording: () => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -378,6 +390,129 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, 4000);
     return () => clearInterval(interval);
   }, [socket, measurePing]);
+
+  // Per-User Volumes & Local Mutes
+  const [userVolumes, setUserVolumes] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('dc_user_volumes');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [userLocalMutes, setUserLocalMutes] = useState<Record<string, boolean>>({});
+
+  const setUserVolume = useCallback((userId: string, volume: number) => {
+    setUserVolumes((prev) => {
+      const next = { ...prev, [userId]: volume };
+      try {
+        localStorage.setItem('dc_user_volumes', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    const audio = audioElementsRef.current.get(userId);
+    if (audio) {
+      const isLocallyMuted = userLocalMutes[userId] ?? false;
+      audio.muted = isDeafened || isLocallyMuted;
+      audio.volume = Math.min(1, Math.max(0, (outputVolume / 100) * (volume / 100)));
+    }
+  }, [isDeafened, outputVolume, userLocalMutes]);
+
+  const toggleUserLocalMute = useCallback((userId: string) => {
+    setUserLocalMutes((prev) => {
+      const nextMuted = !prev[userId];
+      const next = { ...prev, [userId]: nextMuted };
+      const audio = audioElementsRef.current.get(userId);
+      if (audio) {
+        audio.muted = isDeafened || nextMuted;
+      }
+      return next;
+    });
+  }, [isDeafened]);
+
+  // Voice Room Recorder State
+  const [isVoiceRecording, setIsVoiceRecording] = useState<boolean>(false);
+  const [voiceRecordingSeconds, setVoiceRecordingSeconds] = useState<number>(0);
+  const voiceMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceRecordingChunksRef = useRef<Blob[]>([]);
+  const voiceRecordingTimerRef = useRef<any>(null);
+
+  const startVoiceRecording = useCallback(async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const dest = ctx.createMediaStreamDestination();
+
+      if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
+        try {
+          const localSource = ctx.createMediaStreamSource(localStreamRef.current);
+          localSource.connect(dest);
+        } catch {}
+      }
+
+      audioElementsRef.current.forEach((audioEl) => {
+        if (audioEl.srcObject && (audioEl.srcObject as MediaStream).getAudioTracks().length > 0) {
+          try {
+            const remoteSource = ctx.createMediaStreamSource(audioEl.srcObject as MediaStream);
+            remoteSource.connect(dest);
+          } catch {}
+        }
+      });
+
+      const mimeType = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      const recorder = new MediaRecorder(dest.stream, { mimeType });
+      voiceRecordingChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          voiceRecordingChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(voiceRecordingChunksRef.current, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        const channelName = activeServerRef.current?.name || 'ses-odasi';
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.download = `Oda-Kaydi-${channelName}-${timestamp}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+        }, 100);
+      };
+
+      recorder.start(1000);
+      voiceMediaRecorderRef.current = recorder;
+      setIsVoiceRecording(true);
+      setVoiceRecordingSeconds(0);
+
+      voiceRecordingTimerRef.current = setInterval(() => {
+        setVoiceRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      alert('Ses kaydı başlatılamadı: ' + (err?.message || err));
+    }
+  }, []);
+
+  const stopVoiceRecording = useCallback(() => {
+    if (voiceMediaRecorderRef.current && voiceMediaRecorderRef.current.state !== 'inactive') {
+      voiceMediaRecorderRef.current.stop();
+    }
+    if (voiceRecordingTimerRef.current) {
+      clearInterval(voiceRecordingTimerRef.current);
+      voiceRecordingTimerRef.current = null;
+    }
+    setIsVoiceRecording(false);
+  }, []);
 
   useEffect(() => {
     directCallRef.current = directCall;
@@ -1189,8 +1324,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           audioElementsRef.current.set(peerId, audio);
         }
         audio.srcObject = event.streams[0];
-        audio.muted = isDeafened;
-        audio.volume = Math.min(1, Math.max(0, outputVolume / 100));
+        const userVol = userVolumes[peerId] ?? 100;
+        const isLocallyMuted = userLocalMutes[peerId] ?? false;
+        audio.muted = isDeafened || isLocallyMuted;
+        audio.volume = Math.min(1, Math.max(0, (outputVolume / 100) * (userVol / 100)));
         if ('setSinkId' in audio && selectedOutputDeviceId) {
           (audio as any).setSinkId(selectedOutputDeviceId).catch(() => {});
         }
@@ -2043,6 +2180,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isDiagnosticsOpen,
         setIsDiagnosticsOpen,
         openDiagnostics,
+
+        // Per-User Audio Controls
+        userVolumes,
+        setUserVolume,
+        userLocalMutes,
+        toggleUserLocalMute,
+
+        // Voice Room Recorder
+        isVoiceRecording,
+        voiceRecordingSeconds,
+        startVoiceRecording,
+        stopVoiceRecording,
       }}
     >
       {children}

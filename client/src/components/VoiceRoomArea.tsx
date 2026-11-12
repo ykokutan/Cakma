@@ -15,6 +15,8 @@ import {
   Tv,
   Sparkles,
   Music2,
+  Volume2,
+  Disc,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -96,10 +98,19 @@ export const VoiceRoomArea: React.FC = () => {
     syncRadioState,
     ping,
     openDiagnostics,
+    userVolumes,
+    setUserVolume,
+    userLocalMutes,
+    toggleUserLocalMute,
+    isVoiceRecording,
+    voiceRecordingSeconds,
+    startVoiceRecording,
+    stopVoiceRecording,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
   const [showRadioBot, setShowRadioBot] = useState(false);
+  const [volumePopoverUserId, setVolumePopoverUserId] = useState<string | null>(null);
 
   if (!activeChannel || activeChannel.type !== 'voice') return null;
 
@@ -135,6 +146,30 @@ export const VoiceRoomArea: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3 text-xs text-white/60">
+          {/* Voice Room Audio Recorder */}
+          {isConnected && (
+            <button
+              onClick={isVoiceRecording ? stopVoiceRecording : startVoiceRecording}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium ${
+                isVoiceRecording
+                  ? 'bg-red-500/20 border-red-500 text-red-300 shadow-lg shadow-red-500/20'
+                  : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+              }`}
+              title={isVoiceRecording ? 'Kaydı Durdur ve İndir' : 'Kanal Sesini Kaydet (Toplantı/Oda Kaydedici)'}
+            >
+              <Disc className={`w-3.5 h-3.5 ${isVoiceRecording ? 'text-red-400 animate-spin' : ''}`} />
+              <span>
+                {isVoiceRecording
+                  ? `${Math.floor(voiceRecordingSeconds / 60)
+                      .toString()
+                      .padStart(2, '0')}:${(voiceRecordingSeconds % 60)
+                      .toString()
+                      .padStart(2, '0')} Kaydediliyor`
+                  : 'Kanalı Kaydet'}
+              </span>
+            </button>
+          )}
+
           <button
             onClick={() => setShowRadioBot(!showRadioBot)}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium ${
@@ -282,6 +317,75 @@ export const VoiceRoomArea: React.FC = () => {
                       : ''
                   }`}
                 >
+                  {/* Remote user volume popup trigger */}
+                  {!isThisMe && isConnected && (
+                    <div className="absolute top-3 right-3 z-20">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setVolumePopoverUserId(volumePopoverUserId === user.id ? null : user.id);
+                        }}
+                        className={`p-1.5 rounded-full transition-all text-xs border ${
+                          userLocalMutes[user.id]
+                            ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                            : (userVolumes[user.id] ?? 100) !== 100
+                            ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                            : 'bg-white/5 hover:bg-white/15 text-white/60 hover:text-white border-white/10'
+                        }`}
+                        title="Kullanıcı Ses Düzeyi (%0 - %200)"
+                      >
+                        {userLocalMutes[user.id] ? (
+                          <VolumeX className="w-3.5 h-3.5" />
+                        ) : (
+                          <Volume2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
+                      {volumePopoverUserId === user.id && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 top-8 z-50 w-52 p-3 rounded-2xl bg-neutral-900/95 backdrop-blur-xl border border-white/15 shadow-2xl space-y-2 text-left"
+                        >
+                          <div className="flex items-center justify-between text-xs font-semibold text-white">
+                            <span>Kullanıcı Sesi</span>
+                            <span className="text-emerald-400 font-mono">
+                              {userLocalMutes[user.id] ? 'Sessiz' : `%${userVolumes[user.id] ?? 100}`}
+                            </span>
+                          </div>
+
+                          <input
+                            type="range"
+                            min="0"
+                            max="200"
+                            step="5"
+                            value={userLocalMutes[user.id] ? 0 : (userVolumes[user.id] ?? 100)}
+                            onChange={(e) => setUserVolume(user.id, Number(e.target.value))}
+                            className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
+                          />
+
+                          <div className="flex items-center justify-between pt-1 text-[11px]">
+                            <button
+                              onClick={() => toggleUserLocalMute(user.id)}
+                              className={`px-2 py-0.5 rounded-md border font-medium transition ${
+                                userLocalMutes[user.id]
+                                  ? 'bg-red-500 text-white border-red-500'
+                                  : 'bg-white/10 hover:bg-white/20 text-white/80 border-white/10'
+                              }`}
+                            >
+                              {userLocalMutes[user.id] ? 'Sesi Aç' : 'Bende Sustur'}
+                            </button>
+                            <button
+                              onClick={() => setUserVolume(user.id, 100)}
+                              className="text-white/40 hover:text-white/80 transition"
+                            >
+                              Sıfırla (%100)
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Avatar with Halo Effect */}
                   <div className="relative mb-3">
                     <div

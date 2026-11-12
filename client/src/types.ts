@@ -57,6 +57,8 @@ export interface User {
   badges?: UserBadge[];
   friends?: string[];
   activity?: UserActivity;
+  level?: number;
+  xp?: number;
 }
 
 export interface MessageAttachment {

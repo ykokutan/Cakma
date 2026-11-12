@@ -12,6 +12,8 @@ import {
   RefreshCw,
   VolumeX,
   LogOut,
+  Bell,
+  Smartphone,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -57,9 +59,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   const [username, setUsername] = useState(currentUser?.username || '');
   const [avatar, setAvatar] = useState(currentUser?.avatar || '🎮');
-  const [activeTab, setActiveTab] = useState<'audio' | 'voice_processing' | 'profile'>('audio');
+  const [activeTab, setActiveTab] = useState<'audio' | 'voice_processing' | 'profile' | 'appearance'>('audio');
   const [recordingKey, setRecordingKey] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [notifPermission, setNotifPermission] = useState(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  );
+
+  const requestNotificationPermission = async () => {
+    if ('Notification' in window) {
+      const perm = await Notification.requestPermission();
+      setNotifPermission(perm);
+    }
+  };
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,6 +125,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             >
               <User className="w-4 h-4" />
               Profilim
+            </button>
+
+            <button
+              onClick={() => setActiveTab('appearance')}
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
+                activeTab === 'appearance'
+                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              Bildirim & Uygulama
             </button>
           </div>
 
@@ -529,6 +553,76 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* TAB 4: Appearance & Notifications */}
+          {activeTab === 'appearance' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base font-semibold text-white tracking-tight">
+                  Bildirimler & Masaüstü Uygulaması (PWA)
+                </h3>
+                <p className="text-xs text-white/50 mt-1">
+                  Masaüstü bildirimlerinizi açın ve uygulamayı yerel uygulama olarak bilgisayarınıza veya telefonunuza kurun.
+                </p>
+              </div>
+
+              {/* Push Notifications Card */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                      <Bell className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-white">Masaüstü Bildirimleri</div>
+                      <div className="text-xs text-white/40">
+                        Bahsedildiğinizde veya özel mesaj aldığınızda anlık bildirim alın
+                      </div>
+                    </div>
+                  </div>
+
+                  {notifPermission === 'granted' ? (
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" /> İzin Verildi
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={requestNotificationPermission}
+                      className="px-4 py-1.5 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold shadow transition"
+                    >
+                      İzin Ver
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* PWA Standalone Install Card */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900/30 to-indigo-900/30 border border-purple-500/30 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-white">PWA / Bağımsız Uygulama Olarak Yükle</div>
+                    <div className="text-xs text-purple-200/70">
+                      Chrome, Edge veya Safari'de adres çubuğundaki "Uygulamayı Yükle" ikonuna tıklayarak doğrudan masaüstü uygulaması yapabilirsiniz.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Theme Info */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2">
+                <div className="text-xs font-semibold text-white/80">Arayüz Teması</div>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-medium">
+                    ✦ iOS Titanium Glass Dark (Varsayılan)
+                  </span>
+                </div>
+              </div>
             </div>
           )}
         </div>

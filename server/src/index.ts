@@ -553,6 +553,30 @@ setInterval(() => {
   }
 }, 15000);
 
+// Intelligent AI Assistant Response Generator
+function generateAIResponse(prompt: string, senderName: string): string {
+  const p = prompt.toLowerCase();
+  if (p.includes('cs2') || p.includes('counter-strike') || p.includes('aim') || p.includes('crosshair')) {
+    return `Selam @${senderName}! 🎯 CS2 için önerim: Mirage A bomba alanı için rampa smoke'unu mutlaka öğren, crosshair'ını her zaman kafa hizasında tut ve spray yaparken ilk 5 mermiden sonra hafif aşağı-sağa çek. Bol HS'ler!`;
+  }
+  if (p.includes('valorant') || p.includes('rank') || p.includes('lineup')) {
+    return `Hey @${senderName}! 🏹 Valorant'ta derecelide yükselmek için: İletişimi asla kesme, eco rauntlarda Sheriff veya Marshal ile cross tut, ultileri saklama ve takımınla info eşliğinde trade yap!`;
+  }
+  if (p.includes('ping') || p.includes('gecikme') || p.includes('lag') || p.includes('bitrate')) {
+    return `Selam @${senderName}! ⚡ Platformumuz WebRTC Full-Mesh mimarisiyle çalışır. Sol alttaki yeşil kapsüle tıklayarak gerçek zamanlı Ping/Jitter dalga grafiğini inceleyebilir, sunucu ayarlarından ses kalitesini 384 kbps Ultra Studio seviyesine çıkarabilirsin!`;
+  }
+  if (p.includes('pelican') || p.includes('wings') || p.includes('sunucu')) {
+    return `Selam @${senderName}! 🐧 Pelican Panel ve Wings hizmetimiz %100 güncel ve sağlıklı durumda. Dedicated sunucunu Mağaza'dan lisans anahtarıyla anında bağlayıp yönetebilirsin!`;
+  }
+  if (p.includes('kod') || p.includes('react') || p.includes('javascript') || p.includes('typescript')) {
+    return `Harika bir soru @${senderName}! 💻 Platformumuz React 18, Vite ve TailwindCSS ile derlenmiştir. Ses hattında WebRTC RTCPeerConnection ve 48kHz Opus kodek kullanılır. Kod bloklarını \`\`\` kullanarak paylaşabilirsin!`;
+  }
+  if (p.includes('merhaba') || p.includes('selam') || p.includes('naber') || p.includes('hey')) {
+    return `Merhaba @${senderName}! ✨ Ben sunucu içi yapay zeka asistanınım. Ses odaları, oyun taktikleri, sunucu ayarları veya genel sorularında bana @ai yazarak dilediğin zaman danışabilirsin! 🚀`;
+  }
+  return `@${senderName}, sorun için buradayım! ✨ Bu platformda 384 kbps stüdyo ses kalitesi, ekran paylaşımı, YouTube müzik botu ve WebRTC teşhisi bulunur. Başka bir konuda yardıma ihtiyacın olursa bana yazmaktan çekinme! 🎮`;
+}
+
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
 
@@ -747,6 +771,49 @@ io.on('connection', (socket: Socket) => {
     saveMessages(messages);
 
     io.emit('new_message', newMessage);
+
+    // 1. Leveling & XP System (+20 XP per message)
+    const userAcc = registeredAccounts.get(sender.username.toLowerCase());
+    if (userAcc) {
+      userAcc.xp = (userAcc.xp || 0) + 20;
+      const newLevel = Math.floor(Math.sqrt(userAcc.xp / 100)) + 1;
+      const oldLevel = userAcc.level || 1;
+      userAcc.level = newLevel;
+      saveAccounts(registeredAccounts);
+
+      if (newLevel > oldLevel) {
+        addAuditLog('SEVIYE_ATLAMA', `${sender.username} Seviye ${newLevel}'e yükseldi! 🎉`, 'info');
+        io.emit('user_level_up', { username: sender.username, level: newLevel, xp: userAcc.xp });
+      }
+    }
+
+    // 2. Intelligent AI Bot Trigger (@ai / @bot / /ai)
+    const lowerContent = textContent.toLowerCase();
+    if (lowerContent.includes('@ai') || lowerContent.includes('@bot') || lowerContent.startsWith('/ai ')) {
+      setTimeout(() => {
+        const cleanPrompt = textContent.replace(/@ai|@bot|\/ai/gi, '').trim() || 'merhaba';
+        const aiAnswer = generateAIResponse(cleanPrompt, sender.username);
+        const aiMessage: Message = {
+          id: `msg-ai-${Date.now()}`,
+          serverId,
+          channelId,
+          author: {
+            id: 'bot-gemini-ai',
+            username: 'Gemini AI Asistan 🤖',
+            avatar: '✨'
+          },
+          content: aiAnswer,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+          isPinned: false
+        };
+
+        if (!messages[channelId]) messages[channelId] = [];
+        messages[channelId].push(aiMessage);
+        saveMessages(messages);
+        io.emit('new_message', aiMessage);
+      }, 600);
+    }
   });
 
   // Emoji Reactions

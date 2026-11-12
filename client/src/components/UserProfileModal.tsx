@@ -289,6 +289,29 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
               </div>
             </div>
 
+            {/* Level & XP Progression Bar */}
+            <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 border border-amber-500/20 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold">
+                <span className="flex items-center gap-1.5 text-amber-300">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  Seviye {user.level || 1}
+                </span>
+                <span className="text-[11px] font-mono text-white/60">
+                  {user.xp || 0} XP
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-black/40 overflow-hidden border border-white/10">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, Math.max(5, ((user.xp || 0) % 100)))}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-white/40 font-mono">
+                <span>İlerleme: %{((user.xp || 0) % 100)}</span>
+                <span>Sonraki seviyeye: {100 - ((user.xp || 0) % 100)} XP</span>
+              </div>
+            </div>
+
             {/* Rich Presence / Activity Card */}
             {user.activity && (
               <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-slate-900/40 border border-purple-500/30 flex items-center gap-3 shadow-lg">

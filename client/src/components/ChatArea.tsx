@@ -4,6 +4,9 @@ import { VoiceRoomArea } from './VoiceRoomArea';
 import { FriendsDashboard } from './FriendsDashboard';
 import { PollModal } from './PollModal';
 import { PinnedMessagesModal } from './PinnedMessagesModal';
+import { GifPickerModal } from './GifPickerModal';
+import { VoiceNotePlayer } from './VoiceNotePlayer';
+import { CodeBlock } from './CodeBlock';
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -21,6 +24,8 @@ import {
   MessageCircle,
   BarChart2,
   Clock,
+  Mic,
+  Sparkles,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -56,6 +61,124 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isPollModalOpen, setIsPollModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isGifModalOpen, setIsGifModalOpen] = useState(false);
+
+  // Voice note recording states
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [voiceRecordSeconds, setVoiceRecordSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const voiceRecordIntervalRef = useRef<any>(null);
+
+  const startVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mr.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mr.start(100);
+      setIsVoiceRecording(true);
+      setVoiceRecordSeconds(0);
+      voiceRecordIntervalRef.current = setInterval(() => {
+        setVoiceRecordSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      alert('Mikrofon erişimi sağlanamadı.');
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (voiceRecordIntervalRef.current) clearInterval(voiceRecordIntervalRef.current);
+    setIsVoiceRecording(false);
+    setVoiceRecordSeconds(0);
+    audioChunksRef.current = [];
+  };
+
+  const finishVoiceRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    if (voiceRecordIntervalRef.current) clearInterval(voiceRecordIntervalRef.current);
+    const duration = voiceRecordSeconds;
+
+    mediaRecorderRef.current.onstop = () => {
+      const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        const newAtt: MessageAttachment = {
+          id: `att-voice-${Date.now()}`,
+          name: `Sesli Mesaj (${duration}s).webm`,
+          size: blob.size,
+          type: 'audio/webm',
+          url: base64,
+        };
+        sendMessage('🎙️ Sesli Mesaj', [newAtt]);
+      };
+      reader.readAsDataURL(blob);
+      setIsVoiceRecording(false);
+      setVoiceRecordSeconds(0);
+      audioChunksRef.current = [];
+    };
+
+    mediaRecorderRef.current.stop();
+  };
+
+  const handleSelectGif = (gifUrl: string, title: string) => {
+    const newAtt: MessageAttachment = {
+      id: `att-gif-${Date.now()}`,
+      name: `${title}.gif`,
+      size: 0,
+      type: 'image/gif',
+      url: gifUrl,
+    };
+    sendMessage('', [newAtt]);
+    setIsGifModalOpen(false);
+  };
+
+  const renderMessageContent = (content: string) => {
+    if (!content) return null;
+    if (content.includes('```')) {
+      const parts = content.split(/(```[\s\S]*?```)/g);
+      return parts.map((part, index) => {
+        if (part.startsWith('```') && part.endsWith('```')) {
+          const raw = part.slice(3, -3);
+          const firstLineBreak = raw.indexOf('\n');
+          let lang = 'code';
+          let codeText = raw;
+          if (firstLineBreak !== -1) {
+            const possibleLang = raw.slice(0, firstLineBreak).trim();
+            if (possibleLang && !possibleLang.includes(' ')) {
+              lang = possibleLang;
+              codeText = raw.slice(firstLineBreak + 1);
+            }
+          }
+          return <CodeBlock key={index} code={codeText} language={lang} />;
+        }
+        return <span key={index} className="whitespace-pre-wrap">{part}</span>;
+      });
+    }
+    return <span className="whitespace-pre-wrap">{content}</span>;
+  };
+
+  const filteredMessages = messages.filter((m) => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    const contentMatch = m.content?.toLowerCase().includes(query);
+    const authorMatch = m.author.username.toLowerCase().includes(query);
+    return contentMatch || authorMatch;
+  });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -313,10 +436,21 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           <div className="relative hidden md:block">
             <input
               type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Ara..."
-              className="bg-white/5 border border-white/10 text-xs text-white rounded-full px-3 py-1.5 pl-8 w-36 focus:w-48 transition-all duration-200 outline-none placeholder:text-white/30"
+              className="bg-white/5 border border-white/10 text-xs text-white rounded-full px-3 py-1.5 pl-8 pr-7 w-36 focus:w-48 transition-all duration-200 outline-none placeholder:text-white/30"
             />
             <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 top-2" />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2 text-white/40 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -339,9 +473,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         {/* Message Items - iOS Messages Bubble Design */}
-        {messages.map((msg, index) => {
+        {filteredMessages.map((msg, index) => {
           const isMe = msg.author.id === currentUser?.id;
-          const prevMsg = messages[index - 1];
+          const prevMsg = filteredMessages[index - 1];
           const isSameAuthorAsPrev =
             prevMsg &&
             prevMsg.author.id === msg.author.id &&
@@ -407,6 +541,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     >
                       {isMe ? 'Sen' : msg.author.username}
                     </button>
+                    {msg.author.username === 'AI Asistan' && (
+                      <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
+                        <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
+                      </span>
+                    )}
                     <span className="text-[10px] text-white/30 select-none">
                       {msg.timestamp}
                     </span>
@@ -426,8 +565,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       : 'bg-white/10 text-white/90 border border-white/10 rounded-2xl rounded-bl-sm backdrop-blur-md'
                   }`}
                 >
-                  {/* Text Content */}
-                  {msg.content && <p>{msg.content}</p>}
+                  {/* Text Content with Code Block Formatting */}
+                  {msg.content && <div>{renderMessageContent(msg.content)}</div>}
 
                   {/* Interactive Poll Card */}
                   {msg.poll && (
@@ -475,6 +614,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className="space-y-2 pt-1">
                       {msg.attachments.map((att) => {
+                        // Voice Note / Audio
+                        if (att.type.startsWith('audio/')) {
+                          return (
+                            <div key={att.id} className="pt-1">
+                              <VoiceNotePlayer
+                                url={att.url}
+                                authorName={msg.author.username}
+                              />
+                            </div>
+                          );
+                        }
+
                         const isImage = att.type.startsWith('image/');
                         if (isImage) {
                           return (
@@ -607,68 +758,128 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           className="hidden"
         />
 
-        <form
-          onSubmit={handleSend}
-          className="ios-glass-card rounded-full px-3 py-2 flex items-center gap-2.5 shadow-2xl border border-white/15"
-        >
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center transition shrink-0"
-            title="Resim veya Dosya Ekle"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+        {isVoiceRecording ? (
+          <div className="ios-glass-card rounded-full px-5 py-2.5 flex items-center justify-between shadow-2xl border border-red-500/30 bg-red-950/30 animate-pulse">
+            <div className="flex items-center gap-3">
+              <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+              <span className="text-xs font-bold text-red-400 font-mono">
+                {Math.floor(voiceRecordSeconds / 60).toString().padStart(2, '0')}:
+                {(voiceRecordSeconds % 60).toString().padStart(2, '0')}
+              </span>
+              <span className="text-xs text-white/80 font-medium hidden sm:inline">
+                Sesli mesaj kaydediliyor...
+              </span>
+            </div>
 
-          {!isDM && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={cancelVoiceRecording}
+                className="px-3.5 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-xs font-semibold transition"
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                onClick={finishVoiceRecording}
+                className="px-4 py-1.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg transition"
+              >
+                <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>Gönder</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleSend}
+            className="ios-glass-card rounded-full px-3 py-2 flex items-center gap-2.5 shadow-2xl border border-white/15"
+          >
             <button
               type="button"
-              onClick={() => setIsPollModalOpen(true)}
-              className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
-              title="Anket Başlat (Poll)"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center transition shrink-0"
+              title="Resim veya Dosya Ekle"
             >
-              <BarChart2 className="w-4 h-4" />
+              <Plus className="w-4 h-4" />
             </button>
-          )}
 
-          {slowmodeRemaining > 0 ? (
-            <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
-              <Clock className="w-3.5 h-3.5 animate-spin" />
-              <span>Yavaş Mod aktif: Lütfen {slowmodeRemaining} saniye bekleyin...</span>
-            </div>
-          ) : (
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder={
-                isDM
-                  ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
-                  : `iMessage (#${activeChannel.name})...`
-              }
-              className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
-            />
-          )}
+            <button
+              type="button"
+              onClick={() => setIsGifModalOpen(true)}
+              className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-[10px] font-bold tracking-wider transition shrink-0 border border-white/10"
+              title="GIF Arama & Ekleme"
+            >
+              GIF
+            </button>
 
-          <button
-            type="button"
-            className="w-8 h-8 rounded-full hover:bg-white/10 text-white/60 hover:text-yellow-400 flex items-center justify-center transition shrink-0"
-            title="Emoji Ekle"
-            onClick={() => setInputText((prev) => prev + ' 😊')}
-          >
-            <Smile className="w-5 h-5" />
-          </button>
+            {!isDM && (
+              <button
+                type="button"
+                onClick={() => setIsPollModalOpen(true)}
+                className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
+                title="Anket Başlat (Poll)"
+              >
+                <BarChart2 className="w-4 h-4" />
+              </button>
+            )}
 
-          <button
-            type="submit"
-            disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
-            className="w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-blue-500/30"
-            title="Gönder"
-          >
-            <ArrowUp className="w-4 h-4 stroke-[2.5]" />
-          </button>
-        </form>
+            {slowmodeRemaining > 0 ? (
+              <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                <Clock className="w-3.5 h-3.5 animate-spin" />
+                <span>Yavaş Mod aktif: Lütfen {slowmodeRemaining} saniye bekleyin...</span>
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder={
+                  isDM
+                    ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
+                    : `iMessage (#${activeChannel.name})...`
+                }
+                className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
+              />
+            )}
+
+            <button
+              type="button"
+              className="w-8 h-8 rounded-full hover:bg-white/10 text-white/60 hover:text-yellow-400 flex items-center justify-center transition shrink-0"
+              title="Emoji Ekle"
+              onClick={() => setInputText((prev) => prev + ' 😊')}
+            >
+              <Smile className="w-5 h-5" />
+            </button>
+
+            {!inputText.trim() && pendingAttachments.length === 0 ? (
+              <button
+                type="button"
+                onClick={startVoiceRecording}
+                className="w-8 h-8 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white flex items-center justify-center transition shrink-0 shadow"
+                title="Sesli Mesaj Kaydet"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
+                className="w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-blue-500/30"
+                title="Gönder"
+              >
+                <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            )}
+          </form>
+        )}
       </div>
+
+      {/* GIF Picker Modal */}
+      <GifPickerModal
+        isOpen={isGifModalOpen}
+        onClose={() => setIsGifModalOpen(false)}
+        onSelectGif={handleSelectGif}
+      />
 
       {/* Poll Creation Modal */}
       <PollModal
