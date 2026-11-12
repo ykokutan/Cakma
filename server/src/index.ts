@@ -151,7 +151,7 @@ app.use(cors({
     if (!origin || ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
-      callback(null, true);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true
@@ -1518,7 +1518,7 @@ io.on('connection', (socket: Socket) => {
     io.emit('message_reaction_updated', { channelId, messageId, reactions: msg.reactions });
   });
 
-  // Pin / Unpin Message
+  // Pin / Unpin Message (Requires manage_messages permission)
   socket.on('toggle_pin_message', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
@@ -1526,6 +1526,11 @@ io.on('connection', (socket: Socket) => {
     if (!channelMsgs) return;
     const msg = channelMsgs.find(m => m.id === messageId);
     if (!msg) return;
+
+    const targetServer = servers.find(s => s.id === msg.serverId || s.channels.some(c => c.id === channelId));
+    if (targetServer && !checkServerPermission(user, targetServer, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Mesaj sabitlemek için Kanalları Yönet yetkiniz yok.' });
+    }
 
     msg.isPinned = !msg.isPinned;
     saveMessages(messages);
@@ -2922,7 +2927,12 @@ io.on('connection', (socket: Socket) => {
     const lic = issuedLicenses.get(licenseId);
     if (!lic) return;
 
-    const days = Number(addDays);
+    const rawDays = Number(addDays);
+    const allowedDays = [30, 90, 180, 365, -1];
+    if (!Number.isFinite(rawDays) || (!allowedDays.includes(rawDays) && rawDays < 1)) {
+      return socket.emit('admin_error', 'Geçersiz süre uzatma değeri.');
+    }
+    const days = rawDays === -1 ? -1 : Math.floor(rawDays);
     let newExpiresAt: string;
 
     if (days === -1) {
@@ -3024,10 +3034,13 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    const slots = Number(maxSlots) || 16;
-    const days = Number(expireDays) || 30;
+    const rawSlots = Number(maxSlots);
+    const slots = Number.isFinite(rawSlots) ? Math.max(2, Math.min(500, Math.floor(rawSlots))) : 16;
+    const rawDays = Number(expireDays);
+    const allowedDays = [30, 90, 180, 365, -1];
+    const days = allowedDays.includes(rawDays) ? rawDays : (Number.isFinite(rawDays) && rawDays >= 1 ? Math.floor(rawDays) : 30);
     const selectedTier = (tier as 'Starter' | 'Pro' | 'Enterprise') || 'Starter';
-    const cleanName = (serverName || `${user.username} Sunucusu`).trim();
+    const cleanName = sanitizeText((serverName || `${user.username} Sunucusu`).trim()).slice(0, 64);
 
     // Dynamic Price calculation based on storeSettings
     let basePrice = 99;
@@ -3047,7 +3060,7 @@ io.on('connection', (socket: Socket) => {
     else if (days === 365) multiplier = 8;
     else if (days === -1) multiplier = 12; // Lifetime
 
-    let totalPrice = Math.round(basePrice * multiplier);
+    let totalPrice = Math.max(1, Math.round(basePrice * multiplier));
 
     // Apply campaign discount
     if (storeSettings.discountPercentage > 0) {
@@ -3148,7 +3161,12 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('store_extend_response', { success: false, error: 'İptal edilmiş lisansların süresi uzatılamaz.' });
     }
 
-    const days = Number(addDays);
+    const rawDays = Number(addDays);
+    const allowedDays = [30, 90, 180, 365, -1];
+    if (!Number.isFinite(rawDays) || (!allowedDays.includes(rawDays) && rawDays < 1)) {
+      return socket.emit('store_extend_response', { success: false, error: 'Geçersiz süre uzatma değeri.' });
+    }
+    const days = rawDays === -1 ? -1 : Math.floor(rawDays);
     const baseMonthlyPrice = Math.round(lic.maxSlots * (storeSettings.customSlotUnitPrice || 4));
     let rawPrice = 0;
     if (days === 30) rawPrice = baseMonthlyPrice;
