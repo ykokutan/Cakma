@@ -60,7 +60,6 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
                 className={`w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center font-bold text-base overflow-hidden bg-white/10 text-white/90 hover:bg-white/20 hover:scale-105 shadow-md ${
                   isActive ? '!bg-gradient-to-tr from-blue-600 to-indigo-500 !text-white ring-2 ring-blue-400/50 shadow-blue-500/30' : ''
                 }`}
-                title={server.name}
               >
                 {server.icon ? (
                   <span className="text-xl">{server.icon}</span>
@@ -68,6 +67,13 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
                   server.name.substring(0, 2).toUpperCase()
                 )}
               </button>
+
+              {/* Floating Glass Tooltip */}
+              {isHovered && (
+                <div className="pointer-events-none fixed left-[78px] z-50 px-3 py-1.5 rounded-xl bg-[#16171d]/95 border border-white/15 text-xs font-bold text-white shadow-2xl backdrop-blur-xl whitespace-nowrap animate-fade-in">
+                  {server.name}
+                </div>
+              )}
             </div>
           );
         })}

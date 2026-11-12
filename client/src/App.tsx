@@ -31,6 +31,7 @@ const MainLayout: React.FC = () => {
     setIsDiagnosticsOpen,
   } = useSocket();
   const [showMembers, setShowMembers] = useState(true);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -100,32 +101,49 @@ const MainLayout: React.FC = () => {
         </div>
       )}
 
-      {/* 1. Sol Sunucular Sütunu */}
-      <ServerSidebar onOpenCreateServer={() => setIsCreateServerOpen(true)} />
+      {/* Mobile Navigation Backdrop */}
+      {isMobileNavOpen && (
+        <div
+          onClick={() => setIsMobileNavOpen(false)}
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden animate-fade-in"
+        />
+      )}
 
-      {/* 2. Kanallar ve Profil Sütunu */}
-      <ChannelSidebar
-        onOpenCreateChannel={(type) =>
-          setCreateChannelModal({ isOpen: true, type })
-        }
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenServerSettings={() => setIsServerSettingsOpen(true)}
-        onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
-        onOpenStore={() => setIsStoreOpen(true)}
-        onOpenProfile={(user) => setSelectedProfileUser(user)}
-      />
+      {/* 1 & 2. Sol Sunucular & Kanallar Sütunu (Responsive Drawer) */}
+      <div
+        className={`${
+          isMobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex animate-fade-in' : 'hidden'
+        } md:relative md:flex h-full shrink-0`}
+      >
+        <ServerSidebar onOpenCreateServer={() => { setIsCreateServerOpen(true); setIsMobileNavOpen(false); }} />
+
+        <ChannelSidebar
+          onOpenCreateChannel={(type) => {
+            setCreateChannelModal({ isOpen: true, type });
+            setIsMobileNavOpen(false);
+          }}
+          onOpenSettings={() => { setIsSettingsOpen(true); setIsMobileNavOpen(false); }}
+          onOpenServerSettings={() => { setIsServerSettingsOpen(true); setIsMobileNavOpen(false); }}
+          onOpenAuth={() => { setIsAuthOpen(true); setIsMobileNavOpen(false); }}
+          onOpenAdminDashboard={() => { setIsAdminDashboardOpen(true); setIsMobileNavOpen(false); }}
+          onOpenStore={() => { setIsStoreOpen(true); setIsMobileNavOpen(false); }}
+          onOpenProfile={(user) => { setSelectedProfileUser(user); setIsMobileNavOpen(false); }}
+        />
+      </div>
 
       {/* 3. Ana Mesajlaşma / Ses Odası Alanı */}
       <ChatArea
         showMembers={showMembers}
         onToggleMembers={() => setShowMembers((prev) => !prev)}
         onOpenProfile={(user) => setSelectedProfileUser(user)}
+        onOpenMobileNav={() => setIsMobileNavOpen(true)}
       />
 
       {/* 4. Sağ Üye Listesi Sütunu */}
       {showMembers && (
-        <MemberList onOpenProfile={(user) => setSelectedProfileUser(user)} />
+        <div className="hidden lg:flex h-full shrink-0">
+          <MemberList onOpenProfile={(user) => setSelectedProfileUser(user)} />
+        </div>
       )}
 
       {/* 1-on-1 Direct Voice Calling Floating Widget */}

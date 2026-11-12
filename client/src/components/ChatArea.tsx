@@ -36,12 +36,18 @@ import {
   Tag,
   Edit2,
   Trash2,
+  Copy,
+  Check,
+  CornerUpLeft,
+  ArrowDown,
+  Menu,
 } from 'lucide-react';
 
 interface ChatAreaProps {
   onToggleMembers: () => void;
   showMembers: boolean;
   onOpenProfile: (user: User) => void;
+  onOpenMobileNav?: () => void;
 }
 
 const SpoilerText: React.FC<{ text: string }> = ({ text }) => {
@@ -118,6 +124,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onToggleMembers,
   showMembers,
   onOpenProfile,
+  onOpenMobileNav,
 }) => {
   const {
     activeServer,
@@ -152,6 +159,32 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isEditingNotice, setIsEditingNotice] = useState(false);
   const [noticeEditText, setNoticeEditText] = useState('');
   const [topicEditText, setTopicEditText] = useState('');
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<{ id: string; username: string; content: string } | null>(null);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const EMOJI_GROUPS = [
+    { label: 'Popüler', emojis: ['😊', '😂', '❤️', '🔥', '👍', '🎉', '🙌', '😎', '🤔', '👀', '💀', '💯'] },
+    { label: 'İfadeler', emojis: ['😁', '😅', '🤣', '😍', '🥰', '🤩', '🥳', '😭', '😡', '🤯', '😴', '🙏'] },
+    { label: 'Oyun & Teknoloji', emojis: ['🎮', '🎧', '🎤', '💻', '🚀', '⚡', '🏆', '🥇', '💎', '🛡️', '⚔️', '🎲'] },
+  ];
+
+  const handleCopyMessage = (msgId: string, content: string) => {
+    if (!content) return;
+    navigator.clipboard.writeText(content).then(() => {
+      setCopiedMsgId(msgId);
+      setTimeout(() => setCopiedMsgId(null), 1500);
+    }).catch(() => {});
+  };
+
+  const handleMessagesScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBottom(distFromBottom > 220);
+  };
 
   const handleJumpToMessage = (messageId: string) => {
     setHighlightedMessageId(messageId);
@@ -339,9 +372,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     e.preventDefault();
     if (slowmodeRemaining > 0) return;
     if (!inputText.trim() && pendingAttachments.length === 0) return;
-    sendMessage(inputText.trim(), pendingAttachments);
+    let finalMessage = inputText.trim();
+    if (replyingTo) {
+      const snippet = replyingTo.content.replace(/\n/g, ' ').slice(0, 70);
+      finalMessage = `> **@${replyingTo.username}:** ${snippet}${replyingTo.content.length > 70 ? '...' : ''}\n${finalMessage}`;
+    }
+    sendMessage(finalMessage, pendingAttachments);
     setInputText('');
     setPendingAttachments([]);
+    setReplyingTo(null);
+    setIsEmojiPickerOpen(false);
     if (activeChannel?.slowmodeSeconds && activeChannel.slowmodeSeconds > 0) {
       setSlowmodeRemaining(activeChannel.slowmodeSeconds);
     }
@@ -447,8 +487,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* iOS Translucent Header */}
-      <header className="h-14 px-6 border-b border-white/[0.06] flex items-center justify-between shrink-0 bg-[#16161a]/60 backdrop-blur-2xl shadow-sm select-none">
-        <div className="flex items-center gap-3">
+      <header className="h-14 px-4 md:px-6 border-b border-white/[0.06] flex items-center justify-between shrink-0 bg-[#16161a]/60 backdrop-blur-2xl shadow-sm select-none">
+        <div className="flex items-center gap-3 min-w-0">
+          {onOpenMobileNav && (
+            <button
+              type="button"
+              onClick={onOpenMobileNav}
+              className="md:hidden w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
+              title="Menüyü Aç"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+          )}
           {isDM ? (
             <div
               onClick={() => dmPartner && onOpenProfile(dmPartner)}
@@ -651,7 +701,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleMessagesScroll}
+        className="relative flex-1 overflow-y-auto px-6 py-6 space-y-4"
+      >
         {/* Welcome Banner */}
         <div className="pt-2 pb-6 border-b border-white/[0.06] space-y-2 select-none max-w-lg">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-500/20 to-indigo-500/20 border border-white/10 flex items-center justify-center text-blue-400">
@@ -719,6 +773,26 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </button>
                   ))}
                   <div className="w-[1px] h-3 bg-white/20 mx-0.5" />
+                  <button
+                    type="button"
+                    onClick={() => setReplyingTo({ id: msg.id, username: msg.author.username, content: msg.content || 'Ek / Medya' })}
+                    title="Yanıtla"
+                    className="p-1 rounded-full text-xs text-slate-400 hover:text-blue-400 transition-colors"
+                  >
+                    <CornerUpLeft className="w-3 h-3" />
+                  </button>
+                  {msg.content && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopyMessage(msg.id, msg.content)}
+                      title="Mesajı Kopyala"
+                      className={`p-1 rounded-full text-xs transition-colors ${
+                        copiedMsgId === msg.id ? 'text-emerald-400' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {copiedMsgId === msg.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => togglePinMessage(msg.id)}
@@ -990,87 +1064,161 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
           </div>
         ) : (
-          <form
-            onSubmit={handleSend}
-            className="ios-glass-card rounded-full px-3 py-2 flex items-center gap-2.5 shadow-2xl border border-white/15"
-          >
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center transition shrink-0"
-              title="Resim veya Dosya Ekle"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsGifModalOpen(true)}
-              className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-[10px] font-bold tracking-wider transition shrink-0 border border-white/10"
-              title="GIF Arama & Ekleme"
-            >
-              GIF
-            </button>
-
-            {!isDM && (
+          <div className="relative">
+            {/* Scroll to Bottom Floating Pill */}
+            {showScrollBottom && (
               <button
                 type="button"
-                onClick={() => setIsPollModalOpen(true)}
-                className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
-                title="Anket Başlat (Poll)"
+                onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                className="absolute -top-12 right-2 z-20 px-3 py-1.5 rounded-full bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xl backdrop-blur-md border border-blue-400/30 transition animate-fade-in"
               >
-                <BarChart2 className="w-4 h-4" />
+                <ArrowDown className="w-3.5 h-3.5" />
+                <span>En Alta İn</span>
               </button>
             )}
 
-            {slowmodeRemaining > 0 ? (
-              <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
-                <Clock className="w-3.5 h-3.5 animate-spin" />
-                <span>Yavaş Mod aktif: Lütfen {slowmodeRemaining} saniye bekleyin...</span>
+            {/* Reply Preview Banner */}
+            {replyingTo && (
+              <div className="mb-2 px-4 py-2 rounded-2xl bg-blue-500/10 border border-blue-500/25 flex items-center justify-between text-xs animate-fade-in">
+                <div className="flex items-center gap-2 min-w-0">
+                  <CornerUpLeft className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span className="text-blue-300 font-semibold shrink-0">@{replyingTo.username}</span>
+                  <span className="text-white/60 truncate">{replyingTo.content}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReplyingTo(null)}
+                  className="text-white/40 hover:text-white p-1 rounded-full hover:bg-white/10 transition shrink-0"
+                  title="Yanıtı İptal Et"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-            ) : (
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder={
-                  isDM
-                    ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
-                    : `iMessage (#${activeChannel.name})...`
-                }
-                className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
-              />
             )}
 
-            <button
-              type="button"
-              className="w-8 h-8 rounded-full hover:bg-white/10 text-white/60 hover:text-yellow-400 flex items-center justify-center transition shrink-0"
-              title="Emoji Ekle"
-              onClick={() => setInputText((prev) => prev + ' 😊')}
-            >
-              <Smile className="w-5 h-5" />
-            </button>
+            {/* Emoji Picker Popover */}
+            {isEmojiPickerOpen && (
+              <div className="absolute bottom-14 right-0 z-30 w-72 p-3 rounded-2xl ios-glass border border-white/15 shadow-2xl space-y-3 animate-slide-up">
+                <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
+                  <span className="text-xs font-bold text-white/90">Emoji Seç</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEmojiPickerOpen(false)}
+                    className="text-white/40 hover:text-white transition"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                  {EMOJI_GROUPS.map((group) => (
+                    <div key={group.label}>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1.5">
+                        {group.label}
+                      </div>
+                      <div className="grid grid-cols-6 gap-1">
+                        {group.emojis.map((em) => (
+                          <button
+                            key={em}
+                            type="button"
+                            onClick={() => setInputText((prev) => prev + em)}
+                            className="h-8 rounded-lg hover:bg-white/15 flex items-center justify-center text-lg transition hover:scale-110"
+                          >
+                            {em}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-            {!inputText.trim() && pendingAttachments.length === 0 ? (
+            <form
+              onSubmit={handleSend}
+              className="ios-glass-card rounded-full px-3 py-2 flex items-center gap-2.5 shadow-2xl border border-white/15"
+            >
               <button
                 type="button"
-                onClick={startVoiceRecording}
-                className="w-8 h-8 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white flex items-center justify-center transition shrink-0 shadow"
-                title="Sesli Mesaj Kaydet"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center transition shrink-0"
+                title="Resim veya Dosya Ekle"
               >
-                <Mic className="w-4 h-4" />
+                <Plus className="w-4 h-4" />
               </button>
-            ) : (
+
               <button
-                type="submit"
-                disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
-                className="w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-blue-500/30"
-                title="Gönder"
+                type="button"
+                onClick={() => setIsGifModalOpen(true)}
+                className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-[10px] font-bold tracking-wider transition shrink-0 border border-white/10"
+                title="GIF Arama & Ekleme"
               >
-                <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+                GIF
               </button>
-            )}
-          </form>
+
+              {!isDM && (
+                <button
+                  type="button"
+                  onClick={() => setIsPollModalOpen(true)}
+                  className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
+                  title="Anket Başlat (Poll)"
+                >
+                  <BarChart2 className="w-4 h-4" />
+                </button>
+              )}
+
+              {slowmodeRemaining > 0 ? (
+                <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                  <Clock className="w-3.5 h-3.5 animate-spin" />
+                  <span>Yavaş Mod aktif: Lütfen {slowmodeRemaining} saniye bekleyin...</span>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder={
+                    isDM
+                      ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
+                      : `iMessage (#${activeChannel.name})...`
+                  }
+                  className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
+                />
+              )}
+
+              <button
+                type="button"
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition shrink-0 ${
+                  isEmojiPickerOpen
+                    ? 'bg-yellow-400/20 text-yellow-300'
+                    : 'hover:bg-white/10 text-white/60 hover:text-yellow-400'
+                }`}
+                title="Emoji Seç"
+                onClick={() => setIsEmojiPickerOpen((prev) => !prev)}
+              >
+                <Smile className="w-5 h-5" />
+              </button>
+
+              {!inputText.trim() && pendingAttachments.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={startVoiceRecording}
+                  className="w-8 h-8 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white flex items-center justify-center transition shrink-0 shadow"
+                  title="Sesli Mesaj Kaydet"
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
+                  className="w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-blue-500/30"
+                  title="Gönder"
+                >
+                  <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              )}
+            </form>
+          </div>
         )}
       </div>
 
