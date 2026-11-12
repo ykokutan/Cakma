@@ -7,6 +7,8 @@ import express from 'express';
 import http from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import cors from 'cors';
+import helmet from 'helmet';
+import bcrypt from 'bcryptjs';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
@@ -24,15 +26,118 @@ import {
   loadServerLevels, saveServerLevels
 } from './storage.js';
 
+// --- SECURITY & RATE LIMITING HELPERS ---
+export function sanitizeText(input: string): string {
+  if (!input) return '';
+  return input
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function getClientIp(socket: Socket): string {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  return socket.handshake.address || socket.id;
+}
+
+interface RateLimitEntry {
+  count: number;
+  blockedUntil?: number;
+}
+
+const loginRateLimits = new Map<string, RateLimitEntry>();
+const registerRateLimits = new Map<string, RateLimitEntry>();
+
+export function checkLoginRateLimit(ip: string): { allowed: boolean; retryAfterSeconds?: number } {
+  const now = Date.now();
+  const entry = loginRateLimits.get(ip);
+  if (entry && entry.blockedUntil && entry.blockedUntil > now) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.ceil((entry.blockedUntil - now) / 1000)
+    };
+  }
+  return { allowed: true };
+}
+
+export function recordFailedLogin(ip: string): void {
+  const now = Date.now();
+  const entry = loginRateLimits.get(ip) || { count: 0 };
+  entry.count++;
+  if (entry.count >= 5) {
+    entry.blockedUntil = now + 15 * 60 * 1000; // 15 minutes block
+    entry.count = 0;
+  }
+  loginRateLimits.set(ip, entry);
+}
+
+export function clearLoginRateLimit(ip: string): void {
+  loginRateLimits.delete(ip);
+}
+
+export function checkRegisterRateLimit(ip: string): { allowed: boolean; retryAfterSeconds?: number } {
+  const now = Date.now();
+  const entry = registerRateLimits.get(ip);
+  if (entry && entry.blockedUntil && entry.blockedUntil > now) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.ceil((entry.blockedUntil - now) / 1000)
+    };
+  }
+  return { allowed: true };
+}
+
+export function recordRegisterAttempt(ip: string): void {
+  const now = Date.now();
+  const entry = registerRateLimits.get(ip) || { count: 0 };
+  entry.count++;
+  if (entry.count >= 3) {
+    entry.blockedUntil = now + 10 * 60 * 1000; // 10 minutes block
+    entry.count = 0;
+  }
+  registerRateLimits.set(ip, entry);
+}
+
+const ALLOWED_ORIGINS = [
+  'https://ses.yahyakemalokutan.com',
+  'http://ses.yahyakemalokutan.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000'
+];
+
 const app = express();
-app.use(cors());
+
+// 1. Helmet HTTP Security Headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Maintain WebRTC and data: URL audio/video streaming
+  crossOriginEmbedderPolicy: false
+}));
+
+// 2. Strict CORS Configuration
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, true);
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+    origin: ALLOWED_ORIGINS,
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -803,11 +908,20 @@ io.on('connection', (socket: Socket) => {
 
   // 1. REGISTER (Kayıt Olma)
   socket.on('auth_register', ({ username, email, password, avatar }: any) => {
-    const cleanUsername = username?.trim();
-    const cleanEmail = email?.trim()?.toLowerCase();
+    const clientIp = getClientIp(socket);
+    const regCheck = checkRegisterRateLimit(clientIp);
+    if (!regCheck.allowed) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: `Çok fazla kayıt denemesi yapıldı! Lütfen ${regCheck.retryAfterSeconds} saniye sonra tekrar deneyin.`
+      });
+    }
 
-    if (!cleanUsername || !password) {
-      return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı ve şifre zorunludur.' });
+    const cleanUsername = sanitizeText(username?.trim()).slice(0, 32);
+    const cleanEmail = email?.trim()?.toLowerCase().slice(0, 64);
+
+    if (!cleanUsername || cleanUsername.length < 3 || !password || password.length < 4) {
+      return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı en az 3, şifre en az 4 karakter olmalıdır.' });
     }
 
     if (registeredAccounts.has(cleanUsername.toLowerCase())) {
@@ -818,11 +932,15 @@ io.on('connection', (socket: Socket) => {
     const isFirstUser = registeredAccounts.size === 0;
     const role = (cleanUsername.toLowerCase() === 'admin' || isFirstUser) ? 'admin' : 'user';
 
+    // Hash password with bcrypt salt rounds
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    recordRegisterAttempt(clientIp);
+
     const newAccount: RegisteredAccount = {
       id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       username: cleanUsername,
       email: cleanEmail || `${cleanUsername.toLowerCase()}@local.com`,
-      password,
+      password: hashedPassword,
       avatar: avatar || '🎮',
       role,
       createdAt: new Date().toLocaleDateString('tr-TR'),
@@ -836,7 +954,7 @@ io.on('connection', (socket: Socket) => {
 
     registeredAccounts.set(cleanUsername.toLowerCase(), newAccount);
     saveAccounts(registeredAccounts);
-    addAuditLog('YENI_KAYIT', `Yeni kullanıcı kaydoldu: ${cleanUsername} (${role})`, 'auth');
+    addAuditLog('YENI_KAYIT', `Yeni kullanıcı kaydoldu: ${cleanUsername} (${role}, IP: ${clientIp})`, 'auth');
 
     // Create session user
     const user: User = {
@@ -876,6 +994,16 @@ io.on('connection', (socket: Socket) => {
 
   // 2. LOGIN (Giriş Yapma)
   socket.on('auth_login', ({ usernameOrEmail, password }: any) => {
+    const clientIp = getClientIp(socket);
+    const rateCheck = checkLoginRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+      addAuditLog('GUVENLIK_ENGELI', `IP (${clientIp}) çok fazla başarısız giriş denemesi nedeniyle engellendi.`, 'auth');
+      return socket.emit('auth_response', {
+        success: false,
+        error: `Çok fazla başarısız giriş denemesi! Güvenlik gereği ${rateCheck.retryAfterSeconds} saniye boyunca giriş engellendi.`
+      });
+    }
+
     const query = usernameOrEmail?.trim()?.toLowerCase();
     if (!query || !password) {
       return socket.emit('auth_response', { success: false, error: 'Lütfen kullanıcı adı ve şifrenizi girin.' });
@@ -890,9 +1018,32 @@ io.on('connection', (socket: Socket) => {
       }
     }
 
-    if (!foundAccount || foundAccount.password !== password) {
+    if (!foundAccount) {
+      recordFailedLogin(clientIp);
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
     }
+
+    // Verify password with bcrypt (supports legacy plain text with auto-upgrade)
+    let isPasswordValid = false;
+    if (foundAccount.password.startsWith('$2a$') || foundAccount.password.startsWith('$2b$')) {
+      isPasswordValid = bcrypt.compareSync(password, foundAccount.password);
+    } else {
+      // Legacy plain text check & auto-upgrade
+      if (foundAccount.password === password) {
+        isPasswordValid = true;
+        foundAccount.password = bcrypt.hashSync(password, 10);
+        saveAccounts(registeredAccounts);
+        console.log(`[Security] Account '${foundAccount.username}' legacy password upgraded to bcrypt.`);
+      }
+    }
+
+    if (!isPasswordValid) {
+      recordFailedLogin(clientIp);
+      return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
+    }
+
+    // Successful login -> clear failed attempts
+    clearLoginRateLimit(clientIp);
 
     // Bind socket to account
     const user: User = {
@@ -916,7 +1067,7 @@ io.on('connection', (socket: Socket) => {
 
     activeUsers.set(socket.id, user);
     ensureUserInServers(user);
-    addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı.`, 'auth');
+    addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı (IP: ${clientIp}).`, 'auth');
     recordUserConnection(socket, user.username, user.role);
 
     socket.emit('auth_response', { success: true, user });
@@ -959,8 +1110,11 @@ io.on('connection', (socket: Socket) => {
   // Text Messaging (Supports text, file attachments & interactive polls)
   socket.on('send_message', ({ serverId, channelId, content, attachments, poll }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[]; poll?: any }) => {
     const sender = activeUsers.get(socket.id);
-    const textContent = (content || '').trim();
-    if (!sender || (!textContent && (!attachments || attachments.length === 0) && !poll)) return;
+    const rawContent = (content || '').trim();
+    if (!sender || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
+
+    // Sanitize message content to prevent XSS / HTML injection attacks while preserving formatting
+    const textContent = sanitizeText(rawContent).slice(0, 4000);
 
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -1527,14 +1681,17 @@ io.on('connection', (socket: Socket) => {
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
 
+    const cleanName = sanitizeText(name).toLowerCase().replace(/\s+/g, '-').slice(0, 32);
+    const cleanTopic = topic ? sanitizeText(topic.trim()).slice(0, 100) : undefined;
+
     const newChannel: Channel = {
       id: `ch-${type}-${Date.now()}`,
-      name: name.toLowerCase().replace(/\s+/g, '-'),
+      name: cleanName,
       type,
       serverId,
       isLocked: !!isLocked,
       password: password?.trim() || undefined,
-      topic: topic?.trim() || undefined
+      topic: cleanTopic
     };
 
     targetServer.channels.push(newChannel);
@@ -1555,13 +1712,13 @@ io.on('connection', (socket: Socket) => {
 
     if (notice !== undefined) {
       ch.stickyNotice = notice ? {
-        text: notice.trim(),
+        text: sanitizeText(notice.trim()).slice(0, 300),
         author: user.username,
         updatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       } : null;
     }
     if (topic !== undefined) {
-      ch.topic = topic.trim();
+      ch.topic = sanitizeText(topic.trim()).slice(0, 100);
     }
 
     saveServers(servers);
