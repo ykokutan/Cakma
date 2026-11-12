@@ -1140,16 +1140,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Initialize socket & Auto-Login
   useEffect(() => {
+    const isTauriApp = typeof window !== 'undefined' && (
+      '__TAURI_INTERNALS__' in window ||
+      window.location.hostname === 'tauri.localhost' ||
+      window.location.protocol === 'tauri:'
+    );
     const isDevVite = typeof window !== 'undefined' && window.location.port === '5173';
-    const defaultHost = (!isDevVite && typeof window !== 'undefined' && window.location.host)
-      ? window.location.host
-      : 'localhost:4000';
+    const defaultHost = isTauriApp
+      ? 'ses.yahyakemalokutan.com'
+      : (!isDevVite && typeof window !== 'undefined' && window.location.host)
+        ? window.location.host
+        : 'localhost:4000';
 
     const savedHost = localStorage.getItem('dc_dedicated_server_host') || defaultHost;
     setCurrentServerHost(savedHost);
     const backendUrl = savedHost.startsWith('http://') || savedHost.startsWith('https://')
       ? savedHost
-      : `${window.location.protocol}//${savedHost}`;
+      : isTauriApp
+        ? `${(savedHost.startsWith('localhost') || savedHost.startsWith('127.0.0.1')) ? 'http:' : 'https:'}//${savedHost}`
+        : `${window.location.protocol}//${savedHost}`;
 
     let handshakeUsername = '';
     let handshakeAvatar = '🎮';
@@ -2162,10 +2171,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const resetToMainServer = () => {
     localStorage.removeItem('dc_dedicated_server_host');
+    const isTauriApp = typeof window !== 'undefined' && (
+      '__TAURI_INTERNALS__' in window ||
+      window.location.hostname === 'tauri.localhost' ||
+      window.location.protocol === 'tauri:'
+    );
     const isDevVite = typeof window !== 'undefined' && window.location.port === '5173';
-    const defaultHost = (!isDevVite && typeof window !== 'undefined' && window.location.host)
-      ? window.location.host
-      : 'localhost:4000';
+    const defaultHost = isTauriApp
+      ? 'ses.yahyakemalokutan.com'
+      : (!isDevVite && typeof window !== 'undefined' && window.location.host)
+        ? window.location.host
+        : 'localhost:4000';
     setCurrentServerHost(defaultHost);
     cleanupWebRTC();
     window.location.reload();
