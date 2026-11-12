@@ -74,6 +74,7 @@ export const initialServers: Server[] = [
       { id: 'ch-voice-genel', name: 'Genel Ses', type: 'voice', serverId: 'server-1' },
       { id: 'ch-voice-oyun1', name: 'Oyun Odası 1', type: 'voice', serverId: 'server-1' },
       { id: 'ch-voice-muzik', name: 'Müzik & Sohbet', type: 'voice', serverId: 'server-1' },
+      { id: 'ch-voice-create-temp', name: '➕ Oda Kur (+)', type: 'voice', serverId: 'server-1', isTempCreatorChannel: true },
     ]
   },
   {

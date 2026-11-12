@@ -10,7 +10,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord } from './types.js';
+import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import {
   loadAccounts, saveAccounts,
@@ -913,6 +913,74 @@ io.on('connection', (socket: Socket) => {
         io.emit('new_message', aiMessage);
       }, 600);
     }
+
+    // 3. Fun Bot Commands (/zar, /roll, /yazitura, /coinflip, /8ball)
+    if (lowerContent === '/zar' || lowerContent === '/roll') {
+      setTimeout(() => {
+        const rollNum = Math.floor(Math.random() * 6) + 1;
+        const rollMsg: Message = {
+          id: `msg-cmd-${Date.now()}`,
+          serverId,
+          channelId,
+          author: { id: 'bot-game', username: 'Oyun Botu 🎲', avatar: '🎲' },
+          content: `🎲 **@${sender.username}** zar attı: **${rollNum}** (1-6)`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+          isPinned: false
+        };
+        if (!messages[channelId]) messages[channelId] = [];
+        messages[channelId].push(rollMsg);
+        saveMessages(messages);
+        io.emit('new_message', rollMsg);
+      }, 300);
+    } else if (lowerContent === '/yazitura' || lowerContent === '/coinflip' || lowerContent === '/yazi-tura') {
+      setTimeout(() => {
+        const result = Math.random() > 0.5 ? 'YAZI 🪙' : 'TURA 🦅';
+        const coinMsg: Message = {
+          id: `msg-cmd-${Date.now()}`,
+          serverId,
+          channelId,
+          author: { id: 'bot-game', username: 'Oyun Botu 🎲', avatar: '🪙' },
+          content: `🪙 **@${sender.username}** madeni para attı: **${result}**`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+          isPinned: false
+        };
+        if (!messages[channelId]) messages[channelId] = [];
+        messages[channelId].push(coinMsg);
+        saveMessages(messages);
+        io.emit('new_message', coinMsg);
+      }, 300);
+    } else if (lowerContent.startsWith('/8ball')) {
+      setTimeout(() => {
+        const answers = [
+          'Kesinlikle evet! ✨',
+          'Gözlerim evet diyor. 🎱',
+          'Şüphesiz öyle. 👍',
+          'Büyük ihtimalle. 🔮',
+          'Şu an kestiremiyorum, sonra tekrar sor. ⏳',
+          'Buna şimdi odaklanmasan iyi olur. 🤔',
+          'Pek olası görünmüyor. ❌',
+          'Cevabım hayır. 🛑',
+          'Yıldızlar bugün seninle değil! 🌌'
+        ];
+        const ans = answers[Math.floor(Math.random() * answers.length)];
+        const ballMsg: Message = {
+          id: `msg-cmd-${Date.now()}`,
+          serverId,
+          channelId,
+          author: { id: 'bot-game', username: 'Sihirli 8-Ball 🎱', avatar: '🎱' },
+          content: `🎱 **Soru:** "${textContent.replace(/\/8ball/gi, '').trim() || 'Geleceğim nasıl?'}"\n🔮 **Cevap:** ${ans}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+          isPinned: false
+        };
+        if (!messages[channelId]) messages[channelId] = [];
+        messages[channelId].push(ballMsg);
+        saveMessages(messages);
+        io.emit('new_message', ballMsg);
+      }, 300);
+    }
   });
 
   // Emoji Reactions
@@ -1398,6 +1466,54 @@ io.on('connection', (socket: Socket) => {
     io.emit('server_updated', s);
   });
 
+  // Restore Server Backup / Template
+  socket.on('restore_server_backup', ({ serverId, backupData }: { serverId: string; backupData: any }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'manage_server')) {
+      return socket.emit('server_action_error', { message: 'Sunucu yedeğini yüklemek için Sunucu Yönetimi yetkiniz yok.' });
+    }
+
+    if (backupData.name) s.name = backupData.name.trim();
+    if (backupData.icon) s.icon = backupData.icon;
+    if (backupData.bannerGradient) s.bannerGradient = backupData.bannerGradient;
+    if (backupData.description !== undefined) s.description = backupData.description;
+    if (backupData.bitrateKbps) s.bitrateKbps = backupData.bitrateKbps;
+    if (backupData.voiceRegion) s.voiceRegion = backupData.voiceRegion;
+    if (backupData.verificationLevel) s.verificationLevel = backupData.verificationLevel;
+    if (backupData.autoModEnabled !== undefined) s.autoModEnabled = backupData.autoModEnabled;
+
+    if (Array.isArray(backupData.channels) && backupData.channels.length > 0) {
+      s.channels = backupData.channels.map((ch: any, idx: number) => ({
+        id: ch.id || `ch-${ch.type || 'text'}-${Date.now() + idx}`,
+        name: ch.name || 'kanal',
+        type: ch.type === 'voice' ? 'voice' : 'text',
+        serverId: s.id,
+        topic: ch.topic || '',
+        bitrateKbps: ch.bitrateKbps || s.bitrateKbps || 128,
+        userLimit: ch.userLimit || 0,
+        isTempCreatorChannel: !!ch.isTempCreatorChannel
+      }));
+    }
+
+    if (Array.isArray(backupData.roles) && backupData.roles.length > 0) {
+      s.roles = backupData.roles.map((r: any, idx: number) => ({
+        id: r.id || `role-${Date.now() + idx}`,
+        name: r.name || 'Yeni Rol',
+        color: r.color || '#3b82f6',
+        permissions: Array.isArray(r.permissions) ? r.permissions : [],
+        isDefault: !!r.isDefault
+      }));
+    }
+
+    saveServers(servers);
+    addAuditLog('SUNUCU_YEDEKTEN_YUKLENDI', `${s.name} sunucusu şablondan/yedekten yüklendi (Yetkili: ${user.username})`);
+    io.emit('server_updated', s);
+    socket.emit('server_restore_success', { message: 'Sunucu şablonu/yedeği başarıyla geri yüklendi!' });
+  });
+
   // Create Server Role
   socket.on('create_server_role', ({ serverId, name, color, permissions }: {
     serverId: string;
@@ -1567,49 +1683,95 @@ io.on('connection', (socket: Socket) => {
     io.emit('server_deleted', { serverId });
   });
 
+  function cleanupTemporaryChannels() {
+    let changed = false;
+    for (const server of servers) {
+      const toRemove: string[] = [];
+      for (const channel of server.channels) {
+        if (channel.isTemporary) {
+          const usersInCh = Array.from(activeUsers.values()).filter(u => u.currentVoiceChannelId === channel.id);
+          if (usersInCh.length === 0) {
+            toRemove.push(channel.id);
+          }
+        }
+      }
+      if (toRemove.length > 0) {
+        server.channels = server.channels.filter(c => !toRemove.includes(c.id));
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveServers(servers);
+      io.emit('servers_updated', servers);
+    }
+  }
+
   // Voice Channel Join
   socket.on('join_voice', ({ channelId }: { channelId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
-    if (user.currentVoiceChannelId && user.currentVoiceChannelId !== channelId) {
-      socket.leave(user.currentVoiceChannelId);
-      io.to(user.currentVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: user.currentVoiceChannelId });
+    // Check if user is joining the "➕ Oda Kur (+)" channel to spawn a temporary room
+    let targetChannelId = channelId;
+    const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === channelId);
+    if (targetChannel && (targetChannel.isTempCreatorChannel || targetChannel.name.includes('➕ Oda Kur'))) {
+      const server = servers.find(s => s.id === targetChannel.serverId);
+      if (server) {
+        const tempChannelId = `ch-temp-${Date.now()}`;
+        const tempChannel: Channel = {
+          id: tempChannelId,
+          name: `🔊 ${user.username} Odası`,
+          type: 'voice',
+          serverId: server.id,
+          isTemporary: true,
+          createdByUserId: user.id
+        };
+        server.channels.push(tempChannel);
+        saveServers(servers);
+        io.emit('servers_updated', servers);
+        targetChannelId = tempChannelId;
+      }
     }
 
-    user.currentVoiceChannelId = channelId;
-    socket.join(channelId);
+    if (user.currentVoiceChannelId && user.currentVoiceChannelId !== targetChannelId) {
+      socket.leave(user.currentVoiceChannelId);
+      io.to(user.currentVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: user.currentVoiceChannelId });
+      cleanupTemporaryChannels();
+    }
+
+    user.currentVoiceChannelId = targetChannelId;
+    socket.join(targetChannelId);
 
     const peersInRoom: User[] = [];
     for (const [sId, u] of activeUsers.entries()) {
-      if (u.currentVoiceChannelId === channelId && sId !== socket.id) {
+      if (u.currentVoiceChannelId === targetChannelId && sId !== socket.id) {
         peersInRoom.push(u);
       }
     }
 
     socket.emit('voice_room_users', {
-      channelId,
+      channelId: targetChannelId,
       peers: peersInRoom
     });
 
-    socket.to(channelId).emit('user_joined_voice', {
+    socket.to(targetChannelId).emit('user_joined_voice', {
       user,
-      channelId
+      channelId: targetChannelId
     });
 
     io.emit('voice_state_update', {
       userId: socket.id,
-      channelId,
+      channelId: targetChannelId,
       isMuted: user.isMuted,
       isDeafened: user.isDeafened
     });
 
-    addAuditLog('SESE_KATILDI', `${user.username} ses kanalina baglandi (${channelId})`, 'voice');
+    addAuditLog('SESE_KATILDI', `${user.username} ses kanalina baglandi (${targetChannelId})`, 'voice');
 
-    let channelName = channelId;
+    let channelName = targetChannelId;
     let sName = 'Ana Topluluk';
     for (const s of servers) {
-      const ch = s.channels.find(c => c.id === channelId);
+      const ch = s.channels.find(c => c.id === targetChannelId);
       if (ch) {
         channelName = ch.name;
         sName = s.name;
@@ -1644,6 +1806,29 @@ io.on('connection', (socket: Socket) => {
 
     addAuditLog('SESTEN_AYRILDI', `${user.username} ses kanalindan ayrildi`, 'voice');
     updateUserConnectionLocation(socket.id, undefined, '#genel-sohbet');
+    cleanupTemporaryChannels();
+  });
+
+  // Priority Speaker relay
+  socket.on('priority_speaker_toggle', ({ active }: { active: boolean }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    io.emit('priority_speaker_active', { userId: socket.id, username: user.username, active });
+  });
+
+  // Webcam state update relay
+  socket.on('webcam_state_update', ({ active }: { active: boolean }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    io.emit('user_webcam_update', { userId: socket.id, active });
+  });
+
+  // Whiteboard Canvas Relay
+  socket.on('whiteboard_draw', (data: any) => {
+    socket.broadcast.emit('whiteboard_draw', data);
+  });
+  socket.on('whiteboard_clear', () => {
+    socket.broadcast.emit('whiteboard_clear');
   });
 
   // WebRTC Signaling Relay
@@ -2231,6 +2416,7 @@ io.on('connection', (socket: Socket) => {
       }
       activeUsers.delete(socket.id);
       io.emit('user_disconnected', socket.id);
+      cleanupTemporaryChannels();
       console.log(`[User Disconnected] ${user.username} (${socket.id})`);
     }
   });

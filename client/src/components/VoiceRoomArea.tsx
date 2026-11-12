@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { SoundboardModal } from './SoundboardModal';
 import { VoiceRadioWidget } from './VoiceRadioWidget';
+import { WhiteboardModal } from './WhiteboardModal';
 import {
   Mic,
   MicOff,
@@ -17,6 +18,10 @@ import {
   Music2,
   Volume2,
   Disc,
+  Video,
+  VideoOff,
+  Palette,
+  Star,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -106,11 +111,18 @@ export const VoiceRoomArea: React.FC = () => {
     voiceRecordingSeconds,
     startVoiceRecording,
     stopVoiceRecording,
+    isWebcamActive,
+    toggleWebcam,
+    webcamStream,
+    isPrioritySpeakerActive,
+    prioritySpeakerUsername,
+    togglePrioritySpeaker,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
   const [showRadioBot, setShowRadioBot] = useState(false);
   const [volumePopoverUserId, setVolumePopoverUserId] = useState<string | null>(null);
+  const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
 
   if (!activeChannel || activeChannel.type !== 'voice') return null;
 
@@ -186,6 +198,16 @@ export const VoiceRoomArea: React.FC = () => {
             )}
           </button>
 
+          {/* Whiteboard / Live Canvas */}
+          <button
+            onClick={() => setIsWhiteboardOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-pink-500/30 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 transition text-xs font-medium shadow-sm"
+            title="Ortak Canlı Çizim & Tuval (Whiteboard)"
+          >
+            <Palette className="w-3.5 h-3.5" />
+            <span>Ortak Çizim</span>
+          </button>
+
           {hasAnyScreenShare && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/15 text-red-400 border border-red-500/30 text-[11px] font-medium">
               <Tv className="w-3.5 h-3.5 animate-pulse" />
@@ -209,6 +231,14 @@ export const VoiceRoomArea: React.FC = () => {
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-pink-600 to-purple-600 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-xs font-bold animate-bounce border border-white/20">
           <Sparkles className="w-4 h-4" />
           <span>{activeSoundboardEffect.username} ses tahtasından efekt çaldı!</span>
+        </div>
+      )}
+
+      {/* Floating Priority Speaker Banner */}
+      {prioritySpeakerUsername && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-amber-500 text-black px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-black animate-pulse border border-yellow-300">
+          <Star className="w-4 h-4 fill-black" />
+          <span>{prioritySpeakerUsername} konuşuyor (Öncelikli Konuşmacı)</span>
         </div>
       )}
 
@@ -388,13 +418,27 @@ export const VoiceRoomArea: React.FC = () => {
 
                   {/* Avatar with Halo Effect */}
                   <div className="relative mb-3">
-                    <div
-                      className={`w-20 h-20 rounded-full bg-gradient-to-b from-white/15 to-white/5 border border-white/15 flex items-center justify-center text-4xl shadow-2xl transition-all duration-300 ${
-                        speaking ? 'ios-halo scale-105' : ''
-                      }`}
-                    >
-                      {user.avatar || '🎮'}
-                    </div>
+                    {isThisMe && isWebcamActive && webcamStream ? (
+                      <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-emerald-500 shadow-2xl bg-black">
+                        <video
+                          ref={(el) => {
+                            if (el && el.srcObject !== webcamStream) el.srcObject = webcamStream;
+                          }}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-full object-cover scale-x-[-1]"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className={`w-20 h-20 rounded-full bg-gradient-to-b from-white/15 to-white/5 border border-white/15 flex items-center justify-center text-4xl shadow-2xl transition-all duration-300 ${
+                          speaking ? 'ios-halo scale-105' : ''
+                        }`}
+                      >
+                        {user.avatar || '🎮'}
+                      </div>
+                    )}
 
                     {/* Mute badge */}
                     {muted && (
@@ -499,6 +543,34 @@ export const VoiceRoomArea: React.FC = () => {
                 <Monitor className="w-5 h-5" />
               </button>
 
+              {/* Webcam Video Button */}
+              <button
+                onClick={toggleWebcam}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
+                  isWebcamActive
+                    ? 'bg-emerald-500 text-white shadow-emerald-500/30 ring-2 ring-emerald-400 animate-pulse'
+                    : 'bg-white/10 hover:bg-white/20 text-white'
+                }`}
+                title={isWebcamActive ? 'Kamerayı Kapat' : 'Kamerayı Aç (Görüntülü Sohbet)'}
+              >
+                {isWebcamActive ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+              </button>
+
+              {/* Priority Speaker Toggle (Admin) */}
+              {currentUser?.role === 'admin' && (
+                <button
+                  onClick={togglePrioritySpeaker}
+                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
+                    isPrioritySpeakerActive
+                      ? 'bg-amber-500 text-black shadow-amber-500/30 ring-2 ring-amber-300 font-bold'
+                      : 'bg-white/10 hover:bg-white/20 text-white'
+                  }`}
+                  title="Öncelikli Konuşmacı (Diğer Sesleri Otomatik Kıs)"
+                >
+                  <Star className={`w-5 h-5 ${isPrioritySpeakerActive ? 'fill-black' : ''}`} />
+                </button>
+              )}
+
               {/* Soundboard Button */}
               <button
                 onClick={() => setIsSoundboardOpen(true)}
@@ -530,6 +602,13 @@ export const VoiceRoomArea: React.FC = () => {
         onClose={() => setIsSoundboardOpen(false)}
         onPlaySound={(soundId) => playSoundboard(soundId)}
         connectedVoiceChannelName={activeChannel.name}
+      />
+
+      {/* Whiteboard Live Canvas Modal */}
+      <WhiteboardModal
+        isOpen={isWhiteboardOpen}
+        onClose={() => setIsWhiteboardOpen(false)}
+        channelName={activeChannel.name}
       />
     </div>
   );

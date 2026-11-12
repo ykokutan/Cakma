@@ -104,6 +104,7 @@ interface SocketContextType {
     autoModEnabled?: boolean;
     vanityCode?: string;
   }) => void;
+  restoreServerBackup: (serverId: string, backupData: any) => void;
   createServerRole: (data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => void;
   updateServerRole: (data: { serverId: string; roleId: string; name: string; color: string; permissions: ServerPermission[]; position?: number; }) => void;
   deleteServerRole: (serverId: string, roleId: string) => void;
@@ -210,6 +211,15 @@ interface SocketContextType {
   voiceRecordingSeconds: number;
   startVoiceRecording: () => Promise<void>;
   stopVoiceRecording: () => void;
+
+  // Webcam & Priority Speaker
+  isWebcamActive: boolean;
+  toggleWebcam: () => Promise<void>;
+  webcamStream: MediaStream | null;
+  remoteWebcamUserIds: string[];
+  isPrioritySpeakerActive: boolean;
+  prioritySpeakerUsername: string | null;
+  togglePrioritySpeaker: () => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -557,6 +567,61 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     setIsVoiceRecording(false);
   }, []);
+
+  // Webcam State
+  const [isWebcamActive, setIsWebcamActive] = useState<boolean>(false);
+  const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+  const webcamStreamRef = useRef<MediaStream | null>(null);
+  const [remoteWebcamUserIds, setRemoteWebcamUserIds] = useState<string[]>([]);
+
+  const toggleWebcam = useCallback(async () => {
+    if (isWebcamActive) {
+      if (webcamStreamRef.current) {
+        webcamStreamRef.current.getTracks().forEach((t) => t.stop());
+        webcamStreamRef.current = null;
+      }
+      setWebcamStream(null);
+      setIsWebcamActive(false);
+      socket?.emit('webcam_state_update', { active: false });
+
+      for (const pc of peerConnectionsRef.current.values()) {
+        const senders = pc.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          pc.removeTrack(videoSender);
+        }
+      }
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, frameRate: 24 }
+        });
+        webcamStreamRef.current = stream;
+        setWebcamStream(stream);
+        setIsWebcamActive(true);
+        socket?.emit('webcam_state_update', { active: true });
+
+        const videoTrack = stream.getVideoTracks()[0];
+        for (const pc of peerConnectionsRef.current.values()) {
+          pc.addTrack(videoTrack, stream);
+        }
+      } catch (err) {
+        alert('Kamera açılamadı. Lütfen kamera erişim izinlerinizi kontrol edin.');
+      }
+    }
+  }, [isWebcamActive, socket]);
+
+  // Priority Speaker State
+  const [isPrioritySpeakerActive, setIsPrioritySpeakerActive] = useState<boolean>(false);
+  const [prioritySpeakerUsername, setPrioritySpeakerUsername] = useState<string | null>(null);
+
+  const togglePrioritySpeaker = useCallback(() => {
+    setIsPrioritySpeakerActive((prev) => {
+      const next = !prev;
+      socket?.emit('priority_speaker_toggle', { active: next });
+      return next;
+    });
+  }, [socket]);
 
   useEffect(() => {
     directCallRef.current = directCall;
@@ -1048,6 +1113,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('server_deleted', ({ serverId }: { serverId: string }) => {
       setServers(prev => prev.filter(s => s.id !== serverId));
+    });
+
+    newSocket.on('servers_updated', (updatedServers: Server[]) => {
+      setServers(updatedServers);
+    });
+
+    newSocket.on('priority_speaker_active', ({ userId, username, active }: { userId: string; username: string; active: boolean }) => {
+      setPrioritySpeakerUsername(active ? username : null);
+      audioElementsRef.current.forEach((audio, pId) => {
+        if (active) {
+          if (pId !== userId) {
+            audio.volume = Math.max(0.05, ((userVolumes[pId] ?? 100) / 100) * 0.25);
+          } else {
+            audio.volume = Math.min(2, (userVolumes[pId] ?? 100) / 100);
+          }
+        } else {
+          audio.volume = Math.min(2, (userVolumes[pId] ?? 100) / 100);
+        }
+      });
+    });
+
+    newSocket.on('user_webcam_update', ({ userId, active }: { userId: string; active: boolean }) => {
+      setRemoteWebcamUserIds(prev => active ? [...new Set([...prev, userId])] : prev.filter(id => id !== userId));
     });
 
     newSocket.on('server_action_error', ({ message }: { message: string }) => {
@@ -2034,6 +2122,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [socket]);
 
+  const restoreServerBackup = useCallback((serverId: string, backupData: any) => {
+    socket?.emit('restore_server_backup', { serverId, backupData });
+  }, [socket]);
+
   const createServerRole = useCallback((data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => {
     socket?.emit('create_server_role', data);
   }, [socket]);
@@ -2161,6 +2253,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         // Server Roles & Detailed Settings
         updateServerSettings,
+        restoreServerBackup,
         createServerRole,
         updateServerRole,
         deleteServerRole,
@@ -2248,6 +2341,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         voiceRecordingSeconds,
         startVoiceRecording,
         stopVoiceRecording,
+
+        // Webcam & Priority Speaker
+        isWebcamActive,
+        toggleWebcam,
+        webcamStream,
+        remoteWebcamUserIds,
+        isPrioritySpeakerActive,
+        prioritySpeakerUsername,
+        togglePrioritySpeaker,
       }}
     >
       {children}

@@ -247,6 +247,9 @@ export interface Channel {
   serverId: string;
   allowedRoleIds?: string[];
   slowmodeSeconds?: number;
+  isTemporary?: boolean;
+  isTempCreatorChannel?: boolean;
+  createdByUserId?: string;
 }
 
 export interface Server {

@@ -16,6 +16,9 @@ import {
   Copy,
   Link,
   CheckCircle2,
+  Download,
+  Upload,
+  FileJson,
 } from 'lucide-react';
 
 interface ServerSettingsModalProps {
@@ -69,6 +72,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   const {
     currentUser,
     updateServerSettings,
+    restoreServerBackup,
     createServerRole,
     updateServerRole,
     deleteServerRole,
@@ -78,7 +82,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     hasServerPermission,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'danger'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'backup' | 'danger'>('overview');
 
   // Overview Form State
   const [name, setName] = useState(server.name);
@@ -154,6 +158,67 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     navigator.clipboard.writeText(inviteUrl);
     setCopiedInvite(true);
     setTimeout(() => setCopiedInvite(false), 2000);
+  };
+
+  const handleExportBackup = () => {
+    const backup = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      name: server.name,
+      icon: server.icon,
+      bannerGradient: server.bannerGradient,
+      description: server.description,
+      bitrateKbps: server.bitrateKbps,
+      voiceRegion: server.voiceRegion,
+      verificationLevel: server.verificationLevel,
+      autoModEnabled: server.autoModEnabled,
+      channels: (server.channels || []).map((c) => ({
+        name: c.name,
+        type: c.type,
+        topic: c.topic,
+        bitrateKbps: c.bitrateKbps,
+        userLimit: c.userLimit,
+        isTempCreatorChannel: c.isTempCreatorChannel,
+      })),
+      roles: (server.roles || []).map((r) => ({
+        name: r.name,
+        color: r.color,
+        permissions: r.permissions,
+        isDefault: r.isDefault,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sunucu-yedek-${server.name.toLowerCase().replace(/\s+/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (!json || typeof json !== 'object') {
+          alert('Geçersiz yedek dosyası!');
+          return;
+        }
+        if (confirm(`"${json.name || 'Bilinmeyen'}" adlı sunucu şablonu/yedeği uygulansın mı? Mevcut kanallar ve ayarlar güncellenecektir.`)) {
+          restoreServerBackup(server.id, json);
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 3000);
+        }
+      } catch (err) {
+        alert('Yedek dosyası okunamadı veya JSON formatı hatalı.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleCreateNewRole = () => {
@@ -315,6 +380,19 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                 <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/80">
                   {server.members?.length || 0}
                 </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('backup')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'backup'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <FileJson className="w-4 h-4 text-emerald-400" />
+                <span>Yedek & Şablon</span>
               </button>
             </nav>
           </div>
@@ -1013,7 +1091,71 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
             </div>
           )}
 
-          {/* 6. DANGER ZONE TAB */}
+          {/* 6. BACKUP & TEMPLATE TAB */}
+          {activeTab === 'backup' && (
+            <div className="space-y-6 max-w-lg">
+              <div>
+                <h2 className="text-xl font-bold tracking-tight text-white mb-1">Sunucu Yedekleme & Şablon</h2>
+                <p className="text-xs text-white/50">
+                  Sunucunuzun tüm kanal yapısını, rollerini, yetkilerini ve ses kalitesi ayarlarını JSON formatında dışa aktarın veya hazır bir şablon yükleyin.
+                </p>
+              </div>
+
+              {/* Export Card */}
+              <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-xl">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-white">Şablonu Dışa Aktar (JSON)</h4>
+                    <p className="text-[11px] text-white/50">
+                      Mevcut kanallar ({server.channels?.length || 0}), roller ({server.roles?.length || 0}) ve sunucu ayarlarını dosya olarak kaydeder.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleExportBackup}
+                  className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Sunucu Yedeğini İndir (.json)</span>
+                </button>
+              </div>
+
+              {/* Import Card */}
+              {canManageServer && (
+                <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xl">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">Yedekten / Şablondan Geri Yükle</h4>
+                      <p className="text-[11px] text-white/50">
+                        Önceden indirilmiş bir .json sunucu şablonunu yükleyerek kanal ve rol düzenini otomatik uygulayın.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer">
+                    <Upload className="w-4 h-4" />
+                    <span>Şablon / Yedek Dosyası Seç (.json)</span>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={handleImportBackup}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 7. DANGER ZONE TAB */}
           {activeTab === 'danger' && isOwner && (
             <div className="space-y-6 max-w-lg">
               <div>

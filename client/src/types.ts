@@ -226,8 +226,14 @@ export interface Channel {
   name: string;
   type: 'text' | 'voice';
   serverId: string;
+  topic?: string;
+  bitrateKbps?: number;
+  userLimit?: number;
   allowedRoleIds?: string[];
   slowmodeSeconds?: number;
+  isTemporary?: boolean;
+  isTempCreatorChannel?: boolean;
+  createdByUserId?: string;
 }
 
 export interface Server {
