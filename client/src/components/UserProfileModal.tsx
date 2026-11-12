@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { User } from '../types';
 import {
@@ -18,6 +18,7 @@ import {
   Clock,
   Gamepad2,
   LogOut,
+  StickyNote,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -30,6 +31,8 @@ const BANNER_PRESETS = [
   { id: 'emerald', name: 'Zümrüt Yeşili', class: 'from-emerald-600 via-teal-600 to-cyan-600' },
   { id: 'sunset', name: 'Gün Batımı', class: 'from-amber-500 via-orange-600 to-red-600' },
   { id: 'ocean', name: 'Okyanus Dalgası', class: 'from-blue-600 via-cyan-500 to-teal-400' },
+  { id: 'cyber', name: 'Siberpunk Neon', class: 'from-fuchsia-600 via-purple-600 to-pink-500' },
+  { id: 'gold', name: 'Altın VIP', class: 'from-yellow-500 via-amber-600 to-yellow-700' },
   { id: 'midnight', name: 'Siyah Titanyum', class: 'from-neutral-800 via-neutral-900 to-black' },
 ];
 
@@ -71,6 +74,25 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
   const [editBannerColor, setEditBannerColor] = useState(user.bannerColor || BANNER_PRESETS[0].class);
   const [editAvatar, setEditAvatar] = useState(user.avatar || '🎮');
   const [copiedId, setCopiedId] = useState(false);
+
+  // Private Note state (stored in localStorage per target user)
+  const [userNote, setUserNote] = useState('');
+  const [noteSavedFeedback, setNoteSavedFeedback] = useState(false);
+
+  useEffect(() => {
+    if (!isMe && user.id) {
+      const savedNote = localStorage.getItem(`dc_user_note_${user.id}`) || '';
+      setUserNote(savedNote);
+    }
+  }, [user.id, isMe]);
+
+  const handleSaveNote = () => {
+    if (!isMe && user.id) {
+      localStorage.setItem(`dc_user_note_${user.id}`, userNote);
+      setNoteSavedFeedback(true);
+      setTimeout(() => setNoteSavedFeedback(false), 2000);
+    }
+  };
 
   const handleSaveProfile = () => {
     updateProfileDetails({
@@ -411,6 +433,39 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
                 />
               )}
             </div>
+
+            {/* Private User Note (Only visible to current user) */}
+            {!isMe && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold text-white/40 uppercase tracking-wider flex items-center gap-1">
+                    <StickyNote className="w-3 h-3 text-amber-400" />
+                    <span>Özel Kullanıcı Notu</span>
+                  </div>
+                  <span className="text-[10px] text-white/30">Yalnızca siz görürsünüz</span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={userNote}
+                    onChange={(e) => setUserNote(e.target.value)}
+                    onBlur={handleSaveNote}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveNote();
+                    }}
+                    placeholder="Bu kullanıcıya özel not ekle (örn: CS2 Kaptanı)..."
+                    className="w-full px-3 py-2 pr-16 rounded-xl bg-white/[0.03] hover:bg-white/[0.05] focus:bg-black/50 border border-white/10 focus:border-amber-500/50 text-xs text-white placeholder:text-white/30 outline-none transition"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveNote}
+                    className="absolute right-1.5 top-1.5 px-2 py-0.5 rounded-lg bg-white/10 hover:bg-amber-500/20 text-white/70 hover:text-amber-300 text-[10px] font-medium transition"
+                  >
+                    {noteSavedFeedback ? '✓ Kaydedildi' : 'Kaydet'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Edit Mode Customizers (Banner & Avatar) */}
             {isEditing && (

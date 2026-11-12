@@ -221,6 +221,12 @@ export interface PollData {
   totalVotes?: number;
 }
 
+export interface ChannelStickyNotice {
+  text: string;
+  author: string;
+  updatedAt: string;
+}
+
 export interface Channel {
   id: string;
   name: string;
@@ -234,6 +240,9 @@ export interface Channel {
   isTemporary?: boolean;
   isTempCreatorChannel?: boolean;
   createdByUserId?: string;
+  isLocked?: boolean;
+  password?: string;
+  stickyNotice?: ChannelStickyNotice | null;
 }
 
 export interface Server {
@@ -307,4 +316,14 @@ export interface Message {
   reactions?: Record<string, string[]>; // emoji -> array of usernames
   isPinned?: boolean;
   poll?: PollData;
+}
+
+export interface ServerAnalyticsData {
+  totalMembers: number;
+  onlineMembers: number;
+  totalMessages: number;
+  totalVoiceMinutes: number;
+  channelMessageCounts: { channelName: string; count: number }[];
+  popularVoiceChannels: { channelName: string; userCount: number }[];
+  tierDistribution: { tier: string; count: number }[];
 }

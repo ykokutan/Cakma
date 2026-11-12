@@ -10,7 +10,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState } from './types.js';
+import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import {
   loadAccounts, saveAccounts,
@@ -1523,21 +1523,50 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Channel Creation
-  socket.on('create_channel', ({ serverId, name, type }: { serverId: string; name: string; type: 'text' | 'voice' }) => {
+  socket.on('create_channel', ({ serverId, name, type, isLocked, password, topic }: { serverId: string; name: string; type: 'text' | 'voice'; isLocked?: boolean; password?: string; topic?: string }) => {
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
 
-    const newChannel = {
+    const newChannel: Channel = {
       id: `ch-${type}-${Date.now()}`,
       name: name.toLowerCase().replace(/\s+/g, '-'),
       type,
-      serverId
+      serverId,
+      isLocked: !!isLocked,
+      password: password?.trim() || undefined,
+      topic: topic?.trim() || undefined
     };
 
     targetServer.channels.push(newChannel);
     saveServers(servers);
-    addAuditLog('KANAL_OLUSTURULDU', `${targetServer.name} sunucusunda #${newChannel.name} (${type}) olusturuldu.`);
+    addAuditLog('KANAL_OLUSTURULDU', `${targetServer.name} sunucusunda #${newChannel.name} (${type}${newChannel.password ? ' - Şifreli' : ''}) oluşturuldu.`);
     io.emit('channel_created', { serverId, channel: newChannel });
+    io.emit('servers_updated', servers);
+  });
+
+  // Update Channel Notice & Topic
+  socket.on('update_channel_notice', ({ serverId, channelId, notice, topic }: { serverId: string; channelId: string; notice?: string | null; topic?: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const targetServer = servers.find(s => s.id === serverId);
+    if (!targetServer) return;
+    const ch = targetServer.channels.find(c => c.id === channelId);
+    if (!ch) return;
+
+    if (notice !== undefined) {
+      ch.stickyNotice = notice ? {
+        text: notice.trim(),
+        author: user.username,
+        updatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      } : null;
+    }
+    if (topic !== undefined) {
+      ch.topic = topic.trim();
+    }
+
+    saveServers(servers);
+    io.emit('channel_updated', { serverId, channel: ch });
+    io.emit('servers_updated', servers);
   });
 
   // Server Creation
@@ -1889,13 +1918,27 @@ io.on('connection', (socket: Socket) => {
   }
 
   // Voice Channel Join
-  socket.on('join_voice', ({ channelId }: { channelId: string }) => {
+  socket.on('join_voice', ({ channelId, password }: { channelId: string; password?: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
-    // Check if user is joining the "➕ Oda Kur (+)" channel to spawn a temporary room
     let targetChannelId = channelId;
     const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === channelId);
+
+    // Password verification for locked channels
+    if (targetChannel && targetChannel.password && user.role !== 'admin') {
+      const server = servers.find(s => s.id === targetChannel.serverId);
+      const isOwner = server?.ownerId === user.id;
+      if (!isOwner && password !== targetChannel.password) {
+        return socket.emit('voice_password_error', {
+          channelId,
+          channelName: targetChannel.name,
+          message: 'Bu oda şifrelidir. Hatalı şifre girdiniz.'
+        });
+      }
+    }
+
+    // Check if user is joining the "➕ Oda Kur (+)" channel to spawn a temporary room
     if (targetChannel && (targetChannel.isTempCreatorChannel || targetChannel.name.includes('➕ Oda Kur'))) {
       const server = servers.find(s => s.id === targetChannel.serverId);
       if (server) {
@@ -2137,6 +2180,59 @@ io.on('connection', (socket: Socket) => {
     const sLevels = serverLevels[serverId] || {};
     const list = Object.values(sLevels).sort((a, b) => b.xp - a.xp).slice(0, 20);
     socket.emit('server_leaderboard_data', { serverId, list });
+  });
+
+  // 5. Server Analytics & Live Statistics
+  socket.on('get_server_analytics', ({ serverId }: { serverId: string }) => {
+    const targetServer = servers.find(s => s.id === serverId);
+    if (!targetServer) return;
+
+    const totalMembers = targetServer.members?.length || 0;
+    const onlineMembers = targetServer.members
+      ? targetServer.members.filter(m => Array.from(activeUsers.values()).some(u => u.id === m.userId && u.status !== 'offline')).length
+      : 0;
+
+    let totalMessages = 0;
+    const channelMessageCounts: { channelName: string; count: number }[] = [];
+    (targetServer.channels || []).forEach(ch => {
+      const count = (messages[ch.id] || []).length;
+      totalMessages += count;
+      if (ch.type === 'text') {
+        channelMessageCounts.push({ channelName: `#${ch.name}`, count });
+      }
+    });
+
+    const popularVoiceChannels: { channelName: string; userCount: number }[] = [];
+    (targetServer.channels || []).filter(c => c.type === 'voice').forEach(ch => {
+      const uCount = Array.from(activeUsers.values()).filter(u => u.currentVoiceChannelId === ch.id).length;
+      popularVoiceChannels.push({ channelName: ch.name, userCount: uCount });
+    });
+
+    let totalVoiceMinutes = 0;
+    const sLevels = serverLevels[serverId] || {};
+    const tiers: Record<string, number> = { 'Bronz': 0, 'Gümüş': 0, 'Altın': 0, 'Elmas': 0, 'Efsane': 0 };
+    Object.values(sLevels).forEach(m => {
+      totalVoiceMinutes += m.voiceMinutes || 0;
+      if (m.level >= 50) tiers['Efsane']++;
+      else if (m.level >= 30) tiers['Elmas']++;
+      else if (m.level >= 15) tiers['Altın']++;
+      else if (m.level >= 5) tiers['Gümüş']++;
+      else tiers['Bronz']++;
+    });
+
+    const tierDistribution = Object.entries(tiers).map(([tier, count]) => ({ tier, count }));
+
+    const analyticsData: ServerAnalyticsData = {
+      totalMembers,
+      onlineMembers: Math.max(1, onlineMembers),
+      totalMessages,
+      totalVoiceMinutes,
+      channelMessageCounts: channelMessageCounts.sort((a, b) => b.count - a.count).slice(0, 6),
+      popularVoiceChannels: popularVoiceChannels.sort((a, b) => b.userCount - a.userCount).slice(0, 5),
+      tierDistribution
+    };
+
+    socket.emit('server_analytics_data', { serverId, data: analyticsData });
   });
 
   // WebRTC Signaling Relay

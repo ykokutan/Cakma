@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { X, Hash, Volume2 } from 'lucide-react';
+import { X, Hash, Volume2, Lock, Tag } from 'lucide-react';
 
 interface CreateChannelModalProps {
   initialType: 'text' | 'voice';
@@ -14,11 +14,18 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
   const { createChannel } = useSocket();
   const [channelType, setChannelType] = useState<'text' | 'voice'>(initialType);
   const [channelName, setChannelName] = useState('');
+  const [topic, setTopic] = useState('');
+  const [isLocked, setIsLocked] = useState(false);
+  const [password, setPassword] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!channelName.trim()) return;
-    createChannel(channelName.trim(), channelType);
+    createChannel(channelName.trim(), channelType, {
+      topic: topic.trim() || undefined,
+      isLocked,
+      password: isLocked ? password.trim() : undefined,
+    });
     onClose();
   };
 
@@ -107,6 +114,55 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
             </div>
           </div>
 
+          <div>
+            <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1 flex items-center gap-1">
+              <Tag className="w-3.5 h-3.5 text-blue-400" />
+              <span>Kanal Konusu / Açıklama (İsteğe bağlı)</span>
+            </label>
+            <input
+              type="text"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="Örn: Genel sohbet ve duyurular..."
+              className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {channelType === 'voice' && (
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isLocked}
+                    onChange={(e) => setIsLocked(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-500 bg-black/40 border-white/20 focus:ring-amber-400"
+                  />
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Şifreli & Kilitli Özel Oda</span>
+                  </div>
+                </label>
+              </div>
+
+              {isLocked && (
+                <div className="pt-1">
+                  <input
+                    type="password"
+                    required={isLocked}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Oda giriş şifresini belirleyin..."
+                    className="w-full bg-black/40 border border-amber-500/40 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-white/30"
+                  />
+                  <p className="text-[10px] text-amber-300/70 mt-1">
+                    Bu odaya yalnızca şifreyi bilen üyeler veya yöneticiler katılabilir.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2.5 pt-2">
             <button
               type="button"
@@ -117,7 +173,7 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={!channelName.trim()}
+              disabled={!channelName.trim() || (isLocked && !password.trim())}
               className="px-5 py-2 bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold rounded-full transition shadow-md shadow-blue-500/25 disabled:opacity-40"
             >
               Ekle

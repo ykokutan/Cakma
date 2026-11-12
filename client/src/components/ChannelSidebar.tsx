@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { User } from '../types';
+import { User, Channel } from '../types';
 import {
   Hash,
   Volume2,
@@ -24,8 +24,12 @@ import {
   Sliders,
   Gamepad2,
   Activity,
+  Lock,
+  BarChart2,
 } from 'lucide-react';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
+import { ChannelPasswordModal } from './ChannelPasswordModal';
+import { ServerAnalyticsModal } from './ServerAnalyticsModal';
 
 interface ChannelSidebarProps {
   onOpenCreateChannel: (type: 'text' | 'voice') => void;
@@ -72,9 +76,36 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     updateUserActivity,
     openDiagnostics,
     ping,
+    unlockedChannelIds,
+    unlockChannel,
+    voicePasswordError,
+    clearVoicePasswordError,
   } = useSocket();
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
+  const [passwordModalChannel, setPasswordModalChannel] = useState<{ id: string; name: string } | null>(null);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+
+  const handleVoiceChannelClick = (channel: Channel) => {
+    selectChannel(channel.id);
+    const requiresPassword = Boolean(channel.password || channel.isLocked);
+    const isOwner = activeServer?.ownerId === currentUser?.id;
+    const isAdmin = currentUser?.role === 'admin';
+    const isAlreadyUnlocked = unlockedChannelIds.includes(channel.id);
+
+    if (requiresPassword && !isAdmin && !isOwner && !isAlreadyUnlocked) {
+      setPasswordModalChannel({ id: channel.id, name: channel.name });
+    } else {
+      joinVoiceChannel(channel.id);
+    }
+  };
+
+  const handlePasswordSubmit = (password: string) => {
+    if (!passwordModalChannel) return;
+    joinVoiceChannel(passwordModalChannel.id, password);
+    unlockChannel(passwordModalChannel.id);
+    setPasswordModalChannel(null);
+  };
 
   if (!activeServer) {
     return (
@@ -129,6 +160,21 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               <span>Sunucu Ayarları</span>
             </div>
             <span className="text-[10px] text-white/40">Roller & Detay</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsDropdownOpen(false);
+              setIsAnalyticsOpen(true);
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            <div className="flex items-center gap-2">
+              <BarChart2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Sunucu Analitiği</span>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-mono">Canlı</span>
           </button>
 
           <button
@@ -289,13 +335,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 (u) => u.currentVoiceChannelId === channel.id
               );
 
+              const isLocked = Boolean(channel.password || channel.isLocked);
+
               return (
                 <div key={channel.id} className="space-y-1">
                   <button
-                    onClick={() => {
-                      selectChannel(channel.id);
-                      joinVoiceChannel(channel.id);
-                    }}
+                    onClick={() => handleVoiceChannelClick(channel)}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isConnectedHere
                         ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
@@ -311,6 +356,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         }`}
                       />
                       <span className="truncate">{channel.name}</span>
+                      {isLocked && (
+                        <span title="Korumalı Ses Odası">
+                          <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5">
@@ -567,6 +617,29 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         currentActivity={currentUser?.activity}
         onSaveActivity={(act) => updateUserActivity(act)}
       />
+
+      {/* Password Modal for Protected Voice Channels */}
+      {passwordModalChannel && (
+        <ChannelPasswordModal
+          channelId={passwordModalChannel.id}
+          channelName={passwordModalChannel.name}
+          errorMessage={voicePasswordError}
+          onClose={() => {
+            setPasswordModalChannel(null);
+            clearVoicePasswordError();
+          }}
+          onSubmit={handlePasswordSubmit}
+        />
+      )}
+
+      {/* Server Analytics Modal */}
+      {isAnalyticsOpen && activeServer && (
+        <ServerAnalyticsModal
+          serverId={activeServer.id}
+          serverName={activeServer.name}
+          onClose={() => setIsAnalyticsOpen(false)}
+        />
+      )}
     </aside>
   );
 };

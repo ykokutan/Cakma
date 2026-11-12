@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData } from '../types';
+import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission } from '../utils/tsSoundEffects';
 
@@ -76,7 +76,7 @@ interface SocketContextType {
   selectServer: (serverId: string) => void;
   selectChannel: (channelId: string) => void;
   sendMessage: (content: string, attachments?: MessageAttachment[]) => void;
-  joinVoiceChannel: (channelId: string) => void;
+  joinVoiceChannel: (channelId: string, password?: string) => void;
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
@@ -85,7 +85,7 @@ interface SocketContextType {
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
   createServer: (name: string, icon?: string) => void;
-  createChannel: (name: string, type: 'text' | 'voice') => void;
+  createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string }) => void;
   updateProfile: (username: string, avatar: string) => void;
 
   // Server Roles & Detailed Settings
@@ -257,6 +257,19 @@ interface SocketContextType {
   // Server Leaderboard
   leaderboardData: Record<string, MemberLevelData[]>;
   fetchLeaderboard: (serverId: string) => void;
+
+  // Server Analytics & Statistics
+  serverAnalyticsData: ServerAnalyticsData | null;
+  fetchServerAnalytics: (serverId: string) => void;
+
+  // Channel Sticky Notices & Topics
+  updateChannelNotice: (serverId: string, channelId: string, notice?: string | null, topic?: string) => void;
+
+  // Voice Channel Security & Password Protection
+  voicePasswordError: string | null;
+  clearVoicePasswordError: () => void;
+  unlockedChannelIds: string[];
+  unlockChannel: (channelId: string) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -418,6 +431,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setInputSensitivityState(val);
     try { localStorage.setItem('dsp_inputSensitivity', String(val)); } catch {}
   };
+
+  // 5 Major Features States
+  const [serverAnalyticsData, setServerAnalyticsData] = useState<ServerAnalyticsData | null>(null);
+  const [voicePasswordError, setVoicePasswordError] = useState<string | null>(null);
+  const [unlockedChannelIds, setUnlockedChannelIds] = useState<string[]>([]);
 
   // WebRTC Refs
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -1226,6 +1244,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }));
     });
 
+    newSocket.on('channel_updated', ({ serverId, channel }: { serverId: string; channel: Channel }) => {
+      setServers(prev => prev.map(s => {
+        if (s.id === serverId) {
+          return {
+            ...s,
+            channels: s.channels.map(c => c.id === channel.id ? channel : c)
+          };
+        }
+        return s;
+      }));
+    });
+
     newSocket.on('channel_deleted', ({ serverId, channelId }: { serverId: string; channelId: string }) => {
       setServers(prev => prev.map(s => {
         if (s.id === serverId) {
@@ -1610,6 +1640,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         sendDesktopNotification('Tebrikler! 🎉', `Seviye ${level}'e yükseldiniz!`);
       }
+    });
+
+    // 6. Server Analytics Data
+    newSocket.on('server_analytics_data', ({ data }: { serverId: string; data: ServerAnalyticsData }) => {
+      setServerAnalyticsData(data);
+    });
+
+    // 7. Voice Password Error
+    newSocket.on('voice_password_error', ({ message }: { channelId: string; channelName: string; message: string }) => {
+      setVoicePasswordError(message);
+      setConnectedVoiceChannelId(null);
+      cleanupWebRTC();
     });
 
     return () => {
@@ -2179,13 +2221,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('vote_poll', { channelId: activeChannel.id, messageId, optionId });
   }, [socket, activeChannel]);
 
-  const joinVoiceChannel = async (channelId: string) => {
+  const joinVoiceChannel = async (channelId: string, password?: string) => {
     if (!socket) return;
     if (connectedVoiceChannelId === channelId) return;
 
+    setVoicePasswordError(null);
     cleanupWebRTC();
     setConnectedVoiceChannelId(channelId);
-    socket.emit('join_voice', { channelId });
+    socket.emit('join_voice', { channelId, password });
   };
 
   const leaveVoiceChannel = () => {
@@ -2281,14 +2324,39 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('create_server', { name: name.trim(), icon });
   };
 
-  const createChannel = (name: string, type: 'text' | 'voice') => {
+  const createChannel = (
+    name: string,
+    type: 'text' | 'voice',
+    options?: { isLocked?: boolean; password?: string; topic?: string }
+  ) => {
     if (!socket || !activeServer || !name.trim()) return;
     socket.emit('create_channel', {
       serverId: activeServer.id,
       name: name.trim(),
-      type
+      type,
+      isLocked: options?.isLocked,
+      password: options?.password,
+      topic: options?.topic
     });
   };
+
+  const clearVoicePasswordError = useCallback(() => {
+    setVoicePasswordError(null);
+  }, []);
+
+  const unlockChannel = useCallback((channelId: string) => {
+    setUnlockedChannelIds(prev => prev.includes(channelId) ? prev : [...prev, channelId]);
+  }, []);
+
+  const fetchServerAnalytics = useCallback((serverId: string) => {
+    if (!socket) return;
+    socket.emit('get_server_analytics', { serverId });
+  }, [socket]);
+
+  const updateChannelNotice = useCallback((serverId: string, channelId: string, notice?: string | null, topic?: string) => {
+    if (!socket) return;
+    socket.emit('update_channel_notice', { serverId, channelId, notice, topic });
+  }, [socket]);
 
   const updateProfile = (username: string, avatar: string) => {
     if (!socket) return;
@@ -2583,6 +2651,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // Server Leaderboard
         leaderboardData,
         fetchLeaderboard,
+
+        // Server Analytics & Statistics
+        serverAnalyticsData,
+        fetchServerAnalytics,
+
+        // Channel Sticky Notices & Topics
+        updateChannelNotice,
+
+        // Voice Channel Security & Password Protection
+        voicePasswordError,
+        clearVoicePasswordError,
+        unlockedChannelIds,
+        unlockChannel,
       }}
     >
       {children}

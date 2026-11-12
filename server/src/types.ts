@@ -240,6 +240,12 @@ export interface PollData {
   totalVotes?: number;
 }
 
+export interface ChannelStickyNotice {
+  text: string;
+  author: string;
+  updatedAt: string;
+}
+
 export interface Channel {
   id: string;
   name: string;
@@ -250,6 +256,12 @@ export interface Channel {
   isTemporary?: boolean;
   isTempCreatorChannel?: boolean;
   createdByUserId?: string;
+  isLocked?: boolean;
+  password?: string;
+  topic?: string;
+  bitrateKbps?: number;
+  userLimit?: number;
+  stickyNotice?: ChannelStickyNotice | null;
 }
 
 export interface Server {
@@ -330,4 +342,14 @@ export interface WebRTCSignal {
   senderUserId: string;
   channelId: string;
   payload: any;
+}
+
+export interface ServerAnalyticsData {
+  totalMembers: number;
+  onlineMembers: number;
+  totalMessages: number;
+  totalVoiceMinutes: number;
+  channelMessageCounts: { channelName: string; count: number }[];
+  popularVoiceChannels: { channelName: string; userCount: number }[];
+  tierDistribution: { tier: string; count: number }[];
 }
