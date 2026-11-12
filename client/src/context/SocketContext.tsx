@@ -1309,6 +1309,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       alert(message);
     });
 
+    newSocket.on('chat_flood_error', ({ message }: { message: string }) => {
+      alert(`⚠️ ${message}`);
+    });
+
+    newSocket.on('file_security_error', ({ message }: { message: string }) => {
+      alert(`🛡️ ${message}`);
+    });
+
     newSocket.on('user_connected', (newUser: User) => {
       setOnlineUsers(prev => [...prev.filter(u => u.id !== newUser.id), newUser]);
     });

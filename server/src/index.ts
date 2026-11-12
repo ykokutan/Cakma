@@ -894,6 +894,42 @@ function generateAIResponse(prompt: string, senderName: string): string {
   return `@${senderName}, sorun için buradayım! ✨ Bu platformda 384 kbps stüdyo ses kalitesi, ekran paylaşımı, YouTube müzik botu ve WebRTC teşhisi bulunur. Başka bir konuda yardıma ihtiyacın olursa bana yazmaktan çekinme! 🎮`;
 }
 
+// --- WEBRTC & CHAT INTEGRITY SECURITY ---
+const activeDirectCallPairs = new Map<string, string>(); // socketId -> socketId
+const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
+
+function isMessageFlooding(userId: string): boolean {
+  const now = Date.now();
+  const timestamps = (messageRateLimits.get(userId) || []).filter(t => now - t < 3000);
+  if (timestamps.length >= 5) {
+    return true; // Exceeded 5 messages in 3 seconds
+  }
+  timestamps.push(now);
+  messageRateLimits.set(userId, timestamps);
+  return false;
+}
+
+const DANGEROUS_EXTENSIONS = [
+  '.exe', '.bat', '.cmd', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
+  '.ps1', '.ps2', '.scr', '.msi', '.msp', '.com', '.pif', '.reg', '.hta',
+  '.jar', '.sh', '.bash', '.app', '.dmg', '.pkg', '.apk'
+];
+
+function hasDangerousAttachment(attachments?: MessageAttachment[]): boolean {
+  if (!attachments || attachments.length === 0) return false;
+  return attachments.some(att => {
+    const lowerName = (att.name || '').toLowerCase();
+    const lowerType = (att.type || '').toLowerCase();
+    const isDangerousExt = DANGEROUS_EXTENSIONS.some(ext => lowerName.endsWith(ext));
+    const isDangerousMime =
+      lowerType.includes('executable') ||
+      lowerType.includes('x-msdownload') ||
+      lowerType.includes('x-sh') ||
+      lowerType.includes('x-bat');
+    return isDangerousExt || isDangerousMime;
+  });
+}
+
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
 
@@ -1113,7 +1149,22 @@ io.on('connection', (socket: Socket) => {
     const rawContent = (content || '').trim();
     if (!sender || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
 
-    // Sanitize message content to prevent XSS / HTML injection attacks while preserving formatting
+    // 1. Anti-Spam / Flood Limiting Check
+    if (isMessageFlooding(sender.id)) {
+      return socket.emit('chat_flood_error', {
+        message: 'Çok hızlı mesaj gönderiyorsunuz! Lütfen birkaç saniye bekleyin.'
+      });
+    }
+
+    // 2. Malware & Executable File Attachment Blocking
+    if (hasDangerousAttachment(attachments)) {
+      addAuditLog('GUVENLIK_ENGELI', `${sender.username} zararlı/çalıştırılabilir dosya (.exe, .bat vb.) yüklemeye çalıştı ve engellendi.`, 'warn');
+      return socket.emit('file_security_error', {
+        message: 'Güvenlik gereği çalıştırılabilir veya tehlikeli dosya türleri (.exe, .bat, .cmd, .scr vb.) yüklenemez.'
+      });
+    }
+
+    // 3. Sanitize message content to prevent XSS / HTML injection attacks while preserving formatting
     const textContent = sanitizeText(rawContent).slice(0, 4000);
 
     const newMessage: Message = {
@@ -1471,6 +1522,8 @@ io.on('connection', (socket: Socket) => {
 
     for (const [sId, u] of activeUsers.entries()) {
       if (u.id === callerUserId || u.username.toLowerCase() === callerUserId.toLowerCase()) {
+        activeDirectCallPairs.set(socket.id, sId);
+        activeDirectCallPairs.set(sId, socket.id);
         io.to(sId).emit('direct_call_accepted', { targetUser: acceptor });
         break;
       }
@@ -1478,8 +1531,14 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('direct_call_decline', ({ callerUserId }: { callerUserId: string }) => {
+    const paired = activeDirectCallPairs.get(socket.id);
+    if (paired) {
+      activeDirectCallPairs.delete(paired);
+      activeDirectCallPairs.delete(socket.id);
+    }
     for (const [sId, u] of activeUsers.entries()) {
       if (u.id === callerUserId || u.username.toLowerCase() === callerUserId.toLowerCase()) {
+        activeDirectCallPairs.delete(sId);
         io.to(sId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
         break;
       }
@@ -1487,8 +1546,14 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('direct_call_end', ({ targetUserId }: { targetUserId: string }) => {
+    const paired = activeDirectCallPairs.get(socket.id);
+    if (paired) {
+      activeDirectCallPairs.delete(paired);
+      activeDirectCallPairs.delete(socket.id);
+    }
     for (const [sId, u] of activeUsers.entries()) {
       if (u.id === targetUserId || u.username.toLowerCase() === targetUserId.toLowerCase()) {
+        activeDirectCallPairs.delete(sId);
         io.to(sId).emit('direct_call_ended');
         break;
       }
@@ -1678,8 +1743,14 @@ io.on('connection', (socket: Socket) => {
 
   // Channel Creation
   socket.on('create_channel', ({ serverId, name, type, isLocked, password, topic }: { serverId: string; name: string; type: 'text' | 'voice'; isLocked?: boolean; password?: string; topic?: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
+
+    if (!checkServerPermission(user, targetServer, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Kanal oluşturmak için Kanalları Yönet yetkiniz yok.' });
+    }
 
     const cleanName = sanitizeText(name).toLowerCase().replace(/\s+/g, '-').slice(0, 32);
     const cleanTopic = topic ? sanitizeText(topic.trim()).slice(0, 100) : undefined;
@@ -1707,6 +1778,11 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     const targetServer = servers.find(s => s.id === serverId);
     if (!targetServer) return;
+
+    if (!checkServerPermission(user, targetServer, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Kanal duyurusunu düzenlemek için yetkiniz yok.' });
+    }
+
     const ch = targetServer.channels.find(c => c.id === channelId);
     if (!ch) return;
 
@@ -2392,8 +2468,21 @@ io.on('connection', (socket: Socket) => {
     socket.emit('server_analytics_data', { serverId, data: analyticsData });
   });
 
-  // WebRTC Signaling Relay
+  // WebRTC Signaling Relay (Secured with Room & Call Isolation)
   socket.on('webrtc_signal', ({ targetUserId, signal, type }: { targetUserId: string; signal: any; type: 'offer' | 'answer' | 'candidate' }) => {
+    const sender = activeUsers.get(socket.id);
+    const target = activeUsers.get(targetUserId);
+    if (!sender || !target) return;
+
+    // Security Check: Sender and Target must be in the exact same voice room OR in an accepted direct call
+    const inSameVoiceRoom = Boolean(sender.currentVoiceChannelId && sender.currentVoiceChannelId === target.currentVoiceChannelId);
+    const inDirectCall = activeDirectCallPairs.get(socket.id) === targetUserId;
+
+    if (!inSameVoiceRoom && !inDirectCall) {
+      // Reject unauthorized signaling packet - strictly protects room privacy against eavesdropping
+      return;
+    }
+
     io.to(targetUserId).emit('webrtc_signal', {
       senderUserId: socket.id,
       signal,
@@ -2966,6 +3055,14 @@ io.on('connection', (socket: Socket) => {
 
   // Disconnect
   socket.on('disconnect', () => {
+    // Clean up active direct calls & rate limits
+    const paired = activeDirectCallPairs.get(socket.id);
+    if (paired) {
+      activeDirectCallPairs.delete(paired);
+      activeDirectCallPairs.delete(socket.id);
+    }
+    messageRateLimits.delete(socket.id);
+
     recordUserDisconnection(socket.id);
     const user = activeUsers.get(socket.id);
     if (user) {
