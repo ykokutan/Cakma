@@ -56,6 +56,7 @@ export interface User {
   bio?: string;
   badges?: UserBadge[];
   friends?: string[];
+  blockedUsers?: string[];
   activity?: UserActivity;
   level?: number;
   xp?: number;
@@ -75,6 +76,7 @@ export interface RegisteredAccount {
   bio?: string;
   badges?: UserBadge[];
   friends: string[];
+  blockedUsers?: string[];
   activity?: UserActivity;
   level?: number;
   xp?: number;
@@ -264,6 +266,16 @@ export interface Channel {
   stickyNotice?: ChannelStickyNotice | null;
 }
 
+export interface ServerInvite {
+  code: string;
+  serverId: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt?: number | null;
+  maxUses?: number;
+  uses: number;
+}
+
 export interface Server {
   id: string;
   name: string;
@@ -274,6 +286,8 @@ export interface Server {
   channels: Channel[];
   roles: ServerRole[];
   members: ServerMember[];
+  invites?: ServerInvite[];
+  timeouts?: Record<string, number>;
   afkChannelId?: string | null;
   afkTimeoutMinutes?: number;
   bitrateKbps?: number;
@@ -334,6 +348,7 @@ export interface Message {
   attachments?: MessageAttachment[];
   reactions?: Record<string, string[]>;
   isPinned?: boolean;
+  isEdited?: boolean;
   poll?: PollData;
 }
 

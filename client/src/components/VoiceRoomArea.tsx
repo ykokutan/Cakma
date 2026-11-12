@@ -28,12 +28,20 @@ import {
   Film,
   Compass,
   Gamepad2,
+  Minimize2,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
-const VideoStreamPlayer: React.FC<{ stream: MediaStream; title: string }> = ({
+const VideoStreamPlayer: React.FC<{
+  stream: MediaStream;
+  title: string;
+  isFocused?: boolean;
+  onToggleFocus?: () => void;
+}> = ({
   stream,
   title,
+  isFocused,
+  onToggleFocus,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -69,14 +77,30 @@ const VideoStreamPlayer: React.FC<{ stream: MediaStream; title: string }> = ({
         <span>CANLI · {title}</span>
       </div>
 
-      {/* Fullscreen Button */}
-      <button
-        onClick={handleFullscreen}
-        className="absolute top-4 right-4 p-2 bg-black/60 hover:bg-black/90 backdrop-blur-md rounded-full text-white/80 hover:text-white transition border border-white/10 opacity-0 group-hover:opacity-100 shadow-lg"
-        title="Tam Ekran Yap"
-      >
-        <Maximize2 className="w-4 h-4" />
-      </button>
+      {/* Action Buttons: Focus Mode + Fullscreen */}
+      <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
+        {onToggleFocus && (
+          <button
+            onClick={onToggleFocus}
+            className={`px-3 py-1.5 backdrop-blur-md rounded-full text-xs font-semibold transition border shadow-lg flex items-center gap-1.5 ${
+              isFocused
+                ? 'bg-blue-500/80 hover:bg-blue-500 text-white border-blue-400/50'
+                : 'bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border-white/10'
+            }`}
+            title={isFocused ? 'Odak Modundan Çık' : 'Ekranı Odakla'}
+          >
+            {isFocused ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <span>{isFocused ? 'Odaktan Çık' : 'Odakla'}</span>
+          </button>
+        )}
+        <button
+          onClick={handleFullscreen}
+          className="p-2 bg-black/60 hover:bg-black/90 backdrop-blur-md rounded-full text-white/80 hover:text-white transition border border-white/10 shadow-lg"
+          title="Tam Ekran Yap"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 };
@@ -134,6 +158,7 @@ export const VoiceRoomArea: React.FC = () => {
   const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
   const [isSpatialAudioOpen, setIsSpatialAudioOpen] = useState(false);
   const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
+  const [isScreenFocused, setIsScreenFocused] = useState(false);
 
   if (!activeChannel || activeChannel.type !== 'voice') return null;
 
@@ -328,23 +353,28 @@ export const VoiceRoomArea: React.FC = () => {
           </div>
         ) : hasAnyScreenShare ? (
           /* Screen Sharing Stage (Split Screen: Video on top, iOS Avatars Below) */
-          <div className="w-full h-full flex flex-col gap-4 max-w-6xl">
+          <div className={`w-full h-full flex flex-col gap-4 ${isScreenFocused ? 'max-w-none' : 'max-w-6xl'}`}>
             {/* Live Video Player */}
             <div className="flex-1 w-full min-h-[320px] rounded-2xl overflow-hidden shadow-2xl">
               {isScreenSharing && screenStream ? (
                 <VideoStreamPlayer
                   stream={screenStream}
                   title={`${currentUser?.username || 'Sen'} (Ekran Yayını)`}
+                  isFocused={isScreenFocused}
+                  onToggleFocus={() => setIsScreenFocused((p) => !p)}
                 />
               ) : activeRemoteStreamEntry ? (
                 <VideoStreamPlayer
                   stream={activeRemoteStreamEntry[1]}
                   title={`${activePresenter?.username || 'Kullanıcı'} (Ekran Yayını)`}
+                  isFocused={isScreenFocused}
+                  onToggleFocus={() => setIsScreenFocused((p) => !p)}
                 />
               ) : null}
             </div>
 
             {/* Bottom Row of Voice Participants */}
+            {!isScreenFocused && (
             <div className="h-24 flex items-center justify-center gap-4 overflow-x-auto py-1">
               {usersInRoom.map((user) => {
                 const isThisMe = user.id === currentUser?.id;
@@ -377,6 +407,7 @@ export const VoiceRoomArea: React.FC = () => {
                 );
               })}
             </div>
+            )}
           </div>
         ) : (
           /* Standard iOS Grid with Voice Pulsating Halo */

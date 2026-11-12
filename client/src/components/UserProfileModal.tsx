@@ -19,6 +19,8 @@ import {
   Gamepad2,
   LogOut,
   StickyNote,
+  Ban,
+  VolumeX,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -60,9 +62,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
     acceptFriendRequest,
     removeFriend,
     logout,
+    activeServer,
+    blockUser,
+    unblockUser,
+    timeoutMember,
   } = useSocket();
 
   const isMe = currentUser?.id === user.id || currentUser?.username.toLowerCase() === user.username.toLowerCase();
+  const isBlocked = Boolean(currentUser?.blockedUsers?.includes(user.username));
+  const canTimeout = Boolean(
+    !isMe &&
+      activeServer &&
+      activeServer.id !== 'direct-messages' &&
+      (activeServer.ownerId === currentUser?.id || currentUser?.role === 'admin')
+  );
   const isFriend = friends.some((f) => f.username.toLowerCase() === user.username.toLowerCase());
   const incomingReq = incomingFriendRequests.find((r) => r.fromUsername.toLowerCase() === user.username.toLowerCase());
   const hasOutgoingRequest = outgoingFriendRequests.some((r) => r.toUsername.toLowerCase() === user.username.toLowerCase());
@@ -512,6 +525,56 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
                     ))}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Block & Moderator Timeout Controls */}
+            {!isMe && (
+              <div className="space-y-2.5 pt-2 border-t border-white/10">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => (isBlocked ? unblockUser(user.username) : blockUser(user.username))}
+                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                      isBlocked
+                        ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30'
+                        : 'bg-red-500/15 hover:bg-red-500/25 text-red-300 border-red-500/30'
+                    }`}
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>{isBlocked ? 'Engeli Kaldır' : 'Kullanıcıyı Engelle'}</span>
+                  </button>
+                </div>
+
+                {canTimeout && activeServer && (
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-300">
+                      <VolumeX className="w-3.5 h-3.5" />
+                      <span>Moderatör: Zaman Aşımı (Sustur)</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[
+                        { label: '5 dk', mins: 5 },
+                        { label: '15 dk', mins: 15 },
+                        { label: '1 saat', mins: 60 },
+                        { label: 'Kaldır', mins: 0 },
+                      ].map((opt) => (
+                        <button
+                          key={opt.mins}
+                          type="button"
+                          onClick={() => timeoutMember(activeServer.id, user.username, opt.mins)}
+                          className={`py-1 px-2 rounded-lg text-[10px] font-bold border transition ${
+                            opt.mins === 0
+                              ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/30'
+                              : 'bg-black/30 hover:bg-amber-500/25 text-amber-200 border-white/10'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -140,9 +140,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     createPoll,
     votePoll,
     updateChannelNotice,
+    editMessage,
+    deleteMessage,
+    typingUsers,
+    sendTyping,
+    chatFontSize,
   } = useSocket();
 
   const [inputText, setInputText] = useState('');
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -308,6 +317,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const filteredMessages = messages.filter((m) => {
+    if (currentUser?.blockedUsers?.includes(m.author.username)) return false;
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
     const contentMatch = m.content?.toLowerCase().includes(query);
@@ -803,6 +813,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   >
                     <Pin className="w-3 h-3" />
                   </button>
+                  {isMe && msg.content && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingMsgId(msg.id);
+                        setEditingText(msg.content);
+                      }}
+                      title="Mesajı Düzenle"
+                      className="p-1 rounded-full text-xs text-slate-400 hover:text-amber-300 transition-colors"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                    </button>
+                  )}
+                  {(isMe || activeServer?.ownerId === currentUser?.id) && (
+                    <button
+                      type="button"
+                      onClick={() => deleteMessage(msg.id)}
+                      title="Mesajı Sil"
+                      className="p-1 rounded-full text-xs text-slate-400 hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
 
                 {!isSameAuthorAsPrev && (
@@ -822,6 +855,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     )}
                     <span className="text-[10px] text-white/30 select-none">
                       {msg.timestamp}
+                      {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
                     </span>
                     {msg.isPinned && (
                       <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
@@ -833,14 +867,63 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
                 {/* Bubble Container */}
                 <div
-                  className={`space-y-2 px-4 py-2.5 text-sm leading-relaxed break-words shadow-md transition-all ${
+                  className={`space-y-2 px-4 py-2.5 ${
+                    chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
+                  } leading-relaxed break-words shadow-md transition-all ${
                     isMe
                       ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl rounded-br-sm'
                       : 'bg-white/10 text-white/90 border border-white/10 rounded-2xl rounded-bl-sm backdrop-blur-md'
                   }`}
                 >
-                  {/* Text Content with Code Block Formatting */}
-                  {msg.content && <div>{renderMessageContent(msg.content)}</div>}
+                  {/* Text Content with Code Block Formatting or Inline Edit */}
+                  {editingMsgId === msg.id ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const trimmed = editingText.trim();
+                        if (trimmed && trimmed !== msg.content) {
+                          editMessage(msg.id, trimmed);
+                        }
+                        setEditingMsgId(null);
+                      }}
+                      className="flex items-center gap-1.5 min-w-[220px]"
+                    >
+                      <input
+                        type="text"
+                        value={editingText}
+                        onChange={(e) => setEditingText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setEditingMsgId(null);
+                        }}
+                        autoFocus
+                        className="flex-1 bg-black/30 border border-white/20 rounded-lg px-2.5 py-1 text-xs text-white outline-none focus:border-white/50"
+                      />
+                      <button
+                        type="submit"
+                        title="Kaydet"
+                        className="p-1 rounded-md bg-emerald-500/30 hover:bg-emerald-500/50 text-emerald-200 transition"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingMsgId(null)}
+                        title="İptal"
+                        className="p-1 rounded-md bg-white/10 hover:bg-white/20 text-white/70 transition"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  ) : (
+                    msg.content && (
+                      <div>
+                        {renderMessageContent(msg.content)}
+                        {isSameAuthorAsPrev && msg.isEdited && (
+                          <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
+                        )}
+                      </div>
+                    )
+                  )}
 
                   {/* Interactive Poll Card */}
                   {msg.poll && (
@@ -1065,6 +1148,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         ) : (
           <div className="relative">
+            {/* Typing Indicator */}
+            {(() => {
+              const activeTypers = (typingUsers[activeChannel.id] || []).filter(
+                (u) => u !== currentUser?.username && !currentUser?.blockedUsers?.includes(u)
+              );
+              if (activeTypers.length === 0) return null;
+              const text =
+                activeTypers.length === 1
+                  ? `${activeTypers[0]} yazıyor...`
+                  : activeTypers.length === 2
+                  ? `${activeTypers[0]} ve ${activeTypers[1]} yazıyor...`
+                  : `${activeTypers.length} kişi yazıyor...`;
+              return (
+                <div className="flex items-center gap-2 px-4 pb-1.5 text-[11px] text-white/60 animate-fadeIn">
+                  <span className="flex gap-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" />
+                  </span>
+                  <span className="font-medium">{text}</span>
+                </div>
+              );
+            })()}
             {/* Scroll to Bottom Floating Pill */}
             {showScrollBottom && (
               <button
@@ -1175,7 +1281,25 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <input
                   type="text"
                   value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setInputText(val);
+                    if (val.trim().length > 0) {
+                      if (!isTypingRef.current) {
+                        isTypingRef.current = true;
+                        sendTyping(true);
+                      }
+                      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                      typingTimeoutRef.current = setTimeout(() => {
+                        isTypingRef.current = false;
+                        sendTyping(false);
+                      }, 2500);
+                    } else if (isTypingRef.current) {
+                      isTypingRef.current = false;
+                      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                      sendTyping(false);
+                    }
+                  }}
                   placeholder={
                     isDM
                       ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`

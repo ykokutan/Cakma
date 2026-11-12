@@ -14,6 +14,9 @@ import {
   LogOut,
   Bell,
   Smartphone,
+  Lock,
+  ShieldAlert,
+  Palette,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -59,11 +62,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setTsSoundEffectsEnabled,
     desktopNotificationsEnabled,
     setDesktopNotificationsEnabled,
+    changePassword,
+    unblockUser,
+    uiTheme,
+    setUiTheme,
+    chatFontSize,
+    setChatFontSize,
   } = useSocket();
 
   const [username, setUsername] = useState(currentUser?.username || '');
   const [avatar, setAvatar] = useState(currentUser?.avatar || '🎮');
-  const [activeTab, setActiveTab] = useState<'audio' | 'voice_processing' | 'profile' | 'appearance'>('audio');
+  const [activeTab, setActiveTab] = useState<'audio' | 'voice_processing' | 'profile' | 'security' | 'appearance'>('audio');
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [passwordStatus, setPasswordStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [recordingKey, setRecordingKey] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [notifPermission, setNotifPermission] = useState(
@@ -132,6 +146,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </button>
 
             <button
+              onClick={() => setActiveTab('security')}
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
+                activeTab === 'security'
+                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+              }`}
+            >
+              <Lock className="w-4 h-4 text-amber-400" />
+              Hesap & Güvenlik
+            </button>
+
+            <button
               onClick={() => setActiveTab('appearance')}
               className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
                 activeTab === 'appearance'
@@ -139,8 +165,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
               }`}
             >
-              <Bell className="w-4 h-4" />
-              Bildirim & Uygulama
+              <Palette className="w-4 h-4 text-purple-400" />
+              Görünüm & Bildirim
             </button>
           </div>
 
@@ -611,6 +637,139 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </div>
           )}
 
+          {/* TAB 3.5: Security & Blocked Users */}
+          {activeTab === 'security' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Hesap & Güvenlik</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Şifrenizi güncelleyin ve engellediğiniz kullanıcıları yönetin.
+                </p>
+              </div>
+
+              {/* Password Change */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Lock className="w-4 h-4 text-amber-400" />
+                  <span>Şifre Değiştir</span>
+                </div>
+
+                {!isAuthenticated ? (
+                  <p className="text-xs text-white/50">
+                    Şifre değiştirebilmek için kayıtlı bir hesapla giriş yapmış olmalısınız.
+                  </p>
+                ) : (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setPasswordStatus(null);
+                      if (newPasswordInput.length < 6) {
+                        setPasswordStatus({ type: 'error', text: 'Yeni şifre en az 6 karakter olmalıdır.' });
+                        return;
+                      }
+                      if (newPasswordInput !== confirmPasswordInput) {
+                        setPasswordStatus({ type: 'error', text: 'Yeni şifreler eşleşmiyor.' });
+                        return;
+                      }
+                      setIsChangingPassword(true);
+                      const res = await changePassword(currentPasswordInput, newPasswordInput);
+                      setIsChangingPassword(false);
+                      if (res.success) {
+                        setPasswordStatus({ type: 'success', text: res.message || 'Şifreniz başarıyla güncellendi.' });
+                        setCurrentPasswordInput('');
+                        setNewPasswordInput('');
+                        setConfirmPasswordInput('');
+                      } else {
+                        setPasswordStatus({ type: 'error', text: res.error || 'Şifre güncellenemedi.' });
+                      }
+                    }}
+                    className="space-y-2.5"
+                  >
+                    <input
+                      type="password"
+                      required
+                      value={currentPasswordInput}
+                      onChange={(e) => setCurrentPasswordInput(e.target.value)}
+                      placeholder="Mevcut Şifre"
+                      className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        type="password"
+                        required
+                        value={newPasswordInput}
+                        onChange={(e) => setNewPasswordInput(e.target.value)}
+                        placeholder="Yeni Şifre (en az 6 karakter)"
+                        className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      <input
+                        type="password"
+                        required
+                        value={confirmPasswordInput}
+                        onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                        placeholder="Yeni Şifre (Tekrar)"
+                        className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                    {passwordStatus && (
+                      <div
+                        className={`text-xs px-3 py-2 rounded-xl border ${
+                          passwordStatus.type === 'success'
+                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                            : 'bg-red-500/15 border-red-500/30 text-red-300'
+                        }`}
+                      >
+                        {passwordStatus.text}
+                      </div>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isChangingPassword}
+                      className="px-4 py-2 rounded-full bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs transition disabled:opacity-50"
+                    >
+                      {isChangingPassword ? 'Güncelleniyor...' : 'Şifreyi Güncelle'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {/* Blocked Users */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <ShieldAlert className="w-4 h-4 text-red-400" />
+                    <span>Engellenen Kullanıcılar</span>
+                  </div>
+                  <span className="text-[11px] text-white/40">
+                    {(currentUser?.blockedUsers || []).length} kişi
+                  </span>
+                </div>
+
+                {(!currentUser?.blockedUsers || currentUser.blockedUsers.length === 0) ? (
+                  <p className="text-xs text-white/40">Şu anda engellediğiniz bir kullanıcı yok.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {currentUser.blockedUsers.map((blockedName) => (
+                      <div
+                        key={blockedName}
+                        className="flex items-center justify-between px-3 py-2 rounded-xl bg-black/30 border border-white/5"
+                      >
+                        <span className="text-xs font-medium text-white/80">{blockedName}</span>
+                        <button
+                          type="button"
+                          onClick={() => unblockUser(blockedName)}
+                          className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white/80 hover:text-white transition"
+                        >
+                          Engeli Kaldır
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* TAB 4: Appearance & Notifications */}
           {activeTab === 'appearance' && (
             <div className="space-y-6">
@@ -669,13 +828,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              {/* Theme Info */}
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2">
-                <div className="text-xs font-semibold text-white/80">Arayüz Teması</div>
-                <div className="flex items-center gap-2">
-                  <span className="px-3 py-1 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-medium">
-                    ✦ iOS Titanium Glass Dark (Varsayılan)
-                  </span>
+              {/* Theme Presets & Chat Font Size */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-4">
+                <div>
+                  <div className="text-xs font-semibold text-white/80 mb-2">Arayüz Teması</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: 'vision-dark', label: 'Vision Dark', dot: 'bg-slate-400' },
+                      { id: 'midnight-blue', label: 'Midnight Blue', dot: 'bg-blue-400' },
+                      { id: 'cyber-emerald', label: 'Cyber Emerald', dot: 'bg-emerald-400' },
+                      { id: 'amber-gold', label: 'Amber Gold', dot: 'bg-amber-400' },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setUiTheme(t.id as any)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold transition ${
+                          uiTheme === t.id
+                            ? 'bg-blue-500/20 border-blue-400 text-white shadow'
+                            : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        <span className={`w-2.5 h-2.5 rounded-full ${t.dot}`} />
+                        <span className="truncate">{t.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-white/5">
+                  <div className="text-xs font-semibold text-white/80 mb-2">Sohbet Yazı Boyutu</div>
+                  <div className="flex gap-2">
+                    {[
+                      { id: 'sm', label: 'Küçük (12px)' },
+                      { id: 'base', label: 'Normal (14px)' },
+                      { id: 'lg', label: 'Büyük (16px)' },
+                    ].map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setChatFontSize(s.id as any)}
+                        className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
+                          chatFontSize === s.id
+                            ? 'bg-blue-500 text-white border-blue-400 shadow'
+                            : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>

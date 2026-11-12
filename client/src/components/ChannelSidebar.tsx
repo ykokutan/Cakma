@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { User, Channel } from '../types';
 import {
@@ -10,6 +11,7 @@ import {
   Headphones,
   Settings,
   ChevronDown,
+  ChevronRight,
   PhoneOff,
   Radio,
   VolumeX,
@@ -26,6 +28,10 @@ import {
   Activity,
   Lock,
   BarChart2,
+  UserPlus,
+  Copy,
+  Check,
+  X,
 } from 'lucide-react';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
@@ -80,9 +86,17 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     unlockChannel,
     voicePasswordError,
     clearVoicePasswordError,
+    unreadCounts,
+    createServerInvite,
   } = useSocket();
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
+  const [isTextCollapsed, setIsTextCollapsed] = useState(false);
+  const [isVoiceCollapsed, setIsVoiceCollapsed] = useState(false);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [generatedInviteCode, setGeneratedInviteCode] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
   const [passwordModalChannel, setPasswordModalChannel] = useState<{ id: string; name: string } | null>(null);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
 
@@ -190,6 +204,27 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               <span>Kanal Oluştur</span>
             </div>
           </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              setIsDropdownOpen(false);
+              setIsInviteModalOpen(true);
+              setGeneratedInviteCode(null);
+              setInviteCopied(false);
+              setIsCreatingInvite(true);
+              const inv = await createServerInvite(activeServer.id);
+              setIsCreatingInvite(false);
+              if (inv) setGeneratedInviteCode(inv.code);
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            <div className="flex items-center gap-2">
+              <UserPlus className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Davet Linki Oluştur</span>
+            </div>
+            <span className="text-[10px] text-indigo-300">Paylaş</span>
+          </button>
         </div>
       )}
 
@@ -283,7 +318,18 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         {/* Text Channels */}
         <div>
           <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-            <span>Metin Kanalları</span>
+            <button
+              type="button"
+              onClick={() => setIsTextCollapsed((p) => !p)}
+              className="flex items-center gap-1 hover:text-white/80 transition"
+            >
+              {isTextCollapsed ? (
+                <ChevronRight className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+              <span>Metin Kanalları</span>
+            </button>
             <button
               onClick={() => onOpenCreateChannel('text')}
               className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
@@ -293,31 +339,54 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             </button>
           </div>
 
-          <div className="space-y-0.5">
-            {textChannels.map((channel) => {
-              const isActive = activeChannel?.id === channel.id;
-              return (
-                <button
-                  key={channel.id}
-                  onClick={() => selectChannel(channel.id)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                    isActive
-                      ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20'
-                      : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-                  }`}
-                >
-                  <Hash className="w-4 h-4 opacity-70 shrink-0" />
-                  <span className="truncate">{channel.name}</span>
-                </button>
-              );
-            })}
-          </div>
+          {!isTextCollapsed && (
+            <div className="space-y-0.5">
+              {textChannels.map((channel) => {
+                const isActive = activeChannel?.id === channel.id;
+                const unread = !isActive ? (unreadCounts[channel.id] || 0) : 0;
+                return (
+                  <button
+                    key={channel.id}
+                    onClick={() => selectChannel(channel.id)}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                      isActive
+                        ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20'
+                        : unread > 0
+                        ? 'text-white font-bold hover:bg-white/[0.06]'
+                        : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Hash className="w-4 h-4 opacity-70 shrink-0" />
+                      <span className="truncate">{channel.name}</span>
+                    </div>
+                    {unread > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold shrink-0">
+                        {unread > 99 ? '99+' : unread}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Voice Channels */}
         <div>
           <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-            <span>Ses Odaları</span>
+            <button
+              type="button"
+              onClick={() => setIsVoiceCollapsed((p) => !p)}
+              className="flex items-center gap-1 hover:text-white/80 transition"
+            >
+              {isVoiceCollapsed ? (
+                <ChevronRight className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+              <span>Ses Odaları</span>
+            </button>
             <button
               onClick={() => onOpenCreateChannel('voice')}
               className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
@@ -327,7 +396,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             </button>
           </div>
 
-          <div className="space-y-1">
+          {!isVoiceCollapsed && (
+            <div className="space-y-1">
             {voiceChannels.map((channel) => {
               const isConnectedHere = connectedVoiceChannelId === channel.id;
               const isViewingHere = activeChannel?.id === channel.id;
@@ -424,6 +494,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               );
             })}
           </div>
+          )}
         </div>
       </div>
       )}
@@ -640,6 +711,79 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           onClose={() => setIsAnalyticsOpen(false)}
         />
       )}
+
+      {/* Invite Link Modal (Portal) */}
+      {isInviteModalOpen &&
+        activeServer &&
+        createPortal(
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+            <div className="w-full max-w-md rounded-3xl bg-slate-900/95 border border-white/15 p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                    <UserPlus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Sunucuya Davet Et</h3>
+                    <p className="text-[11px] text-white/50">{activeServer.name}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsInviteModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/15 text-white/60 hover:text-white flex items-center justify-center transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {isCreatingInvite ? (
+                <div className="py-6 text-center text-xs text-white/60">
+                  Davet bağlantısı oluşturuluyor...
+                </div>
+              ) : generatedInviteCode ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-white/70">
+                    Arkadaşlarını bu sunucuya davet etmek için aşağıdaki bağlantıyı veya davet kodunu paylaşabilirsin:
+                  </p>
+                  <div className="flex items-center gap-2 p-2 rounded-2xl bg-black/40 border border-white/10">
+                    <input
+                      type="text"
+                      readOnly
+                      value={`${window.location.origin}/?invite=${generatedInviteCode}`}
+                      className="flex-1 bg-transparent text-xs text-indigo-300 font-mono outline-none px-2"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/?invite=${generatedInviteCode}`);
+                        setInviteCopied(true);
+                        setTimeout(() => setInviteCopied(false), 2000);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                        inviteCopied
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-indigo-500 hover:bg-indigo-600 text-white'
+                      }`}
+                    >
+                      {inviteCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{inviteCopied ? 'Kopyalandı' : 'Kopyala'}</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-white/40 px-1">
+                    <span>Davet Kodu: <strong className="text-white/80 font-mono">{generatedInviteCode}</strong></span>
+                    <span>Süresiz • Sınırsız kullanım</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-4 text-center text-xs text-red-400">
+                  Davet linki oluşturulamadı (yetkiniz olmayabilir).
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </aside>
   );
 };

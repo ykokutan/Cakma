@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData } from '../types';
+import { User, Server, ServerInvite, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission } from '../utils/tsSoundEffects';
 
@@ -195,6 +195,25 @@ interface SocketContextType {
   createPoll: (question: string, options: string[]) => void;
   votePoll: (messageId: string, optionId: string) => void;
 
+  // Message Edit/Delete, Typing & Unread Badges
+  editMessage: (messageId: string, newContent: string) => void;
+  deleteMessage: (messageId: string) => void;
+  typingUsers: Record<string, string[]>;
+  sendTyping: (isTyping: boolean) => void;
+  unreadCounts: Record<string, number>;
+
+  // Account Security, Block, Timeout, Invites & UI Themes
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  blockUser: (targetUsername: string) => void;
+  unblockUser: (targetUsername: string) => void;
+  timeoutMember: (serverId: string, targetUsername: string, durationMinutes: number) => void;
+  createServerInvite: (serverId: string, maxUses?: number, expireMinutes?: number) => Promise<ServerInvite | null>;
+  joinServerByInvite: (code: string) => Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>;
+  uiTheme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold';
+  setUiTheme: (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold') => void;
+  chatFontSize: 'sm' | 'base' | 'lg';
+  setChatFontSize: (size: 'sm' | 'base' | 'lg') => void;
+
   // Diagnostics & Network Telemetry
   ping: number;
   jitter: number;
@@ -336,6 +355,33 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServerId, setActiveServerId] = useState<string>('');
   const [activeChannelId, setActiveChannelId] = useState<string>('');
+  const activeChannelIdRef = useRef<string>('');
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
+
+  const [typingUsers, setTypingUsers] = useState<Record<string, string[]>>({});
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold'>(() => {
+    return (localStorage.getItem('dc_ui_theme') as any) || 'vision-dark';
+  });
+  const [chatFontSize, setChatFontSizeState] = useState<'sm' | 'base' | 'lg'>(() => {
+    return (localStorage.getItem('dc_chat_font_size') as any) || 'base';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', uiTheme);
+    try { localStorage.setItem('dc_ui_theme', uiTheme); } catch {}
+  }, [uiTheme]);
+
+  const setUiTheme = (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold') => {
+    setUiThemeState(theme);
+  };
+
+  const setChatFontSize = (size: 'sm' | 'base' | 'lg') => {
+    setChatFontSizeState(size);
+    try { localStorage.setItem('dc_chat_font_size', size); } catch {}
+  };
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
@@ -1195,6 +1241,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         [msg.channelId]: [...(prev[msg.channelId] || []), msg]
       }));
 
+      if (msg.channelId !== activeChannelIdRef.current && msg.author?.username !== currentUserRef.current?.username) {
+        setUnreadCounts(prev => ({
+          ...prev,
+          [msg.channelId]: (prev[msg.channelId] || 0) + 1
+        }));
+      }
+
       // Desktop Push Notification
       if (desktopNotificationsRef.current && currentUserRef.current && msg.author?.id !== currentUserRef.current.id) {
         const isMention = msg.content && msg.content.includes('@' + currentUserRef.current.username);
@@ -1206,6 +1259,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           );
         }
       }
+    });
+
+    newSocket.on('message_edited', ({ channelId, messageId, content, isEdited }: { channelId: string; messageId: string; content: string; isEdited: boolean }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m => m.id === messageId ? { ...m, content, isEdited } : m)
+        };
+      });
+    });
+
+    newSocket.on('message_deleted', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.filter(m => m.id !== messageId)
+        };
+      });
+    });
+
+    newSocket.on('user_typing', ({ channelId, username, isTyping }: { channelId: string; username: string; isTyping: boolean }) => {
+      setTypingUsers(prev => {
+        const list = prev[channelId] || [];
+        if (isTyping) {
+          if (list.includes(username)) return prev;
+          return { ...prev, [channelId]: [...list, username] };
+        } else {
+          return { ...prev, [channelId]: list.filter(u => u !== username) };
+        }
+      });
     });
 
     newSocket.on('message_reaction_updated', ({ channelId, messageId, reactions }: { channelId: string; messageId: string; reactions: Record<string, string[]> }) => {
@@ -2176,6 +2263,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const selectChannel = (channelId: string) => {
     setActiveChannelId(channelId);
+    setUnreadCounts(prev => {
+      if (!prev[channelId]) return prev;
+      const next = { ...prev };
+      delete next[channelId];
+      return next;
+    });
   };
 
   const sendMessage = (content: string, attachments?: MessageAttachment[]) => {
@@ -2469,6 +2562,110 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return userRoles.length > 0 ? userRoles[0] : null;
   }, []);
 
+  const editMessage = useCallback((messageId: string, newContent: string) => {
+    if (!socket || !activeChannelId) return;
+    socket.emit('edit_message', { channelId: activeChannelId, messageId, newContent });
+  }, [socket, activeChannelId]);
+
+  const deleteMessage = useCallback((messageId: string) => {
+    if (!socket || !activeChannelId) return;
+    socket.emit('delete_message', { channelId: activeChannelId, messageId });
+  }, [socket, activeChannelId]);
+
+  const sendTyping = useCallback((isTyping: boolean) => {
+    if (!socket || !activeChannelId) return;
+    socket.emit(isTyping ? 'typing_start' : 'typing_stop', { channelId: activeChannelId });
+  }, [socket, activeChannelId]);
+
+  const changePassword = useCallback((currentPassword: string, newPassword: string) => {
+    return new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      const handler = (res: { success: boolean; message?: string; error?: string }) => {
+        socket.off('change_password_response', handler);
+        resolve(res);
+      };
+      socket.on('change_password_response', handler);
+      socket.emit('change_password', { currentPassword, newPassword });
+      setTimeout(() => {
+        socket.off('change_password_response', handler);
+        resolve({ success: false, error: 'İstek zaman aşımına uğradı.' });
+      }, 10000);
+    });
+  }, [socket]);
+
+  const blockUser = useCallback((targetUsername: string) => {
+    if (!socket) return;
+    socket.emit('block_user', { targetUsername });
+  }, [socket]);
+
+  const unblockUser = useCallback((targetUsername: string) => {
+    if (!socket) return;
+    socket.emit('unblock_user', { targetUsername });
+  }, [socket]);
+
+  const timeoutMember = useCallback((serverId: string, targetUsername: string, durationMinutes: number) => {
+    if (!socket) return;
+    socket.emit('timeout_server_member', { serverId, targetUsername, durationMinutes });
+  }, [socket]);
+
+  const createServerInvite = useCallback((serverId: string, maxUses?: number, expireMinutes?: number) => {
+    return new Promise<ServerInvite | null>((resolve) => {
+      if (!socket) {
+        resolve(null);
+        return;
+      }
+      const handler = (invite: ServerInvite) => {
+        if (invite.serverId === serverId) {
+          socket.off('server_invite_created', handler);
+          resolve(invite);
+        }
+      };
+      socket.on('server_invite_created', handler);
+      socket.emit('create_server_invite', { serverId, maxUses, expireMinutes });
+      setTimeout(() => {
+        socket.off('server_invite_created', handler);
+        resolve(null);
+      }, 8000);
+    });
+  }, [socket]);
+
+  const joinServerByInvite = useCallback((code: string) => {
+    return new Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      const handler = (res: { success: boolean; serverId?: string; serverName?: string; error?: string }) => {
+        socket.off('join_invite_response', handler);
+        if (res.success && res.serverId) {
+          setActiveServerId(res.serverId);
+        }
+        resolve(res);
+      };
+      socket.on('join_invite_response', handler);
+      socket.emit('join_server_by_invite', { code });
+      setTimeout(() => {
+        socket.off('join_invite_response', handler);
+        resolve({ success: false, error: 'İstek zaman aşımına uğradı.' });
+      }, 8000);
+    });
+  }, [socket]);
+
+  useEffect(() => {
+    if (!socket || !currentUser) return;
+    const params = new URLSearchParams(window.location.search);
+    const inviteCode = params.get('invite');
+    if (inviteCode) {
+      joinServerByInvite(inviteCode).then(() => {
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, cleanUrl);
+      });
+    }
+  }, [socket, currentUser, joinServerByInvite]);
+
   return (
     <SocketContext.Provider
       value={{
@@ -2690,6 +2887,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         clearVoicePasswordError,
         unlockedChannelIds,
         unlockChannel,
+
+        // Message Edit/Delete, Typing & Unread Badges
+        editMessage,
+        deleteMessage,
+        typingUsers,
+        sendTyping,
+        unreadCounts,
+
+        // Account Security, Block, Timeout, Invites & UI Themes
+        changePassword,
+        blockUser,
+        unblockUser,
+        timeoutMember,
+        createServerInvite,
+        joinServerByInvite,
+        uiTheme,
+        setUiTheme,
+        chatFontSize,
+        setChatFontSize,
       }}
     >
       {children}

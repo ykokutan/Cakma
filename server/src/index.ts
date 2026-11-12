@@ -1179,7 +1179,8 @@ io.on('connection', (socket: Socket) => {
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
-      friends: foundAccount.friends || []
+      friends: foundAccount.friends || [],
+      blockedUsers: foundAccount.blockedUsers || []
     };
 
     activeUsers.set(socket.id, user);
@@ -1229,7 +1230,8 @@ io.on('connection', (socket: Socket) => {
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
-      friends: foundAccount.friends || []
+      friends: foundAccount.friends || [],
+      blockedUsers: foundAccount.blockedUsers || []
     };
 
     activeUsers.set(socket.id, user);
@@ -1278,6 +1280,16 @@ io.on('connection', (socket: Socket) => {
     const sender = activeUsers.get(socket.id);
     const rawContent = (content || '').trim();
     if (!sender || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
+
+    // 0. Server Timeout Check
+    const targetSrv = servers.find(s => s.id === serverId);
+    const timeoutUntil = targetSrv?.timeouts?.[sender.username.toLowerCase()];
+    if (timeoutUntil && timeoutUntil > Date.now()) {
+      const minsLeft = Math.ceil((timeoutUntil - Date.now()) / 60000);
+      return socket.emit('chat_flood_error', {
+        message: `Bu sunucuda geçici olarak susturuldunuz. Kalan süre: ~${minsLeft} dakika.`
+      });
+    }
 
     // 1. Anti-Spam / Flood Limiting Check
     if (isMessageFlooding(sender.id)) {
@@ -1537,6 +1549,105 @@ io.on('connection', (socket: Socket) => {
     io.emit('message_pin_updated', { channelId, messageId, isPinned: msg.isPinned });
   });
 
+  // Edit Message (Only message author)
+  socket.on('edit_message', ({ channelId, messageId, newContent }: { channelId: string; messageId: string; newContent: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    const msg = channelMsgs.find(m => m.id === messageId);
+    if (!msg) return;
+    if (msg.author.username.toLowerCase() !== user.username.toLowerCase()) return;
+
+    const clean = sanitizeText((newContent || '').trim()).slice(0, 4000);
+    if (!clean) return;
+    msg.content = clean;
+    msg.isEdited = true;
+    saveMessages(messages);
+    io.emit('message_edited', { channelId, messageId, content: msg.content, isEdited: true });
+  });
+
+  // Delete Message (Author or moderator/admin)
+  socket.on('delete_message', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    const idx = channelMsgs.findIndex(m => m.id === messageId);
+    if (idx === -1) return;
+    const msg = channelMsgs[idx];
+
+    const targetServer = servers.find(s => s.id === msg.serverId || s.channels.some(c => c.id === channelId));
+    const isAuthor = msg.author.username.toLowerCase() === user.username.toLowerCase();
+    const canManage = targetServer ? checkServerPermission(user, targetServer, 'manage_channels') : false;
+    if (!isAuthor && !canManage && user.role !== 'admin') {
+      return socket.emit('server_action_error', { message: 'Bu mesajı silmek için yetkiniz yok.' });
+    }
+
+    channelMsgs.splice(idx, 1);
+    saveMessages(messages);
+    io.emit('message_deleted', { channelId, messageId });
+  });
+
+  // Typing Indicator
+  socket.on('typing_start', ({ channelId }: { channelId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !channelId) return;
+    socket.broadcast.emit('user_typing', { channelId, username: user.username, isTyping: true });
+  });
+
+  socket.on('typing_stop', ({ channelId }: { channelId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !channelId) return;
+    socket.broadcast.emit('user_typing', { channelId, username: user.username, isTyping: false });
+  });
+
+  // Change Password (Self-Service)
+  socket.on('change_password', ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc) return socket.emit('change_password_response', { success: false, error: 'Hesap bulunamadı.' });
+
+    if (!verifyPassword(currentPassword, acc.password)) {
+      return socket.emit('change_password_response', { success: false, error: 'Mevcut şifreniz hatalı.' });
+    }
+    if (!newPassword || newPassword.length < 4) {
+      return socket.emit('change_password_response', { success: false, error: 'Yeni şifre en az 4 karakter olmalıdır.' });
+    }
+
+    acc.password = hashPassword(newPassword);
+    saveAccounts(registeredAccounts);
+    addAuditLog('SIFRE_DEGISTIRILDI', `${user.username} kendi şifresini güncelledi.`, 'auth');
+    socket.emit('change_password_response', { success: true, message: 'Şifreniz başarıyla güncellendi.' });
+  });
+
+  // Block / Unblock User
+  socket.on('block_user', ({ targetUsername }: { targetUsername: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !targetUsername || targetUsername.toLowerCase() === user.username.toLowerCase()) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc) return;
+    if (!acc.blockedUsers) acc.blockedUsers = [];
+    if (!acc.blockedUsers.includes(targetUsername.toLowerCase())) {
+      acc.blockedUsers.push(targetUsername.toLowerCase());
+      saveAccounts(registeredAccounts);
+    }
+    user.blockedUsers = [...acc.blockedUsers];
+    socket.emit('user_updated', user);
+  });
+
+  socket.on('unblock_user', ({ targetUsername }: { targetUsername: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !targetUsername) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc || !acc.blockedUsers) return;
+    acc.blockedUsers = acc.blockedUsers.filter(u => u !== targetUsername.toLowerCase());
+    saveAccounts(registeredAccounts);
+    user.blockedUsers = [...acc.blockedUsers];
+    socket.emit('user_updated', user);
+  });
+
   // Vote on Poll
   socket.on('vote_poll', ({ channelId, messageId, optionId }: { channelId: string; messageId: string; optionId: string }) => {
     const user = activeUsers.get(socket.id);
@@ -1664,6 +1775,10 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (targetSocketId) {
+      const targetUser = activeUsers.get(targetSocketId);
+      if (targetUser?.blockedUsers?.includes(caller.username.toLowerCase())) {
+        return socket.emit('direct_call_declined', { reason: 'Bu kullanıcıya şu anda ulaşılamıyor.' });
+      }
       io.to(targetSocketId).emit('direct_call_incoming', { callerUser: caller });
     } else {
       socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
@@ -2262,6 +2377,97 @@ io.on('connection', (socket: Socket) => {
     io.emit('server_updated', s);
   });
 
+  // Timeout / Mute Member Temporarily
+  socket.on('timeout_server_member', ({ serverId, targetUsername, durationMinutes }: { serverId: string; targetUsername: string; durationMinutes: number }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+    if (!checkServerPermission(user, s, 'kick_members') && !checkServerPermission(user, s, 'mute_members')) {
+      return socket.emit('server_action_error', { message: 'Üyeyi susturmak için yetkiniz yok.' });
+    }
+    const targetLower = targetUsername.toLowerCase();
+    const targetAcc = registeredAccounts.get(targetLower);
+    if (targetAcc?.role === 'admin' || s.ownerId === targetAcc?.id) {
+      return socket.emit('server_action_error', { message: 'Yöneticilere veya sunucu sahibine zaman aşımı uygulanamaz.' });
+    }
+
+    if (!s.timeouts) s.timeouts = {};
+    if (durationMinutes <= 0) {
+      delete s.timeouts[targetLower];
+      addAuditLog('ZAMAN_ASIMI_KALDIRILDI', `${targetUsername} kullanıcısının susturması kaldırıldı (Yetkili: ${user.username})`, 'info');
+    } else {
+      s.timeouts[targetLower] = Date.now() + durationMinutes * 60 * 1000;
+      addAuditLog('ZAMAN_ASIMI_UYGULANDI', `${targetUsername} ${durationMinutes} dakika susturuldu (Yetkili: ${user.username})`, 'warn');
+    }
+    saveServers(servers);
+    io.emit('server_updated', s);
+  });
+
+  // Create Server Invite Link
+  socket.on('create_server_invite', ({ serverId, maxUses, expireMinutes }: { serverId: string; maxUses?: number; expireMinutes?: number }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s) return;
+
+    if (!s.invites) s.invites = [];
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const newInvite = {
+      code,
+      serverId,
+      createdBy: user.username,
+      createdAt: new Date().toISOString(),
+      expiresAt: expireMinutes && expireMinutes > 0 ? Date.now() + expireMinutes * 60 * 1000 : null,
+      maxUses: maxUses && maxUses > 0 ? maxUses : undefined,
+      uses: 0
+    };
+    s.invites.unshift(newInvite);
+    if (s.invites.length > 20) s.invites = s.invites.slice(0, 20);
+    saveServers(servers);
+    io.emit('server_updated', s);
+    socket.emit('server_invite_created', newInvite);
+  });
+
+  // Join Server via Invite Code
+  socket.on('join_server_by_invite', ({ code }: { code: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !code) return;
+    const cleanCode = code.trim().toUpperCase();
+
+    for (const s of servers) {
+      const inv = s.invites?.find(i => i.code === cleanCode);
+      if (inv) {
+        if (inv.expiresAt && inv.expiresAt < Date.now()) {
+          return socket.emit('join_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
+        }
+        if (inv.maxUses && inv.uses >= inv.maxUses) {
+          return socket.emit('join_invite_response', { success: false, error: 'Bu davet linki maksimum kullanım sınırına ulaşmış.' });
+        }
+
+        const alreadyMember = s.members?.some(m => m.username.toLowerCase() === user.username.toLowerCase());
+        if (!alreadyMember) {
+          if (!s.members) s.members = [];
+          const defaultRole = s.roles?.find(r => r.isDefault);
+          s.members.push({
+            userId: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            roleIds: defaultRole ? [defaultRole.id] : [],
+            joinedAt: new Date().toLocaleDateString('tr-TR')
+          });
+        }
+
+        inv.uses += 1;
+        saveServers(servers);
+        io.emit('server_updated', s);
+        return socket.emit('join_invite_response', { success: true, serverId: s.id, serverName: s.name });
+      }
+    }
+
+    socket.emit('join_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
+  });
+
   // Delete Server
   socket.on('delete_server', ({ serverId }: { serverId: string }) => {
     const user = activeUsers.get(socket.id);
@@ -2311,6 +2517,14 @@ io.on('connection', (socket: Socket) => {
 
     let targetChannelId = channelId;
     const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === channelId);
+    const parentServer = servers.find(s => s.channels.some(c => c.id === channelId));
+    const voiceTimeoutUntil = parentServer?.timeouts?.[user.username.toLowerCase()];
+    if (voiceTimeoutUntil && voiceTimeoutUntil > Date.now()) {
+      const minsLeft = Math.ceil((voiceTimeoutUntil - Date.now()) / 60000);
+      return socket.emit('server_action_error', {
+        message: `Bu sunucuda geçici olarak susturuldunuz (~${minsLeft} dk). Ses kanallarına katılamazsınız.`
+      });
+    }
 
     // Password verification for locked channels
     if (targetChannel && targetChannel.password && user.role !== 'admin') {

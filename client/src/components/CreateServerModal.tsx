@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { X, Globe, Plus, RotateCcw } from 'lucide-react';
+import { X, Globe, Plus, RotateCcw, UserPlus } from 'lucide-react';
 
 interface CreateServerModalProps {
   onClose: () => void;
@@ -9,11 +9,39 @@ interface CreateServerModalProps {
 const SERVER_EMOJIS = ['🎮', '⚡', '🚀', '🔥', '🛡️', '⚔️', '👾', '🎧', '☕', '🌟'];
 
 export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose }) => {
-  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer } = useSocket();
-  const [tab, setTab] = useState<'create' | 'direct'>('create');
+  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer, joinServerByInvite } = useSocket();
+  const [tab, setTab] = useState<'create' | 'invite' | 'direct'>('create');
   const [serverName, setServerName] = useState('');
   const [serverIcon, setServerIcon] = useState('🎮');
   const [directHost, setDirectHost] = useState('');
+  const [inviteInput, setInviteInput] = useState('');
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [isJoiningInvite, setIsJoiningInvite] = useState(false);
+
+  const handleJoinInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = inviteInput.trim();
+    if (!raw) return;
+    let code = raw;
+    try {
+      if (raw.includes('invite=')) {
+        const urlObj = new URL(raw.startsWith('http') ? raw : `https://dummy.local/${raw}`);
+        code = urlObj.searchParams.get('invite') || raw;
+      }
+    } catch {
+      const match = raw.match(/invite=([A-Za-z0-9_-]+)/);
+      if (match) code = match[1];
+    }
+    setInviteError(null);
+    setIsJoiningInvite(true);
+    const res = await joinServerByInvite(code);
+    setIsJoiningInvite(false);
+    if (res.success) {
+      onClose();
+    } else {
+      setInviteError(res.error || 'Davet koduna katılınamadı.');
+    }
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,30 +75,42 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
           </p>
 
           {/* Segmented Control */}
-          <div className="flex bg-white/5 p-1 rounded-2xl mt-4 border border-white/10">
+          <div className="flex bg-white/5 p-1 rounded-2xl mt-4 border border-white/10 gap-1">
             <button
               type="button"
               onClick={() => setTab('create')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-1.5 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
                 tab === 'create'
                   ? 'bg-blue-500 text-white shadow-md shadow-blue-500/30'
                   : 'text-white/60 hover:text-white'
               }`}
             >
               <Plus className="w-3.5 h-3.5" />
-              Sunucu Oluştur
+              Oluştur
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('invite')}
+              className={`flex-1 py-1.5 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
+                tab === 'invite'
+                  ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/30'
+                  : 'text-white/60 hover:text-white'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              Davet Kodu
             </button>
             <button
               type="button"
               onClick={() => setTab('direct')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-1.5 text-[11px] font-semibold rounded-xl transition flex items-center justify-center gap-1 ${
                 tab === 'direct'
-                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/30'
+                  ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
                   : 'text-white/60 hover:text-white'
               }`}
             >
               <Globe className="w-3.5 h-3.5" />
-              Özel IP ile Bağlan
+              Özel IP
             </button>
           </div>
         </div>
@@ -125,6 +165,49 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
                 className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold rounded-full transition shadow-md shadow-blue-500/25 disabled:opacity-40"
               >
                 Oluştur
+              </button>
+            </div>
+          </form>
+        ) : tab === 'invite' ? (
+          <form onSubmit={handleJoinInvite} className="p-6 space-y-4">
+            <div>
+              <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                Davet Bağlantısı veya Kodu
+              </label>
+              <input
+                type="text"
+                required
+                value={inviteInput}
+                onChange={(e) => setInviteInput(e.target.value)}
+                placeholder="Örn: A1B2C3D4 veya https://...?invite=A1B2C3D4"
+                className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+              />
+              <span className="text-[11px] text-white/40 mt-1 block">
+                Arkadaşınızın paylaştığı sunucu davet linkini veya kodunu girerek topluluğa katılın.
+              </span>
+            </div>
+
+            {inviteError && (
+              <div className="p-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-300">
+                {inviteError}
+              </div>
+            )}
+
+            <div className="flex justify-between items-center pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-xs text-white/60 hover:text-white transition"
+              >
+                İptal
+              </button>
+              <button
+                type="submit"
+                disabled={!inviteInput.trim() || isJoiningInvite}
+                className="px-6 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold rounded-full transition shadow-md shadow-indigo-500/25 disabled:opacity-40 flex items-center gap-1.5"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                {isJoiningInvite ? 'Katılınıyor...' : 'Sunucuya Katıl'}
               </button>
             </div>
           </form>
