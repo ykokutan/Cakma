@@ -55,6 +55,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     refreshAudioDevices,
     logout,
     isAuthenticated,
+    tsSoundEffectsEnabled,
+    setTsSoundEffectsEnabled,
+    desktopNotificationsEnabled,
+    setDesktopNotificationsEnabled,
   } = useSocket();
 
   const [username, setUsername] = useState(currentUser?.username || '');
@@ -481,6 +485,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <span>Dengeli</span>
                   <span>Gürültülü Ortam (Sert)</span>
                 </div>
+              </div>
+
+              {/* TeamSpeak Sound Events */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    <span>📢 TeamSpeak Sesli Uyarıları (Sound Events)</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">Klasik TS</span>
+                  </div>
+                  <p className="text-[11px] text-white/50 mt-0.5">
+                    Odaya biri girdiğinde/çıktığında ve mikrofon susturulduğunda sesli uyarı çal.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTsSoundEffectsEnabled(!tsSoundEffectsEnabled)}
+                  className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${
+                    tsSoundEffectsEnabled ? 'bg-amber-500' : 'bg-white/10'
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                      tsSoundEffectsEnabled ? 'translate-x-6' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Desktop Push Notifications */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    <span>🔔 Masaüstü Bildirimleri (Push Notifications)</span>
+                  </div>
+                  <p className="text-[11px] text-white/50 mt-0.5">
+                    Birisi sizden bahsettiğinde (@etiket) veya özel mesaj attığında masaüstünde bildirim göster.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDesktopNotificationsEnabled(!desktopNotificationsEnabled)}
+                  className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${
+                    desktopNotificationsEnabled ? 'bg-blue-500' : 'bg-white/10'
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                      desktopNotificationsEnabled ? 'translate-x-6' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
               </div>
             </div>
           )}

@@ -272,6 +272,40 @@ export interface Server {
   autoModEnabled?: boolean;
   vanityCode?: string;
   rules?: string[];
+  welcomeChannelId?: string | null;
+  welcomeMessage?: string;
+  welcomeEnabled?: boolean;
+  autoRoleId?: string | null;
+}
+
+export interface MemberLevelData {
+  userId: string;
+  username: string;
+  avatar: string;
+  xp: number;
+  level: number;
+  messageCount: number;
+  voiceMinutes: number;
+}
+
+export interface WatchTogetherState {
+  channelId: string;
+  active: boolean;
+  videoId: string;
+  title: string;
+  isPlaying: boolean;
+  currentTime: number;
+  startedBy: string;
+}
+
+export interface MiniGameState {
+  channelId: string;
+  game: 'xox' | 'typeracer';
+  board?: (string | null)[];
+  turn?: 'X' | 'O';
+  winner?: string | null;
+  players?: { X: string; O: string };
+  playerNames?: { X: string; O: string };
 }
 
 export interface Message {

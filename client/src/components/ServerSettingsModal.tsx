@@ -19,6 +19,7 @@ import {
   Download,
   Upload,
   FileJson,
+  Bot,
 } from 'lucide-react';
 
 interface ServerSettingsModalProps {
@@ -82,7 +83,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     hasServerPermission,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'backup' | 'danger'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'welcome' | 'backup' | 'danger'>('overview');
 
   // Overview Form State
   const [name, setName] = useState(server.name);
@@ -93,6 +94,12 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   const [defaultNotification, setDefaultNotification] = useState<'all' | 'mentions'>(server.defaultNotification || 'all');
   const [vanityCode, setVanityCode] = useState(server.vanityCode || '');
   const [copiedInvite, setCopiedInvite] = useState(false);
+
+  // Welcome & Auto-Role State
+  const [welcomeEnabled, setWelcomeEnabled] = useState<boolean>(server.welcomeEnabled ?? true);
+  const [welcomeChannelId, setWelcomeChannelId] = useState<string>(server.welcomeChannelId || (server.channels.find(c => c.type === 'text')?.id || ''));
+  const [welcomeMessage, setWelcomeMessage] = useState<string>(server.welcomeMessage || '🎉 **{user}** sunucumuza katıldı! Hoş geldin! 🚀');
+  const [autoRoleId, setAutoRoleId] = useState<string>(server.autoRoleId || '');
 
   // Voice & TeamSpeak State
   const [bitrateKbps, setBitrateKbps] = useState<number>(server.bitrateKbps || 128);
@@ -148,6 +155,10 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       voiceRegion,
       verificationLevel,
       autoModEnabled,
+      welcomeEnabled,
+      welcomeChannelId: welcomeChannelId || null,
+      welcomeMessage,
+      autoRoleId: autoRoleId || null,
     });
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
@@ -172,6 +183,10 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       voiceRegion: server.voiceRegion,
       verificationLevel: server.verificationLevel,
       autoModEnabled: server.autoModEnabled,
+      welcomeEnabled,
+      welcomeChannelId,
+      welcomeMessage,
+      autoRoleId,
       channels: (server.channels || []).map((c) => ({
         name: c.name,
         type: c.type,
@@ -380,6 +395,19 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                 <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/80">
                   {server.members?.length || 0}
                 </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('welcome')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'welcome'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <Bot className="w-4 h-4 text-amber-400" />
+                <span>Karşılama & Auto-Rol</span>
               </button>
 
               <button
@@ -1091,7 +1119,117 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
             </div>
           )}
 
-          {/* 6. BACKUP & TEMPLATE TAB */}
+          {/* 6. WELCOME BOT & AUTO-ROLE TAB */}
+          {activeTab === 'welcome' && (
+            <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl">
+              <div>
+                <h2 className="text-xl font-bold tracking-tight mb-1">Karşılama Botu & Otomatik Rol (Auto-Role)</h2>
+                <p className="text-xs text-white/50">
+                  Sunucuya yeni katılan kullanıcıları otomatik karşılayın ve başlangıç rollerini tanımlayın.
+                </p>
+              </div>
+
+              {/* Welcome Bot Toggle */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-white">Karşılama Mesajları</h4>
+                  <p className="text-[11px] text-white/50">
+                    Yeni üyeler sunucuya katıldığında seçilen kanala otomatik karşılama kartı gönderir.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWelcomeEnabled(!welcomeEnabled)}
+                  className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${
+                    welcomeEnabled ? 'bg-amber-500' : 'bg-white/10'
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                      welcomeEnabled ? 'translate-x-6' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {welcomeEnabled && (
+                <>
+                  {/* Target Channel */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
+                      Karşılama Kanalı
+                    </label>
+                    <select
+                      value={welcomeChannelId}
+                      onChange={(e) => setWelcomeChannelId(e.target.value)}
+                      className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 focus:border-amber-500 outline-none text-xs text-white"
+                    >
+                      {server.channels
+                        .filter((c) => c.type === 'text')
+                        .map((c) => (
+                          <option key={c.id} value={c.id} className="bg-neutral-900">
+                            #{c.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Custom Welcome Template */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
+                      Karşılama Mesajı Şablonu
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={welcomeMessage}
+                      onChange={(e) => setWelcomeMessage(e.target.value)}
+                      placeholder="🎉 **{user}** sunucumuza katıldı! Hoş geldin! 🚀"
+                      className="w-full p-3 rounded-xl bg-white/5 border border-white/10 focus:border-amber-500 outline-none text-xs text-white resize-none"
+                    />
+                    <p className="text-[10px] text-white/40 mt-1">
+                      Kullanılabilir etiketler: <code className="text-amber-300 font-mono">{"{user}"}</code> (üye adı), <code className="text-amber-300 font-mono">{"{server}"}</code> (sunucu adı)
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {/* Auto-Role Assignment */}
+              <div className="pt-4 border-t border-white/10 space-y-3">
+                <div>
+                  <h4 className="text-xs font-bold text-white">Otomatik Başlangıç Rolü (Auto-Role)</h4>
+                  <p className="text-[11px] text-white/50">
+                    Sunucuya katılan yeni kullanıcılara verilecek başlangıç rolü.
+                  </p>
+                </div>
+
+                <select
+                  value={autoRoleId}
+                  onChange={(e) => setAutoRoleId(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 focus:border-amber-500 outline-none text-xs text-white"
+                >
+                  <option value="" className="bg-neutral-900">Otomatik rol yok (Yalnızca @everyone)</option>
+                  {(server.roles || [])
+                    .filter((r) => !r.isDefault && r.id !== 'role-owner')
+                    .map((r) => (
+                      <option key={r.id} value={r.id} className="bg-neutral-900">
+                        {r.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {canManageServer && (
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs transition shadow-lg shadow-amber-500/20"
+                >
+                  Bot ve Karşılama Ayarlarını Kaydet
+                </button>
+              )}
+            </form>
+          )}
+
+          {/* 7. BACKUP & TEMPLATE TAB */}
           {activeTab === 'backup' && (
             <div className="space-y-6 max-w-lg">
               <div>

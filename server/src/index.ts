@@ -10,7 +10,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord } from './types.js';
+import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import {
   loadAccounts, saveAccounts,
@@ -20,7 +20,8 @@ import {
   loadStoreSettings, saveStoreSettings,
   loadAuditLogs, saveAuditLogs,
   loadFriendRequests, saveFriendRequests,
-  loadConnectionLogs, saveConnectionLogs
+  loadConnectionLogs, saveConnectionLogs,
+  loadServerLevels, saveServerLevels
 } from './storage.js';
 
 const app = express();
@@ -137,6 +138,87 @@ const messages: Record<string, Message[]> = loadMessages(initialMessages);
 // Dedicated Servers Registry (Reported by standalone licensed servers)
 const dedicatedServersRegistry = new Map<string, DedicatedServerInfo>();
 
+// Server XP & Levels
+const serverLevels = loadServerLevels();
+
+// Watch Together Rooms (channelId -> WatchTogetherState)
+const watchTogetherRooms = new Map<string, WatchTogetherState>();
+
+// Mini Game Rooms (channelId -> MiniGameState)
+const miniGameRooms = new Map<string, MiniGameState>();
+
+function addMemberXP(serverId: string, user: User, amount: number, isMessage = false) {
+  if (!serverId || !user) return;
+  if (!serverLevels[serverId]) serverLevels[serverId] = {};
+  const userLevels = serverLevels[serverId];
+  if (!userLevels[user.id]) {
+    userLevels[user.id] = {
+      userId: user.id,
+      username: user.username,
+      avatar: user.avatar,
+      xp: 0,
+      level: 1,
+      messageCount: 0,
+      voiceMinutes: 0
+    };
+  }
+  const data = userLevels[user.id];
+  data.username = user.username;
+  data.avatar = user.avatar;
+  data.xp += amount;
+  if (isMessage) data.messageCount += 1;
+  const newLevel = Math.max(1, Math.floor(0.2 * Math.sqrt(data.xp)));
+  if (newLevel > data.level) {
+    data.level = newLevel;
+    io.emit('member_level_up', {
+      serverId,
+      userId: user.id,
+      username: user.username,
+      level: newLevel,
+      xp: data.xp
+    });
+  }
+  saveServerLevels(serverLevels);
+}
+
+// Voice XP interval: award active users in voice channels XP every minute
+setInterval(() => {
+  for (const user of activeUsers.values()) {
+    if (user.currentVoiceChannelId) {
+      const server = servers.find(s => s.channels.some(c => c.id === user.currentVoiceChannelId));
+      if (server) {
+        if (!serverLevels[server.id]) serverLevels[server.id] = {};
+        const userLevels = serverLevels[server.id];
+        if (!userLevels[user.id]) {
+          userLevels[user.id] = {
+            userId: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            xp: 0,
+            level: 1,
+            messageCount: 0,
+            voiceMinutes: 0
+          };
+        }
+        userLevels[user.id].xp += 10;
+        userLevels[user.id].voiceMinutes += 1;
+        const newLevel = Math.max(1, Math.floor(0.2 * Math.sqrt(userLevels[user.id].xp)));
+        if (newLevel > userLevels[user.id].level) {
+          userLevels[user.id].level = newLevel;
+          io.emit('member_level_up', {
+            serverId: server.id,
+            userId: user.id,
+            username: user.username,
+            level: newLevel,
+            xp: userLevels[user.id].xp
+          });
+        }
+      }
+    }
+  }
+  saveServerLevels(serverLevels);
+}, 60000);
+
 function ensureUserInServers(user: User) {
   let changed = false;
   servers.forEach(srv => {
@@ -145,15 +227,49 @@ function ensureUserInServers(user: User) {
     const existing = srv.members.find(m => m.userId === user.id || m.username.toLowerCase() === user.username.toLowerCase());
     if (!existing) {
       const isOwner = srv.ownerId === user.id;
+      const initialRoles = isOwner
+        ? ['role-owner', 'role-admin']
+        : ['role-everyone'];
+      if (!isOwner && srv.autoRoleId && !initialRoles.includes(srv.autoRoleId)) {
+        initialRoles.push(srv.autoRoleId);
+      }
       srv.members.push({
         userId: user.id,
         username: user.username,
         avatar: user.avatar,
-        roleIds: isOwner ? ['role-owner', 'role-admin'] : ['role-everyone'],
+        roleIds: initialRoles,
         joinedAt: new Date().toLocaleDateString('tr-TR'),
         isOwner
       });
       changed = true;
+
+      // Welcome bot message if enabled
+      if (srv.welcomeEnabled && srv.welcomeChannelId) {
+        const targetChannel = srv.channels.find(c => c.id === srv.welcomeChannelId);
+        if (targetChannel) {
+          const welcomeText = srv.welcomeMessage
+            ? srv.welcomeMessage.replace(/{user}/g, user.username).replace(/{server}/g, srv.name)
+            : `🎉 **${user.username}** sunucumuza katıldı! Hoş geldin! 🚀`;
+
+          const welcomeMsg: Message = {
+            id: `msg-welcome-${Date.now()}`,
+            serverId: srv.id,
+            channelId: srv.welcomeChannelId,
+            author: {
+              id: 'system-bot',
+              username: 'Karşılama Botu 🤖',
+              avatar: '👋'
+            },
+            content: welcomeText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            reactions: { '🎉': [user.username] }
+          };
+          if (!messages[srv.welcomeChannelId]) messages[srv.welcomeChannelId] = [];
+          messages[srv.welcomeChannelId].push(welcomeMsg);
+          saveMessages(messages);
+          io.emit('new_message', welcomeMsg);
+        }
+      }
     } else {
       if (existing.userId !== user.id || existing.avatar !== user.avatar || existing.username !== user.username) {
         existing.userId = user.id;
@@ -886,6 +1002,9 @@ io.on('connection', (socket: Socket) => {
       }
     }
 
+    // Award Server Member XP
+    addMemberXP(serverId, sender, 15 + Math.floor(Math.random() * 10), true);
+
     // 2. Intelligent AI Bot Trigger (@ai / @bot / /ai)
     const lowerContent = textContent.toLowerCase();
     if (lowerContent.includes('@ai') || lowerContent.includes('@bot') || lowerContent.startsWith('/ai ')) {
@@ -979,6 +1098,61 @@ io.on('connection', (socket: Socket) => {
         messages[channelId].push(ballMsg);
         saveMessages(messages);
         io.emit('new_message', ballMsg);
+      }, 300);
+    } else if (lowerContent === '/rank' || lowerContent === '/seviye') {
+      setTimeout(() => {
+        const sLevels = serverLevels[serverId] || {};
+        const memberData = sLevels[sender.id] || {
+          userId: sender.id,
+          username: sender.username,
+          avatar: sender.avatar,
+          xp: 20,
+          level: 1,
+          messageCount: 1,
+          voiceMinutes: 0
+        };
+        const rankMsg: Message = {
+          id: `msg-cmd-${Date.now()}`,
+          serverId,
+          channelId,
+          author: { id: 'bot-rank', username: 'Seviye Botu 🏆', avatar: '⭐' },
+          content: `🏆 **@${sender.username}** Sunucu İstatistikleri:\n⭐ **Seviye:** ${memberData.level} | ⚡ **XP:** ${memberData.xp}\n💬 **Toplam Mesaj:** ${memberData.messageCount} | 🎙️ **Ses Odası Süresi:** ${memberData.voiceMinutes} dakika`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+          isPinned: false
+        };
+        if (!messages[channelId]) messages[channelId] = [];
+        messages[channelId].push(rankMsg);
+        saveMessages(messages);
+        io.emit('new_message', rankMsg);
+      }, 300);
+    } else if (lowerContent === '/liderlik' || lowerContent === '/top') {
+      setTimeout(() => {
+        const sLevels = serverLevels[serverId] || {};
+        const sorted = Object.values(sLevels).sort((a, b) => b.xp - a.xp).slice(0, 5);
+        let leaderText = '🏆 **Sunucu Liderlik Tablosu (En Aktif Üyeler):**\n';
+        if (sorted.length === 0) {
+          leaderText += 'Henüz yeterli XP kaydı bulunmuyor!';
+        } else {
+          sorted.forEach((m, idx) => {
+            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '🔹';
+            leaderText += `${medal} **${idx + 1}. ${m.username}** — Seviye ${m.level} (${m.xp} XP | ${m.messageCount} mesaj)\n`;
+          });
+        }
+        const leadMsg: Message = {
+          id: `msg-cmd-${Date.now()}`,
+          serverId,
+          channelId,
+          author: { id: 'bot-rank', username: 'Liderlik Botu 👑', avatar: '🥇' },
+          content: leaderText.trim(),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+          isPinned: false
+        };
+        if (!messages[channelId]) messages[channelId] = [];
+        messages[channelId].push(leadMsg);
+        saveMessages(messages);
+        io.emit('new_message', leadMsg);
       }, 300);
     }
   });
@@ -1437,6 +1611,10 @@ io.on('connection', (socket: Socket) => {
     defaultNotification?: 'all' | 'mentions';
     autoModEnabled?: boolean;
     vanityCode?: string;
+    welcomeChannelId?: string | null;
+    welcomeMessage?: string;
+    welcomeEnabled?: boolean;
+    autoRoleId?: string | null;
   }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
@@ -1459,6 +1637,10 @@ io.on('connection', (socket: Socket) => {
     if (data.defaultNotification !== undefined) s.defaultNotification = data.defaultNotification;
     if (data.autoModEnabled !== undefined) s.autoModEnabled = data.autoModEnabled;
     if (data.vanityCode !== undefined) s.vanityCode = data.vanityCode;
+    if (data.welcomeChannelId !== undefined) s.welcomeChannelId = data.welcomeChannelId;
+    if (data.welcomeMessage !== undefined) s.welcomeMessage = data.welcomeMessage;
+    if (data.welcomeEnabled !== undefined) s.welcomeEnabled = data.welcomeEnabled;
+    if (data.autoRoleId !== undefined) s.autoRoleId = data.autoRoleId;
 
     saveServers(servers);
 
@@ -1829,6 +2011,132 @@ io.on('connection', (socket: Socket) => {
   });
   socket.on('whiteboard_clear', () => {
     socket.broadcast.emit('whiteboard_clear');
+  });
+
+  // 1. Watch Together (YouTube Sineması)
+  socket.on('watch_together_start', ({ channelId, videoId, title }: { channelId: string; videoId: string; title: string }) => {
+    const user = activeUsers.get(socket.id);
+    const roomState: WatchTogetherState = {
+      channelId,
+      active: true,
+      videoId,
+      title: title || 'YouTube Video',
+      isPlaying: true,
+      currentTime: 0,
+      startedBy: user ? user.username : 'Biri'
+    };
+    watchTogetherRooms.set(channelId, roomState);
+    io.to(channelId).emit('watch_together_update', roomState);
+    addAuditLog('WATCH_TOGETHER', `${user?.username || 'Biri'} ${channelId} odasinda YouTube sinemasi baslatti: "${title}"`);
+  });
+
+  socket.on('watch_together_action', ({ channelId, action, currentTime }: { channelId: string; action: 'play' | 'pause' | 'seek'; currentTime: number }) => {
+    const roomState = watchTogetherRooms.get(channelId);
+    if (!roomState) return;
+    if (action === 'play') roomState.isPlaying = true;
+    if (action === 'pause') roomState.isPlaying = false;
+    roomState.currentTime = currentTime;
+    socket.to(channelId).emit('watch_together_sync', { action, currentTime, isPlaying: roomState.isPlaying });
+  });
+
+  socket.on('watch_together_stop', ({ channelId }: { channelId: string }) => {
+    watchTogetherRooms.delete(channelId);
+    io.to(channelId).emit('watch_together_ended');
+  });
+
+  socket.on('watch_together_get', ({ channelId }: { channelId: string }) => {
+    const roomState = watchTogetherRooms.get(channelId);
+    if (roomState) {
+      socket.emit('watch_together_update', roomState);
+    }
+  });
+
+  // 2. Mini Games (XOX & TypeRacer)
+  socket.on('minigame_start', ({ channelId, game }: { channelId: string; game: 'xox' | 'typeracer' }) => {
+    const user = activeUsers.get(socket.id);
+    const state: MiniGameState = {
+      channelId,
+      game,
+      board: Array(9).fill(null),
+      turn: 'X',
+      winner: null,
+      players: { X: socket.id, O: '' },
+      playerNames: { X: user?.username || 'Oyuncu 1', O: 'Bekleniyor...' }
+    };
+    miniGameRooms.set(channelId, state);
+    io.to(channelId).emit('minigame_update', state);
+  });
+
+  socket.on('minigame_join', ({ channelId }: { channelId: string }) => {
+    const state = miniGameRooms.get(channelId);
+    const user = activeUsers.get(socket.id);
+    if (state && !state.players?.O && state.players?.X !== socket.id) {
+      state.players!.O = socket.id;
+      state.playerNames!.O = user?.username || 'Oyuncu 2';
+      io.to(channelId).emit('minigame_update', state);
+    }
+  });
+
+  socket.on('minigame_move', ({ channelId, index }: { channelId: string; index: number }) => {
+    const state = miniGameRooms.get(channelId);
+    if (!state || state.winner || !state.board) return;
+    const currentSymbol = state.turn || 'X';
+    if (state.board[index] !== null) return;
+
+    state.board[index] = currentSymbol;
+
+    const lines = [
+      [0,1,2], [3,4,5], [6,7,8],
+      [0,3,6], [1,4,7], [2,5,8],
+      [0,4,8], [2,4,6]
+    ];
+    let won = false;
+    for (const [a, b, c] of lines) {
+      if (state.board[a] && state.board[a] === state.board[b] && state.board[a] === state.board[c]) {
+        state.winner = currentSymbol;
+        won = true;
+        break;
+      }
+    }
+    if (!won && state.board.every(cell => cell !== null)) {
+      state.winner = 'draw';
+    } else if (!won) {
+      state.turn = currentSymbol === 'X' ? 'O' : 'X';
+    }
+
+    io.to(channelId).emit('minigame_update', state);
+  });
+
+  socket.on('minigame_reset', ({ channelId }: { channelId: string }) => {
+    const state = miniGameRooms.get(channelId);
+    if (!state) return;
+    state.board = Array(9).fill(null);
+    state.turn = 'X';
+    state.winner = null;
+    io.to(channelId).emit('minigame_update', state);
+  });
+
+  socket.on('minigame_stop', ({ channelId }: { channelId: string }) => {
+    miniGameRooms.delete(channelId);
+    io.to(channelId).emit('minigame_ended');
+  });
+
+  // 3. TeamSpeak Whisper (Fısıltı) Relay
+  socket.on('whisper_send', ({ targetUserId, active }: { targetUserId: string; active: boolean }) => {
+    const sender = activeUsers.get(socket.id);
+    if (!sender) return;
+    io.to(targetUserId).emit('whisper_receive', {
+      senderId: socket.id,
+      senderUsername: sender.username,
+      active
+    });
+  });
+
+  // 4. Server Leaderboard Request
+  socket.on('get_server_leaderboard', ({ serverId }: { serverId: string }) => {
+    const sLevels = serverLevels[serverId] || {};
+    const list = Object.values(sLevels).sort((a, b) => b.xp - a.xp).slice(0, 20);
+    socket.emit('server_leaderboard_data', { serverId, list });
   });
 
   // WebRTC Signaling Relay

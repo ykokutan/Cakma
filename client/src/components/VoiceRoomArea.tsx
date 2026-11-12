@@ -3,6 +3,9 @@ import { useSocket } from '../context/SocketContext';
 import { SoundboardModal } from './SoundboardModal';
 import { VoiceRadioWidget } from './VoiceRadioWidget';
 import { WhiteboardModal } from './WhiteboardModal';
+import { WatchTogetherModal } from './WatchTogetherModal';
+import { SpatialAudioModal } from './SpatialAudioModal';
+import { MiniGamesModal } from './MiniGamesModal';
 import {
   Mic,
   MicOff,
@@ -22,6 +25,9 @@ import {
   VideoOff,
   Palette,
   Star,
+  Film,
+  Compass,
+  Gamepad2,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -117,12 +123,17 @@ export const VoiceRoomArea: React.FC = () => {
     isPrioritySpeakerActive,
     prioritySpeakerUsername,
     togglePrioritySpeaker,
+    activeWhisperFrom,
+    sendWhisper,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
   const [showRadioBot, setShowRadioBot] = useState(false);
   const [volumePopoverUserId, setVolumePopoverUserId] = useState<string | null>(null);
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
+  const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
+  const [isSpatialAudioOpen, setIsSpatialAudioOpen] = useState(false);
+  const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
 
   if (!activeChannel || activeChannel.type !== 'voice') return null;
 
@@ -208,6 +219,36 @@ export const VoiceRoomArea: React.FC = () => {
             <span>Ortak Çizim</span>
           </button>
 
+          {/* Watch Together */}
+          <button
+            onClick={() => setIsWatchTogetherOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 transition text-xs font-medium shadow-sm"
+            title="Birlikte YouTube İzle (Watch Together)"
+          >
+            <Film className="w-3.5 h-3.5" />
+            <span>Birlikte İzle</span>
+          </button>
+
+          {/* 3D Spatial Audio */}
+          <button
+            onClick={() => setIsSpatialAudioOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 transition text-xs font-medium shadow-sm"
+            title="TeamSpeak 3D Konumsal Ses (Stereo Panning)"
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>3D Ses</span>
+          </button>
+
+          {/* Mini Games */}
+          <button
+            onClick={() => setIsMiniGamesOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 transition text-xs font-medium shadow-sm"
+            title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma)"
+          >
+            <Gamepad2 className="w-3.5 h-3.5" />
+            <span>Mini Oyunlar</span>
+          </button>
+
           {hasAnyScreenShare && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/15 text-red-400 border border-red-500/30 text-[11px] font-medium">
               <Tv className="w-3.5 h-3.5 animate-pulse" />
@@ -239,6 +280,13 @@ export const VoiceRoomArea: React.FC = () => {
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-amber-500 text-black px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-black animate-pulse border border-yellow-300">
           <Star className="w-4 h-4 fill-black" />
           <span>{prioritySpeakerUsername} konuşuyor (Öncelikli Konuşmacı)</span>
+        </div>
+      )}
+
+      {/* Floating Whisper Banner */}
+      {activeWhisperFrom && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-40 bg-purple-600 text-white px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-black animate-pulse border border-purple-300">
+          <span>🤫 @{activeWhisperFrom} şu an sana fısıldıyor!</span>
         </div>
       )}
 
@@ -409,6 +457,21 @@ export const VoiceRoomArea: React.FC = () => {
                               className="text-white/40 hover:text-white/80 transition"
                             >
                               Sıfırla (%100)
+                            </button>
+                          </div>
+
+                          {/* TeamSpeak Whisper Button */}
+                          <div className="pt-2 border-t border-white/10">
+                            <button
+                              type="button"
+                              onMouseDown={() => sendWhisper(user.id, true)}
+                              onMouseUp={() => sendWhisper(user.id, false)}
+                              onTouchStart={() => sendWhisper(user.id, true)}
+                              onTouchEnd={() => sendWhisper(user.id, false)}
+                              className="w-full py-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 border border-purple-500/40 text-[11px] font-bold flex items-center justify-center gap-1.5 transition active:scale-95"
+                              title="Basılı tutarak sadece bu kullanıcıya fısıldayın"
+                            >
+                              <span>🤫 Fısılda (Basılı Tut)</span>
                             </button>
                           </div>
                         </div>
@@ -610,6 +673,30 @@ export const VoiceRoomArea: React.FC = () => {
         onClose={() => setIsWhiteboardOpen(false)}
         channelName={activeChannel.name}
       />
+
+      {/* Watch Together YouTube Cinema Modal */}
+      {isWatchTogetherOpen && (
+        <WatchTogetherModal
+          channelId={activeChannel.id}
+          onClose={() => setIsWatchTogetherOpen(false)}
+        />
+      )}
+
+      {/* 3D Spatial Audio Modal */}
+      {isSpatialAudioOpen && (
+        <SpatialAudioModal
+          participants={usersInRoom}
+          onClose={() => setIsSpatialAudioOpen(false)}
+        />
+      )}
+
+      {/* Mini Games Modal */}
+      {isMiniGamesOpen && (
+        <MiniGamesModal
+          channelId={activeChannel.id}
+          onClose={() => setIsMiniGamesOpen(false)}
+        />
+      )}
     </div>
   );
 };

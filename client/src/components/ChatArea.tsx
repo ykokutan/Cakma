@@ -7,6 +7,8 @@ import { PinnedMessagesModal } from './PinnedMessagesModal';
 import { GifPickerModal } from './GifPickerModal';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
+import { ChannelMediaModal } from './ChannelMediaModal';
+import { LeaderboardModal } from './LeaderboardModal';
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -26,6 +28,8 @@ import {
   Clock,
   Mic,
   Sparkles,
+  Image as ImageIcon,
+  Trophy,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -133,6 +137,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isGifModalOpen, setIsGifModalOpen] = useState(false);
+  const [isMediaModalOpen, setIsMediaModalOpen] = useState(false);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
 
   // Voice note recording states
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
@@ -481,6 +487,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           >
             <Bell className="w-4 h-4" />
           </button>
+          <button
+            onClick={() => setIsMediaModalOpen(true)}
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-pink-400"
+            title="Kanal Medya & Dosya Galerisi"
+          >
+            <ImageIcon className="w-4 h-4" />
+          </button>
+          {activeServer && (
+            <button
+              onClick={() => setIsLeaderboardOpen(true)}
+              className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-amber-400"
+              title="Sunucu Liderlik Tablosu (XP & Seviye)"
+            >
+              <Trophy className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={() => setIsPinModalOpen(true)}
             className="relative w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
@@ -989,6 +1011,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             />
           </div>
         </div>
+      )}
+
+      {/* Channel Media Gallery Modal */}
+      {isMediaModalOpen && activeChannel && (
+        <ChannelMediaModal
+          channelName={activeChannel.name}
+          messages={messages}
+          onClose={() => setIsMediaModalOpen(false)}
+        />
+      )}
+
+      {/* Server Leaderboard Modal */}
+      {isLeaderboardOpen && activeServer && (
+        <LeaderboardModal
+          serverId={activeServer.id}
+          serverName={activeServer.name}
+          onClose={() => setIsLeaderboardOpen(false)}
+        />
       )}
     </main>
   );

@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord } from '../types';
+import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
+import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission } from '../utils/tsSoundEffects';
 
 export interface RadioBotState {
   isPlaying: boolean;
@@ -103,6 +104,10 @@ interface SocketContextType {
     defaultNotification?: 'all' | 'mentions';
     autoModEnabled?: boolean;
     vanityCode?: string;
+    welcomeChannelId?: string | null;
+    welcomeMessage?: string;
+    welcomeEnabled?: boolean;
+    autoRoleId?: string | null;
   }) => void;
   restoreServerBackup: (serverId: string, backupData: any) => void;
   createServerRole: (data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => void;
@@ -220,6 +225,38 @@ interface SocketContextType {
   isPrioritySpeakerActive: boolean;
   prioritySpeakerUsername: string | null;
   togglePrioritySpeaker: () => void;
+
+  // 3D Spatial Audio & Panning
+  userPans: Record<string, number>;
+  setUserPan: (userId: string, pan: number) => void;
+
+  // Watch Together
+  watchTogetherState: WatchTogetherState | null;
+  startWatchTogether: (channelId: string, videoId: string, title: string) => void;
+  sendWatchTogetherAction: (channelId: string, action: 'play' | 'pause' | 'seek', currentTime: number) => void;
+  stopWatchTogether: (channelId: string) => void;
+
+  // Mini Games
+  miniGameState: MiniGameState | null;
+  startMiniGame: (channelId: string, game: 'xox' | 'typeracer') => void;
+  joinMiniGame: (channelId: string) => void;
+  sendMiniGameMove: (channelId: string, index: number) => void;
+  resetMiniGame: (channelId: string) => void;
+  stopMiniGame: (channelId: string) => void;
+
+  // TeamSpeak Sound Events & Push Notifications
+  tsSoundEffectsEnabled: boolean;
+  setTsSoundEffectsEnabled: (val: boolean) => void;
+  desktopNotificationsEnabled: boolean;
+  setDesktopNotificationsEnabled: (val: boolean) => void;
+
+  // TeamSpeak Whisper
+  activeWhisperFrom: string | null;
+  sendWhisper: (targetUserId: string, active: boolean) => void;
+
+  // Server Leaderboard
+  leaderboardData: Record<string, MemberLevelData[]>;
+  fetchLeaderboard: (serverId: string) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -278,6 +315,10 @@ const applyAudioBitrate = async (pc: RTCPeerConnection, bitrateKbps: number) => 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const currentUserRef = useRef<User | null>(null);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServerId, setActiveServerId] = useState<string>('');
@@ -644,6 +685,90 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     };
   }, [directCall?.status]);
+
+  // 1. Spatial Audio (User Panning)
+  const [userPans, setUserPans] = useState<Record<string, number>>({});
+  const setUserPan = useCallback((userId: string, pan: number) => {
+    setUserPans((prev) => ({ ...prev, [userId]: pan }));
+  }, []);
+
+  // 2. Watch Together State
+  const [watchTogetherState, setWatchTogetherState] = useState<WatchTogetherState | null>(null);
+  const startWatchTogether = useCallback((channelId: string, videoId: string, title: string) => {
+    socket?.emit('watch_together_start', { channelId, videoId, title });
+  }, [socket]);
+  const sendWatchTogetherAction = useCallback((channelId: string, action: 'play' | 'pause' | 'seek', currentTime: number) => {
+    socket?.emit('watch_together_action', { channelId, action, currentTime });
+  }, [socket]);
+  const stopWatchTogether = useCallback((channelId: string) => {
+    socket?.emit('watch_together_stop', { channelId });
+  }, [socket]);
+
+  // 3. Mini Games State
+  const [miniGameState, setMiniGameState] = useState<MiniGameState | null>(null);
+  const startMiniGame = useCallback((channelId: string, game: 'xox' | 'typeracer') => {
+    socket?.emit('minigame_start', { channelId, game });
+  }, [socket]);
+  const joinMiniGame = useCallback((channelId: string) => {
+    socket?.emit('minigame_join', { channelId });
+  }, [socket]);
+  const sendMiniGameMove = useCallback((channelId: string, index: number) => {
+    socket?.emit('minigame_move', { channelId, index });
+  }, [socket]);
+  const resetMiniGame = useCallback((channelId: string) => {
+    socket?.emit('minigame_reset', { channelId });
+  }, [socket]);
+  const stopMiniGame = useCallback((channelId: string) => {
+    socket?.emit('minigame_stop', { channelId });
+  }, [socket]);
+
+  // 4. TeamSpeak Sound Events & Push Notifications Settings (Persisted in localStorage)
+  const [tsSoundEffectsEnabled, setTsSoundEffectsEnabledState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('dc_ts_sound_effects');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const setTsSoundEffectsEnabled = useCallback((val: boolean) => {
+    setTsSoundEffectsEnabledState(val);
+    localStorage.setItem('dc_ts_sound_effects', String(val));
+  }, []);
+
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabledState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('dc_desktop_notifications');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const setDesktopNotificationsEnabled = useCallback(async (val: boolean) => {
+    if (val) {
+      const granted = await requestDesktopNotificationPermission();
+      if (!granted) {
+        alert('Tarayıcı bildirim izni verilmedi. Lütfen tarayıcı ayarlarından bildirimlere izin verin.');
+        return;
+      }
+    }
+    setDesktopNotificationsEnabledState(val);
+    localStorage.setItem('dc_desktop_notifications', String(val));
+  }, []);
+
+  const tsSoundEffectsRef = useRef<boolean>(tsSoundEffectsEnabled);
+  useEffect(() => {
+    tsSoundEffectsRef.current = tsSoundEffectsEnabled;
+  }, [tsSoundEffectsEnabled]);
+
+  const desktopNotificationsRef = useRef<boolean>(desktopNotificationsEnabled);
+  useEffect(() => {
+    desktopNotificationsRef.current = desktopNotificationsEnabled;
+  }, [desktopNotificationsEnabled]);
+
+  // 5. TeamSpeak Whisper State
+  const [activeWhisperFrom, setActiveWhisperFrom] = useState<string | null>(null);
+  const sendWhisper = useCallback((targetUserId: string, active: boolean) => {
+    socket?.emit('whisper_send', { targetUserId, active });
+  }, [socket]);
+
+  // 6. Server Leaderboard
+  const [leaderboardData, setLeaderboardData] = useState<Record<string, MemberLevelData[]>>({});
+  const fetchLeaderboard = useCallback((serverId: string) => {
+    socket?.emit('get_server_leaderboard', { serverId });
+  }, [socket]);
 
   // Derived state (supports virtual Direct Messages server)
   const isDMMode = activeServerId === 'direct-messages';
@@ -1033,6 +1158,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ...prev,
         [msg.channelId]: [...(prev[msg.channelId] || []), msg]
       }));
+
+      // Desktop Push Notification
+      if (desktopNotificationsRef.current && currentUserRef.current && msg.author?.id !== currentUserRef.current.id) {
+        const isMention = msg.content && msg.content.includes('@' + currentUserRef.current.username);
+        const isDM = msg.channelId.startsWith('dm-');
+        if (isMention || isDM) {
+          sendDesktopNotification(
+            isDM ? `Direkt Mesaj (@${msg.author.username})` : `@${msg.author.username} senden bahsetti`,
+            msg.content || 'Yeni bir ek veya mesaj paylaşıldı'
+          );
+        }
+      }
     });
 
     newSocket.on('message_reaction_updated', ({ channelId, messageId, reactions }: { channelId: string; messageId: string; reactions: Record<string, string[]> }) => {
@@ -1291,6 +1428,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('user_joined_voice', async ({ user }: { user: User }) => {
+      if (tsSoundEffectsRef.current) {
+        playTeamSpeakChime('join');
+      }
       const localStream = await getLocalAudioStream();
       if (!localStream) return;
       const pc = createPeerConnection(user.id, localStream, newSocket);
@@ -1298,6 +1438,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('user_left_voice', ({ userId }: { userId: string }) => {
+      if (tsSoundEffectsRef.current) {
+        playTeamSpeakChime('leave');
+      }
       if (peerConnectionsRef.current.has(userId)) {
         peerConnectionsRef.current.get(userId)?.close();
         peerConnectionsRef.current.delete(userId);
@@ -1421,6 +1564,52 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('friend_request_accepted', () => {
       newSocket.emit('get_friends_data');
+    });
+
+    // 1. Watch Together
+    newSocket.on('watch_together_update', (state: WatchTogetherState) => {
+      setWatchTogetherState(state);
+    });
+    newSocket.on('watch_together_sync', ({ isPlaying, currentTime }: any) => {
+      setWatchTogetherState(prev => prev ? { ...prev, isPlaying, currentTime } : null);
+    });
+    newSocket.on('watch_together_ended', () => {
+      setWatchTogetherState(null);
+    });
+
+    // 2. Mini Games
+    newSocket.on('minigame_update', (state: MiniGameState) => {
+      setMiniGameState(state);
+    });
+    newSocket.on('minigame_ended', () => {
+      setMiniGameState(null);
+    });
+
+    // 3. TeamSpeak Whisper
+    newSocket.on('whisper_receive', ({ senderUsername, active }: { senderUsername: string; active: boolean }) => {
+      if (active) {
+        setActiveWhisperFrom(senderUsername);
+        if (tsSoundEffectsRef.current) {
+          playTeamSpeakChime('whisper');
+        }
+      } else {
+        setActiveWhisperFrom(null);
+      }
+    });
+
+    // 4. Server Leaderboard
+    newSocket.on('server_leaderboard_data', ({ serverId, list }: { serverId: string; list: MemberLevelData[] }) => {
+      setLeaderboardData(prev => ({ ...prev, [serverId]: list }));
+    });
+
+    // 5. Member Level Up
+    newSocket.on('member_level_up', ({ username, level }: { username: string; level: number }) => {
+      if (currentUserRef.current?.username === username) {
+        if (tsSoundEffectsRef.current) {
+          playTeamSpeakChime('levelup');
+        }
+        sendDesktopNotification('Tebrikler! 🎉', `Seviye ${level}'e yükseldiniz!`);
+      }
     });
 
     return () => {
@@ -2010,6 +2199,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
 
+    if (tsSoundEffectsRef.current) {
+      playTeamSpeakChime(nextMuted ? 'mute' : 'unmute');
+    }
+
     if (localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach(track => {
         track.enabled = !nextMuted;
@@ -2022,6 +2215,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const toggleDeafen = () => {
     const nextDeafened = !isDeafened;
     setIsDeafened(nextDeafened);
+
+    if (tsSoundEffectsRef.current) {
+      playTeamSpeakChime(nextDeafened ? 'mute' : 'unmute');
+    }
 
     audioElementsRef.current.forEach(audio => {
       audio.muted = nextDeafened;
@@ -2113,6 +2310,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     defaultNotification?: 'all' | 'mentions';
     autoModEnabled?: boolean;
     vanityCode?: string;
+    welcomeChannelId?: string | null;
+    welcomeMessage?: string;
+    welcomeEnabled?: boolean;
+    autoRoleId?: string | null;
   }) => {
     socket?.emit('update_server_settings', data);
     if (data.bitrateKbps) {
@@ -2350,6 +2551,38 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isPrioritySpeakerActive,
         prioritySpeakerUsername,
         togglePrioritySpeaker,
+
+        // 3D Spatial Audio & Panning
+        userPans,
+        setUserPan,
+
+        // Watch Together
+        watchTogetherState,
+        startWatchTogether,
+        sendWatchTogetherAction,
+        stopWatchTogether,
+
+        // Mini Games
+        miniGameState,
+        startMiniGame,
+        joinMiniGame,
+        sendMiniGameMove,
+        resetMiniGame,
+        stopMiniGame,
+
+        // TeamSpeak Sound Events & Push Notifications
+        tsSoundEffectsEnabled,
+        setTsSoundEffectsEnabled,
+        desktopNotificationsEnabled,
+        setDesktopNotificationsEnabled,
+
+        // TeamSpeak Whisper
+        activeWhisperFrom,
+        sendWhisper,
+
+        // Server Leaderboard
+        leaderboardData,
+        fetchLeaderboard,
       }}
     >
       {children}

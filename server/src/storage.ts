@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord } from './types.js';
+import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData } from './types.js';
 
 // Resolve persistent data directory
 function getPersistentDir(): string {
@@ -154,4 +154,13 @@ export function saveConnectionLogs(logs: UserConnectionRecord[]) {
   // Keep last 300 logs max
   const trimmed = logs.slice(0, 300);
   safeWriteJson('connection_logs.json', trimmed);
+}
+
+// 9. SERVER LEVELS & XP (Kullanıcı XP ve Seviyeleri)
+export function loadServerLevels(): Record<string, Record<string, MemberLevelData>> {
+  return safeReadJson<Record<string, Record<string, MemberLevelData>>>('server_levels.json', {});
+}
+
+export function saveServerLevels(levels: Record<string, Record<string, MemberLevelData>>) {
+  safeWriteJson('server_levels.json', levels);
 }
