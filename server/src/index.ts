@@ -3204,9 +3204,38 @@ io.on('connection', (socket: Socket) => {
   // Admin: Store Settings & Pricing Management (Mağaza Ayarları & Fiyatlandırma)
   socket.on('admin_update_store_settings', (newSettings: StoreSettings) => {
     const requester = activeUsers.get(socket.id);
-    if (!requester || requester.role !== 'admin') return;
+    if (!requester || requester.role !== 'admin') {
+      socket.emit('admin_action_error', 'Mağaza ayarlarını güncellemek için yönetici yetkisi gereklidir.');
+      return;
+    }
 
-    Object.assign(storeSettings, newSettings);
+    if (!newSettings || typeof newSettings !== 'object') return;
+
+    storeSettings.isOpen = Boolean(newSettings.isOpen);
+    storeSettings.closedReason = typeof newSettings.closedReason === 'string' ? newSettings.closedReason.trim() : '';
+    storeSettings.currencySymbol = newSettings.currencySymbol || '₺';
+    storeSettings.customSlotUnitPrice = Math.max(1, Number(newSettings.customSlotUnitPrice) || 4);
+    storeSettings.discountPercentage = Math.min(90, Math.max(0, Number(newSettings.discountPercentage) || 0));
+    storeSettings.campaignBanner = typeof newSettings.campaignBanner === 'string' ? newSettings.campaignBanner.trim() : '';
+
+    if (newSettings.packages) {
+      storeSettings.packages = {
+        starter: { ...storeSettings.packages.starter, ...newSettings.packages.starter },
+        pro: { ...storeSettings.packages.pro, ...newSettings.packages.pro },
+        enterprise: { ...storeSettings.packages.enterprise, ...newSettings.packages.enterprise },
+      };
+    }
+
+    if (Array.isArray(newSettings.paymentMethods)) {
+      storeSettings.paymentMethods = newSettings.paymentMethods.map((m) => ({
+        id: m.id,
+        name: (m.name || '').trim() || m.id,
+        enabled: Boolean(m.enabled),
+        icon: m.icon || 'Wallet',
+        description: (m.description || '').trim(),
+      }));
+    }
+
     saveStoreSettings(storeSettings);
     addAuditLog(
       'MAGAZA_AYARLARI_GUNCEL',
@@ -3215,7 +3244,8 @@ io.on('connection', (socket: Socket) => {
     );
 
     io.emit('store_settings_updated', storeSettings);
-    socket.emit('admin_action_success', 'Mağaza ayarları ve fiyatlandırma başarıyla kaydedildi.');
+    io.emit('store_settings_response', storeSettings);
+    socket.emit('admin_action_success', 'Mağaza ayarları ve ödeme yöntemleri başarıyla kaydedildi.');
   });
 
   // ================= STORE & USER LICENSE EVENTS =================
@@ -3276,10 +3306,19 @@ io.on('connection', (socket: Socket) => {
     // Dynamic Price calculation based on storeSettings
     let basePrice = 99;
     if (selectedTier === 'Starter') {
+      if (storeSettings.packages.starter.enabled === false) {
+        return socket.emit('store_purchase_response', { success: false, error: 'Starter paketi şu anda satışa kapalıdır.' });
+      }
       basePrice = storeSettings.packages.starter.price;
     } else if (selectedTier === 'Pro') {
+      if (storeSettings.packages.pro.enabled === false) {
+        return socket.emit('store_purchase_response', { success: false, error: 'Pro paketi şu anda satışa kapalıdır.' });
+      }
       basePrice = storeSettings.packages.pro.price;
     } else if (selectedTier === 'Enterprise') {
+      if (storeSettings.packages.enterprise.enabled === false) {
+        return socket.emit('store_purchase_response', { success: false, error: 'Enterprise paketi şu anda satışa kapalıdır.' });
+      }
       basePrice = storeSettings.packages.enterprise.price;
     } else {
       basePrice = slots * (storeSettings.customSlotUnitPrice || 4);

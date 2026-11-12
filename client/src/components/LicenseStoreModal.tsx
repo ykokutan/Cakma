@@ -186,9 +186,37 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
   };
 
   const isStoreOpen = storeSettings?.isOpen ?? true;
-  const availablePaymentMethods = storeSettings?.paymentMethods?.filter((m) => m.enabled) || [
-    { id: 'wallet', name: 'Cüzdan Bakiyesi', enabled: true, icon: 'Wallet', description: 'Hesap bakiyesinden anlık düşüm.' }
-  ];
+  const availablePaymentMethods = storeSettings?.paymentMethods
+    ? storeSettings.paymentMethods.filter((m) => m.enabled)
+    : [{ id: 'wallet', name: 'Cüzdan Bakiyesi', enabled: true, icon: 'Wallet', description: 'Hesap bakiyesinden anında onay.' }];
+
+  const isStarterEnabled = storeSettings?.packages?.starter?.enabled ?? true;
+  const isProEnabled = storeSettings?.packages?.pro?.enabled ?? true;
+  const isEnterpriseEnabled = storeSettings?.packages?.enterprise?.enabled ?? true;
+
+  useEffect(() => {
+    if (availablePaymentMethods.length > 0) {
+      if (!availablePaymentMethods.some((m) => m.id === selectedPaymentMethod)) {
+        setSelectedPaymentMethod(availablePaymentMethods[0].id as any);
+      }
+      if (!availablePaymentMethods.some((m) => m.id === extendPaymentMethod)) {
+        setExtendPaymentMethod(availablePaymentMethods[0].id as any);
+      }
+    }
+  }, [storeSettings]);
+
+  useEffect(() => {
+    if (selectedTier === 'Starter' && !isStarterEnabled) {
+      if (isProEnabled) setSelectedTier('Pro');
+      else if (isEnterpriseEnabled) setSelectedTier('Enterprise');
+    } else if (selectedTier === 'Pro' && !isProEnabled) {
+      if (isStarterEnabled) setSelectedTier('Starter');
+      else if (isEnterpriseEnabled) setSelectedTier('Enterprise');
+    } else if (selectedTier === 'Enterprise' && !isEnterpriseEnabled) {
+      if (isProEnabled) setSelectedTier('Pro');
+      else if (isStarterEnabled) setSelectedTier('Starter');
+    }
+  }, [isStarterEnabled, isProEnabled, isEnterpriseEnabled, selectedTier]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-3xl flex items-center justify-center p-4">
@@ -339,13 +367,20 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Starter */}
                     <div
-                      onClick={() => handleSelectPackage('Starter', storeSettings?.packages?.starter?.slots || 16)}
-                      className={`p-5 rounded-3xl border transition cursor-pointer flex flex-col justify-between ${
-                        selectedTier === 'Starter'
-                          ? 'border-emerald-400 bg-emerald-500/15 shadow-xl shadow-emerald-500/15 scale-[1.02]'
-                          : 'border-white/10 bg-white/[0.03] hover:border-white/20'
+                      onClick={() => isStarterEnabled && handleSelectPackage('Starter', storeSettings?.packages?.starter?.slots || 16)}
+                      className={`p-5 rounded-3xl border transition flex flex-col justify-between relative ${
+                        !isStarterEnabled
+                          ? 'border-white/5 bg-black/30 opacity-50 cursor-not-allowed'
+                          : selectedTier === 'Starter'
+                          ? 'border-emerald-400 bg-emerald-500/15 shadow-xl shadow-emerald-500/15 scale-[1.02] cursor-pointer'
+                          : 'border-white/10 bg-white/[0.03] hover:border-white/20 cursor-pointer'
                       }`}
                     >
+                      {!isStarterEnabled && (
+                        <div className="absolute -top-3 right-5 px-3 py-0.5 rounded-full bg-rose-500 text-white font-extrabold text-[10px] shadow-md">
+                          SATIŞA KAPALI
+                        </div>
+                      )}
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold font-mono">
@@ -389,15 +424,19 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
 
                     {/* Klan Pro */}
                     <div
-                      onClick={() => handleSelectPackage('Pro', storeSettings?.packages?.pro?.slots || 64)}
-                      className={`p-5 rounded-3xl border transition cursor-pointer flex flex-col justify-between relative ${
-                        selectedTier === 'Pro'
-                          ? 'border-emerald-400 bg-emerald-500/20 shadow-xl shadow-emerald-500/20 scale-[1.02]'
-                          : 'border-white/10 bg-white/[0.03] hover:border-white/20'
+                      onClick={() => isProEnabled && handleSelectPackage('Pro', storeSettings?.packages?.pro?.slots || 64)}
+                      className={`p-5 rounded-3xl border transition flex flex-col justify-between relative ${
+                        !isProEnabled
+                          ? 'border-white/5 bg-black/30 opacity-50 cursor-not-allowed'
+                          : selectedTier === 'Pro'
+                          ? 'border-emerald-400 bg-emerald-500/20 shadow-xl shadow-emerald-500/20 scale-[1.02] cursor-pointer'
+                          : 'border-white/10 bg-white/[0.03] hover:border-white/20 cursor-pointer'
                       }`}
                     >
-                      <div className="absolute -top-3 right-5 px-3 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-extrabold text-[10px] shadow-md">
-                        EN ÇOK TERCİH EDİLEN
+                      <div className={`absolute -top-3 right-5 px-3 py-0.5 rounded-full font-extrabold text-[10px] shadow-md ${
+                        !isProEnabled ? 'bg-rose-500 text-white' : 'bg-gradient-to-r from-amber-500 to-orange-500 text-black'
+                      }`}>
+                        {!isProEnabled ? 'SATIŞA KAPALI' : 'EN ÇOK TERCİH EDİLEN'}
                       </div>
 
                       <div className="space-y-3">
@@ -447,13 +486,20 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
 
                     {/* Enterprise */}
                     <div
-                      onClick={() => handleSelectPackage('Enterprise', storeSettings?.packages?.enterprise?.slots || 256)}
-                      className={`p-5 rounded-3xl border transition cursor-pointer flex flex-col justify-between ${
-                        selectedTier === 'Enterprise'
-                          ? 'border-emerald-400 bg-emerald-500/15 shadow-xl shadow-emerald-500/15 scale-[1.02]'
-                          : 'border-white/10 bg-white/[0.03] hover:border-white/20'
+                      onClick={() => isEnterpriseEnabled && handleSelectPackage('Enterprise', storeSettings?.packages?.enterprise?.slots || 256)}
+                      className={`p-5 rounded-3xl border transition flex flex-col justify-between relative ${
+                        !isEnterpriseEnabled
+                          ? 'border-white/5 bg-black/30 opacity-50 cursor-not-allowed'
+                          : selectedTier === 'Enterprise'
+                          ? 'border-emerald-400 bg-emerald-500/15 shadow-xl shadow-emerald-500/15 scale-[1.02] cursor-pointer'
+                          : 'border-white/10 bg-white/[0.03] hover:border-white/20 cursor-pointer'
                       }`}
                     >
+                      {!isEnterpriseEnabled && (
+                        <div className="absolute -top-3 right-5 px-3 py-0.5 rounded-full bg-rose-500 text-white font-extrabold text-[10px] shadow-md">
+                          SATIŞA KAPALI
+                        </div>
+                      )}
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center text-sm font-bold font-mono">
@@ -559,32 +605,49 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
                       <label className="block text-[11px] font-semibold text-white/40 uppercase">
                         Ödeme Yöntemi Seçin:
                       </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        {availablePaymentMethods.map((method) => {
-                          const isSelected = selectedPaymentMethod === method.id;
-                          return (
-                            <button
-                              key={method.id}
-                              type="button"
-                              onClick={() => setSelectedPaymentMethod(method.id as any)}
-                              className={`p-3 rounded-2xl border text-left transition flex flex-col justify-between gap-1.5 ${
-                                isSelected
-                                  ? 'border-emerald-400 bg-emerald-500/20 text-white shadow-md shadow-emerald-500/10'
-                                  : 'border-white/10 bg-white/[0.02] text-white/70 hover:bg-white/5'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between w-full">
-                                {method.id === 'wallet' && <Wallet className="w-4 h-4 text-blue-400" />}
-                                {method.id === 'credit_card' && <CreditCard className="w-4 h-4 text-emerald-400" />}
-                                {method.id === 'bank_transfer' && <Building2 className="w-4 h-4 text-purple-400" />}
-                                {method.id === 'crypto' && <Coins className="w-4 h-4 text-amber-400" />}
-                                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                      {availablePaymentMethods.length === 0 ? (
+                        <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300">
+                          Şu anda aktif bir ödeme yöntemi bulunmuyor. Lütfen yönetici ile iletişime geçin.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            {availablePaymentMethods.map((method) => {
+                              const isSelected = selectedPaymentMethod === method.id;
+                              return (
+                                <button
+                                  key={method.id}
+                                  type="button"
+                                  onClick={() => setSelectedPaymentMethod(method.id as any)}
+                                  className={`p-3 rounded-2xl border text-left transition flex flex-col justify-between gap-1.5 ${
+                                    isSelected
+                                      ? 'border-emerald-400 bg-emerald-500/20 text-white shadow-md shadow-emerald-500/10'
+                                      : 'border-white/10 bg-white/[0.02] text-white/70 hover:bg-white/5'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between w-full">
+                                    {method.id === 'wallet' && <Wallet className="w-4 h-4 text-blue-400" />}
+                                    {method.id === 'credit_card' && <CreditCard className="w-4 h-4 text-emerald-400" />}
+                                    {method.id === 'bank_transfer' && <Building2 className="w-4 h-4 text-purple-400" />}
+                                    {method.id === 'crypto' && <Coins className="w-4 h-4 text-amber-400" />}
+                                    {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                                  </div>
+                                  <span className="text-xs font-bold block">{method.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {(() => {
+                            const activeM = availablePaymentMethods.find((m) => m.id === selectedPaymentMethod);
+                            if (!activeM?.description) return null;
+                            return (
+                              <div className="text-[11px] text-white/60 bg-white/[0.03] border border-white/10 rounded-xl px-3 py-2">
+                                {activeM.description}
                               </div>
-                              <span className="text-xs font-bold block">{method.name}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                            );
+                          })()}
+                        </>
+                      )}
 
                       {/* Payment Method Details Preview */}
                       {selectedPaymentMethod === 'credit_card' && (

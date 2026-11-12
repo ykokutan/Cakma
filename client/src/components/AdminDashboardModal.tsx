@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
 import {
   Shield,
@@ -100,10 +100,46 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [discountPercentage, setDiscountPercentage] = useState<number>(0);
   const [campaignBanner, setCampaignBanner] = useState<string>('');
   const [payWallet, setPayWallet] = useState<boolean>(true);
+  const [payWalletDesc, setPayWalletDesc] = useState<string>('Hesabınızdaki bakiye ile anında onay.');
   const [payCard, setPayCard] = useState<boolean>(true);
+  const [payCardDesc, setPayCardDesc] = useState<string>('3D Secure korumalı güvenli kart ödemesi.');
   const [payBank, setPayBank] = useState<boolean>(true);
+  const [payBankDesc, setPayBankDesc] = useState<string>('7/24 Anında banka transferi ile manuel onay.');
   const [payCrypto, setPayCrypto] = useState<boolean>(false);
+  const [payCryptoDesc, setPayCryptoDesc] = useState<string>('TRC20 / ERC20 ağı ile anonim hızlı ödeme.');
   const [storeSavedNotice, setStoreSavedNotice] = useState<boolean>(false);
+  const [isStoreDirty, setIsStoreDirty] = useState<boolean>(false);
+  const storeFormInitializedRef = useRef<boolean>(false);
+
+  const syncStoreFormFromServer = (s: NonNullable<typeof storeSettings>) => {
+    setStoreIsOpen(s.isOpen);
+    setStoreClosedReason(s.closedReason || '');
+    setStarterPrice(s.packages?.starter?.price ?? 99);
+    setStarterSlots(s.packages?.starter?.slots ?? 16);
+    setStarterEnabled(s.packages?.starter?.enabled ?? true);
+    setProPrice(s.packages?.pro?.price ?? 249);
+    setProSlots(s.packages?.pro?.slots ?? 64);
+    setProEnabled(s.packages?.pro?.enabled ?? true);
+    setEnterprisePrice(s.packages?.enterprise?.price ?? 799);
+    setEnterpriseSlots(s.packages?.enterprise?.slots ?? 256);
+    setEnterpriseEnabled(s.packages?.enterprise?.enabled ?? true);
+    setCustomSlotUnitPrice(s.customSlotUnitPrice ?? 4);
+    setDiscountPercentage(s.discountPercentage ?? 0);
+    setCampaignBanner(s.campaignBanner ?? '');
+
+    const mWallet = s.paymentMethods?.find(m => m.id === 'wallet');
+    const mCard = s.paymentMethods?.find(m => m.id === 'credit_card');
+    const mBank = s.paymentMethods?.find(m => m.id === 'bank_transfer');
+    const mCrypto = s.paymentMethods?.find(m => m.id === 'crypto');
+    setPayWallet(mWallet ? mWallet.enabled : true);
+    setPayWalletDesc(mWallet?.description || 'Hesabınızdaki bakiye ile anında onay.');
+    setPayCard(mCard ? mCard.enabled : true);
+    setPayCardDesc(mCard?.description || '3D Secure korumalı güvenli kart ödemesi.');
+    setPayBank(mBank ? mBank.enabled : true);
+    setPayBankDesc(mBank?.description || '7/24 Anında banka transferi ile manuel onay.');
+    setPayCrypto(mCrypto ? mCrypto.enabled : false);
+    setPayCryptoDesc(mCrypto?.description || 'TRC20 / ERC20 ağı ile anonim hızlı ödeme.');
+  };
 
   useEffect(() => {
     fetchAdminData();
@@ -115,32 +151,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
 
   useEffect(() => {
     const s = adminData?.storeSettings || storeSettings;
-    if (s) {
-      setStoreIsOpen(s.isOpen);
-      setStoreClosedReason(s.closedReason || '');
-      setStarterPrice(s.packages?.starter?.price ?? 99);
-      setStarterSlots(s.packages?.starter?.slots ?? 16);
-      setStarterEnabled(s.packages?.starter?.enabled ?? true);
-      setProPrice(s.packages?.pro?.price ?? 249);
-      setProSlots(s.packages?.pro?.slots ?? 64);
-      setProEnabled(s.packages?.pro?.enabled ?? true);
-      setEnterprisePrice(s.packages?.enterprise?.price ?? 799);
-      setEnterpriseSlots(s.packages?.enterprise?.slots ?? 256);
-      setEnterpriseEnabled(s.packages?.enterprise?.enabled ?? true);
-      setCustomSlotUnitPrice(s.customSlotUnitPrice ?? 4);
-      setDiscountPercentage(s.discountPercentage ?? 0);
-      setCampaignBanner(s.campaignBanner ?? '');
-
-      const mWallet = s.paymentMethods?.find(m => m.id === 'wallet');
-      const mCard = s.paymentMethods?.find(m => m.id === 'credit_card');
-      const mBank = s.paymentMethods?.find(m => m.id === 'bank_transfer');
-      const mCrypto = s.paymentMethods?.find(m => m.id === 'crypto');
-      setPayWallet(mWallet ? mWallet.enabled : true);
-      setPayCard(mCard ? mCard.enabled : true);
-      setPayBank(mBank ? mBank.enabled : true);
-      setPayCrypto(mCrypto ? mCrypto.enabled : false);
+    if (s && (!storeFormInitializedRef.current || !isStoreDirty)) {
+      syncStoreFormFromServer(s);
+      storeFormInitializedRef.current = true;
     }
-  }, [adminData?.storeSettings, storeSettings]);
+  }, [adminData?.storeSettings, storeSettings, isStoreDirty]);
 
   const stats = adminData?.stats;
 
@@ -223,12 +238,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
         }
       },
       paymentMethods: [
-        { id: 'wallet', name: 'Cüzdan Bakiyesi', enabled: payWallet, icon: 'Wallet', description: 'Hesabınızdaki bakiye ile anında onay.' },
-        { id: 'credit_card', name: 'Kredi / Banka Kartı', enabled: payCard, icon: 'CreditCard', description: '3D Secure korumalı güvenli kart ödemesi.' },
-        { id: 'bank_transfer', name: 'Havale / FAST / EFT', enabled: payBank, icon: 'Building2', description: '7/24 Anında banka transferi ile manuel onay.' },
-        { id: 'crypto', name: 'Kripto Para (USDT/BTC)', enabled: payCrypto, icon: 'Coins', description: 'TRC20 / ERC20 ağı ile anonim hızlı ödeme.' },
+        { id: 'wallet', name: 'Cüzdan Bakiyesi', enabled: payWallet, icon: 'Wallet', description: payWalletDesc.trim() || 'Hesabınızdaki bakiye ile anında onay.' },
+        { id: 'credit_card', name: 'Kredi / Banka Kartı', enabled: payCard, icon: 'CreditCard', description: payCardDesc.trim() || '3D Secure korumalı güvenli kart ödemesi.' },
+        { id: 'bank_transfer', name: 'Havale / FAST / EFT', enabled: payBank, icon: 'Building2', description: payBankDesc.trim() || '7/24 Anında banka transferi ile manuel onay.' },
+        { id: 'crypto', name: 'Kripto Para (USDT/BTC)', enabled: payCrypto, icon: 'Coins', description: payCryptoDesc.trim() || 'TRC20 / ERC20 ağı ile anonim hızlı ödeme.' },
       ]
     });
+    setIsStoreDirty(false);
     setStoreSavedNotice(true);
     setTimeout(() => setStoreSavedNotice(false), 3000);
   };
@@ -1240,15 +1256,32 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </p>
                 </div>
 
-                {storeSavedNotice && (
+                {storeSavedNotice ? (
                   <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-500/20">
                     <Check className="w-4 h-4 text-emerald-400" />
                     Ayarlar Başarıyla Kaydedildi!
                   </div>
-                )}
+                ) : isStoreDirty ? (
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-1 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] font-bold">
+                      Kaydedilmemiş Değişiklikler
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const s = adminData?.storeSettings || storeSettings;
+                        if (s) syncStoreFormFromServer(s);
+                        setIsStoreDirty(false);
+                      }}
+                      className="px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white/70 text-[11px] font-semibold transition"
+                    >
+                      Sıfırla
+                    </button>
+                  </div>
+                ) : null}
               </div>
 
-              <form onSubmit={handleSaveStoreSettings} className="space-y-6">
+              <form onSubmit={handleSaveStoreSettings} onChange={() => setIsStoreDirty(true)} className="space-y-6">
                 {/* 1. STORE OPEN/CLOSED MASTER SWITCH */}
                 <div className={`p-5 rounded-3xl border transition ${
                   storeIsOpen
@@ -1281,7 +1314,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
 
                     <button
                       type="button"
-                      onClick={() => setStoreIsOpen(!storeIsOpen)}
+                      onClick={() => {
+                        setStoreIsOpen(!storeIsOpen);
+                        setIsStoreDirty(true);
+                      }}
                       className={`px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm shrink-0 ${
                         storeIsOpen
                           ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/40'
@@ -1513,81 +1549,99 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Wallet */}
-                    <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center">
-                          <Wallet className="w-4 h-4" />
+                    {[
+                      {
+                        id: 'wallet',
+                        title: 'Cüzdan Bakiyesi',
+                        enabled: payWallet,
+                        setEnabled: setPayWallet,
+                        desc: payWalletDesc,
+                        setDesc: setPayWalletDesc,
+                        icon: <Wallet className="w-4 h-4" />,
+                        iconBg: 'bg-blue-500/20 text-blue-400',
+                      },
+                      {
+                        id: 'credit_card',
+                        title: 'Kredi / Banka Kartı',
+                        enabled: payCard,
+                        setEnabled: setPayCard,
+                        desc: payCardDesc,
+                        setDesc: setPayCardDesc,
+                        icon: <CreditCard className="w-4 h-4" />,
+                        iconBg: 'bg-emerald-500/20 text-emerald-400',
+                      },
+                      {
+                        id: 'bank_transfer',
+                        title: 'Havale / FAST / EFT',
+                        enabled: payBank,
+                        setEnabled: setPayBank,
+                        desc: payBankDesc,
+                        setDesc: setPayBankDesc,
+                        icon: <Building2 className="w-4 h-4" />,
+                        iconBg: 'bg-purple-500/20 text-purple-400',
+                      },
+                      {
+                        id: 'crypto',
+                        title: 'Kripto Para (USDT/BTC)',
+                        enabled: payCrypto,
+                        setEnabled: setPayCrypto,
+                        desc: payCryptoDesc,
+                        setDesc: setPayCryptoDesc,
+                        icon: <Coins className="w-4 h-4" />,
+                        iconBg: 'bg-amber-500/20 text-amber-400',
+                      },
+                    ].map((pm) => (
+                      <div
+                        key={pm.id}
+                        className={`p-3.5 rounded-2xl border transition space-y-2.5 ${
+                          pm.enabled
+                            ? 'bg-white/[0.04] border-emerald-500/30'
+                            : 'bg-black/25 border-white/5 opacity-75'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${pm.iconBg}`}>
+                              {pm.icon}
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-white">{pm.title}</div>
+                              <div className={`text-[10px] font-semibold ${pm.enabled ? 'text-emerald-400' : 'text-white/40'}`}>
+                                {pm.enabled ? 'Aktif (Kullanıcılar seçebilir)' : 'Devre Dışı'}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={pm.enabled}
+                            onClick={() => {
+                              pm.setEnabled(!pm.enabled);
+                              setIsStoreDirty(true);
+                            }}
+                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
+                              pm.enabled ? 'bg-emerald-500' : 'bg-white/15'
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition duration-200 ${
+                                pm.enabled ? 'translate-x-5' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
                         </div>
-                        <div>
-                          <div className="text-xs font-bold text-white">Cüzdan Bakiyesi</div>
-                          <div className="text-[10px] text-white/40">Hesap bakiyesinden anlık düşüm</div>
-                        </div>
+                        <input
+                          type="text"
+                          value={pm.desc}
+                          onChange={(e) => {
+                            pm.setDesc(e.target.value);
+                            setIsStoreDirty(true);
+                          }}
+                          placeholder="Kullanıcıya gösterilecek açıklama / IBAN / cüzdan..."
+                          className="w-full bg-black/30 border border-white/10 rounded-xl px-2.5 py-1.5 text-[11px] text-white/80 placeholder:text-white/25 outline-none focus:ring-1 focus:ring-cyan-500"
+                        />
                       </div>
-                      <input
-                        type="checkbox"
-                        checked={payWallet}
-                        onChange={(e) => setPayWallet(e.target.checked)}
-                        className="w-4 h-4 rounded bg-white/10 border-white/20 text-amber-500 focus:ring-0 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Credit Card */}
-                    <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                          <CreditCard className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white">Kredi / Banka Kartı</div>
-                          <div className="text-[10px] text-white/40">3D Secure simülasyonu ile anında onay</div>
-                        </div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={payCard}
-                        onChange={(e) => setPayCard(e.target.checked)}
-                        className="w-4 h-4 rounded bg-white/10 border-white/20 text-amber-500 focus:ring-0 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Bank Transfer */}
-                    <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
-                          <Building2 className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white">Havale / FAST / EFT</div>
-                          <div className="text-[10px] text-white/40">Banka hesap transferi</div>
-                        </div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={payBank}
-                        onChange={(e) => setPayBank(e.target.checked)}
-                        className="w-4 h-4 rounded bg-white/10 border-white/20 text-amber-500 focus:ring-0 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Crypto */}
-                    <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                          <Coins className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white">Kripto Para (USDT/BTC)</div>
-                          <div className="text-[10px] text-white/40">TRC20 / ERC20 cüzdan ödemesi</div>
-                        </div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={payCrypto}
-                        onChange={(e) => setPayCrypto(e.target.checked)}
-                        className="w-4 h-4 rounded bg-white/10 border-white/20 text-amber-500 focus:ring-0 cursor-pointer"
-                      />
-                    </div>
+                    ))}
                   </div>
                 </div>
 
