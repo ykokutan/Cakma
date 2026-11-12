@@ -7,7 +7,7 @@ import {
   CheckCircle,
   Sparkles,
   Globe,
-  Terminal,
+  Apple,
   ExternalLink,
 } from 'lucide-react';
 
@@ -20,7 +20,8 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
   const [canInstallPwa, setCanInstallPwa] = useState<boolean>(Boolean(window.__deferredInstallPrompt));
   const [isStandalone, setIsStandalone] = useState<boolean>(false);
   const [installSuccess, setInstallSuccess] = useState<boolean>(false);
-  const [downloadedFile, setDownloadedFile] = useState<string | null>(null);
+  const [hasMacDmg, setHasMacDmg] = useState<boolean>(false);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const standalone =
@@ -43,6 +44,16 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch('/downloads/Discord-TeamSpeak.dmg', { method: 'HEAD' })
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        setHasMacDmg(res.ok && !ct.includes('text/html'));
+      })
+      .catch(() => setHasMacDmg(false));
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const handleInstallPwa = async () => {
@@ -55,63 +66,6 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
     }
     window.__deferredInstallPrompt = undefined;
     setCanInstallPwa(false);
-  };
-
-  const triggerDownload = (filename: string, content: string, mime = 'text/plain;charset=utf-8') => {
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setDownloadedFile(filename);
-    setTimeout(() => setDownloadedFile(null), 4000);
-  };
-
-  const handleDownloadWindowsLauncher = () => {
-    const appUrl = window.location.origin;
-    const batContent = [
-      '@echo off',
-      'title Discord & TeamSpeak Hybrid App',
-      `set APP_URL=${appUrl}`,
-      'if exist "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe" (',
-      '  start "" "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe" --app=%APP_URL%',
-      '  exit /b',
-      ')',
-      'if exist "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe" (',
-      '  start "" "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe" --app=%APP_URL%',
-      '  exit /b',
-      ')',
-      'if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" (',
-      '  start "" "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" --app=%APP_URL%',
-      '  exit /b',
-      ')',
-      'start "" "%APP_URL%"',
-      '',
-    ].join('\r\n');
-    triggerDownload('Cakma-Uygulama.bat', batContent);
-  };
-
-  const handleDownloadUnixLauncher = () => {
-    const appUrl = window.location.origin;
-    const shContent = [
-      '#!/usr/bin/env bash',
-      `APP_URL="${appUrl}"`,
-      'if command -v google-chrome >/dev/null 2>&1; then',
-      '  google-chrome --app="$APP_URL" &',
-      'elif command -v chromium >/dev/null 2>&1; then',
-      '  chromium --app="$APP_URL" &',
-      'elif command -v open >/dev/null 2>&1; then',
-      '  open -na "Google Chrome" --args --app="$APP_URL" || open "$APP_URL"',
-      'else',
-      '  xdg-open "$APP_URL"',
-      'fi',
-      '',
-    ].join('\n');
-    triggerDownload('cakma-app.sh', shContent);
   };
 
   return (
@@ -132,7 +86,7 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
             <div>
               <h2 className="text-base font-bold text-white tracking-tight">Uygulamayı İndir & Kur</h2>
               <p className="text-[11px] text-white/50">
-                Web tarayıcısı olmadan bağımsız masaüstü / mobil uygulama deneyimi
+                Windows (.exe), macOS (.dmg / PWA) ve mobil kurulum merkezi
               </p>
             </div>
           </div>
@@ -147,16 +101,101 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
         </header>
 
         <div className="p-6 space-y-5 overflow-y-auto">
-          {downloadedFile && (
+          {downloadNotice && (
             <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center gap-2">
               <CheckCircle className="w-4 h-4 shrink-0" />
-              <span>
-                <b>{downloadedFile}</b> indirildi! Çift tıklayarak uygulamayı bağımsız pencerede başlatabilirsiniz.
-              </span>
+              <span>{downloadNotice}</span>
             </div>
           )}
 
-          {/* 1. Native PWA Install */}
+          {/* 1. Native Desktop Installers (.exe / .dmg) */}
+          <div className="space-y-3">
+            <div className="text-xs font-bold text-white/70 uppercase tracking-wider px-1">
+              Masaüstü Kurulum Dosyaları
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Windows .exe */}
+              <div className="p-4 rounded-2xl ios-glass-card border border-cyan-500/25 flex flex-col justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shrink-0">
+                    <Monitor className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>Windows</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono">
+                        .EXE
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-white/50 mt-0.5">
+                      Tauri x64 Kurulum Paketi (Windows 10 / 11)
+                    </div>
+                  </div>
+                </div>
+                <a
+                  href="/downloads/Discord-TeamSpeak-Setup.exe"
+                  download="Discord-TeamSpeak-Setup.exe"
+                  onClick={() => {
+                    setDownloadNotice('Discord-TeamSpeak-Setup.exe indiriliyor...');
+                    setTimeout(() => setDownloadNotice(null), 4000);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold flex items-center justify-center gap-1.5 transition shadow-lg shadow-cyan-500/20"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Windows İçin İndir (.exe)</span>
+                </a>
+              </div>
+
+              {/* macOS .dmg */}
+              <div className="p-4 rounded-2xl ios-glass-card border border-white/10 flex flex-col justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+                    <Apple className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>macOS</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono">
+                        .DMG
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-white/50 mt-0.5">
+                      {hasMacDmg
+                        ? 'Apple Silicon & Intel macOS Uygulama Paketi'
+                        : 'macOS derlemesi (.dmg) henüz sunucuya yüklenmedi. PWA ile kurabilirsiniz.'}
+                    </div>
+                  </div>
+                </div>
+                {hasMacDmg ? (
+                  <a
+                    href="/downloads/Discord-TeamSpeak.dmg"
+                    download="Discord-TeamSpeak.dmg"
+                    onClick={() => {
+                      setDownloadNotice('Discord-TeamSpeak.dmg indiriliyor...');
+                      setTimeout(() => setDownloadNotice(null), 4000);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition shadow-lg shadow-purple-500/20"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>macOS İçin İndir (.dmg)</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-2.5 rounded-xl bg-white/5 text-white/40 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-not-allowed"
+                    title="macOS .dmg paketi macOS bir cihazda derlenip /downloads/Discord-TeamSpeak.dmg yoluna eklendiğinde aktif olur."
+                  >
+                    <Apple className="w-3.5 h-3.5" />
+                    <span>.dmg Henüz Mevcut Değil</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Native PWA Install (Windows, macOS & Mobile) */}
           <div className="p-5 rounded-3xl bg-gradient-to-r from-blue-600/15 via-indigo-600/10 to-purple-600/15 border border-blue-500/30 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -173,7 +212,7 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                     )}
                   </div>
                   <p className="text-xs text-white/60 mt-1 leading-relaxed">
-                    Chrome, Edge veya mobil tarayıcınız üzerinden bilgisayarınıza / telefonunuza doğrudan masaüstü uygulaması olarak kurun.
+                    macOS, Windows, iOS veya Android cihazınıza tarayıcı üzerinden doğrudan bağımsız uygulama olarak kurun.
                   </p>
                 </div>
               </div>
@@ -204,8 +243,8 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                 <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-start gap-2">
                   <Monitor className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-bold text-white">Masaüstü (Chrome / Edge)</div>
-                    <div>Adres çubuğunun sağındaki <b>"Yükle"</b> ikonuna veya Menü &rarr; <b>Uygulamayı Yükle</b> seçeneğine tıklayın.</div>
+                    <div className="font-bold text-white">macOS / Windows (Chrome, Edge, Safari)</div>
+                    <div>Adres çubuğundaki <b>"Yükle"</b> ikonuna veya Safari'de <b>Dosya &rarr; Dock'a Ekle</b>'ye tıklayın.</div>
                   </div>
                 </div>
                 <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-start gap-2">
@@ -217,59 +256,6 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                 </div>
               </div>
             )}
-          </div>
-
-          {/* 2. Direct Desktop Launchers */}
-          <div className="space-y-3">
-            <div className="text-xs font-bold text-white/70 uppercase tracking-wider px-1">
-              Masaüstü Hızlı Başlatıcı İndir
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-4 rounded-2xl ios-glass-card border border-white/10 flex flex-col justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shrink-0">
-                    <Monitor className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-white">Windows Başlatıcı</div>
-                    <div className="text-[11px] text-white/50 mt-0.5">
-                      Adres çubuğu olmadan tam uygulama penceresinde başlatır (<code>.bat</code>).
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleDownloadWindowsLauncher}
-                  className="w-full py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500 text-cyan-300 hover:text-black border border-cyan-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Cakma-Uygulama.bat İndir</span>
-                </button>
-              </div>
-
-              <div className="p-4 rounded-2xl ios-glass-card border border-white/10 flex flex-col justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
-                    <Terminal className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-white">Linux / macOS Başlatıcı</div>
-                    <div className="text-[11px] text-white/50 mt-0.5">
-                      Chrome/Chromium uygulama penceresi olarak başlatır (<code>.sh</code>).
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleDownloadUnixLauncher}
-                  className="w-full py-2 rounded-xl bg-purple-500/20 hover:bg-purple-500 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-bold flex items-center justify-center gap-1.5 transition"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>cakma-app.sh İndir</span>
-                </button>
-              </div>
-            </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-between text-[11px] text-white/50">
