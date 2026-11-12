@@ -77,7 +77,7 @@ export interface DirectCallState {
   durationSeconds: number;
 }
 
-export type LicenseStatus = 'active' | 'revoked' | 'expired';
+export type LicenseStatus = 'active' | 'revoked' | 'expired' | 'pending_payment';
 
 export interface IssuedLicense {
   id: string;

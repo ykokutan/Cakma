@@ -157,10 +157,12 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
+  maxHttpBufferSize: 10 * 1024 * 1024, // 10MB packet limit to prevent memory DoS
   cors: {
     origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
@@ -745,12 +747,13 @@ app.get('/api/dedicated/verify-license', (req, res) => {
 
   for (const lic of issuedLicenses.values()) {
     if (lic.licenseKey === licenseKey || (licVerify.data && lic.licensee.toLowerCase() === licVerify.data.licensee.toLowerCase())) {
-      if (lic.status === 'revoked') {
+      if (lic.status !== 'active') {
         return res.status(403).json({
           valid: false,
-          revoked: true,
-          status: 'revoked',
-          error: 'Bu lisans sistem yöneticisi tarafından feshedilmiştir.'
+          status: lic.status,
+          error: lic.status === 'revoked'
+            ? 'Bu lisans sistem yöneticisi tarafından feshedilmiştir.'
+            : 'Bu lisans henüz aktif değildir (Ödeme veya yönetici onayı bekleniyor).'
         });
       }
       return res.json({ valid: true, status: lic.status, data: licVerify.data });
@@ -760,8 +763,21 @@ app.get('/api/dedicated/verify-license', (req, res) => {
   return res.json({ valid: true, status: 'active', data: licVerify.data });
 });
 
+// Master REST API Key Auth Middleware
+const MASTER_API_KEY = process.env.MASTER_API_KEY || 'cakma_master_sec_2026';
+
+function requireMasterAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers['authorization'];
+  const adminKey = req.headers['x-admin-key'];
+  const token = adminKey || (typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader);
+  if (token && token === MASTER_API_KEY) {
+    return next();
+  }
+  return res.status(401).json({ success: false, error: 'Yetkisiz erişim: Geçersiz master API anahtarı.' });
+}
+
 // Master REST API for syncing licenses & settings across all dedicated servers & clients
-app.get('/api/master/licenses', (req, res) => {
+app.get('/api/master/licenses', requireMasterAuth, (req, res) => {
   res.json({
     success: true,
     licenses: Array.from(issuedLicenses.values())
@@ -779,7 +795,7 @@ app.get('/api/master/user-licenses', (req, res) => {
   res.json({ success: true, licenses: userLics });
 });
 
-app.post('/api/master/license/generate', (req, res) => {
+app.post('/api/master/license/generate', requireMasterAuth, (req, res) => {
   const { licensee, maxSlots, expireDays, tier, assignedUsername } = req.body;
   const cleanLicensee = (licensee || 'Ozel Musteri').trim();
   const slots = Number(maxSlots) || 64;
@@ -806,15 +822,17 @@ app.post('/api/master/license/generate', (req, res) => {
   };
 
   issuedLicenses.set(newLicense.id, newLicense);
+  saveLicenses(issuedLicenses);
   io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   res.json({ success: true, license: newLicense });
 });
 
-app.post('/api/master/license/revoke', (req, res) => {
+app.post('/api/master/license/revoke', requireMasterAuth, (req, res) => {
   const { licenseId, reason } = req.body;
   const lic = issuedLicenses.get(licenseId);
   if (lic) {
     lic.status = 'revoked';
+    saveLicenses(issuedLicenses);
     io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
 
     for (const s of dedicatedServersRegistry.values()) {
@@ -843,7 +861,7 @@ app.post('/api/master/license/revoke', (req, res) => {
   res.status(404).json({ success: false, error: 'Lisans bulunamadı.' });
 });
 
-app.post('/api/master/license/extend', (req, res) => {
+app.post('/api/master/license/extend', requireMasterAuth, (req, res) => {
   const { licenseId, addDays } = req.body;
   const lic = issuedLicenses.get(licenseId);
   if (!lic) return res.status(404).json({ success: false, error: 'Lisans bulunamadı.' });
@@ -867,6 +885,7 @@ app.post('/api/master/license/extend', (req, res) => {
     lic.status = 'active';
   }
 
+  saveLicenses(issuedLicenses);
   io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   res.json({ success: true, license: lic });
 });
@@ -875,8 +894,9 @@ app.get('/api/master/store-settings', (req, res) => {
   res.json(storeSettings);
 });
 
-app.post('/api/master/store-settings', (req, res) => {
+app.post('/api/master/store-settings', requireMasterAuth, (req, res) => {
   Object.assign(storeSettings, req.body);
+  saveStoreSettings(storeSettings);
   io.emit('store_settings_updated', storeSettings);
   res.json({ success: true, storeSettings });
 });
@@ -1494,22 +1514,33 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_updated', user);
   });
 
-  // Profile Update (Status message, bio, banner, avatar)
+  // Profile Update (Status message, bio, banner, avatar - with XSS sanitization & size limits)
   socket.on('update_profile', ({ statusMessage, bio, bannerColor, avatar }: { statusMessage?: string; bio?: string; bannerColor?: string; avatar?: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
-    if (statusMessage !== undefined) user.statusMessage = statusMessage;
-    if (bio !== undefined) user.bio = bio;
-    if (bannerColor !== undefined) user.bannerColor = bannerColor;
-    if (avatar !== undefined) user.avatar = avatar;
-
     const acc = registeredAccounts.get(user.username.toLowerCase());
+
+    if (statusMessage !== undefined) {
+      const cleanStatus = sanitizeText(statusMessage).trim().slice(0, 150);
+      user.statusMessage = cleanStatus;
+      if (acc) acc.statusMessage = cleanStatus;
+    }
+    if (bio !== undefined) {
+      const cleanBio = sanitizeText(bio).trim().slice(0, 500);
+      user.bio = cleanBio;
+      if (acc) acc.bio = cleanBio;
+    }
+    if (bannerColor !== undefined) {
+      user.bannerColor = bannerColor;
+      if (acc) acc.bannerColor = bannerColor;
+    }
+    if (avatar !== undefined) {
+      user.avatar = avatar;
+      if (acc) acc.avatar = avatar;
+    }
+
     if (acc) {
-      if (statusMessage !== undefined) acc.statusMessage = statusMessage;
-      if (bio !== undefined) acc.bio = bio;
-      if (bannerColor !== undefined) acc.bannerColor = bannerColor;
-      if (avatar !== undefined) acc.avatar = avatar;
       saveAccounts(registeredAccounts);
     }
 
@@ -2546,15 +2577,14 @@ io.on('connection', (socket: Socket) => {
     );
   });
 
-  // User State Update (Mute, Deafen, Status)
-  socket.on('update_user_state', ({ isMuted, isDeafened, status, username, avatar }: Partial<User>) => {
+  // User State Update (Mute, Deafen, Online Status - Username change is prohibited here to prevent spoofing)
+  socket.on('update_user_state', ({ isMuted, isDeafened, status, avatar }: Partial<User>) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
     if (isMuted !== undefined) user.isMuted = isMuted;
     if (isDeafened !== undefined) user.isDeafened = isDeafened;
     if (status !== undefined) user.status = status;
-    if (username !== undefined) user.username = username;
     if (avatar !== undefined) user.avatar = avatar;
 
     io.emit('user_updated', user);
@@ -2920,7 +2950,10 @@ io.on('connection', (socket: Socket) => {
     }
 
     // Process payment
-    if (selectedMethod === 'wallet') {
+    const isWallet = selectedMethod === 'wallet';
+    let licenseStatus: 'active' | 'pending_payment' = 'active';
+
+    if (isWallet) {
       const account = registeredAccounts.get(user.username.toLowerCase());
       if (!account) {
         return socket.emit('store_purchase_response', { success: false, error: 'Kullanıcı hesabı bulunamadı.' });
@@ -2937,6 +2970,9 @@ io.on('connection', (socket: Socket) => {
       user.walletBalance = account.walletBalance;
       saveAccounts(registeredAccounts);
       socket.emit('user_updated', user);
+    } else {
+      // Non-wallet payments (credit card, bank transfer, crypto) require manual admin confirmation before activation
+      licenseStatus = 'pending_payment';
     }
 
     const licenseKey = generateLicenseKey(cleanName, slots, days, selectedTier);
@@ -2952,7 +2988,7 @@ io.on('connection', (socket: Socket) => {
       assignedUserId: user.id,
       maxSlots: slots,
       tier: selectedTier,
-      status: 'active',
+      status: licenseStatus,
       issuedAt: new Date().toISOString(),
       expiresAt,
       price: totalPrice,
@@ -2963,12 +2999,18 @@ io.on('connection', (socket: Socket) => {
     saveLicenses(issuedLicenses);
 
     addAuditLog(
-      'MAGAZA_SATIS',
-      `${user.username} mağazadan "${cleanName}" için ${slots} slot (${selectedTier}) lisans satın aldı (₺${totalPrice} - Ödeme: ${methodConfig.name})`,
-      'auth'
+      licenseStatus === 'active' ? 'MAGAZA_SATIS' : 'MAGAZA_SIPARIS_BEKLEMEDE',
+      `${user.username} mağazadan "${cleanName}" için ${slots} slot (${selectedTier}) lisans siparişi verdi (₺${totalPrice} - Ödeme: ${methodConfig.name} - Durum: ${licenseStatus === 'active' ? 'Aktif' : 'Ödeme Onayı Bekleniyor'})`,
+      licenseStatus === 'active' ? 'auth' : 'warn'
     );
 
-    socket.emit('store_purchase_response', { success: true, license: newLicense });
+    socket.emit('store_purchase_response', {
+      success: true,
+      license: newLicense,
+      message: licenseStatus === 'active'
+        ? 'Lisansınız başarıyla oluşturuldu ve aktifleştirildi.'
+        : 'Siparişiniz alındı. Havale/kredi kartı ödemeniz yönetici tarafından onaylandığında lisansınız aktifleşecektir.'
+    });
 
     // Emit user's updated licenses
     const userLics = Array.from(issuedLicenses.values()).filter(l => l.assignedUsername.toLowerCase() === user.username.toLowerCase());
@@ -3020,19 +3062,24 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('store_extend_response', { success: false, error: 'Seçilen ödeme yöntemi aktif değildir.' });
     }
 
-    if (selectedMethod === 'wallet') {
-      const account = registeredAccounts.get(user.username.toLowerCase());
-      if (!account || account.walletBalance < finalPrice) {
-        return socket.emit('store_extend_response', {
-          success: false,
-          error: `Yetersiz bakiye! Gereken: ${finalPrice} ${storeSettings.currencySymbol}, Mevcut Cüzdan: ${account?.walletBalance ?? 0} ${storeSettings.currencySymbol}`
-        });
-      }
-      account.walletBalance -= finalPrice;
-      user.walletBalance = account.walletBalance;
-      saveAccounts(registeredAccounts);
-      socket.emit('user_updated', user);
+    if (selectedMethod !== 'wallet') {
+      return socket.emit('store_extend_response', {
+        success: false,
+        error: 'Süre uzatma işlemi şu an yalnızca cüzdan bakiyesi ile yapılabilmektedir. Lütfen cüzdanınıza bakiye yükleyiniz veya yönetici ile iletişime geçiniz.'
+      });
     }
+
+    const account = registeredAccounts.get(user.username.toLowerCase());
+    if (!account || account.walletBalance < finalPrice) {
+      return socket.emit('store_extend_response', {
+        success: false,
+        error: `Yetersiz bakiye! Gereken: ${finalPrice} ${storeSettings.currencySymbol}, Mevcut Cüzdan: ${account?.walletBalance ?? 0} ${storeSettings.currencySymbol}`
+      });
+    }
+    account.walletBalance -= finalPrice;
+    user.walletBalance = account.walletBalance;
+    saveAccounts(registeredAccounts);
+    socket.emit('user_updated', user);
 
     let newExpiresAt: string;
     if (days === -1) {

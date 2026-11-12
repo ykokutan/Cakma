@@ -1006,6 +1006,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                                     <Ban className="w-3 h-3" />
                                     İptal Edildi
                                   </span>
+                                ) : lic.status === 'pending_payment' ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 w-fit">
+                                    <Clock className="w-3 h-3" />
+                                    Ödeme Bekliyor
+                                  </span>
                                 ) : (
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 w-fit">
                                     <CheckCircle className="w-3 h-3" />
@@ -1092,12 +1097,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                                     <Calendar className="w-3 h-3" />
                                     Uzat
                                   </button>
-                                  {lic.status === 'revoked' ? (
+                                  {lic.status === 'revoked' || lic.status === 'pending_payment' ? (
                                     <button
                                       onClick={() => adminActivateLicense(lic.id)}
                                       className="px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30 text-[10px] font-semibold transition"
                                     >
-                                      Aktifleştir
+                                      {lic.status === 'pending_payment' ? 'Onayla & Aktifleştir' : 'Aktifleştir'}
                                     </button>
                                   ) : (
                                     <button
