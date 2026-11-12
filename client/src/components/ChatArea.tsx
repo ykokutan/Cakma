@@ -9,6 +9,7 @@ import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
 import { ChannelMediaModal } from './ChannelMediaModal';
 import { LeaderboardModal } from './LeaderboardModal';
+import { MiniGamesModal } from './MiniGamesModal';
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -30,6 +31,7 @@ import {
   Sparkles,
   Image as ImageIcon,
   Trophy,
+  Gamepad2,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -139,6 +141,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isGifModalOpen, setIsGifModalOpen] = useState(false);
   const [isMediaModalOpen, setIsMediaModalOpen] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [isChatMiniGamesOpen, setIsChatMiniGamesOpen] = useState(false);
 
   // Voice note recording states
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
@@ -503,6 +506,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               <Trophy className="w-4 h-4" />
             </button>
           )}
+          <button
+            onClick={() => setIsChatMiniGamesOpen(true)}
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-purple-400"
+            title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma)"
+          >
+            <Gamepad2 className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setIsPinModalOpen(true)}
             className="relative w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
@@ -1028,6 +1038,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           serverId={activeServer.id}
           serverName={activeServer.name}
           onClose={() => setIsLeaderboardOpen(false)}
+        />
+      )}
+
+      {/* Mini Games & Activities Modal */}
+      {isChatMiniGamesOpen && activeChannel && (
+        <MiniGamesModal
+          channelId={activeChannel.id}
+          onClose={() => setIsChatMiniGamesOpen(false)}
         />
       )}
     </main>

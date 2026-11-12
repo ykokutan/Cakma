@@ -168,12 +168,12 @@ export const VoiceRoomArea: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-white/60">
+        <div className="flex items-center gap-2 text-xs text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[70vw]">
           {/* Voice Room Audio Recorder */}
           {isConnected && (
             <button
               onClick={isVoiceRecording ? stopVoiceRecording : startVoiceRecording}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
                 isVoiceRecording
                   ? 'bg-red-500/20 border-red-500 text-red-300 shadow-lg shadow-red-500/20'
                   : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
@@ -195,7 +195,7 @@ export const VoiceRoomArea: React.FC = () => {
 
           <button
             onClick={() => setShowRadioBot(!showRadioBot)}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
               showRadioBot || radioBotState.isPlaying
                 ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
                 : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
@@ -212,7 +212,7 @@ export const VoiceRoomArea: React.FC = () => {
           {/* Whiteboard / Live Canvas */}
           <button
             onClick={() => setIsWhiteboardOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-pink-500/30 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 transition text-xs font-medium shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-pink-500/30 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 transition text-xs font-medium shadow-sm shrink-0"
             title="Ortak Canlı Çizim & Tuval (Whiteboard)"
           >
             <Palette className="w-3.5 h-3.5" />
@@ -222,7 +222,7 @@ export const VoiceRoomArea: React.FC = () => {
           {/* Watch Together */}
           <button
             onClick={() => setIsWatchTogetherOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 transition text-xs font-medium shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 transition text-xs font-medium shadow-sm shrink-0"
             title="Birlikte YouTube İzle (Watch Together)"
           >
             <Film className="w-3.5 h-3.5" />
@@ -232,7 +232,7 @@ export const VoiceRoomArea: React.FC = () => {
           {/* 3D Spatial Audio */}
           <button
             onClick={() => setIsSpatialAudioOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 transition text-xs font-medium shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 transition text-xs font-medium shadow-sm shrink-0"
             title="TeamSpeak 3D Konumsal Ses (Stereo Panning)"
           >
             <Compass className="w-3.5 h-3.5" />
@@ -242,11 +242,12 @@ export const VoiceRoomArea: React.FC = () => {
           {/* Mini Games */}
           <button
             onClick={() => setIsMiniGamesOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 transition text-xs font-medium shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-purple-500/50 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 transition text-xs font-bold shadow-md shadow-purple-600/20 shrink-0 animate-pulse hover:animate-none"
             title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma)"
           >
-            <Gamepad2 className="w-3.5 h-3.5" />
+            <Gamepad2 className="w-4 h-4 text-purple-300" />
             <span>Mini Oyunlar</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
           </button>
 
           {hasAnyScreenShare && (
@@ -641,6 +642,32 @@ export const VoiceRoomArea: React.FC = () => {
                 title="Ses Tahtası (Soundboard Efektleri)"
               >
                 <Sparkles className="w-5 h-5" />
+              </button>
+
+              {/* Mini Games & Activities Button */}
+              <button
+                onClick={() => setIsMiniGamesOpen(true)}
+                className={`w-11 h-11 rounded-full border flex items-center justify-center transition shadow-md hover:scale-105 active:scale-95 ${
+                  isMiniGamesOpen
+                    ? 'bg-purple-600 border-purple-400 text-white shadow-purple-600/30 ring-2 ring-purple-400'
+                    : 'bg-purple-500/20 hover:bg-purple-500/30 border-purple-500/30 text-purple-300'
+                }`}
+                title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma Yarışı)"
+              >
+                <Gamepad2 className="w-5 h-5" />
+              </button>
+
+              {/* Watch Together YouTube Cinema Button */}
+              <button
+                onClick={() => setIsWatchTogetherOpen(true)}
+                className={`w-11 h-11 rounded-full border flex items-center justify-center transition shadow-md hover:scale-105 active:scale-95 ${
+                  isWatchTogetherOpen
+                    ? 'bg-red-600 border-red-400 text-white shadow-red-600/30 ring-2 ring-red-400'
+                    : 'bg-red-500/20 hover:bg-red-500/30 border-red-500/30 text-red-300'
+                }`}
+                title="Birlikte İzle (Canlı YouTube Sineması)"
+              >
+                <Film className="w-5 h-5" />
               </button>
 
               <div className="w-[1px] h-6 bg-white/20 mx-1" />
