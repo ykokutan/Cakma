@@ -16,6 +16,7 @@ import { ServerSettingsModal } from './components/ServerSettingsModal';
 import { ConnectionDiagnosticsModal } from './components/ConnectionDiagnosticsModal';
 import { ExploreModal } from './components/ExploreModal';
 import { DownloadAppModal } from './components/DownloadAppModal';
+import { AutoUpdater } from './components/AutoUpdater';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -225,6 +226,7 @@ export function App() {
   return (
     <SocketProvider>
       <MainLayout />
+      <AutoUpdater />
     </SocketProvider>
   );
 }
