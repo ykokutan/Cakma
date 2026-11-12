@@ -46,7 +46,7 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
 
   useEffect(() => {
     if (!isOpen) return;
-    fetch('/downloads/Discord-TeamSpeak.dmg', { method: 'HEAD' })
+    fetch('/downloads/Cakma.dmg', { method: 'HEAD' })
       .then((res) => {
         const ct = res.headers.get('content-type') || '';
         setHasMacDmg(res.ok && !ct.includes('text/html'));
@@ -134,10 +134,10 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                   </div>
                 </div>
                 <a
-                  href="/downloads/Discord-TeamSpeak-Setup.exe"
-                  download="Discord-TeamSpeak-Setup.exe"
+                  href="/downloads/Cakma-Setup.exe"
+                  download="Cakma-Setup.exe"
                   onClick={() => {
-                    setDownloadNotice('Discord-TeamSpeak-Setup.exe indiriliyor...');
+                    setDownloadNotice('Cakma-Setup.exe indiriliyor...');
                     setTimeout(() => setDownloadNotice(null), 4000);
                   }}
                   className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold flex items-center justify-center gap-1.5 transition shadow-lg shadow-cyan-500/20"
@@ -169,10 +169,10 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                 </div>
                 {hasMacDmg ? (
                   <a
-                    href="/downloads/Discord-TeamSpeak.dmg"
-                    download="Discord-TeamSpeak.dmg"
+                    href="/downloads/Cakma.dmg"
+                    download="Cakma.dmg"
                     onClick={() => {
-                      setDownloadNotice('Discord-TeamSpeak.dmg indiriliyor...');
+                      setDownloadNotice('Cakma.dmg indiriliyor...');
                       setTimeout(() => setDownloadNotice(null), 4000);
                     }}
                     className="w-full py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition shadow-lg shadow-purple-500/20"
@@ -185,7 +185,7 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                     type="button"
                     disabled
                     className="w-full py-2.5 rounded-xl bg-white/5 text-white/40 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-not-allowed"
-                    title="macOS .dmg paketi macOS bir cihazda derlenip /downloads/Discord-TeamSpeak.dmg yoluna eklendiğinde aktif olur."
+                    title="macOS .dmg paketi macOS bir cihazda derlenip /downloads/Cakma.dmg yoluna eklendiğinde aktif olur."
                   >
                     <Apple className="w-3.5 h-3.5" />
                     <span>.dmg Henüz Mevcut Değil</span>

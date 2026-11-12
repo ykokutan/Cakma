@@ -70,7 +70,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
           </h2>
           <p className="text-xs text-white/50 mt-1">
             {isRegister
-              ? 'Discord & TeamSpeak platformuna kaydolun'
+              ? 'Çakma platformuna kaydolun'
               : 'Hesabınızla oturum açın veya yönetici paneline erişin'}
           </p>
 

@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Discord-TeamSpeak",
+  "productName": "Çakma",
   "version": "0.1.0",
   "identifier": "com.discordcakma.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Discord / TeamSpeak",
+        "title": "Çakma",
         "width": 1280,
         "height": 780,
         "minWidth": 940,
