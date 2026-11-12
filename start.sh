@@ -14,10 +14,10 @@ if [ "$AUTO_UPDATE" = "1" ] && [ -d ".git" ]; then
   git fetch origin main
   git reset --hard origin/main
   if [ -d "$ROOT_DIR/server" ]; then
-    cd "$ROOT_DIR/server" && npm run build
+    cd "$ROOT_DIR/server" && npm install --no-audit --no-fund && npm run build
   fi
   if [ -d "$ROOT_DIR/client" ]; then
-    cd "$ROOT_DIR/client" && npm run build
+    cd "$ROOT_DIR/client" && npm install --no-audit --no-fund && npm run build
   fi
   cd "$ROOT_DIR"
 fi
