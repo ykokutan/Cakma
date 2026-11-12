@@ -7,8 +7,7 @@ import express from 'express';
 import http from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import cors from 'cors';
-import helmet from 'helmet';
-import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
@@ -26,7 +25,31 @@ import {
   loadServerLevels, saveServerLevels
 } from './storage.js';
 
-// --- SECURITY & RATE LIMITING HELPERS ---
+// --- SECURITY & CRYPTOGRAPHIC HELPERS ---
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
+
+export function verifyPassword(password: string, stored: string): boolean {
+  if (!stored) return false;
+  if (stored.startsWith('scrypt$')) {
+    const parts = stored.split('$');
+    if (parts.length !== 3) return false;
+    const salt = parts[1];
+    const originalHash = parts[2];
+    const testHash = crypto.scryptSync(password, salt, 64).toString('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(originalHash, 'hex'), Buffer.from(testHash, 'hex'));
+    } catch {
+      return false;
+    }
+  }
+  // Fallback for legacy plain text:
+  return password === stored;
+}
+
 export function sanitizeText(input: string): string {
   if (!input) return '';
   return input
@@ -112,11 +135,15 @@ const ALLOWED_ORIGINS = [
 
 const app = express();
 
-// 1. Helmet HTTP Security Headers
-app.use(helmet({
-  contentSecurityPolicy: false, // Maintain WebRTC and data: URL audio/video streaming
-  crossOriginEmbedderPolicy: false
-}));
+// 1. Native HTTP Security Headers (Equivalent to Helmet, zero external dependencies)
+app.use((_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  next();
+});
 
 // 2. Strict CORS Configuration
 app.use(cors({
@@ -968,8 +995,8 @@ io.on('connection', (socket: Socket) => {
     const isFirstUser = registeredAccounts.size === 0;
     const role = (cleanUsername.toLowerCase() === 'admin' || isFirstUser) ? 'admin' : 'user';
 
-    // Hash password with bcrypt salt rounds
-    const hashedPassword = bcrypt.hashSync(password, 10);
+    // Hash password with cryptographically secure scrypt
+    const hashedPassword = hashPassword(password);
     recordRegisterAttempt(clientIp);
 
     const newAccount: RegisteredAccount = {
@@ -1059,18 +1086,13 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
     }
 
-    // Verify password with bcrypt (supports legacy plain text with auto-upgrade)
-    let isPasswordValid = false;
-    if (foundAccount.password.startsWith('$2a$') || foundAccount.password.startsWith('$2b$')) {
-      isPasswordValid = bcrypt.compareSync(password, foundAccount.password);
-    } else {
-      // Legacy plain text check & auto-upgrade
-      if (foundAccount.password === password) {
-        isPasswordValid = true;
-        foundAccount.password = bcrypt.hashSync(password, 10);
-        saveAccounts(registeredAccounts);
-        console.log(`[Security] Account '${foundAccount.username}' legacy password upgraded to bcrypt.`);
-      }
+    // Verify password with secure scrypt (supports legacy plain text with auto-upgrade)
+    const isPasswordValid = verifyPassword(password, foundAccount.password);
+    if (isPasswordValid && !foundAccount.password.startsWith('scrypt$')) {
+      // Auto-upgrade legacy plain-text password to scrypt hash on successful login!
+      foundAccount.password = hashPassword(password);
+      saveAccounts(registeredAccounts);
+      console.log(`[Security] Account '${foundAccount.username}' legacy password upgraded to scrypt hash.`);
     }
 
     if (!isPasswordValid) {
