@@ -3,7 +3,7 @@
   "name": "Discord & TeamSpeak Hybrid Voice & Chat",
   "icons": [
     {
-      "src": "https://api.iconify.design/lucide:radio.svg?color=%233b82f6",
+      "src": "/icon.svg",
       "type": "image/svg+xml",
       "sizes": "192x192 512x512",
       "purpose": "any maskable"

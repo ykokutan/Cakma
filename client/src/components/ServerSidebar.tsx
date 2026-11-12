@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { Plus, Compass, MessageCircle } from 'lucide-react';
+import { Plus, Compass, MessageCircle, Download } from 'lucide-react';
 
 interface ServerSidebarProps {
   onOpenCreateServer: () => void;
   onOpenExplore: () => void;
+  onOpenDownload: () => void;
 }
 
-export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer, onOpenExplore }) => {
+export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer, onOpenExplore, onOpenDownload }) => {
   const { servers, activeServer, selectServer } = useSocket();
   const [hoveredServerId, setHoveredServerId] = useState<string | null>(null);
 
@@ -98,6 +99,17 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
             title="Keşfet & Dedicated Sunucular"
           >
             <Compass className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Download / Install App Button (Web) */}
+        <div className="relative group flex items-center justify-center w-full">
+          <button
+            onClick={onOpenDownload}
+            className="w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center bg-blue-500/10 hover:bg-blue-500 text-blue-400 hover:text-white border border-blue-500/20 hover:border-transparent hover:scale-105 shadow"
+            title="Uygulamayı İndir / Kur"
+          >
+            <Download className="w-5 h-5" />
           </button>
         </div>
       </div>

@@ -15,6 +15,7 @@ import { DirectCallModal } from './components/DirectCallModal';
 import { ServerSettingsModal } from './components/ServerSettingsModal';
 import { ConnectionDiagnosticsModal } from './components/ConnectionDiagnosticsModal';
 import { ExploreModal } from './components/ExploreModal';
+import { DownloadAppModal } from './components/DownloadAppModal';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -40,6 +41,7 @@ const MainLayout: React.FC = () => {
   const [isStoreOpen, setIsStoreOpen] = useState(false);
   const [isCreateServerOpen, setIsCreateServerOpen] = useState(false);
   const [isExploreOpen, setIsExploreOpen] = useState(false);
+  const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
   const [createChannelModal, setCreateChannelModal] = useState<{
     isOpen: boolean;
@@ -120,6 +122,7 @@ const MainLayout: React.FC = () => {
         <ServerSidebar
           onOpenCreateServer={() => { setIsCreateServerOpen(true); setIsMobileNavOpen(false); }}
           onOpenExplore={() => { setIsExploreOpen(true); setIsMobileNavOpen(false); }}
+          onOpenDownload={() => { setIsDownloadOpen(true); setIsMobileNavOpen(false); }}
         />
 
         <ChannelSidebar
@@ -188,6 +191,11 @@ const MainLayout: React.FC = () => {
       <ExploreModal
         isOpen={isExploreOpen}
         onClose={() => setIsExploreOpen(false)}
+      />
+
+      <DownloadAppModal
+        isOpen={isDownloadOpen}
+        onClose={() => setIsDownloadOpen(false)}
       />
 
       {isCreateServerOpen && (
