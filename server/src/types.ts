@@ -2,6 +2,12 @@ export type UserStatus = 'online' | 'idle' | 'dnd' | 'offline';
 
 export type UserRole = 'admin' | 'user';
 
+export interface UserActivity {
+  type: 'playing' | 'listening' | 'streaming' | 'custom';
+  name: string;
+  details?: string;
+}
+
 export interface UserBadge {
   id: string;
   name: string;
@@ -50,6 +56,7 @@ export interface User {
   bio?: string;
   badges?: UserBadge[];
   friends?: string[];
+  activity?: UserActivity;
 }
 
 export interface RegisteredAccount {
@@ -66,6 +73,7 @@ export interface RegisteredAccount {
   bio?: string;
   badges?: UserBadge[];
   friends: string[];
+  activity?: UserActivity;
 }
 
 export interface MessageAttachment {
@@ -199,12 +207,26 @@ export interface ServerMember {
   isOwner?: boolean;
 }
 
+export interface PollOption {
+  id: string;
+  text: string;
+  votes: string[]; // usernames who voted
+}
+
+export interface PollData {
+  question: string;
+  options: PollOption[];
+  closed?: boolean;
+  totalVotes?: number;
+}
+
 export interface Channel {
   id: string;
   name: string;
   type: 'text' | 'voice';
   serverId: string;
   allowedRoleIds?: string[];
+  slowmodeSeconds?: number;
 }
 
 export interface Server {
@@ -218,6 +240,7 @@ export interface Server {
   members: ServerMember[];
   afkChannelId?: string | null;
   bitrateKbps?: number;
+  rules?: string[];
 }
 
 export interface Message {
@@ -232,6 +255,9 @@ export interface Message {
   content: string;
   timestamp: string;
   attachments?: MessageAttachment[];
+  reactions?: Record<string, string[]>;
+  isPinned?: boolean;
+  poll?: PollData;
 }
 
 export interface WebRTCSignal {

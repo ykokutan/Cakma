@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission } from '../types';
+import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData } from '../types';
+import { playSynthesizedSound } from '../utils/soundEffects';
 
 interface SocketContextType {
   socket: Socket | null;
@@ -148,6 +149,19 @@ interface SocketContextType {
     addDays: number;
     paymentMethod?: 'wallet' | 'credit_card' | 'bank_transfer' | 'crypto';
   }) => Promise<{ success: boolean; license?: IssuedLicense; error?: string }>;
+
+  // Soundboard, Radio & Activities
+  playSoundboard: (soundId: string) => void;
+  activeSoundboardEffect: { soundId: string; username: string } | null;
+  radioBotState: { isPlaying: boolean; stationId: string; volume: number };
+  syncRadioState: (state: { isPlaying: boolean; stationId: string; volume: number }) => void;
+  updateUserActivity: (activity: UserActivity | null) => void;
+
+  // Reactions, Pinned & Polls
+  addReaction: (messageId: string, emoji: string) => void;
+  togglePinMessage: (messageId: string) => void;
+  createPoll: (question: string, options: string[]) => void;
+  votePoll: (messageId: string, optionId: string) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -185,6 +199,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [generatedLicense, setGeneratedLicense] = useState<IssuedLicense | null>(null);
   const [myLicenses, setMyLicenses] = useState<IssuedLicense[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
+
+  // Soundboard, Radio & Activities State
+  const [activeSoundboardEffect, setActiveSoundboardEffect] = useState<{ soundId: string; username: string } | null>(null);
+  const [radioBotState, setRadioBotState] = useState<{ isPlaying: boolean; stationId: string; volume: number }>({
+    isPlaying: false,
+    stationId: 'lofi',
+    volume: 0.5
+  });
 
   // Audio & Video Screen Controls
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -632,6 +654,51 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ...prev,
         [msg.channelId]: [...(prev[msg.channelId] || []), msg]
       }));
+    });
+
+    newSocket.on('message_reaction_updated', ({ channelId, messageId, reactions }: { channelId: string; messageId: string; reactions: Record<string, string[]> }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m => m.id === messageId ? { ...m, reactions } : m)
+        };
+      });
+    });
+
+    newSocket.on('message_pin_updated', ({ channelId, messageId, isPinned }: { channelId: string; messageId: string; isPinned: boolean }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m => m.id === messageId ? { ...m, isPinned } : m)
+        };
+      });
+    });
+
+    newSocket.on('poll_updated', ({ channelId, messageId, poll }: { channelId: string; messageId: string; poll: PollData }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m => m.id === messageId ? { ...m, poll } : m)
+        };
+      });
+    });
+
+    newSocket.on('voice_soundboard_played', ({ soundId, username }: { soundId: string; username: string }) => {
+      playSynthesizedSound(soundId);
+      setActiveSoundboardEffect({ soundId, username });
+      setTimeout(() => {
+        setActiveSoundboardEffect(null);
+      }, 2500);
+    });
+
+    newSocket.on('voice_radio_synced', ({ isPlaying, stationId, volume }: any) => {
+      setRadioBotState({ isPlaying, stationId, volume });
     });
 
     newSocket.on('channel_created', ({ serverId, channel }: { serverId: string; channel: Channel }) => {
@@ -1439,6 +1506,65 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
+  const playSoundboard = useCallback((soundId: string) => {
+    if (!socket || !connectedVoiceChannelId) {
+      playSynthesizedSound(soundId);
+      return;
+    }
+    playSynthesizedSound(soundId);
+    socket.emit('voice_soundboard_play', { channelId: connectedVoiceChannelId, soundId });
+  }, [socket, connectedVoiceChannelId]);
+
+  const syncRadioState = useCallback((state: { isPlaying: boolean; stationId: string; volume: number }) => {
+    setRadioBotState(state);
+    if (!socket || !connectedVoiceChannelId) return;
+    socket.emit('voice_radio_state', { channelId: connectedVoiceChannelId, ...state });
+  }, [socket, connectedVoiceChannelId]);
+
+  const updateUserActivity = useCallback((activity: UserActivity | null) => {
+    if (!socket) return;
+    socket.emit('user_update_activity', { activity });
+    if (currentUser) {
+      setCurrentUser(prev => prev ? { ...prev, activity: activity || undefined } : null);
+    }
+  }, [socket, currentUser]);
+
+  const addReaction = useCallback((messageId: string, emoji: string) => {
+    if (!socket || !activeChannel) return;
+    socket.emit('add_reaction', { channelId: activeChannel.id, messageId, emoji });
+  }, [socket, activeChannel]);
+
+  const togglePinMessage = useCallback((messageId: string) => {
+    if (!socket || !activeChannel) return;
+    socket.emit('toggle_pin_message', { channelId: activeChannel.id, messageId });
+  }, [socket, activeChannel]);
+
+  const createPoll = useCallback((question: string, options: string[]) => {
+    if (!socket || !activeServer || !activeChannel) return;
+    const poll: PollData = {
+      question,
+      options: options.map((opt, i) => ({
+        id: `opt-${i + 1}-${Date.now()}`,
+        text: opt,
+        votes: []
+      })),
+      closed: false,
+      totalVotes: 0
+    };
+    socket.emit('send_message', {
+      serverId: activeServer.id,
+      channelId: activeChannel.id,
+      content: `📊 **Anket:** ${question}`,
+      attachments: [],
+      poll
+    });
+  }, [socket, activeServer, activeChannel]);
+
+  const votePoll = useCallback((messageId: string, optionId: string) => {
+    if (!socket || !activeChannel) return;
+    socket.emit('vote_poll', { channelId: activeChannel.id, messageId, optionId });
+  }, [socket, activeChannel]);
+
   const joinVoiceChannel = async (channelId: string) => {
     if (!socket) return;
     if (connectedVoiceChannelId === channelId) return;
@@ -1729,6 +1855,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         fetchMyLicenses,
         storePurchaseLicense,
         storeExtendLicense,
+
+        // Soundboard, Radio & Activities
+        playSoundboard,
+        activeSoundboardEffect,
+        radioBotState,
+        syncRadioState,
+        updateUserActivity,
+
+        // Reactions, Pinned & Polls
+        addReaction,
+        togglePinMessage,
+        createPoll,
+        votePoll,
       }}
     >
       {children}

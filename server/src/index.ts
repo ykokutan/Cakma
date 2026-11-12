@@ -10,7 +10,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount } from './types.js';
+import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import {
   loadAccounts, saveAccounts,
@@ -708,11 +708,11 @@ io.on('connection', (socket: Socket) => {
     return user;
   };
 
-  // Text Messaging (Supports text & file attachments)
-  socket.on('send_message', ({ serverId, channelId, content, attachments }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[] }) => {
+  // Text Messaging (Supports text, file attachments & interactive polls)
+  socket.on('send_message', ({ serverId, channelId, content, attachments, poll }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[]; poll?: any }) => {
     const sender = activeUsers.get(socket.id);
     const textContent = (content || '').trim();
-    if (!sender || (!textContent && (!attachments || attachments.length === 0))) return;
+    if (!sender || (!textContent && (!attachments || attachments.length === 0) && !poll)) return;
 
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -725,7 +725,10 @@ io.on('connection', (socket: Socket) => {
       },
       content: textContent,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      attachments: attachments || []
+      attachments: attachments || [],
+      reactions: {},
+      isPinned: false,
+      poll: poll || undefined
     };
 
     if (!messages[channelId]) {
@@ -735,6 +738,119 @@ io.on('connection', (socket: Socket) => {
     saveMessages(messages);
 
     io.emit('new_message', newMessage);
+  });
+
+  // Emoji Reactions
+  socket.on('add_reaction', ({ channelId, messageId, emoji }: { channelId: string; messageId: string; emoji: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    const msg = channelMsgs.find(m => m.id === messageId);
+    if (!msg) return;
+
+    if (!msg.reactions) msg.reactions = {};
+    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
+
+    const existingIdx = msg.reactions[emoji].indexOf(user.username);
+    if (existingIdx !== -1) {
+      msg.reactions[emoji].splice(existingIdx, 1);
+      if (msg.reactions[emoji].length === 0) {
+        delete msg.reactions[emoji];
+      }
+    } else {
+      msg.reactions[emoji].push(user.username);
+    }
+
+    saveMessages(messages);
+    io.emit('message_reaction_updated', { channelId, messageId, reactions: msg.reactions });
+  });
+
+  // Pin / Unpin Message
+  socket.on('toggle_pin_message', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    const msg = channelMsgs.find(m => m.id === messageId);
+    if (!msg) return;
+
+    msg.isPinned = !msg.isPinned;
+    saveMessages(messages);
+    io.emit('message_pin_updated', { channelId, messageId, isPinned: msg.isPinned });
+  });
+
+  // Vote on Poll
+  socket.on('vote_poll', ({ channelId, messageId, optionId }: { channelId: string; messageId: string; optionId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    const msg = channelMsgs.find(m => m.id === messageId);
+    if (!msg || !msg.poll || msg.poll.closed) return;
+
+    msg.poll.options.forEach(opt => {
+      const voteIdx = opt.votes.indexOf(user.username);
+      if (opt.id === optionId) {
+        if (voteIdx !== -1) {
+          opt.votes.splice(voteIdx, 1);
+        } else {
+          opt.votes.push(user.username);
+        }
+      } else {
+        if (voteIdx !== -1) {
+          opt.votes.splice(voteIdx, 1);
+        }
+      }
+    });
+
+    let total = 0;
+    msg.poll.options.forEach(o => total += o.votes.length);
+    msg.poll.totalVotes = total;
+
+    saveMessages(messages);
+    io.emit('poll_updated', { channelId, messageId, poll: msg.poll });
+  });
+
+  // Soundboard in Voice Channel
+  socket.on('voice_soundboard_play', ({ channelId, soundId }: { channelId: string; soundId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    io.to(channelId).emit('voice_soundboard_played', {
+      userId: user.id,
+      username: user.username,
+      avatar: user.avatar,
+      soundId,
+      channelId
+    });
+  });
+
+  // Synchronized Radio / Music Bot in Voice Channel
+  socket.on('voice_radio_state', ({ channelId, isPlaying, stationId, volume }: any) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    io.to(channelId).emit('voice_radio_synced', {
+      channelId,
+      isPlaying,
+      stationId,
+      volume,
+      initiatedBy: user.username
+    });
+  });
+
+  // User Game / Activity Status Update
+  socket.on('user_update_activity', ({ activity }: { activity: UserActivity | null }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    user.activity = activity || undefined;
+
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (acc) {
+      acc.activity = activity || undefined;
+      saveAccounts(registeredAccounts);
+    }
+
+    io.emit('user_updated', user);
   });
 
   // Profile Update (Status message, bio, banner, avatar)

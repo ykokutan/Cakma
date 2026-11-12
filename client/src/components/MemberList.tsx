@@ -1,7 +1,7 @@
 import React from 'react';
 import { useSocket } from '../context/SocketContext';
 import { User, ServerRole } from '../types';
-import { Volume2, Crown, Tv, Shield, Radio } from 'lucide-react';
+import { Volume2, Crown, Tv, Shield, Radio, Gamepad2 } from 'lucide-react';
 
 interface MemberListProps {
   onOpenProfile: (user: User) => void;
@@ -164,6 +164,11 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                       <div className="text-[10px] text-blue-400 flex items-center gap-1 truncate font-medium">
                         <Tv className="w-3 h-3 shrink-0 animate-pulse" />
                         <span>Ekran Paylaşıyor</span>
+                      </div>
+                    ) : user.activity ? (
+                      <div className="text-[10px] text-purple-300 flex items-center gap-1 truncate font-medium">
+                        <Gamepad2 className="w-3 h-3 shrink-0 text-purple-400" />
+                        <span className="truncate">{user.activity.name}</span>
                       </div>
                     ) : currentVoice ? (
                       <div className="text-[10px] text-emerald-400 flex items-center gap-1 truncate">

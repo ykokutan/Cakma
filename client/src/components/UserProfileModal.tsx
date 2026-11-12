@@ -16,6 +16,7 @@ import {
   UserPlus,
   UserCheck,
   Clock,
+  Gamepad2,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -270,6 +271,28 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClos
                 {copiedId && <span className="text-[10px] text-emerald-400 font-sans">Kopyalandı!</span>}
               </div>
             </div>
+
+            {/* Rich Presence / Activity Card */}
+            {user.activity && (
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-slate-900/40 border border-purple-500/30 flex items-center gap-3 shadow-lg">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-xl shrink-0 text-purple-300">
+                  <Gamepad2 className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
+                    {user.activity.type === 'playing' ? 'Oyun Oynuyor' : user.activity.type === 'listening' ? 'Müzik Dinliyor' : user.activity.type === 'streaming' ? 'Canlı Yayında' : 'Özel Aktivite'}
+                  </div>
+                  <div className="text-sm font-bold text-white truncate">
+                    {user.activity.name}
+                  </div>
+                  {user.activity.details && (
+                    <div className="text-xs text-purple-200/70 truncate">
+                      {user.activity.details}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Custom Status Message */}
             {!isEditing ? (

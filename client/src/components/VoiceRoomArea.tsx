@@ -1,5 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { SoundboardModal } from './SoundboardModal';
+import { VoiceRadioWidget } from './VoiceRadioWidget';
 import {
   Mic,
   MicOff,
@@ -11,6 +13,8 @@ import {
   Activity,
   Maximize2,
   Tv,
+  Sparkles,
+  Music2,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -85,7 +89,14 @@ export const VoiceRoomArea: React.FC = () => {
     inputMode,
     pttKey,
     isPttActive,
+    playSoundboard,
+    activeSoundboardEffect,
+    radioBotState,
+    syncRadioState,
   } = useSocket();
+
+  const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
+  const [showRadioBot, setShowRadioBot] = useState(false);
 
   if (!activeChannel || activeChannel.type !== 'voice') return null;
 
@@ -120,7 +131,23 @@ export const VoiceRoomArea: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-xs text-white/60">
+        <div className="flex items-center gap-3 text-xs text-white/60">
+          <button
+            onClick={() => setShowRadioBot(!showRadioBot)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium ${
+              showRadioBot || radioBotState.isPlaying
+                ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+                : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+            }`}
+            title="Kanal İçi Radyo & Müzik Botu"
+          >
+            <Music2 className="w-3.5 h-3.5" />
+            <span>Radyo Botu</span>
+            {radioBotState.isPlaying && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
+          </button>
+
           {hasAnyScreenShare && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/15 text-red-400 border border-red-500/30 text-[11px] font-medium">
               <Tv className="w-3.5 h-3.5 animate-pulse" />
@@ -133,6 +160,25 @@ export const VoiceRoomArea: React.FC = () => {
           </span>
         </div>
       </header>
+
+      {/* Floating Soundboard Effect Banner */}
+      {activeSoundboardEffect && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-pink-600 to-purple-600 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-xs font-bold animate-bounce border border-white/20">
+          <Sparkles className="w-4 h-4" />
+          <span>{activeSoundboardEffect.username} ses tahtasından efekt çaldı!</span>
+        </div>
+      )}
+
+      {/* Radio Bot Widget Drawer */}
+      {showRadioBot && (
+        <div className="p-4 px-6 border-b border-white/10 bg-slate-950/60 animate-fade-in">
+          <VoiceRadioWidget
+            channelName={activeChannel.name}
+            initialState={radioBotState}
+            onSyncState={(state) => syncRadioState(state)}
+          />
+        </div>
+      )}
 
       {/* Main Grid or Screen Share Stage */}
       <div className="flex-1 p-6 overflow-y-auto flex flex-col items-center justify-center">
@@ -341,6 +387,15 @@ export const VoiceRoomArea: React.FC = () => {
                 <Monitor className="w-5 h-5" />
               </button>
 
+              {/* Soundboard Button */}
+              <button
+                onClick={() => setIsSoundboardOpen(true)}
+                className="w-11 h-11 rounded-full bg-gradient-to-tr from-amber-500/20 to-pink-500/20 hover:from-amber-500/30 hover:to-pink-500/30 border border-pink-500/30 text-pink-300 flex items-center justify-center transition shadow-md hover:scale-105 active:scale-95"
+                title="Ses Tahtası (Soundboard Efektleri)"
+              >
+                <Sparkles className="w-5 h-5" />
+              </button>
+
               <div className="w-[1px] h-6 bg-white/20 mx-1" />
 
               {/* Hang Up Button */}
@@ -356,6 +411,14 @@ export const VoiceRoomArea: React.FC = () => {
           )}
         </div>
       </footer>
+
+      {/* Soundboard Modal */}
+      <SoundboardModal
+        isOpen={isSoundboardOpen}
+        onClose={() => setIsSoundboardOpen(false)}
+        onPlaySound={(soundId) => playSoundboard(soundId)}
+        connectedVoiceChannelName={activeChannel.name}
+      />
     </div>
   );
 };

@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { VoiceRoomArea } from './VoiceRoomArea';
 import { FriendsDashboard } from './FriendsDashboard';
+import { PollModal } from './PollModal';
+import { PinnedMessagesModal } from './PinnedMessagesModal';
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -17,6 +19,8 @@ import {
   Download,
   Phone,
   MessageCircle,
+  BarChart2,
+  Clock,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -39,15 +43,32 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     activeDMUser,
     startDirectCall,
     onlineUsers,
+    addReaction,
+    togglePinMessage,
+    createPoll,
+    votePoll,
   } = useSocket();
 
   const [inputText, setInputText] = useState('');
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [isPollModalOpen, setIsPollModalOpen] = useState(false);
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Slowmode timer effect
+  useEffect(() => {
+    if (slowmodeRemaining > 0) {
+      const timer = setTimeout(() => {
+        setSlowmodeRemaining((prev) => Math.max(0, prev - 1));
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [slowmodeRemaining]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -91,10 +112,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
+    if (slowmodeRemaining > 0) return;
     if (!inputText.trim() && pendingAttachments.length === 0) return;
     sendMessage(inputText.trim(), pendingAttachments);
     setInputText('');
     setPendingAttachments([]);
+    if (activeChannel?.slowmodeSeconds && activeChannel.slowmodeSeconds > 0) {
+      setSlowmodeRemaining(activeChannel.slowmodeSeconds);
+    }
   };
 
   const processFiles = (files: FileList | File[]) => {
@@ -264,10 +289,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             <Bell className="w-4 h-4" />
           </button>
           <button
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
+            onClick={() => setIsPinModalOpen(true)}
+            className="relative w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
             title="Sabitlenmiş Mesajlar"
           >
-            <Pin className="w-4 h-4" />
+            <Pin className={`w-4 h-4 ${messages.some(m => m.isPinned) ? 'text-amber-400' : ''}`} />
+            {messages.filter(m => m.isPinned).length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-amber-500 text-black text-[10px] font-bold flex items-center justify-center">
+                {messages.filter(m => m.isPinned).length}
+              </span>
+            )}
           </button>
           <button
             onClick={onToggleMembers}
@@ -335,7 +366,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 </button>
               )}
 
-              <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+              <div className={`relative group/msg flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+                {/* Floating Quick Action Bar on Hover */}
+                <div
+                  className={`absolute -top-3.5 ${
+                    isMe ? 'right-2' : 'left-2'
+                  } opacity-0 group-hover/msg:opacity-100 transition-opacity z-20 flex items-center gap-1 bg-slate-900/95 border border-white/15 rounded-full px-2 py-0.5 shadow-xl backdrop-blur-md select-none`}
+                >
+                  {['👍', '❤️', '🔥', '😂', '🎉', '💀'].map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => addReaction(msg.id, emoji)}
+                      className="text-xs hover:scale-125 transition-transform px-1 py-0.5"
+                      title={`${emoji} tepkisi ver`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                  <div className="w-[1px] h-3 bg-white/20 mx-0.5" />
+                  <button
+                    type="button"
+                    onClick={() => togglePinMessage(msg.id)}
+                    title={msg.isPinned ? 'Sabitlemeyi Kaldır' : 'Mesajı Sabitle'}
+                    className={`p-1 rounded-full text-xs transition-colors ${
+                      msg.isPinned ? 'text-amber-400 bg-amber-400/20' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Pin className="w-3 h-3" />
+                  </button>
+                </div>
+
                 {!isSameAuthorAsPrev && (
                   <div className="flex items-center gap-2 mb-1 px-1">
                     <button
@@ -349,6 +410,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     <span className="text-[10px] text-white/30 select-none">
                       {msg.timestamp}
                     </span>
+                    {msg.isPinned && (
+                      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                        <Pin className="w-2.5 h-2.5" /> Sabitlendi
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -362,6 +428,48 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 >
                   {/* Text Content */}
                   {msg.content && <p>{msg.content}</p>}
+
+                  {/* Interactive Poll Card */}
+                  {msg.poll && (
+                    <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-white/15 space-y-2 min-w-[240px]">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-white mb-1">
+                        <BarChart2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>{msg.poll.question}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {msg.poll.options.map((opt) => {
+                          const isVoted = currentUser && opt.votes.includes(currentUser.username);
+                          const total = msg.poll!.totalVotes || 1;
+                          const pct = total > 0 ? Math.round((opt.votes.length / total) * 100) : 0;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => votePoll(msg.id, opt.id)}
+                              className={`w-full relative overflow-hidden flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-all ${
+                                isVoted
+                                  ? 'border-emerald-500 bg-emerald-500/20 text-white font-semibold'
+                                  : 'border-white/5 bg-white/5 text-slate-300 hover:bg-white/10'
+                              }`}
+                            >
+                              <div
+                                className="absolute left-0 top-0 bottom-0 bg-emerald-500/25 transition-all duration-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                              <span className="relative z-10 truncate">{opt.text}</span>
+                              <span className="relative z-10 text-[10px] text-slate-400 font-mono ml-2">
+                                %{pct} ({opt.votes.length})
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-slate-400 pt-1 border-t border-white/10 flex items-center justify-between select-none">
+                        <span>Toplam {msg.poll.totalVotes || 0} oy</span>
+                        <span className="text-emerald-400">Oylamak için dokunun</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Attachments rendering */}
                   {msg.attachments && msg.attachments.length > 0 && (
@@ -425,6 +533,31 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Reaction Badges Pill Container */}
+                {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1.5 px-0.5 select-none">
+                    {Object.entries(msg.reactions).map(([emoji, usernames]) => {
+                      const hasMyVote = currentUser && usernames.includes(currentUser.username);
+                      return (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => addReaction(msg.id, emoji)}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all ${
+                            hasMyVote
+                              ? 'bg-blue-600/30 border-blue-500 text-blue-200'
+                              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                          }`}
+                          title={`Tepki verenler: ${usernames.join(', ')}`}
+                        >
+                          <span>{emoji}</span>
+                          <span className="font-bold text-[10px]">{usernames.length}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -487,17 +620,35 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             <Plus className="w-4 h-4" />
           </button>
 
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder={
-              isDM
-                ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
-                : `iMessage (#${activeChannel.name})...`
-            }
-            className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
-          />
+          {!isDM && (
+            <button
+              type="button"
+              onClick={() => setIsPollModalOpen(true)}
+              className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
+              title="Anket Başlat (Poll)"
+            >
+              <BarChart2 className="w-4 h-4" />
+            </button>
+          )}
+
+          {slowmodeRemaining > 0 ? (
+            <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+              <Clock className="w-3.5 h-3.5 animate-spin" />
+              <span>Yavaş Mod aktif: Lütfen {slowmodeRemaining} saniye bekleyin...</span>
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder={
+                isDM
+                  ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
+                  : `iMessage (#${activeChannel.name})...`
+              }
+              className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
+            />
+          )}
 
           <button
             type="button"
@@ -510,7 +661,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
           <button
             type="submit"
-            disabled={!inputText.trim() && pendingAttachments.length === 0}
+            disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
             className="w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-blue-500/30"
             title="Gönder"
           >
@@ -518,6 +669,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </button>
         </form>
       </div>
+
+      {/* Poll Creation Modal */}
+      <PollModal
+        isOpen={isPollModalOpen}
+        onClose={() => setIsPollModalOpen(false)}
+        onCreatePoll={(question, options) => createPoll(question, options)}
+      />
+
+      {/* Pinned Messages Modal */}
+      <PinnedMessagesModal
+        isOpen={isPinModalOpen}
+        onClose={() => setIsPinModalOpen(false)}
+        channelName={activeChannel.name}
+        pinnedMessages={messages.filter((m) => m.isPinned)}
+        onUnpin={(mId) => togglePinMessage(mId)}
+      />
 
       {/* Lightbox Image Modal */}
       {lightboxImage && (

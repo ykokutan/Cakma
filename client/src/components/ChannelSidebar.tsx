@@ -22,7 +22,9 @@ import {
   Phone,
   Users,
   Sliders,
+  Gamepad2,
 } from 'lucide-react';
+import { ActivitySelectorModal } from './ActivitySelectorModal';
 
 interface ChannelSidebarProps {
   onOpenCreateChannel: (type: 'text' | 'voice') => void;
@@ -66,7 +68,10 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     closeDirectMessage,
     startDirectCall,
     incomingFriendRequests,
+    updateUserActivity,
   } = useSocket();
+
+  const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
 
   if (!activeServer) {
     return (
@@ -478,6 +483,18 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </button>
 
           <button
+            onClick={() => setIsActivityModalOpen(true)}
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+              currentUser?.activity
+                ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40 animate-pulse'
+                : 'text-white/70 hover:bg-white/10 hover:text-white'
+            }`}
+            title="Oyun / Aktivite Durumunu Ayarla"
+          >
+            <Gamepad2 className="w-4 h-4" />
+          </button>
+
+          <button
             onClick={onOpenSettings}
             className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition"
             title="Ayarlar"
@@ -504,6 +521,14 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           )}
         </div>
       </footer>
+
+      {/* Activity / Rich Presence Modal */}
+      <ActivitySelectorModal
+        isOpen={isActivityModalOpen}
+        onClose={() => setIsActivityModalOpen(false)}
+        currentActivity={currentUser?.activity}
+        onSaveActivity={(act) => updateUserActivity(act)}
+      />
     </aside>
   );
 };
