@@ -10,7 +10,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity } from './types.js';
+import { User, Message, Server, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import {
   loadAccounts, saveAccounts,
@@ -19,7 +19,8 @@ import {
   loadLicenses, saveLicenses,
   loadStoreSettings, saveStoreSettings,
   loadAuditLogs, saveAuditLogs,
-  loadFriendRequests, saveFriendRequests
+  loadFriendRequests, saveFriendRequests,
+  loadConnectionLogs, saveConnectionLogs
 } from './storage.js';
 
 const app = express();
@@ -256,6 +257,101 @@ function addAuditLog(action: string, details: string, type: 'info' | 'warn' | 'v
 
   // Notify any active admin panels listening
   io.emit('admin_new_log', newLog);
+}
+
+// User Connection & IP Logs
+const connectionLogs: UserConnectionRecord[] = loadConnectionLogs();
+
+function extractClientIp(socket: Socket): string {
+  const forwarded = socket.handshake.headers['x-forwarded-for'];
+  let ip = '';
+  if (typeof forwarded === 'string') {
+    ip = forwarded.split(',')[0].trim();
+  } else if (Array.isArray(forwarded) && forwarded.length > 0) {
+    ip = forwarded[0].trim();
+  } else {
+    ip = socket.handshake.address || (socket.conn as any)?.remoteAddress || '127.0.0.1';
+  }
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.replace('::ffff:', '');
+  }
+  if (ip === '::1' || ip === '127.0.0.1') {
+    return '127.0.0.1 (Yerel/Localhost)';
+  }
+  return ip;
+}
+
+function parseUserAgent(ua?: string): string {
+  if (!ua) return 'Bilinmiyor';
+  let os = 'Masaüstü';
+  if (ua.includes('Windows NT 10.0') || ua.includes('Windows')) os = 'Windows PC';
+  else if (ua.includes('Macintosh') || ua.includes('Mac OS')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone')) os = 'iPhone';
+  else if (ua.includes('iPad')) os = 'iPad';
+
+  let browser = '';
+  if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Safari/')) browser = 'Safari';
+
+  return browser ? `${os} · ${browser}` : os;
+}
+
+function recordUserConnection(socket: Socket, username: string, role: 'admin' | 'user', serverName: string = 'Ana Topluluk', channelName: string = '#genel-sohbet') {
+  const ip = extractClientIp(socket);
+  const ua = parseUserAgent(socket.handshake.headers['user-agent']);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + now.toLocaleDateString('tr-TR');
+
+  // Close any existing active connection record for this socket or user
+  for (const log of connectionLogs) {
+    if (log.socketId === socket.id && log.status === 'online') {
+      log.status = 'disconnected';
+      log.disconnectedAt = timeStr;
+    }
+  }
+
+  const newRecord: UserConnectionRecord = {
+    id: `conn-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    socketId: socket.id,
+    username,
+    role,
+    ip,
+    userAgent: ua,
+    connectedServer: serverName,
+    connectedChannel: channelName,
+    connectedAt: timeStr,
+    status: 'online',
+    lastActiveAt: now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+  };
+
+  connectionLogs.unshift(newRecord);
+  if (connectionLogs.length > 300) connectionLogs.pop();
+  saveConnectionLogs(connectionLogs);
+  return newRecord;
+}
+
+function updateUserConnectionLocation(socketId: string, serverName?: string, channelName?: string) {
+  const record = connectionLogs.find(l => l.socketId === socketId && l.status === 'online');
+  if (record) {
+    if (serverName) record.connectedServer = serverName;
+    if (channelName) record.connectedChannel = channelName;
+    record.lastActiveAt = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    saveConnectionLogs(connectionLogs);
+  }
+}
+
+function recordUserDisconnection(socketId: string) {
+  const record = connectionLogs.find(l => l.socketId === socketId && l.status === 'online');
+  if (record) {
+    record.status = 'disconnected';
+    const now = new Date();
+    record.disconnectedAt = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + now.toLocaleDateString('tr-TR');
+    saveConnectionLogs(connectionLogs);
+  }
 }
 
 // System Stats Helper
@@ -648,6 +744,7 @@ io.on('connection', (socket: Socket) => {
 
     activeUsers.set(socket.id, user);
     ensureUserInServers(user);
+    recordUserConnection(socket, user.username, user.role);
 
     socket.emit('auth_response', { success: true, user });
     socket.emit('init_data', {
@@ -704,6 +801,7 @@ io.on('connection', (socket: Socket) => {
     activeUsers.set(socket.id, user);
     ensureUserInServers(user);
     addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı.`, 'auth');
+    recordUserConnection(socket, user.username, user.role);
 
     socket.emit('auth_response', { success: true, user });
     socket.emit('init_data', {
@@ -721,6 +819,7 @@ io.on('connection', (socket: Socket) => {
   socket.on('auth_logout', () => {
     const user = activeUsers.get(socket.id);
     if (user) {
+      recordUserDisconnection(socket.id);
       addAuditLog('CIKIS_YAPILDI', `${user.username} sistemden çıkış yaptı.`, 'auth');
       if (user.currentVoiceChannelId) {
         socket.to(user.currentVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: user.currentVoiceChannelId });
@@ -1506,6 +1605,18 @@ io.on('connection', (socket: Socket) => {
     });
 
     addAuditLog('SESE_KATILDI', `${user.username} ses kanalina baglandi (${channelId})`, 'voice');
+
+    let channelName = channelId;
+    let sName = 'Ana Topluluk';
+    for (const s of servers) {
+      const ch = s.channels.find(c => c.id === channelId);
+      if (ch) {
+        channelName = ch.name;
+        sName = s.name;
+        break;
+      }
+    }
+    updateUserConnectionLocation(socket.id, sName, `Ses: ${channelName}`);
   });
 
   // Voice Channel Leave
@@ -1532,6 +1643,7 @@ io.on('connection', (socket: Socket) => {
     });
 
     addAuditLog('SESTEN_AYRILDI', `${user.username} ses kanalindan ayrildi`, 'voice');
+    updateUserConnectionLocation(socket.id, undefined, '#genel-sohbet');
   });
 
   // WebRTC Signaling Relay
@@ -1613,8 +1725,20 @@ io.on('connection', (socket: Socket) => {
       auditLogs,
       dedicatedServers: Array.from(dedicatedServersRegistry.values()),
       issuedLicenses: Array.from(issuedLicenses.values()),
-      storeSettings
+      storeSettings,
+      connectionLogs
     });
+  });
+
+  // Admin: Clear connection logs
+  socket.on('admin_clear_connection_logs', () => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    connectionLogs.length = 0;
+    saveConnectionLogs(connectionLogs);
+    addAuditLog('BAGLANTI_LOGLARI_TEMIZLENDI', `${requester.username} bağlantı ve IP geçmişini temizledi.`, 'warn');
+    socket.emit('admin_action_success', 'Bağlantı ve IP kayıtları temizlendi.');
   });
 
   // Admin: Change user role
@@ -2096,6 +2220,7 @@ io.on('connection', (socket: Socket) => {
 
   // Disconnect
   socket.on('disconnect', () => {
+    recordUserDisconnection(socket.id);
     const user = activeUsers.get(socket.id);
     if (user) {
       if (user.currentVoiceChannelId) {

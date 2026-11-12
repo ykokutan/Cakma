@@ -103,6 +103,22 @@ export interface AuditLog {
   type: 'info' | 'warn' | 'voice' | 'auth';
 }
 
+export interface UserConnectionRecord {
+  id: string;
+  socketId: string;
+  username: string;
+  role: 'admin' | 'user';
+  ip: string;
+  userAgent: string;
+  connectedServer: string;
+  connectedChannel: string;
+  connectedAt: string;
+  disconnectedAt?: string;
+  durationText?: string;
+  status: 'online' | 'disconnected';
+  lastActiveAt?: string;
+}
+
 export interface DedicatedServerInfo {
   id: string;
   serverName: string;

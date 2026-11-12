@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData } from '../types';
+import { User, Server, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 
 export interface RadioBotState {
@@ -139,6 +139,7 @@ interface SocketContextType {
     dedicatedServers?: DedicatedServerInfo[];
     issuedLicenses?: IssuedLicense[];
     storeSettings?: StoreSettings;
+    connectionLogs?: UserConnectionRecord[];
   } | null;
   fetchAdminData: () => void;
   adminChangeRole: (targetUsername: string, newRole: 'admin' | 'user') => void;
@@ -150,6 +151,7 @@ interface SocketContextType {
   adminActivateLicense: (licenseId: string) => void;
   adminExtendLicense: (licenseId: string, addDays: number) => void;
   adminUpdateStoreSettings: (settings: StoreSettings) => void;
+  adminClearConnectionLogs: () => void;
   generatedLicense: IssuedLicense | null;
   clearGeneratedLicense: () => void;
   connectToDedicatedServer: (hostWithPort: string) => void;
@@ -285,6 +287,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     dedicatedServers?: DedicatedServerInfo[];
     issuedLicenses?: IssuedLicense[];
     storeSettings?: StoreSettings;
+    connectionLogs?: UserConnectionRecord[];
   } | null>(null);
   const [generatedLicense, setGeneratedLicense] = useState<IssuedLicense | null>(null);
   const [myLicenses, setMyLicenses] = useState<IssuedLicense[]>([]);
@@ -306,23 +309,64 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<Map<string, MediaStream>>(new Map());
-  const [inputMode, setInputMode] = useState<'vad' | 'ptt'>('vad');
-  const [pttKey, setPttKey] = useState<string>('Control');
+  const [inputMode, setInputModeState] = useState<'vad' | 'ptt'>(() => {
+    return (typeof window !== 'undefined' && (localStorage.getItem('dsp_inputMode') as 'vad' | 'ptt')) || 'vad';
+  });
+  const [pttKey, setPttKeyState] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('dsp_pttKey')) || 'Control';
+  });
   const [isPttActive, setIsPttActive] = useState<boolean>(false);
 
   // Advanced Audio Hardware & Processing States
   const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedInputDeviceId, setSelectedInputDeviceIdState] = useState<string>('');
-  const [selectedOutputDeviceId, setSelectedOutputDeviceIdState] = useState<string>('');
-  const [noiseSuppression, setNoiseSuppressionState] = useState<boolean>(true);
-  const [echoCancellation, setEchoCancellationState] = useState<boolean>(true);
-  const [autoGainControl, setAutoGainControlState] = useState<boolean>(true);
-  const [inputSensitivity, setInputSensitivity] = useState<number>(25);
-  const [inputVolume, setInputVolumeState] = useState<number>(100);
-  const [outputVolume, setOutputVolumeState] = useState<number>(100);
+  const [selectedInputDeviceId, setSelectedInputDeviceIdState] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('dsp_inputDeviceId')) || '';
+  });
+  const [selectedOutputDeviceId, setSelectedOutputDeviceIdState] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('dsp_outputDeviceId')) || '';
+  });
+  const [noiseSuppression, setNoiseSuppressionState] = useState<boolean>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_noiseSuppression') : null;
+    return val !== null ? val === 'true' : true;
+  });
+  const [echoCancellation, setEchoCancellationState] = useState<boolean>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_echoCancellation') : null;
+    return val !== null ? val === 'true' : true;
+  });
+  const [autoGainControl, setAutoGainControlState] = useState<boolean>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_autoGainControl') : null;
+    return val !== null ? val === 'true' : true;
+  });
+  const [inputSensitivity, setInputSensitivityState] = useState<number>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_inputSensitivity') : null;
+    return val !== null ? Number(val) : 25;
+  });
+  const [inputVolume, setInputVolumeState] = useState<number>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_inputVolume') : null;
+    return val !== null ? Number(val) : 100;
+  });
+  const [outputVolume, setOutputVolumeState] = useState<number>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_outputVolume') : null;
+    return val !== null ? Number(val) : 100;
+  });
   const [isMicTesting, setIsMicTesting] = useState<boolean>(false);
   const [micVolumeLevel, setMicVolumeLevel] = useState<number>(0);
+
+  const setInputMode = (mode: 'vad' | 'ptt') => {
+    setInputModeState(mode);
+    try { localStorage.setItem('dsp_inputMode', mode); } catch {}
+  };
+
+  const setPttKey = (key: string) => {
+    setPttKeyState(key);
+    try { localStorage.setItem('dsp_pttKey', key); } catch {}
+  };
+
+  const setInputSensitivity = (val: number) => {
+    setInputSensitivityState(val);
+    try { localStorage.setItem('dsp_inputSensitivity', String(val)); } catch {}
+  };
 
   // WebRTC Refs
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -709,6 +753,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setSelectedInputDeviceId = async (deviceId: string) => {
     setSelectedInputDeviceIdState(deviceId);
+    try { localStorage.setItem('dsp_inputDeviceId', deviceId); } catch {}
     if (localStreamRef.current || connectedVoiceChannelId) {
       await getLocalAudioStream(true);
     }
@@ -716,6 +761,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setSelectedOutputDeviceId = async (deviceId: string) => {
     setSelectedOutputDeviceIdState(deviceId);
+    try { localStorage.setItem('dsp_outputDeviceId', deviceId); } catch {}
     audioElementsRef.current.forEach(async (audio) => {
       if ('setSinkId' in audio) {
         try {
@@ -729,21 +775,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setNoiseSuppression = async (val: boolean) => {
     setNoiseSuppressionState(val);
+    try { localStorage.setItem('dsp_noiseSuppression', String(val)); } catch {}
     if (localStreamRef.current) await getLocalAudioStream(true);
   };
 
   const setEchoCancellation = async (val: boolean) => {
     setEchoCancellationState(val);
+    try { localStorage.setItem('dsp_echoCancellation', String(val)); } catch {}
     if (localStreamRef.current) await getLocalAudioStream(true);
   };
 
   const setAutoGainControl = async (val: boolean) => {
     setAutoGainControlState(val);
+    try { localStorage.setItem('dsp_autoGainControl', String(val)); } catch {}
     if (localStreamRef.current) await getLocalAudioStream(true);
   };
 
   const setInputVolume = (val: number) => {
     setInputVolumeState(val);
+    try { localStorage.setItem('dsp_inputVolume', String(val)); } catch {}
     if (gainNodeRef.current) {
       gainNodeRef.current.gain.value = val / 100;
     }
@@ -751,6 +801,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setOutputVolume = (val: number) => {
     setOutputVolumeState(val);
+    try { localStorage.setItem('dsp_outputVolume', String(val)); } catch {}
     audioElementsRef.current.forEach(audio => {
       audio.volume = Math.min(1, Math.max(0, val / 100));
     });
@@ -1542,6 +1593,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_update_store_settings', settings);
   };
 
+  const adminClearConnectionLogs = () => {
+    socket?.emit('admin_clear_connection_logs');
+  };
+
   const fetchMyLicenses = async () => {
     socket?.emit('get_my_licenses');
 
@@ -2144,6 +2199,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminActivateLicense,
         adminExtendLicense,
         adminUpdateStoreSettings,
+        adminClearConnectionLogs,
         generatedLicense,
         clearGeneratedLicense,
         connectToDedicatedServer,

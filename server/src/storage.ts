@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest } from './types.js';
+import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord } from './types.js';
 
 // Resolve persistent data directory
 function getPersistentDir(): string {
@@ -143,4 +143,15 @@ export function loadFriendRequests(): Map<string, FriendRequest> {
 export function saveFriendRequests(requests: Map<string, FriendRequest>) {
   const list = Array.from(requests.values());
   safeWriteJson('friend_requests.json', list);
+}
+
+// 8. CONNECTION & IP LOGS (Kullanıcı IP ve Bağlantı Kayıtları)
+export function loadConnectionLogs(): UserConnectionRecord[] {
+  return safeReadJson<UserConnectionRecord[]>('connection_logs.json', []);
+}
+
+export function saveConnectionLogs(logs: UserConnectionRecord[]) {
+  // Keep last 300 logs max
+  const trimmed = logs.slice(0, 300);
+  safeWriteJson('connection_logs.json', trimmed);
 }
