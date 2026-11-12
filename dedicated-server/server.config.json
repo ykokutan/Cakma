@@ -1,0 +1,20 @@
+{
+  "serverName": "CS2 & Valorant Ozel Ses Sunucusu",
+  "port": 4001,
+  "masterServerUrl": "http://127.0.0.1:4000",
+  "serverPassword": "",
+  "licenseKey": "LIC-eyJsaWNlbnNlZSI6IkNTMiAmIFZhbG9yYW50IFRvcGx1bHVndSIsIm1heFNsb3RzIjo2NCwiZXhwaXJlc0F0IjoiMjAyOC0xMi0zMVQyMzo1OTo1OS4wMDBaIiwidGllciI6IlBybyIsImlzc3VlZEF0IjoiMjAyNi0xMS0xMVQyMjo1MToxNC42ODVaIn0=.b1d1018b51675e4d8efb0480e5d7727a2d10996d32ae8888efd0b2c215bc9b08",
+  "allowedOrigins": [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "tauri://localhost"
+  ],
+  "defaultChannels": [
+    { "name": "lobi-sohbet", "type": "text" },
+    { "name": "duyurular", "type": "text" },
+    { "name": "Lobi (TS3 Low Latency)", "type": "voice" },
+    { "name": "Takim 1 (Sesli)", "type": "voice" },
+    { "name": "Takim 2 (Sesli)", "type": "voice" },
+    { "name": "AFK Sessiz Oda", "type": "voice" }
+  ]
+}
