@@ -216,13 +216,21 @@ export interface Server {
   id: string;
   name: string;
   icon?: string;
+  bannerGradient?: string;
   description?: string;
   ownerId: string;
   channels: Channel[];
   roles: ServerRole[];
   members: ServerMember[];
   afkChannelId?: string | null;
+  afkTimeoutMinutes?: number;
   bitrateKbps?: number;
+  voiceRegion?: string;
+  systemChannelId?: string | null;
+  verificationLevel?: 'none' | 'low' | 'medium' | 'high';
+  defaultNotification?: 'all' | 'mentions';
+  autoModEnabled?: boolean;
+  vanityCode?: string;
   rules?: string[];
 }
 

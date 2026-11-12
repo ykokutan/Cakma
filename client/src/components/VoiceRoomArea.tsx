@@ -71,6 +71,7 @@ const VideoStreamPlayer: React.FC<{ stream: MediaStream; title: string }> = ({
 export const VoiceRoomArea: React.FC = () => {
   const {
     activeChannel,
+    activeServer,
     connectedVoiceChannelId,
     joinVoiceChannel,
     leaveVoiceChannel,
@@ -163,7 +164,7 @@ export const VoiceRoomArea: React.FC = () => {
           >
             <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             <span className="font-mono">{ping} ms</span>
-            <span>· Ultra HD Opus</span>
+            <span>· {activeServer?.bitrateKbps || 128} kbps Opus HD</span>
           </button>
         </div>
       </header>

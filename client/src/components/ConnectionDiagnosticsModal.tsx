@@ -177,11 +177,11 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
                 <Radio className="w-3.5 h-3.5 text-amber-400" />
               </div>
               <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="text-2xl font-black text-white font-mono">96</span>
+                <span className="text-2xl font-black text-white font-mono">{activeServer?.bitrateKbps || 128}</span>
                 <span className="text-xs text-white/40">kbps</span>
               </div>
               <div className="mt-1 text-[10px] text-amber-300 font-medium">
-                Opus Ultra HD
+                {(activeServer?.bitrateKbps || 128) >= 256 ? 'Ultra Studio Kalite' : (activeServer?.bitrateKbps || 128) >= 128 ? 'Standart HD' : 'Veri Tasarruf Modu'}
               </div>
             </div>
           </div>

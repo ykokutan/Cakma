@@ -88,7 +88,22 @@ interface SocketContextType {
   updateProfile: (username: string, avatar: string) => void;
 
   // Server Roles & Detailed Settings
-  updateServerSettings: (data: { serverId: string; name?: string; icon?: string; description?: string; afkChannelId?: string | null; bitrateKbps?: number; }) => void;
+  updateServerSettings: (data: {
+    serverId: string;
+    name?: string;
+    icon?: string;
+    bannerGradient?: string;
+    description?: string;
+    afkChannelId?: string | null;
+    afkTimeoutMinutes?: number;
+    bitrateKbps?: number;
+    voiceRegion?: string;
+    systemChannelId?: string | null;
+    verificationLevel?: 'none' | 'low' | 'medium' | 'high';
+    defaultNotification?: 'all' | 'mentions';
+    autoModEnabled?: boolean;
+    vanityCode?: string;
+  }) => void;
   createServerRole: (data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => void;
   updateServerRole: (data: { serverId: string; roleId: string; name: string; color: string; permissions: ServerPermission[]; position?: number; }) => void;
   deleteServerRole: (serverId: string, roleId: string) => void;
@@ -190,6 +205,50 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' }
   ]
+};
+
+// Helper to modify WebRTC SDP and inject Opus maxaveragebitrate
+const setOpusBitrateInSdp = (sdp: string, bitrateKbps: number): string => {
+  const targetBitrate = Math.max(32000, bitrateKbps * 1000);
+  const match = sdp.match(/a=rtpmap:(\d+)\s+opus\/48000/i);
+  if (!match) return sdp;
+  const pt = match[1];
+
+  const fmtpRegex = new RegExp(`a=fmtp:${pt}\\s+(.*)`, 'i');
+  if (fmtpRegex.test(sdp)) {
+    return sdp.replace(fmtpRegex, (_full, params) => {
+      let clean = params.replace(/;\s*maxaveragebitrate=\d+/gi, '');
+      clean = clean.replace(/;\s*stereo=\d+/gi, '');
+      clean = clean.replace(/;\s*sprop-stereo=\d+/gi, '');
+      clean = clean.replace(/;\s*cbr=\d+/gi, '');
+      return `a=fmtp:${pt} ${clean};maxaveragebitrate=${targetBitrate};stereo=1;sprop-stereo=1;cbr=1;useinbandfec=1`;
+    });
+  } else {
+    return sdp.replace(
+      new RegExp(`(a=rtpmap:${pt}\\s+opus\\/48000[^\r\n]*)`, 'i'),
+      `$1\r\na=fmtp:${pt} minptime=10;useinbandfec=1;maxaveragebitrate=${targetBitrate};stereo=1;sprop-stereo=1;cbr=1`
+    );
+  }
+};
+
+// Helper to apply audio bitrate to WebRTC sender encodings in real-time
+const applyAudioBitrate = async (pc: RTCPeerConnection, bitrateKbps: number) => {
+  try {
+    const senders = pc.getSenders();
+    for (const sender of senders) {
+      if (sender.track && sender.track.kind === 'audio') {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = Math.max(32000, bitrateKbps * 1000);
+        await sender.setParameters(params);
+        console.log(`[WebRTC] Set audio maxBitrate to ${bitrateKbps} kbps on track ${sender.track.id}`);
+      }
+    }
+  } catch (err) {
+    console.warn('[WebRTC] setParameters bitrate warning:', err);
+  }
 };
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -366,6 +425,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   } : null;
 
   const activeServer = isDMMode ? virtualDMServer : (servers.find(s => s.id === activeServerId) || servers[0] || null);
+  const activeServerRef = useRef<Server | null>(null);
+  useEffect(() => {
+    activeServerRef.current = activeServer;
+  }, [activeServer]);
   const activeChannel = isDMMode
     ? virtualDMServer?.channels[0] || null
     : (activeServer?.channels.find(c => c.id === activeChannelId) || 
@@ -790,6 +853,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('server_updated', (updatedServer: Server) => {
       setServers(prev => prev.map(s => s.id === updatedServer.id ? updatedServer : s));
+      if (updatedServer.bitrateKbps) {
+        peerConnectionsRef.current.forEach((pc) => {
+          applyAudioBitrate(pc, updatedServer.bitrateKbps!);
+        });
+      }
     });
 
     newSocket.on('server_deleted', ({ serverId }: { serverId: string }) => {
@@ -933,10 +1001,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         peerConnectionsRef.current.set(peer.id, pc);
 
         const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
+        const targetKbps = activeServerRef.current?.bitrateKbps || 128;
+        const modifiedOffer = new RTCSessionDescription({
+          type: offer.type,
+          sdp: setOpusBitrateInSdp(offer.sdp || '', targetKbps)
+        });
+        await pc.setLocalDescription(modifiedOffer);
+        applyAudioBitrate(pc, targetKbps);
         newSocket.emit('webrtc_signal', {
           targetUserId: peer.id,
-          signal: offer,
+          signal: modifiedOffer,
           type: 'offer'
         });
       }
@@ -974,11 +1048,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         await pc.setRemoteDescription(new RTCSessionDescription(signal));
         const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        const targetKbps = activeServerRef.current?.bitrateKbps || 128;
+        const modifiedAnswer = new RTCSessionDescription({
+          type: answer.type,
+          sdp: setOpusBitrateInSdp(answer.sdp || '', targetKbps)
+        });
+        await pc.setLocalDescription(modifiedAnswer);
+        applyAudioBitrate(pc, targetKbps);
 
         newSocket.emit('webrtc_signal', {
           targetUserId: senderUserId,
-          signal: answer,
+          signal: modifiedAnswer,
           type: 'answer'
         });
       } else if (type === 'answer') {
@@ -1738,8 +1818,28 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('update_user_state', { username, avatar });
   };
 
-  const updateServerSettings = useCallback((data: { serverId: string; name?: string; icon?: string; description?: string; afkChannelId?: string | null; bitrateKbps?: number; }) => {
+  const updateServerSettings = useCallback((data: {
+    serverId: string;
+    name?: string;
+    icon?: string;
+    bannerGradient?: string;
+    description?: string;
+    afkChannelId?: string | null;
+    afkTimeoutMinutes?: number;
+    bitrateKbps?: number;
+    voiceRegion?: string;
+    systemChannelId?: string | null;
+    verificationLevel?: 'none' | 'low' | 'medium' | 'high';
+    defaultNotification?: 'all' | 'mentions';
+    autoModEnabled?: boolean;
+    vanityCode?: string;
+  }) => {
     socket?.emit('update_server_settings', data);
+    if (data.bitrateKbps) {
+      peerConnectionsRef.current.forEach((pc) => {
+        applyAudioBitrate(pc, data.bitrateKbps!);
+      });
+    }
   }, [socket]);
 
   const createServerRole = useCallback((data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => {

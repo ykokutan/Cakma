@@ -1188,30 +1188,47 @@ io.on('connection', (socket: Socket) => {
   }
 
   // Update Server Settings
-  socket.on('update_server_settings', ({ serverId, name, icon, description, afkChannelId, bitrateKbps }: {
+  socket.on('update_server_settings', (data: {
     serverId: string;
     name?: string;
     icon?: string;
+    bannerGradient?: string;
     description?: string;
     afkChannelId?: string | null;
+    afkTimeoutMinutes?: number;
     bitrateKbps?: number;
+    voiceRegion?: string;
+    systemChannelId?: string | null;
+    verificationLevel?: 'none' | 'low' | 'medium' | 'high';
+    defaultNotification?: 'all' | 'mentions';
+    autoModEnabled?: boolean;
+    vanityCode?: string;
   }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
+    const s = servers.find(srv => srv.id === data.serverId);
     if (!s) return;
     if (!checkServerPermission(user, s, 'manage_server')) {
       return socket.emit('server_action_error', { message: 'Bu ayarları değiştirmek için Sunucu Yönetimi yetkiniz yok.' });
     }
 
-    if (name) s.name = name.trim();
-    if (icon) s.icon = icon;
-    if (description !== undefined) s.description = description;
-    if (afkChannelId !== undefined) s.afkChannelId = afkChannelId;
-    if (bitrateKbps !== undefined) s.bitrateKbps = bitrateKbps;
+    if (data.name) s.name = data.name.trim();
+    if (data.icon) s.icon = data.icon;
+    if (data.bannerGradient !== undefined) s.bannerGradient = data.bannerGradient;
+    if (data.description !== undefined) s.description = data.description;
+    if (data.afkChannelId !== undefined) s.afkChannelId = data.afkChannelId;
+    if (data.afkTimeoutMinutes !== undefined) s.afkTimeoutMinutes = data.afkTimeoutMinutes;
+    if (data.bitrateKbps !== undefined) s.bitrateKbps = data.bitrateKbps;
+    if (data.voiceRegion !== undefined) s.voiceRegion = data.voiceRegion;
+    if (data.systemChannelId !== undefined) s.systemChannelId = data.systemChannelId;
+    if (data.verificationLevel !== undefined) s.verificationLevel = data.verificationLevel;
+    if (data.defaultNotification !== undefined) s.defaultNotification = data.defaultNotification;
+    if (data.autoModEnabled !== undefined) s.autoModEnabled = data.autoModEnabled;
+    if (data.vanityCode !== undefined) s.vanityCode = data.vanityCode;
+
     saveServers(servers);
 
-    addAuditLog('SUNUCU_GUNCELLENDI', `${s.name} sunucu ayarlari guncellendi (Yetkili: ${user.username})`);
+    addAuditLog('SUNUCU_GUNCELLENDI', `${s.name} sunucu ayarları güncellendi (Bitrate: ${s.bitrateKbps || 128}kbps, Yetkili: ${user.username})`);
     io.emit('server_updated', s);
   });
 
