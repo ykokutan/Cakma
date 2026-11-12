@@ -297,36 +297,6 @@ function getSystemStats(): SystemStats {
 }
 
 // REST Endpoints
-app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="tr">
-    <head>
-      <meta charset="UTF-8">
-      <title>Discord Clone Backend</title>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121318; color: #dbdee1; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: rgba(28,29,36,0.85); backdrop-filter: blur(20px); padding: 2.5rem; border-radius: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 16px 40px rgba(0,0,0,0.5); max-width: 480px; }
-        h1 { color: #3b82f6; margin-top: 0; }
-        p { line-height: 1.6; color: rgba(255,255,255,0.6); font-size: 14px; }
-        a { display: inline-block; margin-top: 1.2rem; background: #3b82f6; color: white; text-decoration: none; padding: 12px 24px; border-radius: 9999px; font-weight: bold; transition: all 0.2s; box-shadow: 0 4px 14px rgba(59,130,246,0.4); }
-        a:hover { background: #2563eb; transform: translateY(-1px); }
-        .badge { display: inline-block; background: #10b981; color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-bottom: 1rem; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <div class="badge">● Backend Sunucusu Aktif</div>
-        <h1>🚀 Discord / TeamSpeak Backend</h1>
-        <p>Burası arka plan API, Auth ve WebRTC Socket.io sinyalleşme sunucusudur (Port 4000).</p>
-        <p>Uygulamayı kullanmak için lütfen aşağıdaki butona tıklayın:</p>
-        <a href="http://localhost:5173">Arayüze Git (http://localhost:5173) &rarr;</a>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -1712,6 +1682,24 @@ if (activeStaticDir) {
     res.sendFile(path.join(activeStaticDir!, 'index.html'));
   });
   console.log(`🌐 [Web Arayüzü] Statik React arayüzü tek port üzerinden yayında: ${activeStaticDir}`);
+} else {
+  console.warn(`⚠️ [Web Arayüzü] 'client/dist' bulunamadı! 'client' klasöründe 'npm run build' çalıştırın.`);
+  app.get('/', (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="tr">
+      <head><meta charset="UTF-8"><title>Discord Clone Backend</title>
+      <style>body { font-family: sans-serif; background: #121318; color: #dbdee1; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; } .card { background: #1c1d24; padding: 2rem; border-radius: 12px; text-align: center; }</style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>⚠️ Web Arayüzü Henüz Derlenmemiş</h2>
+          <p>client/dist klasörü bulunamadı. Lütfen 'npm run build' komutu ile derleyin.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  });
 }
 
 server.listen(PORT, '0.0.0.0', () => {
