@@ -357,7 +357,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   // If this channel is a voice channel, render the iOS voice room area
   if (activeChannel.type === 'voice') {
-    return <VoiceRoomArea />;
+    return <VoiceRoomArea onOpenMobileNav={onOpenMobileNav} />;
   }
 
   const isDM = activeServer.id === 'direct-messages';
@@ -480,7 +480,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="relative flex-1 flex flex-col h-full overflow-hidden select-text bg-transparent"
+      className="relative flex-1 flex flex-col min-w-0 h-full overflow-hidden select-text bg-transparent"
     >
       {/* Drag & Drop Visual Overlay */}
       {isDragging && (
@@ -494,8 +494,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* iOS Translucent Header */}
-      <header className="h-14 px-4 md:px-6 border-b border-white/[0.06] flex items-center justify-between shrink-0 bg-[#16161a]/60 backdrop-blur-2xl shadow-sm select-none">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="h-14 px-3 sm:px-6 border-b border-white/[0.06] flex items-center justify-between gap-2 shrink-0 bg-[#16161a]/60 backdrop-blur-2xl shadow-sm select-none">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           {onOpenMobileNav && (
             <button
               type="button"
@@ -537,12 +537,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/60">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/60 shrink-0">
                 <Hash className="w-4 h-4" />
               </div>
-              <div>
-                <h3 className="font-semibold text-white text-sm tracking-tight">{activeChannel.name}</h3>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-white text-sm tracking-tight truncate">{activeChannel.name}</h3>
                 <span className="text-[11px] text-white/40 hidden sm:inline">
                   {activeServer.name}
                 </span>
@@ -552,27 +552,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         {/* Header Action Icons */}
-        <div className="flex items-center gap-3 text-white/60">
+        <div className="flex items-center gap-1 sm:gap-2.5 text-white/60 shrink-0">
           {isDM && dmPartner && (
             <button
               onClick={() => startDirectCall(dmPartner)}
-              className="px-3 py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 hover:border-emerald-400 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+              className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 hover:border-emerald-400 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
               title="1-e-1 Sesli Arama Başlat"
             >
               <Phone className="w-3.5 h-3.5" />
-              <span>Sesli Ara</span>
+              <span className="hidden sm:inline">Sesli Ara</span>
             </button>
           )}
 
           <button
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
+            className="hidden sm:flex w-8 h-8 rounded-full hover:bg-white/10 items-center justify-center transition"
             title="Bildirimler"
           >
             <Bell className="w-4 h-4" />
           </button>
           <button
             onClick={() => setIsMediaModalOpen(true)}
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-pink-400"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-pink-400"
             title="Kanal Medya & Dosya Galerisi"
           >
             <ImageIcon className="w-4 h-4" />
@@ -580,7 +580,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           {activeServer && (
             <button
               onClick={() => setIsLeaderboardOpen(true)}
-              className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-amber-400"
+              className="hidden sm:flex w-8 h-8 rounded-full hover:bg-white/10 items-center justify-center transition text-amber-400"
               title="Sunucu Liderlik Tablosu (XP & Seviye)"
             >
               <Trophy className="w-4 h-4" />
@@ -588,14 +588,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
           <button
             onClick={() => setIsChatMiniGamesOpen(true)}
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-purple-400"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-purple-400"
             title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma)"
           >
             <Gamepad2 className="w-4 h-4" />
           </button>
           <button
             onClick={() => setIsPinModalOpen(true)}
-            className="relative w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
+            className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
             title="Sabitlenmiş Mesajlar"
           >
             <Pin className={`w-4 h-4 ${messages.some(m => m.isPinned) ? 'text-amber-400' : ''}`} />
@@ -607,7 +607,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </button>
           <button
             onClick={onToggleMembers}
-            className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+            className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center transition ${
               showMembers ? 'bg-white/15 text-white' : 'hover:bg-white/10'
             }`}
             title="Kişileri Göster/Gizle"
@@ -617,7 +617,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
           <button
             onClick={() => setIsSearchModalOpen(true)}
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-blue-400"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-blue-400"
             title="Gelişmiş Sohbet Araması & Işınlanma"
           >
             <Search className="w-4 h-4" />
@@ -1110,7 +1110,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Message Input Box - iOS Messages Capsule Bar */}
-      <div className="px-6 pb-6 pt-2 shrink-0 select-none">
+      <div className="px-3 sm:px-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-6 pt-2 shrink-0 select-none">
         {/* Hidden File Input */}
         <input
           type="file"
@@ -1209,7 +1209,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
             {/* Emoji Picker Popover */}
             {isEmojiPickerOpen && (
-              <div className="absolute bottom-14 right-0 z-30 w-72 p-3 rounded-2xl ios-glass border border-white/15 shadow-2xl space-y-3 animate-slide-up">
+              <div className="absolute bottom-14 right-0 z-30 w-[calc(100vw-24px)] max-w-72 p-3 rounded-2xl ios-glass border border-white/15 shadow-2xl space-y-3 animate-slide-up">
                 <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
                   <span className="text-xs font-bold text-white/90">Emoji Seç</span>
                   <button
@@ -1272,7 +1272,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
             <form
               onSubmit={handleSend}
-              className="ios-glass-card rounded-full px-3 py-2 flex items-center gap-2.5 shadow-2xl border border-white/15"
+              className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15"
             >
               <button
                 type="button"
@@ -1336,7 +1336,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
                       : `iMessage (#${activeChannel.name})...`
                   }
-                  className="flex-1 bg-transparent text-white placeholder-white/30 text-sm outline-none px-2"
+                  className="flex-1 min-w-0 bg-transparent text-white placeholder-white/30 text-base sm:text-sm outline-none px-1 sm:px-2"
                 />
               )}
 

@@ -350,10 +350,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xl flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl ios-glass rounded-3xl shadow-2xl flex overflow-hidden border border-white/10 h-[660px] max-h-[90vh]">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xl flex items-center justify-center p-0 sm:p-4">
+      <div className="w-full max-w-5xl ios-glass rounded-none sm:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden border-0 sm:border border-white/10 h-[100dvh] sm:h-[660px] sm:max-h-[90vh]">
         {/* Left Settings Sidebar - TeamSpeak-style Categorized Panel */}
-        <div className="w-60 bg-white/[0.02] p-4 flex flex-col justify-between shrink-0 border-r border-white/[0.06] overflow-y-auto">
+        <div className="w-full md:w-60 max-h-44 md:max-h-none bg-white/[0.02] p-3 md:p-4 flex flex-col justify-between shrink-0 border-b md:border-b-0 md:border-r border-white/[0.06] overflow-y-auto">
           <div className="space-y-4">
             <div className="text-[11px] font-bold text-white/40 uppercase px-2 tracking-wider">
               Ayarlar
@@ -514,10 +514,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         </div>
 
         {/* Right Settings Content */}
-        <div className="flex-1 p-8 flex flex-col justify-between overflow-y-auto relative">
+        <div className="flex-1 p-4 sm:p-8 flex flex-col justify-between overflow-y-auto relative min-w-0">
           <button
             onClick={onClose}
-            className="absolute top-6 right-6 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition shadow"
+            className="absolute top-3 right-3 sm:top-6 sm:right-6 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition shadow z-10"
             title="Kapat"
           >
             <X className="w-4 h-4" />

@@ -34,7 +34,9 @@ const MainLayout: React.FC = () => {
     isDiagnosticsOpen,
     setIsDiagnosticsOpen,
   } = useSocket();
-  const [showMembers, setShowMembers] = useState(true);
+  const [showMembers, setShowMembers] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+  );
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
@@ -53,14 +55,14 @@ const MainLayout: React.FC = () => {
   // Mandatory Authentication Wall: Kayıt / Giriş yapılmadan platform açılamaz
   if (!isAuthenticated) {
     return (
-      <div className="flex h-screen w-screen overflow-hidden items-center justify-center bg-transparent">
+      <div className="flex h-[100dvh] w-full overflow-hidden items-center justify-center bg-transparent">
         <AuthModal forced={true} onClose={() => {}} />
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
+    <div className="relative flex h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
       {/* Dedicated Server Banner Indicator */}
       {isDedicatedServer && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 animate-fade-in pointer-events-auto">
@@ -118,7 +120,7 @@ const MainLayout: React.FC = () => {
       {/* 1 & 2. Sol Sunucular & Kanallar Sütunu (Responsive Drawer) */}
       <div
         className={`${
-          isMobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex animate-fade-in' : 'hidden'
+          isMobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex max-w-[92vw] animate-fade-in' : 'hidden'
         } md:relative md:flex h-full shrink-0`}
       >
         <ServerSidebar
@@ -149,11 +151,24 @@ const MainLayout: React.FC = () => {
         onOpenMobileNav={() => setIsMobileNavOpen(true)}
       />
 
-      {/* 4. Sağ Üye Listesi Sütunu */}
+      {/* 4. Sağ Üye Listesi Sütunu (Mobilde çekmece, masaüstünde sabit) */}
       {showMembers && (
-        <div className="hidden lg:flex h-full shrink-0">
-          <MemberList onOpenProfile={(user) => setSelectedProfileUser(user)} />
-        </div>
+        <>
+          <div
+            onClick={() => setShowMembers(false)}
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden animate-fade-in"
+          />
+          <div className="fixed inset-y-0 right-0 z-40 lg:relative lg:z-auto flex h-full shrink-0 animate-fade-in">
+            <MemberList
+              onOpenProfile={(user) => {
+                setSelectedProfileUser(user);
+                if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                  setShowMembers(false);
+                }
+              }}
+            />
+          </div>
+        </>
       )}
 
       {/* 1-on-1 Direct Voice Calling Floating Widget */}

@@ -34,6 +34,7 @@ import {
   Minimize2,
   Hand,
   Layers,
+  Menu,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -110,7 +111,11 @@ const VideoStreamPlayer: React.FC<{
   );
 };
 
-export const VoiceRoomArea: React.FC = () => {
+interface VoiceRoomAreaProps {
+  onOpenMobileNav?: () => void;
+}
+
+export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav }) => {
   const {
     activeChannel,
     activeServer,
@@ -185,24 +190,34 @@ export const VoiceRoomArea: React.FC = () => {
   const hasAnyScreenShare = isScreenSharing || !!activeRemoteStreamEntry;
 
   return (
-    <div className="flex-1 bg-transparent flex flex-col h-full overflow-hidden relative">
+    <div className="flex-1 min-w-0 bg-transparent flex flex-col h-full overflow-hidden relative">
       {/* iOS Translucent Header */}
-      <header className="h-14 px-6 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-[#16161a]/60 backdrop-blur-2xl">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+      <header className="h-14 px-3 sm:px-6 border-b border-white/[0.08] flex items-center justify-between gap-2 shrink-0 bg-[#16161a]/60 backdrop-blur-2xl">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {onOpenMobileNav && (
+            <button
+              type="button"
+              onClick={onOpenMobileNav}
+              className="md:hidden w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
+              title="Menüyü Aç"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+          )}
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
             <Radio className="w-4 h-4 animate-pulse" />
           </div>
-          <div>
-            <h2 className="font-semibold text-white text-sm tracking-tight flex items-center gap-2">
-              {activeChannel.name}
-              <span className="text-[11px] bg-white/10 text-white/80 font-normal px-2 py-0.5 rounded-full">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-white text-sm tracking-tight flex items-center gap-2 truncate">
+              <span className="truncate">{activeChannel.name}</span>
+              <span className="hidden sm:inline-flex text-[11px] bg-white/10 text-white/80 font-normal px-2 py-0.5 rounded-full shrink-0">
                 FaceTime / WebRTC Odası
               </span>
             </h2>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[70vw]">
+        <div className="flex items-center gap-2 text-xs text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[52vw] sm:max-w-[70vw] shrink-0">
           {/* Voice Room Audio Recorder */}
           {isConnected && (
             <button
@@ -604,8 +619,8 @@ export const VoiceRoomArea: React.FC = () => {
       )}
 
       {/* iOS Floating Control Dock (FaceTime Style Capsule Bar) */}
-      <footer className="h-20 flex items-center justify-center px-6 shrink-0 z-30">
-        <div className="ios-glass px-6 py-2.5 rounded-full shadow-2xl flex items-center gap-4 border border-white/15">
+      <footer className="min-h-[4.5rem] py-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center justify-center px-2 sm:px-6 shrink-0 z-30">
+        <div className="ios-glass px-3 sm:px-6 py-2 rounded-3xl sm:rounded-full shadow-2xl flex flex-wrap sm:flex-nowrap items-center justify-center gap-1.5 sm:gap-3 border border-white/15 max-w-[calc(100vw-16px)]">
           {!isConnected ? (
             <button
               onClick={() => joinVoiceChannel(activeChannel.id)}
