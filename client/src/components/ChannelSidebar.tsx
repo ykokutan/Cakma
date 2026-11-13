@@ -273,8 +273,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="relative shrink-0">
-                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">
-                          {user.avatar || '👤'}
+                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm overflow-hidden">
+                          <AvatarView avatar={user.avatar} alt={user.username} fallback="👤" className="w-full h-full object-cover" />
                         </div>
                         <div
                           className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black ${
@@ -464,11 +464,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                           >
                             <div className="flex items-center gap-2 truncate">
                               <div
-                                className={`w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[11px] transition ${
+                                className={`w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[11px] transition overflow-hidden shrink-0 ${
                                   speaking ? 'ios-halo-subtle' : ''
                                 }`}
                               >
-                                {user.avatar || '👤'}
+                                <AvatarView avatar={user.avatar} alt={user.username} fallback="👤" className="w-full h-full object-cover" />
                               </div>
                               <span className="truncate">{user.username}</span>
                             </div>

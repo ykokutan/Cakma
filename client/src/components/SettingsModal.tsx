@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { AvatarView } from './AvatarView';
 import {
   X,
   Mic,
@@ -804,8 +805,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
               {/* Profile Card Preview */}
               <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center gap-4 shadow-sm">
-                <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-3xl shadow">
-                  {avatar}
+                <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-3xl shadow overflow-hidden shrink-0">
+                  <AvatarView avatar={avatar} alt={username} fallback="🎮" className="w-full h-full object-cover" />
                 </div>
                 <div>
                   <div className="text-base font-bold text-white">{username || 'Kullanıcı'}</div>

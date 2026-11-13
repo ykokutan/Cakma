@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { AvatarView } from './AvatarView';
 import {
   Shield,
   X,
@@ -524,7 +525,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                       .map((u) => (
                         <div key={u.id} className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <span className="text-lg">{u.avatar}</span>
+                            <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center overflow-hidden shrink-0 text-sm">
+                              <AvatarView avatar={u.avatar} alt={u.username} fallback="👤" className="w-full h-full object-cover" />
+                            </div>
                             <div>
                               <div className="text-xs font-semibold text-white">{u.username}</div>
                               <div className="text-[10px] text-emerald-400">{u.currentVoiceChannelId}</div>
