@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
 import {
   X,
@@ -43,6 +43,12 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
   );
 
   const [isTesting, setIsTesting] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setLastUpdated(new Date().toLocaleTimeString('tr-TR'));
+  }, [isOpen, ping, pingHistory.length]);
 
   if (!isOpen) return null;
 
@@ -109,6 +115,10 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${quality.bg} ${quality.color} ${quality.border}`}>
                   {quality.label}
                 </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  CANLI · 1s
+                </span>
               </div>
               <p className="text-xs text-white/40 mt-0.5">
                 {isDedicatedServer ? `Özel Sunucu: ${currentServerHost}` : 'Ana Sunucu: ses.yahyakemalokutan.com · Port 4000'}
@@ -139,7 +149,7 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
                 <span className="text-xs text-white/40">ms</span>
               </div>
               <div className="mt-1 text-[10px] text-emerald-400 font-medium">
-                {ping < 20 ? 'Ultra Düşük RTT' : 'Stabil RTT'}
+                {ping <= 25 ? 'Ultra Düşük RTT' : ping <= 75 ? 'Stabil RTT' : 'Yüksek RTT'}
               </div>
             </div>
 
@@ -153,7 +163,7 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
                 <span className="text-xs text-white/40">ms</span>
               </div>
               <div className="mt-1 text-[10px] text-blue-400 font-medium">
-                Dalgalanma Yok
+                {jitter <= 5 ? 'Dalgalanma Yok' : jitter <= 20 ? 'Hafif Dalgalanma' : 'Yüksek Sapma'}
               </div>
             </div>
 
@@ -166,8 +176,8 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
                 <span className="text-2xl font-black text-white font-mono">{packetLoss.toFixed(1)}</span>
                 <span className="text-xs text-white/40">%</span>
               </div>
-              <div className="mt-1 text-[10px] text-emerald-400 font-medium">
-                Kayıpsız Akış
+              <div className={`mt-1 text-[10px] font-medium ${packetLoss === 0 ? 'text-emerald-400' : packetLoss < 2 ? 'text-amber-400' : 'text-red-400'}`}>
+                {packetLoss === 0 ? 'Kayıpsız Akış' : packetLoss < 2 ? 'Düşük Paket Kaybı' : 'Yüksek Paket Kaybı'}
               </div>
             </div>
 
@@ -327,7 +337,9 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
         <div className="px-6 py-4 border-t border-white/[0.08] bg-white/[0.02] flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-white/40">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>Otomatik 3 saniyelik RTT telemetrisi aktif</span>
+            <span>
+              Anlık 1 saniyelik RTT & paket kaybı telemetrisi aktif{lastUpdated ? ` · Son: ${lastUpdated}` : ''}
+            </span>
           </div>
 
           <div className="flex items-center gap-2">

@@ -520,49 +520,68 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [outgoingFriendRequests, setOutgoingFriendRequests] = useState<FriendRequest[]>([]);
 
   // Diagnostics & Network Telemetry State
-  const [ping, setPing] = useState<number>(16);
-  const [jitter, setJitter] = useState<number>(1.2);
-  const [packetLoss] = useState<number>(0.0);
-  const [pingHistory, setPingHistory] = useState<number[]>([14, 16, 15, 17, 14, 15, 16, 18, 15, 14, 16, 15, 14, 17, 16]);
+  const [ping, setPing] = useState<number>(0);
+  const [jitter, setJitter] = useState<number>(0);
+  const [packetLoss, setPacketLoss] = useState<number>(0);
+  const [pingHistory, setPingHistory] = useState<number[]>([]);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
+  const packetResultsRef = useRef<boolean[]>([]);
 
   const openDiagnostics = useCallback(() => {
     setIsDiagnosticsOpen(true);
   }, []);
 
+  const recordPacketResult = useCallback((ok: boolean) => {
+    const next = [...packetResultsRef.current.slice(-29), ok];
+    packetResultsRef.current = next;
+    const lost = next.filter((v) => !v).length;
+    setPacketLoss(Number(((lost / next.length) * 100).toFixed(1)));
+  }, []);
+
   const measurePing = useCallback((): Promise<number> => {
     return new Promise((resolve) => {
       if (!socket || !socket.connected) {
-        const fallback = 14 + Math.floor(Math.random() * 5);
-        setPing(fallback);
-        setPingHistory(prev => [...prev.slice(-29), fallback]);
-        resolve(fallback);
+        recordPacketResult(false);
+        resolve(0);
         return;
       }
+      let settled = false;
       const start = performance.now();
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        recordPacketResult(false);
+        resolve(0);
+      }, 1500);
+
       socket.emit('ping_check', Date.now(), () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
         const roundTrip = Math.max(1, Math.round(performance.now() - start));
-        setPing(prev => {
-          const diff = Math.abs(roundTrip - prev);
-          setJitter(j => Number((j * 0.7 + diff * 0.3).toFixed(1)));
+        recordPacketResult(true);
+        setPing((prev) => {
+          if (prev > 0) {
+            const diff = Math.abs(roundTrip - prev);
+            setJitter((j) => Number((j * 0.65 + diff * 0.35).toFixed(1)));
+          }
           return roundTrip;
         });
-        setPingHistory(prev => [...prev.slice(-29), roundTrip]);
+        setPingHistory((prev) => [...prev.slice(-29), roundTrip]);
         resolve(roundTrip);
       });
-      setTimeout(() => {
-        resolve(16);
-      }, 1500);
     });
-  }, [socket]);
+  }, [socket, recordPacketResult]);
 
   useEffect(() => {
     if (!socket || !socket.connected) return;
+    measurePing();
+    const intervalMs = isDiagnosticsOpen ? 1000 : 4000;
     const interval = setInterval(() => {
       measurePing();
-    }, 4000);
+    }, intervalMs);
     return () => clearInterval(interval);
-  }, [socket, measurePing]);
+  }, [socket, isDiagnosticsOpen, measurePing]);
 
   // Per-User Volumes & Local Mutes
   const [userVolumes, setUserVolumes] = useState<Record<string, number>>(() => {
