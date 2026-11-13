@@ -10,7 +10,7 @@ interface AuthModalProps {
 const AVATAR_OPTIONS = ['🛡️', '🚀', '🎮', '⚡', '🎧', '👾', '🐱', '🐺', '🔥', '💻'];
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false }) => {
-  const { login, register, currentServerHost, isDedicatedServer, resetToMainServer } = useSocket();
+  const { login, verify2faLogin, register, currentServerHost, isDedicatedServer, resetToMainServer } = useSocket();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -18,6 +18,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const [avatar, setAvatar] = useState('🛡️');
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pending2faToken, setPending2faToken] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,6 +27,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
     setLoading(true);
 
     try {
+      if (pending2faToken) {
+        const res = await verify2faLogin(pending2faToken, totpCode);
+        if (res.success) {
+          onClose();
+        } else {
+          setErrorMessage(res.error || '2FA doğrulaması başarısız oldu.');
+        }
+        return;
+      }
+
       if (isRegister) {
         const res = await register({ username, email, password, avatar });
         if (res.success) {
@@ -36,6 +48,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
         const res = await login(username, password);
         if (res.success) {
           onClose();
+        } else if (res.requires2fa && res.pending2faToken) {
+          setPending2faToken(res.pending2faToken);
+          setTotpCode('');
         } else {
           setErrorMessage(res.error || 'Giriş başarısız oldu.');
         }
@@ -127,80 +142,125 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
             </div>
           )}
 
-          {isRegister && (
-            <div>
-              <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
-                Avatar Seç
-              </label>
-              <div className="flex flex-wrap gap-1.5 justify-center">
-                {AVATAR_OPTIONS.map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setAvatar(opt)}
-                    className={`w-9 h-9 rounded-xl bg-white/5 hover:scale-110 transition flex items-center justify-center text-lg border ${
-                      avatar === opt ? 'border-blue-400 bg-blue-500/25' : 'border-white/5'
-                    }`}
-                  >
-                    {opt}
-                  </button>
-                ))}
+          {pending2faToken ? (
+            <div className="space-y-4">
+              <div className="p-3 rounded-2xl bg-blue-500/10 border border-blue-500/25 text-xs text-blue-200 leading-relaxed">
+                Hesabınız <b>İki Faktörlü Doğrulama (2FA)</b> ile korunuyor. Google Authenticator / Authy uygulamanızdaki 6 haneli kodu veya 8 haneli yedek kurtarma kodunuzu girin.
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                  Doğrulama Kodu
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  placeholder="123456 veya XXXX-XXXX"
+                  className="w-full bg-white/5 border border-white/10 text-white text-center font-mono text-base tracking-widest rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPending2faToken(null);
+                    setTotpCode('');
+                    setErrorMessage('');
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white/80 transition"
+                >
+                  Geri
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold text-xs rounded-xl transition shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Shield className="w-4 h-4" />
+                  {loading ? 'Doğrulanıyor...' : 'Doğrula ve Giriş Yap'}
+                </button>
               </div>
             </div>
+          ) : (
+            <>
+              {isRegister && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
+                    Avatar Seç
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 justify-center">
+                    {AVATAR_OPTIONS.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setAvatar(opt)}
+                        className={`w-9 h-9 rounded-xl bg-white/5 hover:scale-110 transition flex items-center justify-center text-lg border ${
+                          avatar === opt ? 'border-blue-400 bg-blue-500/25' : 'border-white/5'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                  Kullanıcı Adı {isRegister ? '' : 'veya E-Posta'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={isRegister ? 'Örn: kullanıcı_adınız' : 'Kullanıcı adınız veya E-Posta'}
+                  className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
+                />
+              </div>
+
+              {isRegister && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                    E-Posta Adresi
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="ahmet@example.com"
+                    className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                  Şifre
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold text-xs rounded-xl transition shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
+              >
+                {isRegister ? <UserPlus className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
+                {loading ? 'İşleniyor...' : isRegister ? 'Hesap Oluştur ve Giriş Yap' : 'Oturum Aç'}
+              </button>
+            </>
           )}
-
-          <div>
-            <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
-              Kullanıcı Adı {isRegister ? '' : 'veya E-Posta'}
-            </label>
-            <input
-              type="text"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder={isRegister ? 'Örn: kullanıcı_adınız' : 'Kullanıcı adınız veya E-Posta'}
-              className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
-            />
-          </div>
-
-          {isRegister && (
-            <div>
-              <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
-                E-Posta Adresi
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="ahmet@example.com"
-                className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
-              />
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
-              Şifre
-            </label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold text-xs rounded-xl transition shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
-          >
-            {isRegister ? <UserPlus className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
-            {loading ? 'İşleniyor...' : isRegister ? 'Hesap Oluştur ve Giriş Yap' : 'Oturum Aç'}
-          </button>
         </form>
       </div>
     </div>

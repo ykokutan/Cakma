@@ -35,6 +35,7 @@ const AVATAR_OPTIONS = ['🎮', '🚀', '🔥', '🎧', '⚡', '💻', '🐱', '
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const {
+    socket,
     currentUser,
     updateProfile,
     inputMode,
@@ -148,6 +149,77 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [appVersion, setAppVersion] = useState<string>('0.1.2');
   const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+
+  // 2FA State
+  const [twoFaSetup, setTwoFaSetup] = useState<{ secret: string; otpauthUri: string } | null>(null);
+  const [twoFaQrDataUrl, setTwoFaQrDataUrl] = useState<string | null>(null);
+  const [twoFaCodeInput, setTwoFaCodeInput] = useState('');
+  const [twoFaDisablePassword, setTwoFaDisablePassword] = useState('');
+  const [twoFaDisableCode, setTwoFaDisableCode] = useState('');
+  const [twoFaBackupCodes, setTwoFaBackupCodes] = useState<string[] | null>(null);
+  const [twoFaStatusMsg, setTwoFaStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [twoFaLoading, setTwoFaLoading] = useState(false);
+
+  const handleInit2fa = () => {
+    if (!socket) return;
+    setTwoFaStatusMsg(null);
+    setTwoFaBackupCodes(null);
+    setTwoFaLoading(true);
+    socket.emit('2fa_setup_init');
+    socket.once('2fa_setup_data', async ({ secret, otpauthUri }: { secret: string; otpauthUri: string }) => {
+      setTwoFaSetup({ secret, otpauthUri });
+      try {
+        const QRCode = await import('qrcode');
+        const url = await QRCode.toDataURL(otpauthUri, { width: 180, margin: 1 });
+        setTwoFaQrDataUrl(url);
+      } catch {
+        setTwoFaQrDataUrl(null);
+      }
+      setTwoFaLoading(false);
+    });
+  };
+
+  const handleVerifyEnable2fa = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!socket || !twoFaCodeInput.trim()) return;
+    setTwoFaStatusMsg(null);
+    setTwoFaLoading(true);
+    socket.emit('2fa_setup_verify', { code: twoFaCodeInput.trim() });
+    socket.once(
+      '2fa_status_response',
+      (res: { success: boolean; enabled?: boolean; backupCodes?: string[]; message?: string; error?: string }) => {
+        setTwoFaLoading(false);
+        if (res.success && res.enabled) {
+          setTwoFaSetup(null);
+          setTwoFaQrDataUrl(null);
+          setTwoFaCodeInput('');
+          setTwoFaBackupCodes(res.backupCodes || null);
+          setTwoFaStatusMsg({ type: 'success', text: res.message || '2FA etkinleştirildi!' });
+        } else {
+          setTwoFaStatusMsg({ type: 'error', text: res.error || '2FA doğrulanamadı.' });
+        }
+      }
+    );
+  };
+
+  const handleDisable2fa = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!socket) return;
+    setTwoFaStatusMsg(null);
+    setTwoFaLoading(true);
+    socket.emit('2fa_disable', { password: twoFaDisablePassword, code: twoFaDisableCode.trim() });
+    socket.once('2fa_status_response', (res: { success: boolean; message?: string; error?: string }) => {
+      setTwoFaLoading(false);
+      if (res.success) {
+        setTwoFaDisablePassword('');
+        setTwoFaDisableCode('');
+        setTwoFaBackupCodes(null);
+        setTwoFaStatusMsg({ type: 'success', text: res.message || '2FA devre dışı bırakıldı.' });
+      } else {
+        setTwoFaStatusMsg({ type: 'error', text: res.error || '2FA kapatılamadı.' });
+      }
+    });
+  };
 
   React.useEffect(() => {
     const isTauri =
@@ -870,8 +942,153 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               <div>
                 <h3 className="text-xl font-bold text-white tracking-tight">Hesap & Güvenlik</h3>
                 <p className="text-xs text-white/50 mt-0.5">
-                  Şifrenizi güncelleyin ve engellediğiniz kullanıcıları yönetin.
+                  İki faktörlü doğrulama (2FA), şifre ve engellenen kullanıcıları yönetin.
                 </p>
+              </div>
+
+              {/* Two-Factor Authentication (2FA) */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                    <span>İki Faktörlü Doğrulama (2FA / Authenticator)</span>
+                  </div>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                      currentUser?.twoFactorEnabled
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-white/10 text-white/50 border border-white/10'
+                    }`}
+                  >
+                    {currentUser?.twoFactorEnabled ? 'Aktif' : 'Kapalı'}
+                  </span>
+                </div>
+
+                {twoFaStatusMsg && (
+                  <div
+                    className={`text-xs px-3 py-2 rounded-xl border ${
+                      twoFaStatusMsg.type === 'success'
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                        : 'bg-red-500/15 border-red-500/30 text-red-300'
+                    }`}
+                  >
+                    {twoFaStatusMsg.text}
+                  </div>
+                )}
+
+                {twoFaBackupCodes && twoFaBackupCodes.length > 0 && (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                    <div className="text-xs font-bold text-amber-300">
+                      Tek Kullanımlık Yedek Kurtarma Kodlarınız (Güvenli Bir Yere Kaydedin):
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 font-mono text-xs text-white">
+                      {twoFaBackupCodes.map((c) => (
+                        <div key={c} className="bg-black/40 rounded-lg px-2 py-1 text-center border border-white/10">
+                          {c}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!isAuthenticated ? (
+                  <p className="text-xs text-white/50">2FA ayarlarını yönetmek için giriş yapmış olmalısınız.</p>
+                ) : currentUser?.twoFactorEnabled ? (
+                  <form onSubmit={handleDisable2fa} className="space-y-2.5 pt-1">
+                    <p className="text-xs text-white/60">
+                      2FA şu anda hesabınızı koruyor. Devre dışı bırakmak için şifrenizi ve güncel 6 haneli kodunuzu girin:
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="password"
+                        required
+                        value={twoFaDisablePassword}
+                        onChange={(e) => setTwoFaDisablePassword(e.target.value)}
+                        placeholder="Mevcut Şifre"
+                        className="bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                      <input
+                        type="text"
+                        required
+                        value={twoFaDisableCode}
+                        onChange={(e) => setTwoFaDisableCode(e.target.value)}
+                        placeholder="6 haneli 2FA kodu"
+                        className="bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={twoFaLoading}
+                      className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 text-xs font-semibold transition disabled:opacity-50"
+                    >
+                      {twoFaLoading ? 'İşleniyor...' : '2FA Korumasını Kapat'}
+                    </button>
+                  </form>
+                ) : twoFaSetup ? (
+                  <form onSubmit={handleVerifyEnable2fa} className="space-y-3 pt-1">
+                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-black/30 p-3 rounded-xl border border-white/10">
+                      {twoFaQrDataUrl && (
+                        <img
+                          src={twoFaQrDataUrl}
+                          alt="2FA QR Code"
+                          className="w-36 h-36 rounded-lg bg-white p-1.5 shrink-0"
+                        />
+                      )}
+                      <div className="space-y-2 text-xs text-white/70 min-w-0">
+                        <div>
+                          Google Authenticator, Authy veya Microsoft Authenticator ile QR kodu okutun.
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-white/40 uppercase font-semibold">Manuel Kurulum Anahtarı:</div>
+                          <div className="font-mono text-white bg-black/40 px-2.5 py-1.5 rounded-lg border border-white/10 break-all select-all mt-1">
+                            {twoFaSetup.secret}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        required
+                        value={twoFaCodeInput}
+                        onChange={(e) => setTwoFaCodeInput(e.target.value)}
+                        placeholder="Uygulamadaki 6 haneli kodu girin"
+                        className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-white outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={twoFaLoading}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold transition disabled:opacity-50"
+                      >
+                        {twoFaLoading ? 'Doğrulanıyor...' : 'Doğrula ve Etkinleştir'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTwoFaSetup(null);
+                          setTwoFaQrDataUrl(null);
+                        }}
+                        className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs text-white/70"
+                      >
+                        İptal
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-white/50">
+                      Giriş yaparken şifrenize ek olarak telefonunuzdaki 6 haneli doğrulama kodunu isteyin.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleInit2fa}
+                      disabled={twoFaLoading}
+                      className="shrink-0 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold shadow transition disabled:opacity-50"
+                    >
+                      {twoFaLoading ? 'Hazırlanıyor...' : "2FA'yı Etkinleştir"}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Password Change */}

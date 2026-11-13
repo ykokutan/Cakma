@@ -61,6 +61,7 @@ export interface User {
   activity?: UserActivity;
   level?: number;
   xp?: number;
+  twoFactorEnabled?: boolean;
 }
 
 export interface MessageAttachment {

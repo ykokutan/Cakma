@@ -120,7 +120,8 @@ interface SocketContextType {
   getServerMemberHighestRole: (member: ServerMember, server: Server) => ServerRole | null;
 
   // Auth Handlers
-  login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }>;
+  verify2faLogin: (pending2faToken: string, code: string) => Promise<{ success: boolean; error?: string }>;
   register: (data: { username: string; email: string; password: string; avatar: string }) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
 
@@ -1884,7 +1885,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [inputMode, pttKey, isPttActive, connectedVoiceChannelId, isMuted, socket]);
 
   // Auth Methods
-  const login = (usernameOrEmail: string, password: string): Promise<{ success: boolean; error?: string }> => {
+  const login = (usernameOrEmail: string, password: string): Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }> => {
     return new Promise((resolve) => {
       if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
 
@@ -1897,6 +1898,37 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 5000);
 
       socket.emit('auth_login', { usernameOrEmail, password });
+      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; requires2fa?: boolean; pending2faToken?: string; error?: string }) => {
+        if (answered) return;
+        answered = true;
+        clearTimeout(timer);
+        if (res.success && res.user) {
+          localStorage.setItem('dc_clone_auth', JSON.stringify({ token: res.token, username: res.user.username, avatar: res.user.avatar }));
+          setCurrentUser(res.user);
+          setIsAuthenticated(true);
+          resolve({ success: true });
+        } else if (res.requires2fa && res.pending2faToken) {
+          resolve({ success: false, requires2fa: true, pending2faToken: res.pending2faToken });
+        } else {
+          resolve({ success: false, error: res.error || 'Giriş başarısız oldu.' });
+        }
+      });
+    });
+  };
+
+  const verify2faLogin = (pending2faToken: string, code: string): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
+
+      let answered = false;
+      const timer = setTimeout(() => {
+        if (!answered) {
+          answered = true;
+          resolve({ success: false, error: 'Sunucu yanıt vermedi (Zaman aşımı).' });
+        }
+      }, 5000);
+
+      socket.emit('auth_2fa_verify', { pending2faToken, code });
       socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; error?: string }) => {
         if (answered) return;
         answered = true;
@@ -1907,7 +1939,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setIsAuthenticated(true);
           resolve({ success: true });
         } else {
-          resolve({ success: false, error: res.error || 'Giriş başarısız oldu.' });
+          resolve({ success: false, error: res.error || '2FA doğrulama başarısız oldu.' });
         }
       });
     });
@@ -2895,6 +2927,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         // Auth
         login,
+        verify2faLogin,
         register,
         logout,
 

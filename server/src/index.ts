@@ -14,6 +14,12 @@ import { initialServers, initialMessages, getDefaultRoles } from './mockData.js'
 import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import {
+  generateBase32Secret,
+  generateOtpAuthUri,
+  verifyTotpCode,
+  generateBackupCodes,
+} from './totp.js';
+import {
   loadAccounts, saveAccounts,
   loadServers, saveServers,
   loadMessages, saveMessages,
@@ -126,6 +132,9 @@ export function recordRegisterAttempt(ip: string): void {
 const ALLOWED_ORIGINS = [
   'https://ses.yahyakemalokutan.com',
   'http://ses.yahyakemalokutan.com',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'tauri://localhost',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://localhost:4000',
@@ -506,7 +515,7 @@ function addAuditLog(action: string, details: string, type: 'info' | 'warn' | 'v
   saveAuditLogs(auditLogs);
 
   // Notify any active admin panels listening
-  io.emit('admin_new_log', newLog);
+  io.to('admins').emit('admin_new_log', newLog);
 }
 
 // User Connection & IP Logs
@@ -676,7 +685,7 @@ app.post('/api/dedicated/heartbeat', (req, res) => {
       const existing = dedicatedServersRegistry.get(id);
       if (existing) {
         existing.status = 'revoked';
-        io.emit('admin_dedicated_updated', existing);
+        io.to('admins').emit('admin_dedicated_updated', existing);
       }
       return res.status(403).json({
         success: false,
@@ -711,7 +720,7 @@ app.post('/api/dedicated/heartbeat', (req, res) => {
   }
 
   // Real-time broadcast to connected admin panels
-  io.emit('admin_dedicated_updated', serverInfo);
+  io.to('admins').emit('admin_dedicated_updated', serverInfo);
 
   res.json({ success: true, message: 'Heartbeat kabul edildi.' });
 });
@@ -722,7 +731,7 @@ app.post('/api/dedicated/shutdown', (req, res) => {
     const s = dedicatedServersRegistry.get(id)!;
     s.status = 'offline';
     addAuditLog('DEDICATED_SUNUCU_KAPANDI', `Dedicated Ses Sunucusu kapandi: "${s.serverName}" (${s.host})`, 'warn');
-    io.emit('admin_dedicated_updated', s);
+    io.to('admins').emit('admin_dedicated_updated', s);
   }
   res.json({ success: true });
 });
@@ -800,12 +809,48 @@ export function verifySessionToken(token: string): string | null {
   }
 }
 
+export function generatePending2faToken(username: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    u: username,
+    purpose: '2fa',
+    exp: Date.now() + 5 * 60 * 1000 // 5 minutes
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+export function verifyPending2faToken(token: string): string | null {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  try {
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    if (!parsed.u || parsed.purpose !== '2fa' || !parsed.exp || parsed.exp < Date.now()) {
+      return null;
+    }
+    return parsed.u;
+  } catch {
+    return null;
+  }
+}
+
 function requireMasterAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers['authorization'];
   const adminKey = req.headers['x-admin-key'];
   const token = adminKey || (typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader);
-  if (token && token === MASTER_API_KEY) {
-    return next();
+  if (typeof token === 'string' && token.length > 0) {
+    const tokenDigest = crypto.createHash('sha256').update(token).digest();
+    const expectedDigest = crypto.createHash('sha256').update(MASTER_API_KEY).digest();
+    if (crypto.timingSafeEqual(tokenDigest, expectedDigest)) {
+      return next();
+    }
   }
   return res.status(401).json({ success: false, error: 'Yetkisiz erişim: Geçersiz master API anahtarı.' });
 }
@@ -857,7 +902,7 @@ app.post('/api/master/license/generate', requireMasterAuth, (req, res) => {
 
   issuedLicenses.set(newLicense.id, newLicense);
   saveLicenses(issuedLicenses);
-  io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+  io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   res.json({ success: true, license: newLicense });
 });
 
@@ -867,12 +912,12 @@ app.post('/api/master/license/revoke', requireMasterAuth, (req, res) => {
   if (lic) {
     lic.status = 'revoked';
     saveLicenses(issuedLicenses);
-    io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+    io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
 
     for (const s of dedicatedServersRegistry.values()) {
       if (s.licenseKey === lic.licenseKey || s.licensee.toLowerCase() === lic.licensee.toLowerCase()) {
         s.status = 'revoked';
-        io.emit('admin_dedicated_updated', s);
+        io.to('admins').emit('admin_dedicated_updated', s);
       }
     }
     const directFallbacks = ['http://127.0.0.1:4001/api/license/revoked', 'http://localhost:4001/api/license/revoked'];
@@ -920,7 +965,7 @@ app.post('/api/master/license/extend', requireMasterAuth, (req, res) => {
   }
 
   saveLicenses(issuedLicenses);
-  io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+  io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   res.json({ success: true, license: lic });
 });
 
@@ -943,11 +988,11 @@ setInterval(() => {
     if (server.status === 'online' && now - new Date(server.lastHeartbeat).getTime() > 30000) {
       server.status = 'offline';
       changed = true;
-      io.emit('admin_dedicated_updated', server);
+      io.to('admins').emit('admin_dedicated_updated', server);
     }
   }
   if (changed) {
-    io.emit('admin_dedicated_list', Array.from(dedicatedServersRegistry.values()));
+    io.to('admins').emit('admin_dedicated_list', Array.from(dedicatedServersRegistry.values()));
   }
 }, 15000);
 
@@ -1098,6 +1143,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     recordUserConnection(socket, user.username, user.role);
 
@@ -1166,8 +1212,18 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
     }
 
-    // Successful login -> clear failed attempts
+    // Successful password check -> check 2FA if enabled
     clearLoginRateLimit(clientIp);
+
+    if (foundAccount.twoFactorEnabled && foundAccount.twoFactorSecret) {
+      const pending2faToken = generatePending2faToken(foundAccount.username);
+      return socket.emit('auth_response', {
+        success: false,
+        requires2fa: true,
+        pending2faToken,
+        username: foundAccount.username,
+      });
+    }
 
     // Bind socket to account
     const user: User = {
@@ -1188,10 +1244,12 @@ io.on('connection', (socket: Socket) => {
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
-      blockedUsers: foundAccount.blockedUsers || []
+      blockedUsers: foundAccount.blockedUsers || [],
+      twoFactorEnabled: Boolean(foundAccount.twoFactorEnabled),
     };
 
     activeUsers.set(socket.id, user);
+    if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı (IP: ${clientIp}).`, 'auth');
     recordUserConnection(socket, user.username, user.role);
@@ -1206,6 +1264,96 @@ io.on('connection', (socket: Socket) => {
     });
     socket.emit('friends_data', getFriendsData(user.username));
 
+    socket.broadcast.emit('user_connected', user);
+  });
+
+  // 2.2 VERIFY 2FA LOGIN
+  socket.on('auth_2fa_verify', ({ pending2faToken, code }: { pending2faToken: string; code: string }) => {
+    const clientIp = getClientIp(socket);
+    const rateCheck = checkLoginRateLimit(clientIp);
+    if (!rateCheck.allowed) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: `Çok fazla başarısız 2FA denemesi! ${rateCheck.retryAfterSeconds} saniye bekleyin.`
+      });
+    }
+
+    const verifiedUsername = verifyPending2faToken(pending2faToken);
+    if (!verifiedUsername) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: '2FA doğrulama süresi doldu, lütfen tekrar giriş yapın.'
+      });
+    }
+
+    const foundAccount = registeredAccounts.get(verifiedUsername.toLowerCase());
+    if (!foundAccount || !foundAccount.twoFactorEnabled || !foundAccount.twoFactorSecret) {
+      return socket.emit('auth_response', { success: false, error: '2FA yapılandırması bulunamadı.' });
+    }
+
+    const cleanCode = (code || '').trim().toUpperCase();
+    let isValid = verifyTotpCode(foundAccount.twoFactorSecret, cleanCode);
+
+    // Check one-time backup codes if TOTP didn't match
+    if (!isValid && Array.isArray(foundAccount.twoFactorBackupCodes) && foundAccount.twoFactorBackupCodes.length > 0) {
+      const matchIdx = foundAccount.twoFactorBackupCodes.findIndex((hashed) => verifyPassword(cleanCode, hashed));
+      if (matchIdx !== -1) {
+        isValid = true;
+        foundAccount.twoFactorBackupCodes.splice(matchIdx, 1);
+        saveAccounts(registeredAccounts);
+        addAuditLog('2FA_YEDEK_KOD', `${foundAccount.username} yedek kurtarma kodu ile giriş yaptı.`, 'auth');
+      }
+    }
+
+    if (!isValid) {
+      recordFailedLogin(clientIp);
+      return socket.emit('auth_response', {
+        success: false,
+        requires2fa: true,
+        pending2faToken,
+        error: 'Geçersiz 2FA kodu! Lütfen doğrulayıcı uygulamanızdaki güncel 6 haneli kodu girin.'
+      });
+    }
+
+    clearLoginRateLimit(clientIp);
+
+    const user: User = {
+      id: socket.id,
+      username: foundAccount.username,
+      email: foundAccount.email,
+      role: foundAccount.role,
+      avatar: foundAccount.avatar,
+      status: 'online',
+      isMuted: false,
+      isDeafened: false,
+      isSpeaking: false,
+      createdAt: foundAccount.createdAt,
+      walletBalance: foundAccount.walletBalance,
+      statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
+      bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
+      bannerImage: foundAccount.bannerImage || '',
+      bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
+      badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
+      friends: foundAccount.friends || [],
+      blockedUsers: foundAccount.blockedUsers || [],
+      twoFactorEnabled: true,
+    };
+
+    activeUsers.set(socket.id, user);
+    if (user.role === 'admin') socket.join('admins');
+    ensureUserInServers(user);
+    addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) 2FA ile giriş yaptı (IP: ${clientIp}).`, 'auth');
+    recordUserConnection(socket, user.username, user.role);
+
+    const token = generateSessionToken(user.username);
+    socket.emit('auth_response', { success: true, user, token });
+    socket.emit('init_data', {
+      currentUser: user,
+      servers,
+      onlineUsers: Array.from(activeUsers.values()),
+      messages
+    });
+    socket.emit('friends_data', getFriendsData(user.username));
     socket.broadcast.emit('user_connected', user);
   });
 
@@ -1248,10 +1396,12 @@ io.on('connection', (socket: Socket) => {
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
-      blockedUsers: foundAccount.blockedUsers || []
+      blockedUsers: foundAccount.blockedUsers || [],
+      twoFactorEnabled: Boolean(foundAccount.twoFactorEnabled),
     };
 
     activeUsers.set(socket.id, user);
+    if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     recordUserConnection(socket, user.username, user.role);
 
@@ -1271,6 +1421,7 @@ io.on('connection', (socket: Socket) => {
   socket.on('auth_logout', () => {
     const user = activeUsers.get(socket.id);
     if (user) {
+      socket.leave('admins');
       recordUserDisconnection(socket.id);
       addAuditLog('CIKIS_YAPILDI', `${user.username} sistemden çıkış yaptı.`, 'auth');
       if (user.currentVoiceChannelId) {
@@ -1637,6 +1788,86 @@ io.on('connection', (socket: Socket) => {
     saveAccounts(registeredAccounts);
     addAuditLog('SIFRE_DEGISTIRILDI', `${user.username} kendi şifresini güncelledi.`, 'auth');
     socket.emit('change_password_response', { success: true, message: 'Şifreniz başarıyla güncellendi.' });
+  });
+
+  // 2FA Setup Init
+  socket.on('2fa_setup_init', () => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc) return;
+    if (acc.twoFactorEnabled) {
+      return socket.emit('2fa_status_response', { success: false, error: '2FA zaten aktif.' });
+    }
+    const secret = generateBase32Secret(20);
+    acc.pendingTwoFactorSecret = secret;
+    saveAccounts(registeredAccounts);
+    const otpauthUri = generateOtpAuthUri(acc.username, secret, 'Çakma');
+    socket.emit('2fa_setup_data', { secret, otpauthUri });
+  });
+
+  // 2FA Setup Verify & Enable
+  socket.on('2fa_setup_verify', ({ code }: { code: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc || !acc.pendingTwoFactorSecret) {
+      return socket.emit('2fa_status_response', { success: false, error: 'Önce 2FA kurulumunu başlatın.' });
+    }
+    if (!verifyTotpCode(acc.pendingTwoFactorSecret, code)) {
+      return socket.emit('2fa_status_response', { success: false, error: 'Doğrulama kodu geçersiz. Saatinizin senkronize olduğundan emin olun.' });
+    }
+
+    const backupCodes = generateBackupCodes(6);
+    acc.twoFactorSecret = acc.pendingTwoFactorSecret;
+    delete acc.pendingTwoFactorSecret;
+    acc.twoFactorEnabled = true;
+    acc.twoFactorBackupCodes = backupCodes.map((c) => hashPassword(c));
+    saveAccounts(registeredAccounts);
+
+    user.twoFactorEnabled = true;
+    socket.emit('user_updated', user);
+    addAuditLog('2FA_AKTIF_EDILDI', `${user.username} hesabında 2FA (TOTP) korumasını aktif etti.`, 'auth');
+    socket.emit('2fa_status_response', {
+      success: true,
+      enabled: true,
+      backupCodes,
+      message: 'İki faktörlü doğrulama (2FA) başarıyla etkinleştirildi!'
+    });
+  });
+
+  // 2FA Disable
+  socket.on('2fa_disable', ({ password, code }: { password: string; code: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc || !acc.twoFactorEnabled || !acc.twoFactorSecret) {
+      return socket.emit('2fa_status_response', { success: false, error: '2FA zaten devre dışı.' });
+    }
+    if (!verifyPassword(password || '', acc.password)) {
+      return socket.emit('2fa_status_response', { success: false, error: 'Mevcut şifreniz hatalı.' });
+    }
+    const cleanCode = (code || '').trim().toUpperCase();
+    const isTotpValid = verifyTotpCode(acc.twoFactorSecret, cleanCode);
+    const isBackupValid = Array.isArray(acc.twoFactorBackupCodes) && acc.twoFactorBackupCodes.some((h) => verifyPassword(cleanCode, h));
+    if (!isTotpValid && !isBackupValid) {
+      return socket.emit('2fa_status_response', { success: false, error: '2FA doğrulama kodu geçersiz.' });
+    }
+
+    acc.twoFactorEnabled = false;
+    delete acc.twoFactorSecret;
+    delete acc.pendingTwoFactorSecret;
+    delete acc.twoFactorBackupCodes;
+    saveAccounts(registeredAccounts);
+
+    user.twoFactorEnabled = false;
+    socket.emit('user_updated', user);
+    addAuditLog('2FA_DEVRE_DISI', `${user.username} hesabında 2FA korumasını devre dışı bıraktı.`, 'auth');
+    socket.emit('2fa_status_response', {
+      success: true,
+      enabled: false,
+      message: 'İki faktörlü doğrulama devre dışı bırakıldı.'
+    });
   });
 
   // Block / Unblock User
@@ -3265,7 +3496,7 @@ io.on('connection', (socket: Socket) => {
     addAuditLog('LISANS_URETILDI', `Musteri: ${cleanLicensee} | Atanan Kullanici: ${targetUsername} | Slot: ${slots} (${selectedTier}) (Yetkili: ${requester.username})`, 'warn');
 
     socket.emit('admin_license_generated', newLicense);
-    io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+    io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   });
 
   // Admin: Revoke License (İptal Et)
@@ -3278,7 +3509,7 @@ io.on('connection', (socket: Socket) => {
       lic.status = 'revoked';
       saveLicenses(issuedLicenses);
       addAuditLog('LISANS_IPTAL_EDILDI', `Lisans iptal edildi: "${lic.licensee}" (${lic.assignedUsername}) - Sebep: ${reason || 'Yönetici kararı'}`, 'warn');
-      io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+      io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
       socket.emit('admin_action_success', `"${lic.licensee}" lisansı iptal edildi.`);
 
       // Broadcast to user's my_licenses as well
@@ -3295,7 +3526,7 @@ io.on('connection', (socket: Socket) => {
       for (const s of dedicatedServersRegistry.values()) {
         if (s.licenseKey === lic.licenseKey || s.licensee.toLowerCase() === lic.licensee.toLowerCase()) {
           s.status = 'revoked';
-          io.emit('admin_dedicated_updated', s);
+          io.to('admins').emit('admin_dedicated_updated', s);
 
           const hostsToTry = [
             s.host,
@@ -3377,7 +3608,7 @@ io.on('connection', (socket: Socket) => {
       'info'
     );
 
-    io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+    io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
     socket.emit('admin_action_success', `"${lic.licensee}" lisansı başarıyla ${days === -1 ? 'Ömür Boyu yapıldı' : days + ' gün uzatıldı'}.`);
 
     // Sync to user if online
@@ -3399,7 +3630,7 @@ io.on('connection', (socket: Socket) => {
       lic.status = 'active';
       saveLicenses(issuedLicenses);
       addAuditLog('LISANS_AKTIFLESTIRILDI', `Lisans yeniden aktifleştirildi: "${lic.licensee}"`, 'info');
-      io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+      io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
       socket.emit('admin_action_success', `"${lic.licensee}" lisansı aktif duruma getirildi.`);
     }
   });
@@ -3608,7 +3839,7 @@ io.on('connection', (socket: Socket) => {
     socket.emit('my_licenses_response', userLics);
 
     // Broadcast to admins
-    io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+    io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   });
 
   // Store: Extend License (Kullanıcının Mağazadan Var Olan Lisansını Uzatması)
@@ -3707,7 +3938,7 @@ io.on('connection', (socket: Socket) => {
     // Sync to user
     const userLics = Array.from(issuedLicenses.values()).filter(l => l.assignedUsername.toLowerCase() === user.username.toLowerCase());
     socket.emit('my_licenses_response', userLics);
-    io.emit('admin_licenses_list', Array.from(issuedLicenses.values()));
+    io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
   });
 
   // Get user's own licenses
