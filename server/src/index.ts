@@ -781,13 +781,14 @@ const soundboardCooldowns = new Map<string, number>();
 export function generateSessionToken(username: string): string {
   const payload = Buffer.from(JSON.stringify({
     u: username,
+    iat: Date.now(),
     exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
   })).toString('base64url');
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
 
-export function verifySessionToken(token: string): string | null {
+export function verifySessionTokenWithMeta(token: string): { username: string; iat: number } | null {
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
@@ -803,11 +804,18 @@ export function verifySessionToken(token: string): string | null {
     if (!parsed.u || !parsed.exp || parsed.exp < Date.now()) {
       return null;
     }
-    return parsed.u;
+    return { username: parsed.u, iat: parsed.iat || 0 };
   } catch {
     return null;
   }
 }
+
+export function verifySessionToken(token: string): string | null {
+  return verifySessionTokenWithMeta(token)?.username ?? null;
+}
+
+const activeSessions = new Map<string, { socketId: string; username: string; ip: string; userAgent: string; connectedAt: string }>();
+const userVoiceActivity = new Map<string, number>();
 
 export function generatePending2faToken(username: string): string {
   const payload = Buffer.from(JSON.stringify({
@@ -1143,6 +1151,13 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    activeSessions.set(socket.id, {
+      socketId: socket.id,
+      username: user.username,
+      ip: getClientIp(socket),
+      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
+      connectedAt: new Date().toISOString()
+    });
     if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     recordUserConnection(socket, user.username, user.role);
@@ -1249,6 +1264,13 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    activeSessions.set(socket.id, {
+      socketId: socket.id,
+      username: user.username,
+      ip: getClientIp(socket),
+      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
+      connectedAt: new Date().toISOString()
+    });
     if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı (IP: ${clientIp}).`, 'auth');
@@ -1340,6 +1362,13 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    activeSessions.set(socket.id, {
+      socketId: socket.id,
+      username: user.username,
+      ip: getClientIp(socket),
+      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
+      connectedAt: new Date().toISOString()
+    });
     if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) 2FA ile giriş yaptı (IP: ${clientIp}).`, 'auth');
@@ -1360,14 +1389,18 @@ io.on('connection', (socket: Socket) => {
   // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz)
   socket.on('auth_token_login', ({ token }: { token: string }) => {
     const clientIp = getClientIp(socket);
-    const verifiedUsername = verifySessionToken(token);
-    if (!verifiedUsername) {
+    const verified = verifySessionTokenWithMeta(token);
+    if (!verified) {
       return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' });
     }
 
-    const foundAccount = registeredAccounts.get(verifiedUsername.toLowerCase());
+    const foundAccount = registeredAccounts.get(verified.username.toLowerCase());
     if (!foundAccount) {
       return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Hesap bulunamadı.' });
+    }
+
+    if (foundAccount.minTokenIssuedAt && verified.iat < foundAccount.minTokenIssuedAt) {
+      return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Bu oturum başka bir cihazdan sonlandırıldı.' });
     }
 
     if (foundAccount.isBanned) {
@@ -1401,6 +1434,13 @@ io.on('connection', (socket: Socket) => {
     };
 
     activeUsers.set(socket.id, user);
+    activeSessions.set(socket.id, {
+      socketId: socket.id,
+      username: user.username,
+      ip: getClientIp(socket),
+      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
+      connectedAt: new Date().toISOString()
+    });
     if (user.role === 'admin') socket.join('admins');
     ensureUserInServers(user);
     recordUserConnection(socket, user.username, user.role);
@@ -1443,8 +1483,8 @@ io.on('connection', (socket: Socket) => {
     return user;
   };
 
-  // Text Messaging (Supports text, file attachments & interactive polls)
-  socket.on('send_message', ({ serverId, channelId, content, attachments, poll }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[]; poll?: any }) => {
+  // Text Messaging (Supports text, file attachments, replies & interactive polls)
+  socket.on('send_message', ({ serverId, channelId, content, attachments, poll, replyTo }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[]; poll?: any; replyTo?: { id: string; username: string; content: string } }) => {
     const sender = activeUsers.get(socket.id);
     const rawContent = (content || '').trim();
     if (!sender || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
@@ -1457,6 +1497,22 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('chat_flood_error', {
         message: `Bu sunucuda geçici olarak susturuldunuz. Kalan süre: ~${minsLeft} dakika.`
       });
+    }
+
+    // 0.5 AutoMod Link & Banned Word Filter (non-admins)
+    if (targetSrv?.autoModEnabled && sender.role !== 'admin') {
+      if (targetSrv.autoModConfig?.blockLinks && /(https?:\/\/|discord\.gg\/|www\.)/i.test(rawContent)) {
+        return socket.emit('chat_flood_error', {
+          message: 'Otomatik Moderasyon: Bu sunucuda harici bağlantı paylaşımı engellenmiştir.'
+        });
+      }
+      const bannedWords = targetSrv.autoModConfig?.bannedWords || ['amk', 'aq', 'orospu', 'piç', 'sik'];
+      const lowerRaw = rawContent.toLowerCase();
+      if (bannedWords.some((w) => w && lowerRaw.includes(w.toLowerCase()))) {
+        return socket.emit('chat_flood_error', {
+          message: 'Otomatik Moderasyon: Mesajınız yasaklı kelime içerdiği için engellendi.'
+        });
+      }
     }
 
     // 1. Anti-Spam / Flood Limiting Check
@@ -1491,7 +1547,8 @@ io.on('connection', (socket: Socket) => {
       attachments: attachments || [],
       reactions: {},
       isPinned: false,
-      poll: poll || undefined
+      poll: poll || undefined,
+      replyTo: replyTo ? { id: replyTo.id, username: sanitizeText(replyTo.username), content: sanitizeText(replyTo.content).slice(0, 140) } : undefined
     };
 
     if (!messages[channelId]) {
@@ -1868,6 +1925,89 @@ io.on('connection', (socket: Socket) => {
       enabled: false,
       message: 'İki faktörlü doğrulama devre dışı bırakıldı.'
     });
+  });
+
+  // Active Sessions List & Revoke Other Sessions
+  socket.on('get_active_sessions', () => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const list = Array.from(activeSessions.values())
+      .filter((s) => s.username.toLowerCase() === user.username.toLowerCase())
+      .map((s) => ({ ...s, isCurrent: s.socketId === socket.id }));
+    socket.emit('active_sessions_list', list);
+  });
+
+  socket.on('revoke_other_sessions', () => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (acc) {
+      acc.minTokenIssuedAt = Date.now();
+      saveAccounts(registeredAccounts);
+    }
+    let revokedCount = 0;
+    for (const [sid, sess] of activeSessions.entries()) {
+      if (sess.username.toLowerCase() === user.username.toLowerCase() && sid !== socket.id) {
+        const targetSock = io.sockets.sockets.get(sid);
+        if (targetSock) {
+          targetSock.emit('auth_response', {
+            success: false,
+            tokenExpired: true,
+            error: 'Oturumunuz başka bir cihazdan sonlandırıldı.'
+          });
+          targetSock.emit('logged_out');
+          targetSock.disconnect(true);
+        }
+        activeSessions.delete(sid);
+        activeUsers.delete(sid);
+        revokedCount++;
+      }
+    }
+    addAuditLog('OTURUMLAR_SONLANDIRILDI', `${user.username} diğer ${revokedCount} oturumu sonlandırdı.`, 'auth');
+    const remaining = Array.from(activeSessions.values())
+      .filter((s) => s.username.toLowerCase() === user.username.toLowerCase())
+      .map((s) => ({ ...s, isCurrent: s.socketId === socket.id }));
+    socket.emit('active_sessions_list', remaining);
+    socket.emit('revoke_sessions_result', { success: true, revokedCount });
+  });
+
+  // Raise Hand / Stage Mode Toggle
+  socket.on('toggle_raise_hand', () => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    user.isHandRaised = !user.isHandRaised;
+    io.emit('user_updated', user);
+  });
+
+  // Voice Activity Ping (for AFK auto-move)
+  socket.on('voice_activity', () => {
+    userVoiceActivity.set(socket.id, Date.now());
+  });
+
+  // Custom Server Emojis
+  socket.on('add_server_emoji', ({ serverId, name, url }: { serverId: string; name: string; url: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId || !name || !url) return;
+    const srv = servers.find((s) => s.id === serverId);
+    if (!srv) return;
+    if (user.role !== 'admin' && srv.ownerId !== user.username && !checkServerPermission(user, srv, 'manage_server')) return;
+    if (url.length > 512 * 1024) return;
+    if (!srv.customEmojis) srv.customEmojis = [];
+    const cleanName = sanitizeText(name).replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24) || 'emoji';
+    srv.customEmojis.push({ id: `emj-${Date.now()}`, name: cleanName, url });
+    saveServers(servers);
+    io.emit('server_updated', srv);
+  });
+
+  socket.on('delete_server_emoji', ({ serverId, emojiId }: { serverId: string; emojiId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId || !emojiId) return;
+    const srv = servers.find((s) => s.id === serverId);
+    if (!srv || !srv.customEmojis) return;
+    if (user.role !== 'admin' && srv.ownerId !== user.username && !checkServerPermission(user, srv, 'manage_server')) return;
+    srv.customEmojis = srv.customEmojis.filter((e) => e.id !== emojiId);
+    saveServers(servers);
+    io.emit('server_updated', srv);
   });
 
   // Block / Unblock User
@@ -2836,6 +2976,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     user.currentVoiceChannelId = targetChannelId;
+    userVoiceActivity.set(socket.id, Date.now());
     socket.join(targetChannelId);
 
     const peersInRoom: User[] = [];
@@ -3971,10 +4112,51 @@ io.on('connection', (socket: Socket) => {
       activeUsers.delete(socket.id);
       io.emit('user_disconnected', socket.id);
       cleanupTemporaryChannels();
+      activeSessions.delete(socket.id);
+      userVoiceActivity.delete(socket.id);
       console.log(`[User Disconnected] ${user.username} (${socket.id})`);
     }
   });
 });
+
+// Automatic AFK Voice Channel Mover (runs every 30s)
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, user] of activeUsers.entries()) {
+    if (!user.currentVoiceChannelId) continue;
+    const srv = servers.find((s) => s.channels.some((c) => c.id === user.currentVoiceChannelId));
+    if (!srv || !srv.afkChannelId || !srv.afkTimeoutMinutes || srv.afkTimeoutMinutes <= 0) continue;
+    if (user.currentVoiceChannelId === srv.afkChannelId) continue;
+
+    const afkChannel = srv.channels.find((c) => c.id === srv.afkChannelId && c.type === 'voice');
+    if (!afkChannel) continue;
+
+    const lastActive = userVoiceActivity.get(sid) || now;
+    if (now - lastActive >= srv.afkTimeoutMinutes * 60_000) {
+      const sock = io.sockets.sockets.get(sid);
+      const oldChannelId = user.currentVoiceChannelId;
+      if (sock) {
+        sock.leave(oldChannelId);
+        sock.join(afkChannel.id);
+        sock.emit('afk_moved', { channelId: afkChannel.id, channelName: afkChannel.name });
+      }
+      user.currentVoiceChannelId = afkChannel.id;
+      user.isSpeaking = false;
+      user.isMuted = true;
+      userVoiceActivity.set(sid, now);
+
+      io.to(oldChannelId).emit('user_left_voice', { userId: sid, channelId: oldChannelId });
+      io.to(afkChannel.id).emit('user_joined_voice', { user, channelId: afkChannel.id });
+      io.emit('voice_state_update', {
+        userId: sid,
+        channelId: afkChannel.id,
+        isMuted: user.isMuted,
+        isDeafened: user.isDeafened
+      });
+      addAuditLog('AFK_TASIMA', `${user.username} hareketsiz kaldığı için AFK odasına (${afkChannel.name}) taşındı.`, 'voice');
+    }
+  }
+}, 30_000);
 
 // Production Static Client Serving (Single-Port Pelican / Docker Deployment)
 const clientDistCandidates = [

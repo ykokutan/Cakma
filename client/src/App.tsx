@@ -17,6 +17,7 @@ import { ConnectionDiagnosticsModal } from './components/ConnectionDiagnosticsMo
 import { ExploreModal } from './components/ExploreModal';
 import { DownloadAppModal } from './components/DownloadAppModal';
 import { AutoUpdater } from './components/AutoUpdater';
+import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -223,6 +224,10 @@ const MainLayout: React.FC = () => {
 };
 
 export function App() {
+  if (typeof window !== 'undefined' && window.location.search.includes('overlay=1')) {
+    return <SpeakersOverlay />;
+  }
+
   return (
     <SocketProvider>
       <MainLayout />

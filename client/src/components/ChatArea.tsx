@@ -383,12 +383,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     e.preventDefault();
     if (slowmodeRemaining > 0) return;
     if (!inputText.trim() && pendingAttachments.length === 0) return;
-    let finalMessage = inputText.trim();
-    if (replyingTo) {
-      const snippet = replyingTo.content.replace(/\n/g, ' ').slice(0, 70);
-      finalMessage = `> **@${replyingTo.username}:** ${snippet}${replyingTo.content.length > 70 ? '...' : ''}\n${finalMessage}`;
-    }
-    sendMessage(finalMessage, pendingAttachments);
+    const finalMessage = inputText.trim();
+    sendMessage(finalMessage, pendingAttachments, replyingTo || undefined);
     setInputText('');
     setPendingAttachments([]);
     setReplyingTo(null);
@@ -916,15 +912,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       </button>
                     </form>
                   ) : (
-                    msg.content && (
-                      <div>
+                    <>
+                      {msg.replyTo && (
+                        <div className="mb-1.5 px-2.5 py-1.5 rounded-lg bg-black/25 border-l-2 border-blue-400 text-[11px] text-white/70">
+                          <span className="font-semibold text-blue-300">@{msg.replyTo.username}: </span>
+                          <span className="truncate">{msg.replyTo.content}</span>
+                        </div>
+                      )}
+                      {msg.content && (
+                        <div>
                         {renderMessageContent(msg.content)}
                         {isSameAuthorAsPrev && msg.isEdited && (
                           <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
                         )}
                       </div>
-                    )
-                  )}
+                    )}
+                  </>
+                )}
 
                   {/* Interactive Poll Card */}
                   {msg.poll && (
@@ -1217,6 +1221,32 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </button>
                 </div>
                 <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                  {activeServer?.customEmojis && activeServer.customEmojis.length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-blue-300/80 mb-1.5">
+                        Sunucu Emojileri
+                      </div>
+                      <div className="grid grid-cols-6 gap-1">
+                        {activeServer.customEmojis.map((ce) => (
+                          <button
+                            key={ce.id}
+                            type="button"
+                            onClick={() => {
+                              setPendingAttachments((prev) => [
+                                ...prev,
+                                { id: `emj-${Date.now()}`, name: `${ce.name}.png`, size: 1024, type: 'image/png', url: ce.url }
+                              ]);
+                              setIsEmojiPickerOpen(false);
+                            }}
+                            title={`:${ce.name}:`}
+                            className="h-8 rounded-lg hover:bg-white/15 flex items-center justify-center p-1 transition hover:scale-110"
+                          >
+                            <img src={ce.url} alt={ce.name} className="w-6 h-6 object-contain rounded" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {EMOJI_GROUPS.map((group) => (
                     <div key={group.label}>
                       <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1.5">

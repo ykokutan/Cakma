@@ -48,6 +48,7 @@ export interface User {
   isMuted: boolean;
   isDeafened: boolean;
   isSpeaking: boolean;
+  isHandRaised?: boolean;
   isScreenSharing?: boolean;
   createdAt?: string;
   walletBalance?: number;
@@ -284,6 +285,8 @@ export interface Server {
   welcomeMessage?: string;
   welcomeEnabled?: boolean;
   autoRoleId?: string | null;
+  customEmojis?: { id: string; name: string; url: string }[];
+  autoModConfig?: { blockLinks?: boolean; antiSpam?: boolean; bannedWords?: string[] };
 }
 
 export interface MemberLevelData {
@@ -332,6 +335,7 @@ export interface Message {
   isPinned?: boolean;
   isEdited?: boolean;
   poll?: PollData;
+  replyTo?: { id: string; username: string; content: string };
 }
 
 export interface ServerAnalyticsData {

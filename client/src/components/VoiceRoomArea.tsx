@@ -7,6 +7,7 @@ import { WatchTogetherModal } from './WatchTogetherModal';
 import { SpatialAudioModal } from './SpatialAudioModal';
 import { MiniGamesModal } from './MiniGamesModal';
 import { GoLiveModal } from './GoLiveModal';
+import { WhisperListsModal } from './WhisperListsModal';
 import { AvatarView } from './AvatarView';
 import {
   Mic,
@@ -31,6 +32,8 @@ import {
   Compass,
   Gamepad2,
   Minimize2,
+  Hand,
+  Layers,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -151,9 +154,12 @@ export const VoiceRoomArea: React.FC = () => {
     togglePrioritySpeaker,
     activeWhisperFrom,
     sendWhisper,
+    toggleRaiseHand,
+    toggleOverlayWindow,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
+  const [isWhisperListsOpen, setIsWhisperListsOpen] = useState(false);
   const [showRadioBot, setShowRadioBot] = useState(false);
   const [volumePopoverUserId, setVolumePopoverUserId] = useState<string | null>(null);
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
@@ -549,6 +555,14 @@ export const VoiceRoomArea: React.FC = () => {
                         <VolumeX className="w-3.5 h-3.5" />
                       </div>
                     )}
+                    {user.isHandRaised && (
+                      <div
+                        className="absolute -top-2 -right-2 bg-amber-500 text-black p-1.5 rounded-full shadow-lg border border-black/30 animate-bounce"
+                        title="Söz İstiyor"
+                      >
+                        <Hand className="w-3.5 h-3.5" />
+                      </div>
+                    )}
                   </div>
 
                   {/* Username & Live Siri / Voice Status */}
@@ -678,6 +692,42 @@ export const VoiceRoomArea: React.FC = () => {
                 <Sparkles className="w-5 h-5" />
               </button>
 
+              {/* Raise Hand Button */}
+              <button
+                onClick={toggleRaiseHand}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
+                  currentUser?.isHandRaised
+                    ? 'bg-amber-500 text-black shadow-amber-500/30 ring-2 ring-amber-300'
+                    : 'bg-white/10 hover:bg-white/20 text-white'
+                }`}
+                title="El Kaldır / Söz İste"
+              >
+                <Hand className="w-5 h-5" />
+              </button>
+
+              {/* Whisper Lists Button */}
+              <button
+                onClick={() => setIsWhisperListsOpen(true)}
+                className="w-11 h-11 rounded-full bg-teal-500/15 hover:bg-teal-500/30 border border-teal-500/30 text-teal-300 flex items-center justify-center transition shadow-md"
+                title="Fısıltı Listeleri (Whisper Lists)"
+              >
+                <Radio className="w-5 h-5" />
+              </button>
+
+              {/* Tauri In-Game Speakers Overlay Toggle */}
+              {typeof window !== 'undefined' &&
+                ('__TAURI_INTERNALS__' in window ||
+                  window.location.hostname === 'tauri.localhost' ||
+                  window.location.protocol === 'tauri:') && (
+                  <button
+                    onClick={toggleOverlayWindow}
+                    className="w-11 h-11 rounded-full bg-indigo-500/15 hover:bg-indigo-500/30 border border-indigo-500/30 text-indigo-300 flex items-center justify-center transition shadow-md"
+                    title="Oyun İçi Konuşanlar Overlay Penceresini Aç/Kapat"
+                  >
+                    <Layers className="w-5 h-5" />
+                  </button>
+                )}
+
               {/* Mini Games & Activities Button */}
               <button
                 onClick={() => setIsMiniGamesOpen(true)}
@@ -765,6 +815,11 @@ export const VoiceRoomArea: React.FC = () => {
         onClose={() => setIsGoLiveOpen(false)}
         onGoLive={startScreenShare}
       />
+
+      {/* Whisper Lists Modal */}
+      {isWhisperListsOpen && (
+        <WhisperListsModal onClose={() => setIsWhisperListsOpen(false)} />
+      )}
     </div>
   );
 };

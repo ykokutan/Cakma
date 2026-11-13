@@ -75,7 +75,11 @@ interface SocketContextType {
 
   selectServer: (serverId: string) => void;
   selectChannel: (channelId: string) => void;
-  sendMessage: (content: string, attachments?: MessageAttachment[]) => void;
+  sendMessage: (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }) => void;
+  toggleRaiseHand: () => void;
+  addServerEmoji: (serverId: string, name: string, url: string) => void;
+  deleteServerEmoji: (serverId: string, emojiId: string) => void;
+  toggleOverlayWindow: () => Promise<void>;
   joinVoiceChannel: (channelId: string, password?: string) => void;
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
@@ -1470,6 +1474,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setOnlineUsers(prev => prev.map(u => u.id === userId ? { ...u, isSpeaking } : u));
     });
 
+    newSocket.on('afk_moved', ({ channelId, channelName }: { channelId: string; channelName: string }) => {
+      setConnectedVoiceChannelId(channelId);
+      setIsMuted(true);
+      sendDesktopNotification('AFK Taşıma', `Hareketsiz kaldığınız için "${channelName}" odasına taşındınız.`);
+    });
+
     newSocket.on('screen_share_change', ({ userId, isSharing }: { userId: string; isSharing: boolean }) => {
       setOnlineUsers(prev => prev.map(u => u.id === userId ? { ...u, isScreenSharing: isSharing } : u));
       if (!isSharing) {
@@ -2367,15 +2377,46 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
-  const sendMessage = (content: string, attachments?: MessageAttachment[]) => {
+  const sendMessage = (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }) => {
     if (!socket || !activeServer || !activeChannel) return;
     socket.emit('send_message', {
       serverId: activeServer.id,
       channelId: activeChannel.id,
       content,
-      attachments
+      attachments,
+      replyTo
     });
   };
+
+  const toggleRaiseHand = useCallback(() => {
+    if (!socket) return;
+    socket.emit('toggle_raise_hand');
+  }, [socket]);
+
+  const addServerEmoji = useCallback((serverId: string, name: string, url: string) => {
+    if (!socket) return;
+    socket.emit('add_server_emoji', { serverId, name, url });
+  }, [socket]);
+
+  const deleteServerEmoji = useCallback((serverId: string, emojiId: string) => {
+    if (!socket) return;
+    socket.emit('delete_server_emoji', { serverId, emojiId });
+  }, [socket]);
+
+  const toggleOverlayWindow = useCallback(async () => {
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('toggle_overlay_window');
+    } catch (err) {
+      console.warn('Overlay toggle failed:', err);
+    }
+  }, []);
 
   const playSoundboard = useCallback((soundId: string) => {
     if (!socket || !connectedVoiceChannelId) {
@@ -2836,6 +2877,116 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [socket, currentUser, joinServerByInvite]);
 
+  // Voice Activity Ping for AFK Auto-Move
+  const lastActivityPingRef = useRef<number>(0);
+  useEffect(() => {
+    if (!socket || !connectedVoiceChannelId || !isSpeaking) return;
+    const now = Date.now();
+    if (now - lastActivityPingRef.current > 15000) {
+      lastActivityPingRef.current = now;
+      socket.emit('voice_activity');
+    }
+  }, [socket, connectedVoiceChannelId, isSpeaking]);
+
+  // Tauri Desktop Integrations: Tray Mute, Global Shortcuts, Game Detection, Overlay Sync
+  const toggleMuteRef = useRef(toggleMute);
+  const toggleDeafenRef = useRef(toggleDeafen);
+  useEffect(() => {
+    toggleMuteRef.current = toggleMute;
+    toggleDeafenRef.current = toggleDeafen;
+  });
+
+  useEffect(() => {
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return;
+
+    let unlistenTray: (() => void) | null = null;
+    let gameTimer: ReturnType<typeof setInterval> | null = null;
+    let lastDetectedGame: string | null = null;
+
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlistenTray = await listen('tray-toggle-mute', () => {
+          toggleMuteRef.current();
+        });
+      } catch {
+        // ignore
+      }
+
+      try {
+        const { register, unregisterAll } = await import('@tauri-apps/plugin-global-shortcut');
+        await unregisterAll().catch(() => {});
+        await register('CommandOrControl+Shift+M', (e) => {
+          if (e.state === 'Pressed') toggleMuteRef.current();
+        }).catch(() => {});
+        await register('CommandOrControl+Shift+D', (e) => {
+          if (e.state === 'Pressed') toggleDeafenRef.current();
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
+
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const pollGame = async () => {
+          if (!socket || !isAuthenticated) return;
+          try {
+            const game = await invoke<string | null>('detect_running_game');
+            if (game !== lastDetectedGame) {
+              lastDetectedGame = game;
+              socket.emit('update_activity', game ? { type: 'playing', name: game } : null);
+            }
+          } catch {
+            // ignore
+          }
+        };
+        pollGame();
+        gameTimer = setInterval(pollGame, 25000);
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      if (unlistenTray) unlistenTray();
+      if (gameTimer) clearInterval(gameTimer);
+      import('@tauri-apps/plugin-global-shortcut')
+        .then(({ unregisterAll }) => unregisterAll())
+        .catch(() => {});
+    };
+  }, [socket, isAuthenticated]);
+
+  // Emit speaker updates to Tauri Overlay window
+  useEffect(() => {
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return;
+    if (typeof window !== 'undefined' && window.location.search.includes('overlay=1')) return;
+
+    const speakers = onlineUsers
+      .filter((u) => connectedVoiceChannelId && u.currentVoiceChannelId === connectedVoiceChannelId)
+      .map((u) => ({
+        id: u.id,
+        username: u.username,
+        avatar: u.avatar,
+        isSpeaking: u.id === currentUser?.id ? isSpeaking : u.isSpeaking,
+        isMuted: u.id === currentUser?.id ? isMuted : u.isMuted,
+        isHandRaised: u.isHandRaised,
+      }));
+
+    import('@tauri-apps/api/event')
+      .then(({ emit }) => emit('overlay-speakers-update', { speakers, inVoice: Boolean(connectedVoiceChannelId) }))
+      .catch(() => {});
+  }, [onlineUsers, connectedVoiceChannelId, isSpeaking, isMuted, currentUser]);
+
   return (
     <SocketContext.Provider
       value={{
@@ -2901,6 +3052,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         selectServer,
         selectChannel,
         sendMessage,
+        toggleRaiseHand,
+        addServerEmoji,
+        deleteServerEmoji,
+        toggleOverlayWindow,
         joinVoiceChannel,
         leaveVoiceChannel,
         toggleMute,

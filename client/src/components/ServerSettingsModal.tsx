@@ -81,6 +81,8 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     kickServerMember,
     deleteServer,
     hasServerPermission,
+    addServerEmoji,
+    deleteServerEmoji,
   } = useSocket();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'welcome' | 'backup' | 'danger'>('overview');
@@ -455,6 +457,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
 
           {/* 1. OVERVIEW & THEME TAB */}
           {activeTab === 'overview' && (
+            <>
             <form onSubmit={handleSaveSettings} className="space-y-6 max-w-2xl">
               <div>
                 <h2 className="text-xl font-bold tracking-tight mb-1">Genel Bakış & Sunucu Kimliği</h2>
@@ -617,6 +620,67 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                 </button>
               )}
             </form>
+
+            {/* Custom Server Emojis */}
+            {canManageServer && (
+              <div className="mt-6 p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-bold text-white">Özel Sunucu Emojileri</div>
+                    <div className="text-xs text-white/40">Sunucuya özel PNG veya GIF emojiler yükleyin.</div>
+                  </div>
+                  <label className="cursor-pointer px-3.5 py-1.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold transition">
+                    Emoji Yükle
+                    <input
+                      type="file"
+                      accept="image/png,image/gif,image/webp,image/jpeg"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 350 * 1024) {
+                          alert('Emoji boyutu 350KB altında olmalıdır.');
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === 'string') {
+                            const emojiName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '') || 'emoji';
+                            addServerEmoji(server.id, emojiName, reader.result);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {(!server.customEmojis || server.customEmojis.length === 0) ? (
+                  <p className="text-xs text-white/40">Henüz özel emoji eklenmedi.</p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {server.customEmojis.map((em) => (
+                      <div key={em.id} className="flex items-center justify-between p-2 rounded-xl bg-black/30 border border-white/10">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <img src={em.url} alt={em.name} className="w-6 h-6 object-contain rounded shrink-0" />
+                          <span className="text-[11px] text-white/80 truncate">:{em.name}:</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteServerEmoji(server.id, em.id)}
+                          className="text-red-400 hover:text-red-300 text-xs px-1"
+                          title="Sil"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            </>
           )}
 
           {/* 2. VOICE & WEBRTC PIPELINE TAB */}
