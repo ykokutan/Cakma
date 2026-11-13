@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Radio, Play, Pause, Volume2, VolumeX, Disc3, Youtube, Tv, ExternalLink } from 'lucide-react';
 import { RadioBotState } from '../context/SocketContext';
 
@@ -53,7 +53,7 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   onSyncState,
   initialState,
 }) => {
-  const [activeTab, setActiveTab] = useState<'youtube' | 'radio'>(initialState?.mode === 'youtube' ? 'youtube' : 'youtube');
+  const [activeTab, setActiveTab] = useState<'youtube' | 'radio'>(initialState?.mode || 'youtube');
   const [isPlaying, setIsPlaying] = useState(initialState?.isPlaying ?? false);
   const [selectedStationId, setSelectedStationId] = useState(initialState?.stationId || 'lofi');
   const [youtubeId, setYoutubeId] = useState(initialState?.youtubeId || 'jfKfPfyJRdk');
@@ -65,10 +65,27 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   const [hasError, setHasError] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const currentStation = RADIO_STATIONS.find(s => s.id === selectedStationId) || RADIO_STATIONS[0];
 
-  // Sync with incoming state from socket
+  const sendYouTubeCommand = useCallback((func: string, args: unknown[] = []) => {
+    const win = youtubeIframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
+  }, []);
+
+  const applyYouTubeAudioState = useCallback(() => {
+    const win = youtubeIframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+    const volPercent = Math.round((isMuted ? 0 : volume) * 100);
+    sendYouTubeCommand('setVolume', [volPercent]);
+    sendYouTubeCommand(isMuted || volume === 0 ? 'mute' : 'unMute');
+    sendYouTubeCommand(isPlaying ? 'playVideo' : 'pauseVideo');
+  }, [isMuted, volume, isPlaying, sendYouTubeCommand]);
+
+  // Sync with incoming state from socket (keep local volume untouched)
   useEffect(() => {
     if (initialState) {
       if (initialState.isPlaying !== undefined) setIsPlaying(initialState.isPlaying);
@@ -76,16 +93,33 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
       if (initialState.stationId) setSelectedStationId(initialState.stationId);
       if (initialState.youtubeId) setYoutubeId(initialState.youtubeId);
       if (initialState.youtubeTitle) setYoutubeTitle(initialState.youtubeTitle);
-      if (initialState.volume !== undefined) setVolume(initialState.volume);
     }
   }, [initialState]);
+
+  // Apply volume & mute changes smoothly to both Radio & YouTube without restarting stream
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = isMuted ? 0 : volume;
+    }
+    if (activeTab === 'youtube' && youtubeId) {
+      const volPercent = Math.round((isMuted ? 0 : volume) * 100);
+      sendYouTubeCommand('setVolume', [volPercent]);
+      sendYouTubeCommand(isMuted || volume === 0 ? 'mute' : 'unMute');
+    }
+  }, [volume, isMuted, activeTab, youtubeId, sendYouTubeCommand]);
+
+  // Apply play/pause changes to YouTube iframe
+  useEffect(() => {
+    if (activeTab === 'youtube' && youtubeId) {
+      sendYouTubeCommand(isPlaying ? 'playVideo' : 'pauseVideo');
+    }
+  }, [isPlaying, activeTab, youtubeId, sendYouTubeCommand]);
 
   // Normal radio audio element controller
   useEffect(() => {
     if (activeTab === 'radio') {
       if (!audioRef.current) {
         audioRef.current = new Audio();
-        audioRef.current.crossOrigin = 'anonymous';
       }
 
       const audio = audioRef.current;
@@ -112,7 +146,19 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
     return () => {
       audioRef.current?.pause();
     };
-  }, [isPlaying, currentStation, isMuted, volume, activeTab]);
+  }, [isPlaying, currentStation, activeTab]);
+
+  const handleTabSwitch = (tab: 'youtube' | 'radio') => {
+    setActiveTab(tab);
+    setHasError(false);
+    onSyncState?.({
+      mode: tab,
+      isPlaying,
+      stationId: selectedStationId,
+      youtubeId,
+      youtubeTitle,
+    });
+  };
 
   const togglePlay = () => {
     setHasError(false);
@@ -124,7 +170,6 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
       stationId: selectedStationId,
       youtubeId,
       youtubeTitle,
-      volume,
     });
   };
 
@@ -137,7 +182,6 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
       isPlaying: true,
       mode: 'radio',
       stationId,
-      volume,
     });
   };
 
@@ -152,7 +196,6 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
       mode: 'youtube',
       youtubeId: preset.id,
       youtubeTitle: preset.name,
-      volume,
     });
   };
 
@@ -176,7 +219,6 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
       mode: 'youtube',
       youtubeId: id,
       youtubeTitle: title,
-      volume,
     });
   };
 
@@ -208,7 +250,7 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
           <div className="flex bg-slate-950/60 p-0.5 rounded-xl border border-white/10 text-xs">
             <button
               type="button"
-              onClick={() => setActiveTab('youtube')}
+              onClick={() => handleTabSwitch('youtube')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold transition-all ${
                 activeTab === 'youtube'
                   ? 'bg-red-600 text-white shadow'
@@ -220,7 +262,7 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('radio')}
+              onClick={() => handleTabSwitch('radio')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold transition-all ${
                 activeTab === 'radio'
                   ? 'bg-indigo-600 text-white shadow'
@@ -311,11 +353,11 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
           </div>
 
           {/* YouTube Player Container */}
-          {youtubeId && isPlaying && (
+          {youtubeId && (
             <div className="mt-2 pt-2 border-t border-white/10 space-y-2">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Disc3 className="w-4 h-4 text-red-400 animate-spin" />
+                <div className="flex items-center gap-2 min-w-0">
+                  <Disc3 className={`w-4 h-4 text-red-400 shrink-0 ${isPlaying ? 'animate-spin' : ''}`} />
                   <span className="text-xs font-semibold text-white truncate max-w-sm">
                     {youtubeTitle}
                   </span>
@@ -323,7 +365,7 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowVideoPlayer(!showVideoPlayer)}
-                  className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg border transition-colors ${
+                  className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg border transition-colors shrink-0 ${
                     showVideoPlayer
                       ? 'bg-red-600/30 border-red-500 text-red-300'
                       : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
@@ -334,15 +376,22 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
                 </button>
               </div>
 
-              {/* Embedded Player (Visible or compact audio mode) */}
+              {/* Embedded Player (Always mounted when playing/paused so volume & position persist) */}
               <div
                 className={`overflow-hidden rounded-xl border border-white/10 bg-black transition-all ${
-                  showVideoPlayer ? 'h-48 sm:h-64' : 'h-0 opacity-0 overflow-hidden m-0 p-0 border-0'
+                  showVideoPlayer ? 'h-48 sm:h-64' : 'h-0 opacity-0 pointer-events-none m-0 p-0 border-0'
                 }`}
               >
                 <iframe
+                  ref={youtubeIframeRef}
+                  key={youtubeId}
                   title="YouTube Music Player"
-                  src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&enablejsapi=1`}
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&enablejsapi=1&rel=0`}
+                  onLoad={() => {
+                    applyYouTubeAudioState();
+                    setTimeout(applyYouTubeAudioState, 350);
+                    setTimeout(applyYouTubeAudioState, 1000);
+                  }}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                   className="w-full h-full"
@@ -352,8 +401,8 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
               {!showVideoPlayer && (
                 <div className="p-2.5 rounded-xl bg-slate-950/40 border border-white/5 flex items-center justify-between text-xs text-slate-400">
                   <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>YouTube arkada çalıyor (Ses Modu)</span>
+                    <span className={`w-2 h-2 rounded-full ${isPlaying ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                    <span>{isPlaying ? 'YouTube arkada çalıyor (Ses Modu)' : 'YouTube duraklatıldı'}</span>
                   </span>
                   <a
                     href={`https://www.youtube.com/watch?v=${youtubeId}`}
@@ -415,10 +464,11 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setIsMuted(!isMuted)}
+            onClick={() => setIsMuted((prev) => !prev)}
             className="text-slate-400 hover:text-white transition-colors"
+            title={isMuted ? 'Sesi Aç' : 'Sustur'}
           >
-            {isMuted || volume === 0 ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            {isMuted || volume === 0 ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5" />}
           </button>
           <input
             type="range"
@@ -428,12 +478,13 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
             value={isMuted ? 0 : volume}
             onChange={(e) => {
               setIsMuted(false);
-              const val = parseFloat(e.target.value);
-              setVolume(val);
-              onSyncState?.({ volume: val });
+              setVolume(parseFloat(e.target.value));
             }}
-            className="w-20 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            className="w-24 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
           />
+          <span className="text-[10px] font-mono text-slate-300 w-8 text-right">
+            {isMuted ? 0 : Math.round(volume * 100)}%
+          </span>
         </div>
       </div>
     </div>

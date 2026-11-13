@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Play, Pause, RotateCcw, Film, Sparkles, ExternalLink } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
@@ -26,6 +26,14 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
   const [inputUrl, setInputUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [localPlaying, setLocalPlaying] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const sendYouTubeCmd = (func: string, args: unknown[] = []) => {
+    iframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args }),
+      '*'
+    );
+  };
 
   const activeSession = watchTogetherState?.channelId === channelId && watchTogetherState?.active
     ? watchTogetherState
@@ -34,6 +42,7 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
   useEffect(() => {
     if (activeSession) {
       setLocalPlaying(activeSession.isPlaying);
+      sendYouTubeCmd(activeSession.isPlaying ? 'playVideo' : 'pauseVideo');
     }
   }, [activeSession?.isPlaying]);
 
@@ -56,11 +65,13 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
     if (!activeSession) return;
     const next = !localPlaying;
     setLocalPlaying(next);
+    sendYouTubeCmd(next ? 'playVideo' : 'pauseVideo');
     sendWatchTogetherAction(channelId, next ? 'play' : 'pause', 0);
   };
 
   const handleRestart = () => {
     if (!activeSession) return;
+    sendYouTubeCmd('seekTo', [0, true]);
     sendWatchTogetherAction(channelId, 'seek', 0);
   };
 
@@ -107,8 +118,15 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
             <div className="space-y-4">
               <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black border border-white/10 shadow-2xl">
                 <iframe
+                  ref={iframeRef}
                   title="YouTube Watch Together"
                   src={`https://www.youtube.com/embed/${activeSession.videoId}?autoplay=1&enablejsapi=1&controls=1&rel=0`}
+                  onLoad={() => {
+                    iframeRef.current?.contentWindow?.postMessage(
+                      JSON.stringify({ event: 'listening', id: 2, channel: 'widget' }),
+                      '*'
+                    );
+                  }}
                   className="w-full h-full border-0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
