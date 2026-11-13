@@ -327,7 +327,7 @@ export const VoiceRoomArea: React.FC = () => {
 
       {/* Radio Bot Widget Drawer */}
       {showRadioBot && (
-        <div className="p-4 px-6 border-b border-white/10 bg-slate-950/60 animate-fade-in">
+        <div className="p-4 px-6 border-b border-white/10 bg-slate-950/60 animate-fade-in max-h-[65vh] overflow-y-auto shrink-0">
           <VoiceRadioWidget
             channelName={activeChannel.name}
             initialState={radioBotState}

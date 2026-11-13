@@ -2,6 +2,65 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Radio, Play, Pause, Volume2, VolumeX, Disc3, Youtube, Tv, ExternalLink } from 'lucide-react';
 import { RadioBotState } from '../context/SocketContext';
 
+declare global {
+  interface Window {
+    YT?: {
+      Player: new (
+        element: HTMLElement | string,
+        options: {
+          videoId?: string;
+          width?: string | number;
+          height?: string | number;
+          playerVars?: Record<string, string | number>;
+          events?: {
+            onReady?: (event: { target: YTPlayerInstance }) => void;
+            onStateChange?: (event: { data: number; target: YTPlayerInstance }) => void;
+            onError?: () => void;
+          };
+        }
+      ) => YTPlayerInstance;
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+interface YTPlayerInstance {
+  playVideo: () => void;
+  pauseVideo: () => void;
+  loadVideoById: (videoId: string) => void;
+  cueVideoById: (videoId: string) => void;
+  setVolume: (volume: number) => void;
+  mute: () => void;
+  unMute: () => void;
+  destroy: () => void;
+  getIframe?: () => HTMLIFrameElement;
+}
+
+let ytApiPromise: Promise<void> | null = null;
+function loadYouTubeIframeApi(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (window.YT?.Player) return Promise.resolve();
+  if (ytApiPromise) return ytApiPromise;
+
+  ytApiPromise = new Promise<void>((resolve) => {
+    const prevCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      prevCallback?.();
+      resolve();
+    };
+    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      tag.async = true;
+      tag.onerror = () => resolve();
+      document.head.appendChild(tag);
+    }
+    // Fallback timeout in case script is blocked
+    setTimeout(resolve, 3500);
+  });
+  return ytApiPromise;
+}
+
 export interface RadioStation {
   id: string;
   name: string;
@@ -11,7 +70,7 @@ export interface RadioStation {
 }
 
 export const RADIO_STATIONS: RadioStation[] = [
-  { id: 'lofi', name: 'Lofi Chill Gaming', genre: 'Chill / Beats', streamUrl: 'https://stream.zeno.fm/f3wvbbqmdg8uv', icon: '☕' },
+  { id: 'lofi', name: 'Lofi Chill & Downtempo', genre: 'Chill / Beats', streamUrl: 'https://ice1.somafm.com/beatblender-128-mp3', icon: '☕' },
   { id: 'synthwave', name: 'Synthwave & Cyberpunk', genre: 'Retro / Synth', streamUrl: 'https://ice2.somafm.com/defcon-128-mp3', icon: '🌆' },
   { id: 'ambient', name: 'Groove Salad Ambient', genre: 'Ambient / Focus', streamUrl: 'https://ice1.somafm.com/groovesalad-128-mp3', icon: '🌿' },
   { id: 'vaporwave', name: 'Vaporwave 90s Beats', genre: 'Vapor / Nostalgia', streamUrl: 'https://ice4.somafm.com/vaporwaves-128-mp3', icon: '📼' },
@@ -63,27 +122,55 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   const [volume, setVolume] = useState(initialState?.volume ?? 0.5);
   const [isMuted, setIsMuted] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [ytApiFailed, setYtApiFailed] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
+  const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
+  const ytFallbackIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const ytReadyRef = useRef(false);
+  const latestStateRef = useRef({ volume, isMuted, isPlaying, youtubeId });
+  latestStateRef.current = { volume, isMuted, isPlaying, youtubeId };
 
   const currentStation = RADIO_STATIONS.find(s => s.id === selectedStationId) || RADIO_STATIONS[0];
 
-  const sendYouTubeCommand = useCallback((func: string, args: unknown[] = []) => {
-    const win = youtubeIframeRef.current?.contentWindow;
+  const sendFallbackCommand = useCallback((func: string, args: unknown[] = []) => {
+    const win = ytFallbackIframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage(JSON.stringify({ event: 'command', func, args }), '*');
   }, []);
 
   const applyYouTubeAudioState = useCallback(() => {
-    const win = youtubeIframeRef.current?.contentWindow;
-    if (!win) return;
-    win.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
-    const volPercent = Math.round((isMuted ? 0 : volume) * 100);
-    sendYouTubeCommand('setVolume', [volPercent]);
-    sendYouTubeCommand(isMuted || volume === 0 ? 'mute' : 'unMute');
-    sendYouTubeCommand(isPlaying ? 'playVideo' : 'pauseVideo');
-  }, [isMuted, volume, isPlaying, sendYouTubeCommand]);
+    const { volume: vol, isMuted: muted, isPlaying: playing } = latestStateRef.current;
+    const volPercent = Math.round((muted ? 0 : vol) * 100);
+
+    if (ytPlayerRef.current && ytReadyRef.current) {
+      try {
+        ytPlayerRef.current.setVolume(volPercent);
+        if (muted || vol === 0) {
+          ytPlayerRef.current.mute();
+        } else {
+          ytPlayerRef.current.unMute();
+        }
+        if (playing) {
+          ytPlayerRef.current.playVideo();
+        } else {
+          ytPlayerRef.current.pauseVideo();
+        }
+        return;
+      } catch {
+        // fallback below
+      }
+    }
+
+    const win = ytFallbackIframeRef.current?.contentWindow;
+    if (win) {
+      win.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+      sendFallbackCommand('setVolume', [volPercent]);
+      sendFallbackCommand(muted || vol === 0 ? 'mute' : 'unMute');
+      sendFallbackCommand(playing ? 'playVideo' : 'pauseVideo');
+    }
+  }, [sendFallbackCommand]);
 
   // Sync with incoming state from socket (keep local volume untouched)
   useEffect(() => {
@@ -96,6 +183,96 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
     }
   }, [initialState]);
 
+  // Initialize / update official YouTube IFrame Player API
+  useEffect(() => {
+    if (activeTab !== 'youtube' || !youtubeId) {
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.pauseVideo();
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+
+    let cancelled = false;
+    loadYouTubeIframeApi().then(() => {
+      if (cancelled) return;
+      if (!window.YT?.Player || !ytContainerRef.current) {
+        setYtApiFailed(true);
+        return;
+      }
+
+      setYtApiFailed(false);
+
+      if (ytPlayerRef.current && ytReadyRef.current) {
+        try {
+          if (latestStateRef.current.isPlaying) {
+            ytPlayerRef.current.loadVideoById(youtubeId);
+          } else {
+            ytPlayerRef.current.cueVideoById(youtubeId);
+          }
+          applyYouTubeAudioState();
+          return;
+        } catch {
+          // recreate player below
+        }
+      }
+
+      // Create fresh player
+      ytReadyRef.current = false;
+      ytContainerRef.current.innerHTML = '';
+      const mountNode = document.createElement('div');
+      ytContainerRef.current.appendChild(mountNode);
+
+      try {
+        ytPlayerRef.current = new window.YT.Player(mountNode, {
+          width: '100%',
+          height: '100%',
+          videoId: youtubeId,
+          playerVars: {
+            autoplay: latestStateRef.current.isPlaying ? 1 : 0,
+            controls: 1,
+            rel: 0,
+            enablejsapi: 1,
+            origin: window.location.origin,
+          },
+          events: {
+            onReady: () => {
+              ytReadyRef.current = true;
+              applyYouTubeAudioState();
+            },
+            onError: () => {
+              setHasError(true);
+            },
+          },
+        });
+      } catch {
+        setYtApiFailed(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, youtubeId, applyYouTubeAudioState]);
+
+  // Cleanup YT player on unmount
+  useEffect(() => {
+    return () => {
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch {
+          // ignore
+        }
+        ytPlayerRef.current = null;
+        ytReadyRef.current = false;
+      }
+    };
+  }, []);
+
   // Apply volume & mute changes smoothly to both Radio & YouTube without restarting stream
   useEffect(() => {
     if (audioRef.current) {
@@ -103,23 +280,49 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
     }
     if (activeTab === 'youtube' && youtubeId) {
       const volPercent = Math.round((isMuted ? 0 : volume) * 100);
-      sendYouTubeCommand('setVolume', [volPercent]);
-      sendYouTubeCommand(isMuted || volume === 0 ? 'mute' : 'unMute');
+      if (ytPlayerRef.current && ytReadyRef.current) {
+        try {
+          ytPlayerRef.current.setVolume(volPercent);
+          if (isMuted || volume === 0) {
+            ytPlayerRef.current.mute();
+          } else {
+            ytPlayerRef.current.unMute();
+          }
+        } catch {
+          // ignore
+        }
+      } else {
+        sendFallbackCommand('setVolume', [volPercent]);
+        sendFallbackCommand(isMuted || volume === 0 ? 'mute' : 'unMute');
+      }
     }
-  }, [volume, isMuted, activeTab, youtubeId, sendYouTubeCommand]);
+  }, [volume, isMuted, activeTab, youtubeId, sendFallbackCommand]);
 
-  // Apply play/pause changes to YouTube iframe
+  // Apply play/pause changes to YouTube player
   useEffect(() => {
     if (activeTab === 'youtube' && youtubeId) {
-      sendYouTubeCommand(isPlaying ? 'playVideo' : 'pauseVideo');
+      if (ytPlayerRef.current && ytReadyRef.current) {
+        try {
+          if (isPlaying) {
+            ytPlayerRef.current.playVideo();
+          } else {
+            ytPlayerRef.current.pauseVideo();
+          }
+        } catch {
+          // ignore
+        }
+      } else {
+        sendFallbackCommand(isPlaying ? 'playVideo' : 'pauseVideo');
+      }
     }
-  }, [isPlaying, activeTab, youtubeId, sendYouTubeCommand]);
+  }, [isPlaying, activeTab, youtubeId, sendFallbackCommand]);
 
   // Normal radio audio element controller
   useEffect(() => {
     if (activeTab === 'radio') {
       if (!audioRef.current) {
         audioRef.current = new Audio();
+        audioRef.current.preload = 'none';
       }
 
       const audio = audioRef.current;
@@ -128,8 +331,10 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
       if (isPlaying) {
         if (audio.src !== currentStation.streamUrl) {
           audio.src = currentStation.streamUrl;
+          audio.load();
         }
-        audio.play().catch(err => {
+        audio.play().catch((err) => {
+          if (err?.name === 'AbortError') return;
           console.warn('[RadioBot] Autoplay blocked or stream error:', err);
           setHasError(true);
           setIsPlaying(false);
@@ -225,12 +430,12 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   return (
     <div className="bg-slate-900/90 border border-indigo-500/30 rounded-2xl p-4 shadow-2xl backdrop-blur-md animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3 pb-3 border-b border-white/10">
-        <div className="flex items-center gap-2.5">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-lg ${isPlaying ? 'bg-gradient-to-tr from-red-500 to-indigo-600 animate-pulse' : 'bg-slate-800'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-3 border-b border-white/10">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-lg shrink-0 ${isPlaying ? 'bg-gradient-to-tr from-red-500 to-indigo-600 animate-pulse' : 'bg-slate-800'}`}>
             {activeTab === 'youtube' ? <Youtube className="w-5 h-5" /> : <Radio className="w-5 h-5" />}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 Müzik & YouTube Botu
@@ -239,13 +444,13 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
                 </span>
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-slate-400 truncate">
               #{channelName} ses odasında ortak eşzamanlı müzik
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {/* Mode Tabs */}
           <div className="flex bg-slate-950/60 p-0.5 rounded-xl border border-white/10 text-xs">
             <button
@@ -355,12 +560,15 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
           {/* YouTube Player Container */}
           {youtubeId && (
             <div className="mt-2 pt-2 border-t border-white/10 space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Disc3 className={`w-4 h-4 text-red-400 shrink-0 ${isPlaying ? 'animate-spin' : ''}`} />
                   <span className="text-xs font-semibold text-white truncate max-w-sm">
                     {youtubeTitle}
                   </span>
+                  {hasError && (
+                    <span className="text-[10px] text-amber-400 font-semibold shrink-0">(Video gömme engelli olabilir)</span>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -376,26 +584,32 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
                 </button>
               </div>
 
-              {/* Embedded Player (Always mounted when playing/paused so volume & position persist) */}
+              {/* Embedded Player: keep non-zero dimensions offscreen when hidden so WebView2 never throttles it */}
               <div
-                className={`overflow-hidden rounded-xl border border-white/10 bg-black transition-all ${
-                  showVideoPlayer ? 'h-48 sm:h-64' : 'h-0 opacity-0 pointer-events-none m-0 p-0 border-0'
-                }`}
+                className={
+                  showVideoPlayer
+                    ? 'overflow-hidden rounded-xl border border-white/10 bg-black h-48 sm:h-64 w-full'
+                    : 'fixed -left-[9999px] top-0 w-64 h-36 opacity-0 pointer-events-none'
+                }
               >
-                <iframe
-                  ref={youtubeIframeRef}
-                  key={youtubeId}
-                  title="YouTube Music Player"
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&enablejsapi=1&rel=0`}
-                  onLoad={() => {
-                    applyYouTubeAudioState();
-                    setTimeout(applyYouTubeAudioState, 350);
-                    setTimeout(applyYouTubeAudioState, 1000);
-                  }}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  className="w-full h-full"
-                />
+                {ytApiFailed ? (
+                  <iframe
+                    ref={ytFallbackIframeRef}
+                    key={youtubeId}
+                    title="YouTube Music Player"
+                    src={`https://www.youtube.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&enablejsapi=1&rel=0&origin=${encodeURIComponent(window.location.origin)}`}
+                    onLoad={() => {
+                      applyYouTubeAudioState();
+                      setTimeout(applyYouTubeAudioState, 400);
+                      setTimeout(applyYouTubeAudioState, 1000);
+                    }}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="w-full h-full border-0"
+                  />
+                ) : (
+                  <div ref={ytContainerRef} className="w-full h-full" />
+                )}
               </div>
 
               {!showVideoPlayer && (
