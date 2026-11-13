@@ -58,13 +58,33 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   // Group online users by highest role
   const roles = (activeServer?.roles || []).filter((r) => !r.isDefault).sort((a, b) => a.position - b.position);
 
+  const activeOnlineUsers = onlineUsers.filter((u) => u.status !== 'offline');
+  const onlineIdSet = new Set(activeOnlineUsers.map((u) => u.id));
+  const onlineNameSet = new Set(activeOnlineUsers.map((u) => u.username.toLowerCase()));
+
+  const offlineMembers: User[] = (activeServer?.members || [])
+    .filter((m) => !onlineIdSet.has(m.userId) && !onlineNameSet.has(m.username.toLowerCase()))
+    .map((m) => ({
+      id: m.userId,
+      username: m.username,
+      avatar: m.avatar || '🎮',
+      status: 'offline' as const,
+      role: 'user' as const,
+      joinedAt: m.joinedAt,
+      isMuted: false,
+      isDeafened: false,
+      isScreenSharing: false,
+      isSpeaking: false,
+      currentVoiceChannelId: undefined,
+    }));
+
   // Group mapping
   const roleGroups: { roleName: string; roleColor: string; users: User[] }[] = [];
   const processedUserIds = new Set<string>();
 
   roles.forEach((role) => {
     const usersInRole: User[] = [];
-    onlineUsers.forEach((user) => {
+    activeOnlineUsers.forEach((user) => {
       if (processedUserIds.has(user.id)) return;
       const { role: userRole } = getUserRoleInfo(user);
       if (userRole?.id === role.id) {
@@ -81,13 +101,22 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
     }
   });
 
-  // Remaining users go to "Çevrimiçi"
-  const standardUsers = onlineUsers.filter((u) => !processedUserIds.has(u.id));
+  // Remaining online users go to "Çevrimiçi"
+  const standardUsers = activeOnlineUsers.filter((u) => !processedUserIds.has(u.id));
   if (standardUsers.length > 0) {
     roleGroups.push({
       roleName: 'Çevrimiçi',
       roleColor: '#94a3b8',
       users: standardUsers
+    });
+  }
+
+  // Offline server members
+  if (offlineMembers.length > 0) {
+    roleGroups.push({
+      roleName: 'Çevrimdışı',
+      roleColor: '#64748b',
+      users: offlineMembers
     });
   }
 
@@ -114,11 +143,15 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                 (c) => c.id === user.currentVoiceChannelId
               );
 
+              const isOffline = user.status === 'offline';
+
               return (
                 <div
                   key={user.id}
                   onClick={() => onOpenProfile(user)}
-                  className="flex items-center gap-3 px-2.5 py-2 rounded-xl hover:bg-white/[0.06] cursor-pointer transition group"
+                  className={`flex items-center gap-3 px-2.5 py-2 rounded-xl hover:bg-white/[0.06] cursor-pointer transition group ${
+                    isOffline ? 'opacity-55 hover:opacity-100' : ''
+                  }`}
                   title={`${user.username} profilini görüntüle`}
                 >
                   <div className="relative shrink-0">
@@ -182,7 +215,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                       </div>
                     ) : (
                       <div className="text-[10px] text-white/40 truncate">
-                        Çevrimiçi
+                        {isOffline ? 'Çevrimdışı' : 'Çevrimiçi'}
                       </div>
                     )}
                   </div>
