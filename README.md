@@ -6,14 +6,21 @@
 
 ## ✨ Güncel Özellikler
 
-### 🖥️ Masaüstü Uygulaması (Rust / Tauri v2)
+### 🖥️ Masaüstü Uygulaması (Windows & macOS — Rust / Tauri v2)
+- **Windows & macOS Universal Desteği:** Windows (`x64-setup.exe`) ve macOS (`Universal .dmg` — Apple Silicon & Intel) için yerel derleme ve GitHub Actions otomatik build desteği.
 - **Sistem Tepsisi & Arka Plan Modu:** Pencere kapatıldığında uygulama tepsiye küçülür; tepsi menüsünden **Çakma'yı Göster**, **Mikrofonu Kapat / Aç** ve **Tamamen Kapat** seçenekleri kullanılabilir.
 - **Global Kısayollar:** Oyun içinde veya uygulama arka plandayken bile çalışan sistem geneli kısayollar:
   - `Ctrl + Shift + M` → Mikrofonu Sustur / Aç
   - `Ctrl + Shift + D` → Kulaklığı Sustur / Aç
-- **Otomatik Oyun Algılama (Rich Presence):** Çalışan oyun/uygulamalar (VALORANT, CS2, LoL, GTA V, FiveM, Minecraft, Fortnite, OBS, Spotify vb.) otomatik algılanıp üye listesinde aktivite olarak gösterilir.
+- **Otomatik Oyun Algılama (Rich Presence):** Windows ve macOS üzerinde çalışan oyun/uygulamalar (VALORANT, CS2, LoL, GTA V, FiveM, Minecraft, Fortnite, OBS, Spotify vb.) otomatik algılanıp üye listesinde aktivite olarak gösterilir.
 - **Oyun İçi Konuşanlar Overlay:** Üstte sabit, çerçevesiz mini overlay penceresi ile ses odasında kimlerin konuştuğu anlık olarak takip edilebilir.
 - **İmzalı Otomatik Güncelleme:** Masaüstü istemcisi açılışta yeni sürümü otomatik denetler ve imzalı güncellemeyi indirip kurar.
+
+### 🎨 Arayüz, Mobil Uyumluluk & Özelleştirme
+- **Spatial Floating Glass Tasarımı:** Nokta dokulu derin obsidian arka plan üzerinde yüzen cam paneller, ışık hatlı aktif kanal/sunucu göstergeleri ve seçilebilir UI temaları.
+- **Mobil & iPhone 12 Safari Uyumluluğu:** `100dvh` tam ekran yüksekliği, safe-area boşlukları, kaydırılabilir yan çekmece (drawer) menüleri ve taşmayan sohbet giriş alanı.
+- **Hızlı Durum & Özel Durum Değiştirici:** Sol alt kullanıcı kartına tıklayarak **Çevrimiçi / Boşta / Rahatsız Etmeyin / Görünmez** durumları ve özel durum mesajı anında güncellenebilir.
+- **Özel Sunucu Simgesi (`512×512`) & Banner (`960×540`):** Sunucu Ayarları üzerinden özel sunucu simgesi ve 16:9 banner görseli (PNG, JPG, WEBP, GIF) yüklenebilir; davet linki önizlemesinde de gösterilir.
 
 ### 🎙️ Ses Odaları, Yayın & TeamSpeak Özellikleri
 - **Düşük Gecikmeli WebRTC Ses Odaları:** Kişi bazlı ses seviyesi ayarı, yerel susturma, konuşma halosu ve şifreli odalar.
@@ -31,6 +38,8 @@
 
 ### 💬 Sohbet, Topluluk & Üye Listesi
 - **Zengin Mesajlaşma:** Yapısal mesaj yanıtlama (`replyTo`), **Sesli Notlar** (gerçek süreli dalga formu, tıklayarak sarma, `1x/1.5x/2x` hız kontrolü), kod blokları, dosya yükleme, anketler ve sabitlenmiş mesajlar.
+- **Okunmamış Mesaj & `@Bahsetme` Rozetleri:** Kanal listesinde ve sunucu simgelerinde okunmamış mesaj sayısı ile `@bahsetme` uyarı rozetleri.
+- **Kanal Sıralama:** Yetkili kullanıcılar metin ve ses kanallarını tek tıkla yukarı/aşağı taşıyarak sıralayabilir.
 - **Özel Sunucu Emojileri:** Sunucu ayarlarından özel emoji yükleme/silme ve sohbet emoji seçicisinde kullanma.
 - **Gelişmiş Mesaj Arama & GIF Seçici:** Kanal geçmişinde hızlı arama ve GIF paylaşımı.
 - **Tam Üye Listesi:** Sağ panelde sunucudaki tüm üyeler (hem **Çevrimiçi** rollere göre, hem **Çevrimdışı** en altta, çoklu cihaz oturumları tekilleştirilmiş şekilde) listelenir.
@@ -91,10 +100,16 @@
 
 ### İmzalı Masaüstü Sürümü Derleme (Release)
 `client/src-tauri/tauri.conf.json` içindeki `version` numarasını yükselttikten sonra:
+- **Windows (NSIS + Updater):**
 ```powershell
 powershell -ExecutionPolicy Bypass -File "scripts/release-desktop.ps1"
 ```
 Bu script `Çakma_<version>_x64-setup.exe` kurulum dosyasını derler, Tauri updater anahtarıyla imzalar ve `client/public/downloads/` altına (`Cakma-Setup.exe` + `latest.json`) yerleştirir.
+- **macOS (Universal `.dmg`):**
+```bash
+bash scripts/release-macos.sh
+```
+Apple Silicon (`aarch64`) ve Intel (`x86_64`) hedefleri için Universal DMG üretir (veya GitHub Actions üzerinden otomatik derlenir).
 
 ---
 

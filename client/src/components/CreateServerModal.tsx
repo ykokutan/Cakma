@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { X, Globe, Plus, RotateCcw, UserPlus } from 'lucide-react';
+import { X, Globe, Plus, RotateCcw, UserPlus, Users } from 'lucide-react';
+import { isImageAvatar } from './AvatarView';
 
 interface CreateServerModalProps {
   onClose: () => void;
@@ -8,8 +9,23 @@ interface CreateServerModalProps {
 
 const SERVER_EMOJIS = ['🎮', '⚡', '🚀', '🔥', '🛡️', '⚔️', '👾', '🎧', '☕', '🌟'];
 
+function extractInviteCode(rawInput: string): string {
+  const raw = rawInput.trim();
+  if (!raw) return '';
+  try {
+    if (raw.includes('invite=')) {
+      const urlObj = new URL(raw.startsWith('http') ? raw : `https://dummy.local/${raw}`);
+      return urlObj.searchParams.get('invite') || raw;
+    }
+  } catch {
+    const match = raw.match(/invite=([A-Za-z0-9_-]+)/);
+    if (match) return match[1];
+  }
+  return raw;
+}
+
 export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose }) => {
-  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer, joinServerByInvite } = useSocket();
+  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer, joinServerByInvite, previewServerInvite } = useSocket();
   const [tab, setTab] = useState<'create' | 'invite' | 'direct'>('create');
   const [serverName, setServerName] = useState('');
   const [serverIcon, setServerIcon] = useState('🎮');
@@ -17,21 +33,42 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
   const [inviteInput, setInviteInput] = useState('');
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [isJoiningInvite, setIsJoiningInvite] = useState(false);
+  const [invitePreview, setInvitePreview] = useState<{
+    id: string;
+    name: string;
+    icon: string;
+    bannerGradient?: string;
+    bannerImage?: string;
+    description?: string;
+    memberCount: number;
+  } | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab !== 'invite') return;
+    const code = extractInviteCode(inviteInput);
+    if (code.length < 4) {
+      setInvitePreview(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsPreviewLoading(true);
+      const res = await previewServerInvite(code);
+      setIsPreviewLoading(false);
+      if (res.success && res.server) {
+        setInvitePreview(res.server);
+        setInviteError(null);
+      } else {
+        setInvitePreview(null);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [inviteInput, tab, previewServerInvite]);
 
   const handleJoinInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    const raw = inviteInput.trim();
-    if (!raw) return;
-    let code = raw;
-    try {
-      if (raw.includes('invite=')) {
-        const urlObj = new URL(raw.startsWith('http') ? raw : `https://dummy.local/${raw}`);
-        code = urlObj.searchParams.get('invite') || raw;
-      }
-    } catch {
-      const match = raw.match(/invite=([A-Za-z0-9_-]+)/);
-      if (match) code = match[1];
-    }
+    const code = extractInviteCode(inviteInput);
+    if (!code) return;
     setInviteError(null);
     setIsJoiningInvite(true);
     const res = await joinServerByInvite(code);
@@ -186,6 +223,46 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
                 Arkadaşınızın paylaştığı sunucu davet linkini veya kodunu girerek topluluğa katılın.
               </span>
             </div>
+
+            {isPreviewLoading && (
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white/50">
+                Sunucu önizlemesi yükleniyor...
+              </div>
+            )}
+
+            {invitePreview && !isPreviewLoading && (
+              <div className="rounded-2xl overflow-hidden border border-white/15 bg-white/[0.04] shadow-xl">
+                <div className="relative h-24 w-full overflow-hidden">
+                  {invitePreview.bannerImage ? (
+                    <img src={invitePreview.bannerImage} alt={invitePreview.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className={`w-full h-full bg-gradient-to-br ${invitePreview.bannerGradient || 'from-blue-600/40 via-indigo-600/30 to-purple-600/40'}`} />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
+                </div>
+                <div className="p-3.5 -mt-8 relative flex items-end gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-[#16171d] border-2 border-white/20 overflow-hidden flex items-center justify-center shrink-0 shadow-lg">
+                    {isImageAvatar(invitePreview.icon) ? (
+                      <img src={invitePreview.icon} alt={invitePreview.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-2xl">{invitePreview.icon || '💬'}</span>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-white truncate">{invitePreview.name}</p>
+                    <p className="text-[11px] text-white/60 flex items-center gap-1">
+                      <Users className="w-3 h-3 text-emerald-400" />
+                      {invitePreview.memberCount} üye
+                    </p>
+                  </div>
+                </div>
+                {invitePreview.description && (
+                  <p className="px-3.5 pb-3 text-[11px] text-white/55 line-clamp-2">
+                    {invitePreview.description}
+                  </p>
+                )}
+              </div>
+            )}
 
             {inviteError && (
               <div className="p-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-300">

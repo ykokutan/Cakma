@@ -2841,6 +2841,40 @@ io.on('connection', (socket: Socket) => {
     socket.emit('server_invite_created', newInvite);
   });
 
+  // Preview Server via Invite Code (for Invite Card Banner/Icon Preview)
+  socket.on('preview_server_invite', ({ code }: { code: string }) => {
+    const cleanCode = (code || '').trim().toUpperCase();
+    if (!cleanCode) {
+      return socket.emit('preview_invite_response', { success: false, error: 'Davet kodu boş olamaz.' });
+    }
+
+    for (const s of servers) {
+      const inv = s.invites?.find(i => i.code === cleanCode);
+      if (inv) {
+        if (inv.expiresAt && inv.expiresAt < Date.now()) {
+          return socket.emit('preview_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
+        }
+        if (inv.maxUses && inv.uses >= inv.maxUses) {
+          return socket.emit('preview_invite_response', { success: false, error: 'Bu davet linki maksimum kullanım sınırına ulaşmış.' });
+        }
+        return socket.emit('preview_invite_response', {
+          success: true,
+          server: {
+            id: s.id,
+            name: s.name,
+            icon: s.icon,
+            bannerGradient: s.bannerGradient,
+            bannerImage: s.bannerImage,
+            description: s.description,
+            memberCount: s.members?.length || 0,
+          },
+        });
+      }
+    }
+
+    socket.emit('preview_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
+  });
+
   // Join Server via Invite Code
   socket.on('join_server_by_invite', ({ code }: { code: string }) => {
     const user = activeUsers.get(socket.id);
@@ -2878,6 +2912,38 @@ io.on('connection', (socket: Socket) => {
     }
 
     socket.emit('join_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
+  });
+
+  // Reorder Channels within a server (up / down within same type)
+  socket.on('reorder_channels', ({ serverId, channelId, direction }: { serverId: string; channelId: string; direction: 'up' | 'down' }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) return;
+
+    const idx = s.channels.findIndex(c => c.id === channelId);
+    if (idx === -1) return;
+
+    const targetType = s.channels[idx].type;
+    const sameTypeIndices: number[] = [];
+    s.channels.forEach((ch, i) => {
+      if (ch.type === targetType) sameTypeIndices.push(i);
+    });
+
+    const posInType = sameTypeIndices.indexOf(idx);
+    if (posInType === -1) return;
+
+    const swapPosInType = direction === 'up' ? posInType - 1 : posInType + 1;
+    if (swapPosInType < 0 || swapPosInType >= sameTypeIndices.length) return;
+
+    const swapIdx = sameTypeIndices[swapPosInType];
+    const temp = s.channels[idx];
+    s.channels[idx] = s.channels[swapIdx];
+    s.channels[swapIdx] = temp;
+
+    saveServers(servers);
+    io.emit('server_updated', s);
   });
 
   // Delete Server

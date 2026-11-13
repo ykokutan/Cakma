@@ -10,7 +10,7 @@ interface ServerSidebarProps {
 }
 
 export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer, onOpenExplore, onOpenDownload }) => {
-  const { servers, activeServer, selectServer } = useSocket();
+  const { servers, activeServer, selectServer, unreadCounts, mentionCounts } = useSocket();
   const [hoveredServerId, setHoveredServerId] = useState<string | null>(null);
 
   const isDMActive = activeServer?.id === 'direct-messages';
@@ -48,6 +48,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
         {servers.map((server) => {
           const isActive = activeServer?.id === server.id;
           const isHovered = hoveredServerId === server.id;
+          const serverMentions = server.channels.reduce((sum, ch) => sum + (mentionCounts[ch.id] || 0), 0);
+          const serverUnreads = server.channels.reduce((sum, ch) => sum + (unreadCounts[ch.id] || 0), 0);
 
           return (
             <div
@@ -56,10 +58,16 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
               onMouseEnter={() => setHoveredServerId(server.id)}
               onMouseLeave={() => setHoveredServerId(null)}
             >
-              {/* Active Indicator Bar */}
+              {/* Active / Unread Indicator Bar */}
               <div
                 className={`absolute left-0 w-1 bg-gradient-to-b from-cyan-400 to-indigo-500 rounded-r-full transition-all duration-200 ${
-                  isActive ? 'h-8 shadow-[0_0_12px_rgba(56,189,248,0.85)]' : isHovered ? 'h-4' : 'h-0'
+                  isActive
+                    ? 'h-8 shadow-[0_0_12px_rgba(56,189,248,0.85)]'
+                    : isHovered
+                    ? 'h-4'
+                    : serverUnreads > 0
+                    ? 'h-2 !bg-white/80'
+                    : 'h-0'
                 }`}
               />
 
@@ -83,6 +91,15 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
                   server.name.substring(0, 2).toUpperCase()
                 )}
               </button>
+
+              {serverMentions > 0 && (
+                <span
+                  className="pointer-events-none absolute -bottom-0.5 right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#0b0d14] shadow-lg"
+                  title={`${serverMentions} bahsetme`}
+                >
+                  {serverMentions > 99 ? '99+' : serverMentions}
+                </span>
+              )}
 
               {/* Floating Glass Tooltip */}
               {isHovered && (

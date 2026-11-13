@@ -215,6 +215,7 @@ interface SocketContextType {
   typingUsers: Record<string, string[]>;
   sendTyping: (isTyping: boolean) => void;
   unreadCounts: Record<string, number>;
+  mentionCounts: Record<string, number>;
 
   // Account Security, Block, Timeout, Invites & UI Themes
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message?: string; error?: string }>;
@@ -222,7 +223,21 @@ interface SocketContextType {
   unblockUser: (targetUsername: string) => void;
   timeoutMember: (serverId: string, targetUsername: string, durationMinutes: number) => void;
   createServerInvite: (serverId: string, maxUses?: number, expireMinutes?: number) => Promise<ServerInvite | null>;
+  previewServerInvite: (code: string) => Promise<{
+    success: boolean;
+    server?: {
+      id: string;
+      name: string;
+      icon: string;
+      bannerGradient?: string;
+      bannerImage?: string;
+      description?: string;
+      memberCount: number;
+    };
+    error?: string;
+  }>;
   joinServerByInvite: (code: string) => Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>;
+  reorderChannel: (serverId: string, channelId: string, direction: 'up' | 'down') => void;
   uiTheme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold';
   setUiTheme: (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold') => void;
   chatFontSize: 'sm' | 'base' | 'lg';
@@ -376,6 +391,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [typingUsers, setTypingUsers] = useState<Record<string, string[]>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold'>(() => {
     return (localStorage.getItem('dc_ui_theme') as any) || 'vision-dark';
@@ -1289,6 +1305,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ...prev,
           [msg.channelId]: (prev[msg.channelId] || 0) + 1
         }));
+        const isMention = Boolean(
+          currentUserRef.current &&
+          msg.content &&
+          msg.content.toLowerCase().includes('@' + currentUserRef.current.username.toLowerCase())
+        );
+        if (isMention) {
+          setMentionCounts(prev => ({
+            ...prev,
+            [msg.channelId]: (prev[msg.channelId] || 0) + 1
+          }));
+        }
       }
 
       // Desktop Push Notification
@@ -2395,6 +2422,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       delete next[channelId];
       return next;
     });
+    setMentionCounts(prev => {
+      if (!prev[channelId]) return prev;
+      const next = { ...prev };
+      delete next[channelId];
+      return next;
+    });
   };
 
   const sendMessage = (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }) => {
@@ -2864,6 +2897,42 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, [socket]);
 
+  const previewServerInvite = useCallback((code: string) => {
+    return new Promise<{
+      success: boolean;
+      server?: {
+        id: string;
+        name: string;
+        icon: string;
+        bannerGradient?: string;
+        bannerImage?: string;
+        description?: string;
+        memberCount: number;
+      };
+      error?: string;
+    }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      const handler = (res: any) => {
+        socket.off('preview_invite_response', handler);
+        resolve(res);
+      };
+      socket.on('preview_invite_response', handler);
+      socket.emit('preview_server_invite', { code });
+      setTimeout(() => {
+        socket.off('preview_invite_response', handler);
+        resolve({ success: false, error: 'Önizleme zaman aşımına uğradı.' });
+      }, 6000);
+    });
+  }, [socket]);
+
+  const reorderChannel = useCallback((serverId: string, channelId: string, direction: 'up' | 'down') => {
+    if (!socket) return;
+    socket.emit('reorder_channels', { serverId, channelId, direction });
+  }, [socket]);
+
   const joinServerByInvite = useCallback((code: string) => {
     return new Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>((resolve) => {
       if (!socket) {
@@ -3249,6 +3318,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         typingUsers,
         sendTyping,
         unreadCounts,
+        mentionCounts,
 
         // Account Security, Block, Timeout, Invites & UI Themes
         changePassword,
@@ -3256,7 +3326,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         unblockUser,
         timeoutMember,
         createServerInvite,
+        previewServerInvite,
         joinServerByInvite,
+        reorderChannel,
         uiTheme,
         setUiTheme,
         chatFontSize,

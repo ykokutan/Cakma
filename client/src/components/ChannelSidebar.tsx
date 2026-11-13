@@ -12,6 +12,7 @@ import {
   Settings,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   PhoneOff,
   Radio,
   VolumeX,
@@ -88,9 +89,28 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     voicePasswordError,
     clearVoicePasswordError,
     unreadCounts,
+    mentionCounts,
     createServerInvite,
+    reorderChannel,
     updateProfileDetails,
   } = useSocket();
+
+  const canManageChannels = Boolean(
+    activeServer &&
+    currentUser &&
+    (
+      activeServer.ownerId === currentUser.id ||
+      activeServer.ownerId === currentUser.username ||
+      currentUser.role === 'admin' ||
+      activeServer.members?.some((m) => {
+        if (m.username.toLowerCase() !== currentUser.username.toLowerCase()) return false;
+        return m.roleIds.some((rid) => {
+          const role = activeServer.roles?.find((r) => r.id === rid);
+          return role?.permissions.includes('manage_server') || role?.permissions.includes('manage_channels');
+        });
+      })
+    )
+  );
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
@@ -395,14 +415,14 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
           {!isTextCollapsed && (
             <div className="space-y-0.5">
-              {textChannels.map((channel) => {
+              {textChannels.map((channel, idx) => {
                 const isActive = activeChannel?.id === channel.id;
                 const unread = !isActive ? (unreadCounts[channel.id] || 0) : 0;
+                const mentions = !isActive ? (mentionCounts[channel.id] || 0) : 0;
                 return (
-                  <button
+                  <div
                     key={channel.id}
-                    onClick={() => selectChannel(channel.id)}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                    className={`group w-full flex items-center justify-between gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isActive
                         ? 'bg-gradient-to-r from-indigo-500/30 via-blue-500/20 to-transparent text-white border border-indigo-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(59,130,246,0.18)]'
                         : unread > 0
@@ -410,16 +430,57 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => selectChannel(channel.id)}
+                      className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
+                    >
                       <Hash className="w-4 h-4 opacity-70 shrink-0" />
                       <span className="truncate">{channel.name}</span>
+                    </button>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {canManageChannels && activeServer && textChannels.length > 1 && (
+                        <div className="hidden group-hover:flex items-center gap-0.5 mr-0.5">
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                reorderChannel(activeServer.id, channel.id, 'up');
+                              }}
+                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                              title="Yukarı Taşı"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                            </button>
+                          )}
+                          {idx < textChannels.length - 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                reorderChannel(activeServer.id, channel.id, 'down');
+                              }}
+                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                              title="Aşağı Taşı"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {mentions > 0 ? (
+                        <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold shrink-0 shadow">
+                          @{mentions > 99 ? '99+' : mentions}
+                        </span>
+                      ) : unread > 0 ? (
+                        <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/80 text-white text-[10px] font-bold shrink-0">
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      ) : null}
                     </div>
-                    {unread > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold shrink-0">
-                        {unread > 99 ? '99+' : unread}
-                      </span>
-                    )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -452,7 +513,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
           {!isVoiceCollapsed && (
             <div className="space-y-1">
-            {voiceChannels.map((channel) => {
+            {voiceChannels.map((channel, idx) => {
               const isConnectedHere = connectedVoiceChannelId === channel.id;
               const isViewingHere = activeChannel?.id === channel.id;
               const usersInChannel = onlineUsers.filter(
@@ -463,9 +524,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
               return (
                 <div key={channel.id} className="space-y-1">
-                  <button
-                    onClick={() => handleVoiceChannelClick(channel)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                  <div
+                    className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isConnectedHere
                         ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                         : isViewingHere
@@ -473,7 +533,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 truncate">
+                    <button
+                      type="button"
+                      onClick={() => handleVoiceChannelClick(channel)}
+                      className="flex-1 flex items-center gap-2.5 truncate text-left"
+                    >
                       <Volume2
                         className={`w-4 h-4 shrink-0 ${
                           isConnectedHere ? 'text-emerald-400' : 'opacity-70'
@@ -485,9 +549,39 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                           <Lock className="w-3 h-3 text-amber-400 shrink-0" />
                         </span>
                       )}
-                    </div>
+                    </button>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {canManageChannels && activeServer && voiceChannels.length > 1 && (
+                        <div className="hidden group-hover:flex items-center gap-0.5">
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                reorderChannel(activeServer.id, channel.id, 'up');
+                              }}
+                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                              title="Yukarı Taşı"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                            </button>
+                          )}
+                          {idx < voiceChannels.length - 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                reorderChannel(activeServer.id, channel.id, 'down');
+                              }}
+                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                              title="Aşağı Taşı"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {usersInChannel.some((u) => u.isScreenSharing) && (
                         <Tv className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
                       )}
@@ -497,7 +591,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         </span>
                       )}
                     </div>
-                  </button>
+                  </div>
 
                   {/* Connected Users Tree with Halo Effect */}
                   {usersInChannel.length > 0 && (
