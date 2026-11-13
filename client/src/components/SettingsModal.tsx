@@ -17,6 +17,13 @@ import {
   Lock,
   ShieldAlert,
   Palette,
+  Video,
+  MessageSquare,
+  Radio,
+  Info,
+  Cpu,
+  Camera,
+  Download,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -68,11 +75,159 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setUiTheme,
     chatFontSize,
     setChatFontSize,
+    currentServerHost,
   } = useSocket();
 
   const [username, setUsername] = useState(currentUser?.username || '');
   const [avatar, setAvatar] = useState(currentUser?.avatar || '🎮');
-  const [activeTab, setActiveTab] = useState<'audio' | 'voice_processing' | 'profile' | 'security' | 'appearance'>('audio');
+  const [activeTab, setActiveTab] = useState<
+    | 'audio'
+    | 'voice_processing'
+    | 'video'
+    | 'keybindings'
+    | 'chats'
+    | 'notifications'
+    | 'profile'
+    | 'security'
+    | 'appearance'
+    | 'about'
+  >('audio');
+
+  const [advSettings, setAdvSettings] = useState(() => {
+    const defaults = {
+      useOpenH264: true,
+      hardwareAcceleration: true,
+      preferredCodec: 'auto' as 'auto' | 'AV1' | 'H264' | 'VP9' | 'VP8',
+      av1Backend: 'Hardware (Auto)',
+      h264Backend: 'Hardware (Auto)',
+      vp9Backend: 'Internal (Software)',
+      vp8Backend: 'Internal (Software)',
+      cameraResolution: '720p' as '480p' | '720p' | '1080p',
+      cameraFps: 30 as 15 | 30 | 60,
+      muteShortcut: 'KeyM',
+      deafenShortcut: 'KeyD',
+      screenShareShortcut: 'KeyS',
+      enterToSend: true,
+      showLinkPreviews: true,
+      autoPlayGifs: true,
+      whisperMode: 'everyone' as 'everyone' | 'friends' | 'disabled',
+      whisperVolume: 100,
+      soundOnJoinLeave: true,
+      soundOnMention: true,
+      soundOnWhisper: true,
+      soundOnStreamStart: true,
+    };
+    try {
+      const saved = localStorage.getItem('cakma_advanced_settings');
+      if (saved) return { ...defaults, ...JSON.parse(saved) };
+    } catch {
+      // ignore
+    }
+    return defaults;
+  });
+
+  const updateAdv = (patch: Partial<typeof advSettings>) => {
+    setAdvSettings((prev: typeof advSettings) => {
+      const next = { ...prev, ...patch };
+      try {
+        localStorage.setItem('cakma_advanced_settings', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  const [recordingShortcutFor, setRecordingShortcutFor] = useState<
+    null | 'muteShortcut' | 'deafenShortcut' | 'screenShareShortcut'
+  >(null);
+  const [isCameraTesting, setIsCameraTesting] = useState(false);
+  const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = React.useRef<MediaStream | null>(null);
+  const [appVersion, setAppVersion] = useState<string>('0.1.2');
+  const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+
+  React.useEffect(() => {
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return;
+    import('@tauri-apps/api/app')
+      .then(({ getVersion }) => getVersion())
+      .then((v) => setAppVersion(v))
+      .catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
+  const toggleCameraTest = async () => {
+    if (isCameraTesting) {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+        cameraStreamRef.current = null;
+      }
+      setIsCameraTesting(false);
+      return;
+    }
+    try {
+      const dims =
+        advSettings.cameraResolution === '1080p'
+          ? { width: 1920, height: 1080 }
+          : advSettings.cameraResolution === '720p'
+            ? { width: 1280, height: 720 }
+            : { width: 854, height: 480 };
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { ...dims, frameRate: { ideal: advSettings.cameraFps } },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      setIsCameraTesting(true);
+      setTimeout(() => {
+        if (cameraVideoRef.current) cameraVideoRef.current.srcObject = stream;
+      }, 50);
+    } catch {
+      alert('Kamera erişimi reddedildi veya kamera bulunamadı.');
+    }
+  };
+
+  const handleManualUpdateCheck = async () => {
+    setIsCheckingUpdate(true);
+    setUpdateStatusMsg(null);
+    try {
+      const isTauri =
+        typeof window !== 'undefined' &&
+        ('__TAURI_INTERNALS__' in window ||
+          window.location.hostname === 'tauri.localhost' ||
+          window.location.protocol === 'tauri:');
+      if (!isTauri) {
+        setUpdateStatusMsg('Web sürümünde her zaman en güncel sürümü kullanıyorsunuz.');
+        return;
+      }
+      const { check } = await import('@tauri-apps/plugin-updater');
+      const update = await check();
+      if (update) {
+        setUpdateStatusMsg(`Yeni sürüm bulundu: v${update.version}. Otomatik indiriliyor...`);
+        await update.downloadAndInstall();
+        const { relaunch } = await import('@tauri-apps/plugin-process');
+        await relaunch();
+      } else {
+        setUpdateStatusMsg(`Uygulama güncel (v${appVersion}).`);
+      }
+    } catch {
+      setUpdateStatusMsg('Güncelleme sunucusuna şu anda ulaşılamadı.');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
   const [newPasswordInput, setNewPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
@@ -101,73 +256,144 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xl flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl ios-glass rounded-3xl shadow-2xl flex overflow-hidden border border-white/10 h-[580px]">
-        {/* Left Settings Sidebar - iOS Translucent Panel */}
-        <div className="w-56 bg-white/[0.02] p-5 flex flex-col justify-between shrink-0 border-r border-white/[0.06]">
-          <div className="space-y-1.5">
-            <div className="text-[11px] font-semibold text-white/40 uppercase px-2 mb-3 tracking-wider">
+      <div className="w-full max-w-5xl ios-glass rounded-3xl shadow-2xl flex overflow-hidden border border-white/10 h-[660px] max-h-[90vh]">
+        {/* Left Settings Sidebar - TeamSpeak-style Categorized Panel */}
+        <div className="w-60 bg-white/[0.02] p-4 flex flex-col justify-between shrink-0 border-r border-white/[0.06] overflow-y-auto">
+          <div className="space-y-4">
+            <div className="text-[11px] font-bold text-white/40 uppercase px-2 tracking-wider">
               Ayarlar
             </div>
 
-            <button
-              onClick={() => setActiveTab('audio')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
-                activeTab === 'audio'
-                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
-                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-              }`}
-            >
-              <Mic className="w-4 h-4" />
-              Ses Aygıtları & Giriş
-            </button>
+            {/* USER SECTION */}
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
+                Kullanıcı
+              </div>
+              <button
+                onClick={() => setActiveTab('profile')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'profile'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <User className="w-4 h-4" />
+                Hesap & Profil
+              </button>
+              <button
+                onClick={() => setActiveTab('security')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'security'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Lock className="w-4 h-4 text-amber-400" />
+                Gizlilik & Güvenlik
+              </button>
+            </div>
 
-            <button
-              onClick={() => setActiveTab('voice_processing')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
-                activeTab === 'voice_processing'
-                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
-                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-              }`}
-            >
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              Gürültü & Filtreler
-            </button>
+            {/* APPLICATION SECTION */}
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
+                Uygulama
+              </div>
+              <button
+                onClick={() => setActiveTab('appearance')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'appearance'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Palette className="w-4 h-4 text-purple-400" />
+                Görünüm
+              </button>
+              <button
+                onClick={() => setActiveTab('audio')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'audio'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Mic className="w-4 h-4" />
+                Ses Aygıtları & Giriş
+              </button>
+              <button
+                onClick={() => setActiveTab('voice_processing')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'voice_processing'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                Gürültü & Filtreler
+              </button>
+              <button
+                onClick={() => setActiveTab('video')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'video'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Video className="w-4 h-4 text-sky-400" />
+                Video & Codec
+              </button>
+              <button
+                onClick={() => setActiveTab('keybindings')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'keybindings'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Keyboard className="w-4 h-4 text-indigo-400" />
+                Kısayol Tuşları
+              </button>
+              <button
+                onClick={() => setActiveTab('chats')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'chats'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <MessageSquare className="w-4 h-4 text-teal-400" />
+                Sohbet & Fısıltı
+              </button>
+              <button
+                onClick={() => setActiveTab('notifications')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'notifications'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Bell className="w-4 h-4 text-pink-400" />
+                Bildirimler
+              </button>
+            </div>
 
-            <button
-              onClick={() => setActiveTab('profile')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
-                activeTab === 'profile'
-                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
-                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-              }`}
-            >
-              <User className="w-4 h-4" />
-              Profilim
-            </button>
-
-            <button
-              onClick={() => setActiveTab('security')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
-                activeTab === 'security'
-                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
-                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-              }`}
-            >
-              <Lock className="w-4 h-4 text-amber-400" />
-              Hesap & Güvenlik
-            </button>
-
-            <button
-              onClick={() => setActiveTab('appearance')}
-              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-xs font-medium transition ${
-                activeTab === 'appearance'
-                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
-                  : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-              }`}
-            >
-              <Palette className="w-4 h-4 text-purple-400" />
-              Görünüm & Bildirim
-            </button>
+            {/* INFORMATION SECTION */}
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
+                Bilgi
+              </div>
+              <button
+                onClick={() => setActiveTab('about')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'about'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Info className="w-4 h-4 text-slate-300" />
+                Hakkında & Sürüm
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3 pt-3 border-t border-white/[0.06]">
@@ -877,6 +1103,458 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         {s.label}
                       </button>
                     ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: Video & Codec (TeamSpeak-style Hardware Acceleration & Camera) */}
+          {activeTab === 'video' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Video & Donanım Hızlandırma</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Video codec tercihlerini, donanım hızlandırmayı ve kamera kalitesini yapılandırın.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="text-xs font-bold uppercase tracking-wider text-white/50 flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-sky-400" />
+                  <span>Hardware Acceleration</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Cisco OpenH264 Kullan</div>
+                    <div className="text-xs text-white/40">H.264 video kodlama ve çözme için OpenH264 desteğini etkinleştirir.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateAdv({ useOpenH264: !advSettings.useOpenH264 })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      advSettings.useOpenH264 ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${advSettings.useOpenH264 ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Donanım Hızlandırma (GPU)</div>
+                    <div className="text-xs text-white/40">Video akışlarını işlerken GPU hızlandırmasından faydalanır.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateAdv({ hardwareAcceleration: !advSettings.hardwareAcceleration })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      advSettings.hardwareAcceleration ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${advSettings.hardwareAcceleration ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                {/* Codec Backends */}
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div className="text-xs font-semibold text-white/70">Tercih Edilen Video Codec</div>
+                  <div className="grid grid-cols-5 gap-2">
+                    {(['auto', 'AV1', 'H264', 'VP9', 'VP8'] as const).map((codec) => (
+                      <button
+                        key={codec}
+                        type="button"
+                        onClick={() => updateAdv({ preferredCodec: codec })}
+                        className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
+                          advSettings.preferredCodec === codec
+                            ? 'bg-blue-500 text-white border-blue-400 shadow'
+                            : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {codec === 'auto' ? 'Otomatik' : codec}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                    {[
+                      { label: 'AV1 Codec Backend', key: 'av1Backend' as const, opts: ['Hardware (Auto)', 'AMD AMF AV1', 'NVIDIA NVENC AV1', 'Internal (Software)'] },
+                      { label: 'H.264 Codec Backend', key: 'h264Backend' as const, opts: ['Hardware (Auto)', 'AMD AMF H.264', 'NVIDIA NVENC H.264', 'OpenH264 (Software)'] },
+                      { label: 'VP9 Codec Backend', key: 'vp9Backend' as const, opts: ['Internal (Software)', 'Hardware (Auto)'] },
+                      { label: 'VP8 Codec Backend', key: 'vp8Backend' as const, opts: ['Internal (Software)', 'Hardware (Auto)'] },
+                    ].map((item) => (
+                      <div key={item.key} className="bg-black/30 rounded-xl p-3 border border-white/5 space-y-1.5">
+                        <div className="text-[11px] font-semibold text-white/70">{item.label}</div>
+                        <select
+                          value={advSettings[item.key]}
+                          onChange={(e) => updateAdv({ [item.key]: e.target.value })}
+                          className="w-full bg-[#161c2c] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                        >
+                          {item.opts.map((o) => (
+                            <option key={o} value={o}>{o}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Camera Settings & Test */}
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Camera className="w-4 h-4 text-emerald-400" />
+                    <span>Kamera Kalitesi & Test</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleCameraTest}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
+                      isCameraTesting
+                        ? 'bg-red-500 hover:bg-red-600 text-white'
+                        : 'bg-blue-500 hover:bg-blue-600 text-white'
+                    }`}
+                  >
+                    {isCameraTesting ? 'Kamerayı Kapat' : 'Kamerayı Test Et'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-white/60 mb-1.5">Çözünürlük</div>
+                    <div className="flex gap-1.5">
+                      {(['480p', '720p', '1080p'] as const).map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => updateAdv({ cameraResolution: r })}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                            advSettings.cameraResolution === r
+                              ? 'bg-blue-500 text-white border-blue-400'
+                              : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                          }`}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-white/60 mb-1.5">FPS</div>
+                    <div className="flex gap-1.5">
+                      {([15, 30, 60] as const).map((f) => (
+                        <button
+                          key={f}
+                          type="button"
+                          onClick={() => updateAdv({ cameraFps: f })}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                            advSettings.cameraFps === f
+                              ? 'bg-blue-500 text-white border-blue-400'
+                              : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                          }`}
+                        >
+                          {f} FPS
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {isCameraTesting && (
+                  <div className="aspect-video w-full max-w-md mx-auto rounded-xl overflow-hidden border border-white/10 bg-black">
+                    <video ref={cameraVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: Key Bindings */}
+          {activeTab === 'keybindings' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Kısayol Tuşları (Key Bindings)</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Bas-Konuş, mikrofon susturma, sağırlaştırma ve yayın kısayollarını atayın.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Bas-Konuş (Push-to-Talk) Tuşu</div>
+                    <div className="text-xs text-white/40">Bas-Konuş modu seçiliyken mikrofonu açmak için basılı tutulacak tuş.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecordingKey(true);
+                      const handler = (e: KeyboardEvent) => {
+                        e.preventDefault();
+                        setPttKey(e.code);
+                        setRecordingKey(false);
+                        window.removeEventListener('keydown', handler);
+                      };
+                      window.addEventListener('keydown', handler);
+                    }}
+                    className={`px-4 py-2 rounded-xl text-xs font-mono font-bold border transition ${
+                      recordingKey
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-300 animate-pulse'
+                        : 'bg-black/40 border-white/15 text-white hover:border-blue-400'
+                    }`}
+                  >
+                    {recordingKey ? 'Tuşa Basın...' : pttKey}
+                  </button>
+                </div>
+
+                {(
+                  [
+                    { key: 'muteShortcut', label: 'Mikrofonu Sessize Al / Aç', desc: 'Ses kanalındayken mikrofon durumunu değiştirir.' },
+                    { key: 'deafenShortcut', label: 'Kulaklığı Kapat / Aç (Deafen)', desc: 'Gelen tüm sesleri susturur.' },
+                    { key: 'screenShareShortcut', label: 'Ekran Yayınını Başlat / Durdur', desc: 'Yayın ayarlarını açar veya yayını sonlandırır.' },
+                  ] as const
+                ).map((item) => (
+                  <div key={item.key} className="flex items-center justify-between pt-3 border-t border-white/5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">{item.label}</div>
+                      <div className="text-xs text-white/40">{item.desc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecordingShortcutFor(item.key);
+                        const handler = (e: KeyboardEvent) => {
+                          e.preventDefault();
+                          updateAdv({ [item.key]: e.code });
+                          setRecordingShortcutFor(null);
+                          window.removeEventListener('keydown', handler);
+                        };
+                        window.addEventListener('keydown', handler);
+                      }}
+                      className={`px-4 py-2 rounded-xl text-xs font-mono font-bold border transition ${
+                        recordingShortcutFor === item.key
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300 animate-pulse'
+                          : 'bg-black/40 border-white/15 text-white hover:border-blue-400'
+                      }`}
+                    >
+                      {recordingShortcutFor === item.key ? 'Tuşa Basın...' : advSettings[item.key]}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: Chats & Whispers */}
+          {activeTab === 'chats' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Sohbet & Fısıltı (Whispers)</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Mesajlaşma davranışlarını ve TeamSpeak tarzı fısıltı izinlerini yönetin.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Enter ile Mesaj Gönder</div>
+                    <div className="text-xs text-white/40">Kapalıysa mesaj göndermek için Ctrl+Enter kullanılır.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateAdv({ enterToSend: !advSettings.enterToSend })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      advSettings.enterToSend ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${advSettings.enterToSend ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Bağlantı Önizlemeleri & GIF Otomatik Oynatma</div>
+                    <div className="text-xs text-white/40">Sohbette paylaşılan medya ve bağlantıları otomatik yükler.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateAdv({ autoPlayGifs: !advSettings.autoPlayGifs })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      advSettings.autoPlayGifs ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${advSettings.autoPlayGifs ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Radio className="w-4 h-4 text-teal-400" />
+                    <span>Fısıltı (Whisper) İzinleri</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'everyone', label: 'Herkesten' },
+                      { id: 'friends', label: 'Sadece Arkadaşlar' },
+                      { id: 'disabled', label: 'Fısıltıyı Kapat' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => updateAdv({ whisperMode: opt.id as any })}
+                        className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
+                          advSettings.whisperMode === opt.id
+                            ? 'bg-blue-500 text-white border-blue-400 shadow'
+                            : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-2">
+                    <div className="flex justify-between text-xs text-white/70 mb-1.5">
+                      <span>Fısıltı Ses Seviyesi</span>
+                      <span className="font-mono">{advSettings.whisperVolume}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={150}
+                      value={advSettings.whisperVolume}
+                      onChange={(e) => updateAdv({ whisperVolume: Number(e.target.value) })}
+                      className="w-full accent-blue-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: Notifications */}
+          {activeTab === 'notifications' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Bildirimler & Ses Paketleri</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Masaüstü bildirimlerini ve olay bazlı ses efektlerini ayrı ayrı yönetin.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">TeamSpeak Ses Efektleri</div>
+                    <div className="text-xs text-white/40">Bağlantı, ayrılma ve sesli uyarı efektleri.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTsSoundEffectsEnabled(!tsSoundEffectsEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      tsSoundEffectsEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${tsSoundEffectsEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Masaüstü Bildirimleri</div>
+                    <div className="text-xs text-white/40">Uygulama arka plandayken yeni mesaj ve çağrı bildirimi gösterir.</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {notifPermission !== 'granted' && (
+                      <button
+                        type="button"
+                        onClick={requestNotificationPermission}
+                        className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 text-xs font-semibold hover:bg-blue-500/30"
+                      >
+                        İzin Ver
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setDesktopNotificationsEnabled(!desktopNotificationsEnabled)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        desktopNotificationsEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${desktopNotificationsEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {(
+                  [
+                    { key: 'soundOnJoinLeave', label: 'Odaya Giriş / Çıkış Sesi' },
+                    { key: 'soundOnMention', label: '@Bahsetme ve DM Bildirim Sesi' },
+                    { key: 'soundOnWhisper', label: 'Fısıltı (Whisper) Sesi' },
+                    { key: 'soundOnStreamStart', label: 'Ekran Yayını Başlangıç Sesi' },
+                  ] as const
+                ).map((item) => (
+                  <div key={item.key} className="flex items-center justify-between pt-3 border-t border-white/5">
+                    <span className="text-xs font-medium text-white/80">{item.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => updateAdv({ [item.key]: !advSettings[item.key] })}
+                      className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
+                        advSettings[item.key] ? 'bg-blue-500' : 'bg-white/15'
+                      }`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${advSettings[item.key] ? 'translate-x-5' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: About & Version */}
+          {activeTab === 'about' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Hakkında & Güncelleme</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Çakma istemci sürüm bilgileri ve otomatik güncelleme denetimi.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-lg font-bold text-white">Çakma Masaüstü & Web İstemcisi</div>
+                    <div className="text-xs text-white/50 mt-0.5">Sürüm: v{appVersion} • WebRTC Opus 48kHz HD</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleManualUpdateCheck}
+                    disabled={isCheckingUpdate}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-xs font-semibold text-white shadow transition"
+                  >
+                    <Download className="w-4 h-4" />
+                    {isCheckingUpdate ? 'Kontrol Ediliyor...' : 'Güncellemeleri Denetle'}
+                  </button>
+                </div>
+
+                {updateStatusMsg && (
+                  <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 px-4 py-2.5 text-xs text-blue-200">
+                    {updateStatusMsg}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 pt-3 border-t border-white/10 text-xs">
+                  <div className="bg-black/30 rounded-xl p-3 border border-white/5">
+                    <div className="text-white/40 mb-1">Bağlı Sunucu</div>
+                    <div className="font-mono text-white/90 truncate">{currentServerHost || 'ses.yahyakemalokutan.com'}</div>
+                  </div>
+                  <div className="bg-black/30 rounded-xl p-3 border border-white/5">
+                    <div className="text-white/40 mb-1">Ses & Video Motoru</div>
+                    <div className="font-mono text-emerald-400">WebRTC Mesh + Opus / {advSettings.preferredCodec.toUpperCase()}</div>
                   </div>
                 </div>
               </div>
