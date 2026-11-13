@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { User, Channel } from '../types';
@@ -89,9 +89,42 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     clearVoicePasswordError,
     unreadCounts,
     createServerInvite,
+    updateProfileDetails,
   } = useSocket();
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
+  const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
+  const [customStatusInput, setCustomStatusInput] = useState(currentUser?.statusMessage || '');
+  const statusMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setCustomStatusInput(currentUser?.statusMessage || '');
+  }, [currentUser?.statusMessage]);
+
+  useEffect(() => {
+    if (!isStatusMenuOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (statusMenuRef.current && !statusMenuRef.current.contains(e.target as Node)) {
+        setIsStatusMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [isStatusMenuOpen]);
+
+  const getStatusMeta = (status?: string) => {
+    switch (status) {
+      case 'idle':
+        return { label: 'Boşta', dot: 'bg-amber-400', text: 'text-amber-300' };
+      case 'dnd':
+        return { label: 'Rahatsız Etmeyin', dot: 'bg-red-500', text: 'text-red-400' };
+      case 'offline':
+        return { label: 'Görünmez', dot: 'bg-slate-400', text: 'text-slate-300' };
+      default:
+        return { label: 'Çevrimiçi', dot: 'bg-emerald-400', text: 'text-emerald-300' };
+    }
+  };
+  const currentStatusMeta = getStatusMeta(currentUser?.status);
   const [isTextCollapsed, setIsTextCollapsed] = useState(false);
   const [isVoiceCollapsed, setIsVoiceCollapsed] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -565,9 +598,94 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       )}
 
       {/* iOS Profile Bar (2-Tier Spacious Glass Panel) */}
-      <footer className="p-2.5 border-t border-white/[0.08] bg-black/40 flex flex-col gap-2 shrink-0">
-        {/* Tier 1: User Profile & Dedicated Logout Button */}
-        <div className="flex items-center justify-between gap-2">
+      <footer ref={statusMenuRef} className="relative p-2.5 border-t border-white/[0.08] bg-black/40 flex flex-col gap-2 shrink-0">
+        {/* Quick Status Popover */}
+        {isStatusMenuOpen && isAuthenticated && (
+          <div className="absolute bottom-full left-2 right-2 mb-2 z-50 rounded-2xl bg-[#161822]/95 border border-white/15 p-3 shadow-2xl backdrop-blur-2xl space-y-2.5 animate-slide-up">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white/50">
+                Durumunu Değiştir
+              </span>
+              <span className={`text-[10px] font-semibold ${currentStatusMeta.text}`}>
+                {currentStatusMeta.label}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              {[
+                { id: 'online' as const, label: 'Çevrimiçi', dot: 'bg-emerald-400', desc: 'Aktif' },
+                { id: 'idle' as const, label: 'Boşta', dot: 'bg-amber-400', desc: 'Uzakta' },
+                { id: 'dnd' as const, label: 'Rahatsız Etme', dot: 'bg-red-500', desc: 'Sessiz' },
+                { id: 'offline' as const, label: 'Görünmez', dot: 'bg-slate-400', desc: 'Gizli' },
+              ].map((opt) => {
+                const isSelected = (currentUser?.status || 'online') === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      updateProfileDetails({ status: opt.id });
+                      setIsStatusMenuOpen(false);
+                    }}
+                    className={`flex items-center gap-2 px-2.5 py-2 rounded-xl text-left transition border ${
+                      isSelected
+                        ? 'bg-white/15 border-white/25 text-white'
+                        : 'bg-white/[0.04] border-white/[0.06] text-white/75 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${opt.dot}`} />
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold truncate">{opt.label}</div>
+                      <div className="text-[9px] text-white/40 truncate">{opt.desc}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                updateProfileDetails({ statusMessage: customStatusInput.trim() });
+                setIsStatusMenuOpen(false);
+              }}
+              className="pt-2 border-t border-white/10 space-y-1.5"
+            >
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  maxLength={50}
+                  value={customStatusInput}
+                  onChange={(e) => setCustomStatusInput(e.target.value)}
+                  placeholder="Durum mesajı yaz..."
+                  className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  type="submit"
+                  className="px-2.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition shrink-0"
+                >
+                  Kaydet
+                </button>
+              </div>
+              {currentUser?.statusMessage && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomStatusInput('');
+                    updateProfileDetails({ statusMessage: '' });
+                    setIsStatusMenuOpen(false);
+                  }}
+                  className="w-full text-[10px] text-white/40 hover:text-white/80 text-right transition"
+                >
+                  Durum mesajını temizle
+                </button>
+              )}
+            </form>
+          </div>
+        )}
+
+        {/* Tier 1: User Profile & Quick Status + Logout */}
+        <div className="flex items-center justify-between gap-1.5">
           <div
             onClick={isAuthenticated && currentUser ? () => onOpenProfile(currentUser) : onOpenAuth}
             className="flex items-center gap-2.5 p-1 rounded-xl hover:bg-white/[0.08] cursor-pointer transition min-w-0 flex-1 group"
@@ -581,7 +699,15 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               >
                 <AvatarView avatar={currentUser?.avatar} alt={currentUser?.username} fallback="🎮" />
               </div>
-              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border border-black shadow" />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isAuthenticated) setIsStatusMenuOpen((p) => !p);
+                }}
+                title={`Durum: ${currentStatusMeta.label} (Değiştirmek için tıkla)`}
+                className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${currentStatusMeta.dot} border-2 border-black shadow hover:scale-125 transition-transform`}
+              />
             </div>
 
             <div className="leading-tight min-w-0 flex-1">
@@ -600,10 +726,25 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 )}
               </div>
               <div className="text-[10px] text-white/50 truncate font-medium">
-                {currentUser?.statusMessage || `#${currentUser?.id?.slice(0, 4) || '0001'}`}
+                {currentUser?.statusMessage || currentStatusMeta.label}
               </div>
             </div>
           </div>
+
+          {isAuthenticated && (
+            <button
+              type="button"
+              onClick={() => setIsStatusMenuOpen((p) => !p)}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center border transition shrink-0 ${
+                isStatusMenuOpen
+                  ? 'bg-white/20 border-white/30 text-white'
+                  : 'bg-white/[0.06] hover:bg-white/15 border-white/10 text-white/70 hover:text-white'
+              }`}
+              title={`Durumu Değiştir (${currentStatusMeta.label})`}
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${currentStatusMeta.dot}`} />
+            </button>
+          )}
 
           {/* Quick Logout / Login Button */}
           {isAuthenticated ? (
