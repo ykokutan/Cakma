@@ -2542,6 +2542,7 @@ io.on('connection', (socket: Socket) => {
     name?: string;
     icon?: string;
     bannerGradient?: string;
+    bannerImage?: string;
     description?: string;
     afkChannelId?: string | null;
     afkTimeoutMinutes?: number;
@@ -2566,8 +2567,9 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (data.name) s.name = data.name.trim();
-    if (data.icon) s.icon = data.icon;
+    if (data.icon && data.icon.length < 3_000_000) s.icon = data.icon;
     if (data.bannerGradient !== undefined) s.bannerGradient = data.bannerGradient;
+    if (data.bannerImage !== undefined && data.bannerImage.length < 3_500_000) s.bannerImage = data.bannerImage;
     if (data.description !== undefined) s.description = data.description;
     if (data.afkChannelId !== undefined) s.afkChannelId = data.afkChannelId;
     if (data.afkTimeoutMinutes !== undefined) s.afkTimeoutMinutes = data.afkTimeoutMinutes;

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { Server, ServerRole, ServerPermission } from '../types';
+import { isImageAvatar, processUploadedImage } from './AvatarView';
 import {
   X,
   Settings,
@@ -20,6 +21,7 @@ import {
   Upload,
   FileJson,
   Bot,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface ServerSettingsModalProps {
@@ -91,7 +93,11 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   const [name, setName] = useState(server.name);
   const [icon, setIcon] = useState(server.icon || '💬');
   const [bannerGradient, setBannerGradient] = useState(server.bannerGradient || BANNER_THEMES[0].class);
+  const [bannerImage, setBannerImage] = useState<string>(server.bannerImage || '');
   const [description, setDescription] = useState(server.description || '');
+  const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const iconFileInputRef = useRef<HTMLInputElement>(null);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
   const [systemChannelId, setSystemChannelId] = useState<string>(server.systemChannelId || '');
   const [defaultNotification, setDefaultNotification] = useState<'all' | 'mentions'>(server.defaultNotification || 'all');
   const [vanityCode, setVanityCode] = useState(server.vanityCode || '');
@@ -140,6 +146,40 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   const canManageRoles = hasServerPermission('manage_roles');
   const canKick = hasServerPermission('kick_members');
 
+  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setMediaUploadError(null);
+    const res = await processUploadedImage(file, {
+      maxWidth: 512,
+      maxHeight: 512,
+      maxGifBytes: 1.5 * 1024 * 1024,
+    });
+    if (!res.ok) {
+      setMediaUploadError(res.error);
+      return;
+    }
+    setIcon(res.dataUrl);
+  };
+
+  const handleBannerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setMediaUploadError(null);
+    const res = await processUploadedImage(file, {
+      maxWidth: 960,
+      maxHeight: 540,
+      maxGifBytes: 2 * 1024 * 1024,
+    });
+    if (!res.ok) {
+      setMediaUploadError(res.error);
+      return;
+    }
+    setBannerImage(res.dataUrl);
+  };
+
   const handleSaveSettings = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     updateServerSettings({
@@ -147,6 +187,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       name,
       icon,
       bannerGradient,
+      bannerImage,
       description,
       systemChannelId: systemChannelId || null,
       defaultNotification,
@@ -467,32 +508,80 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
               </div>
 
               {/* Server Name & Icon */}
-              <div className="grid grid-cols-4 gap-4">
-                <div className="col-span-1">
-                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">Simge</label>
-                  <input
-                    type="text"
-                    value={icon}
-                    maxLength={4}
-                    onChange={(e) => setIcon(e.target.value)}
-                    className="w-full text-center text-2xl h-12 rounded-2xl bg-white/5 border border-white/10 focus:border-blue-500 outline-none"
-                  />
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-end gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center shrink-0">
+                      {isImageAvatar(icon) ? (
+                        <img src={icon} alt={name} className="w-full h-full object-cover" />
+                      ) : (
+                        <input
+                          type="text"
+                          value={icon}
+                          maxLength={4}
+                          onChange={(e) => setIcon(e.target.value)}
+                          aria-label="Sunucu simgesi emoji"
+                          className="w-full h-full text-center text-2xl bg-transparent outline-none text-white"
+                        />
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-semibold text-white/40 uppercase">
+                        Sunucu Simgesi (Maks. 512×512)
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          ref={iconFileInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          onChange={handleIconUpload}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => iconFileInputRef.current?.click()}
+                          className="px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/30 text-blue-300 text-xs font-medium flex items-center gap-1.5 transition"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          Simge Yükle
+                        </button>
+                        {isImageAvatar(icon) && (
+                          <button
+                            type="button"
+                            onClick={() => setIcon('💬')}
+                            className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-red-500/20 border border-white/10 text-white/70 hover:text-red-300 text-xs transition"
+                          >
+                            Görseli Kaldır
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-white/35">PNG, JPG, WEBP veya GIF (otomatik ≤512×512 boyutlandırılır)</p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">Sunucu Adı</label>
+                    <input
+                      type="text"
+                      required
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full h-12 px-4 rounded-2xl bg-white/5 border border-white/10 focus:border-blue-500 outline-none text-sm text-white"
+                    />
+                  </div>
                 </div>
-                <div className="col-span-3">
-                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">Sunucu Adı</label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full h-12 px-4 rounded-2xl bg-white/5 border border-white/10 focus:border-blue-500 outline-none text-sm text-white"
-                  />
-                </div>
+
+                {mediaUploadError && (
+                  <div className="px-3 py-2 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{mediaUploadError}</span>
+                  </div>
+                )}
               </div>
 
               {/* Quick Icon Selector */}
               <div>
-                <span className="text-[10px] text-white/40 block mb-1.5 uppercase font-medium">Hızlı Simge Seç:</span>
+                <span className="text-[10px] text-white/40 block mb-1.5 uppercase font-medium">Hızlı Emoji Simge Seç:</span>
                 <div className="flex flex-wrap gap-2">
                   {PRESET_ICONS.map((emoji) => (
                     <button
@@ -506,6 +595,69 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                       {emoji}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Custom Server Banner Image (960x540) */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase">
+                      Sunucu Banner Görseli (Maks. 960×540 · 16:9)
+                    </label>
+                    <p className="text-[10px] text-white/35 mt-0.5">
+                      Kanal listesinin üst başlığında görünür. PNG, JPG, WEBP veya GIF desteklenir.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      ref={bannerFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={handleBannerUpload}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => bannerFileInputRef.current?.click()}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium flex items-center gap-1.5 transition"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      {bannerImage ? 'Banner Değiştir' : 'Banner Yükle'}
+                    </button>
+                    {bannerImage && (
+                      <button
+                        type="button"
+                        onClick={() => setBannerImage('')}
+                        className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-red-500/20 border border-white/10 text-white/70 hover:text-red-300 text-xs transition"
+                      >
+                        Kaldır
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="relative h-28 rounded-2xl overflow-hidden border border-white/10 bg-[#141720]">
+                  {bannerImage ? (
+                    <img src={bannerImage} alt={`${name} banner`} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className={`w-full h-full bg-gradient-to-br ${bannerGradient}`} />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent flex items-end p-3.5 gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-black/40 border border-white/15 overflow-hidden flex items-center justify-center shrink-0">
+                      {isImageAvatar(icon) ? (
+                        <img src={icon} alt={name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-lg">{icon}</span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{name || 'Sunucu Adı'}</p>
+                      <p className="text-[10px] text-white/60">
+                        {bannerImage ? 'Özel Banner Önizleme (960×540)' : 'Gradient Tema Önizleme'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
 

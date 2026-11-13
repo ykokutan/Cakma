@@ -98,6 +98,7 @@ interface SocketContextType {
     name?: string;
     icon?: string;
     bannerGradient?: string;
+    bannerImage?: string;
     description?: string;
     afkChannelId?: string | null;
     afkTimeoutMinutes?: number;
@@ -2717,6 +2718,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     name?: string;
     icon?: string;
     bannerGradient?: string;
+    bannerImage?: string;
     description?: string;
     afkChannelId?: string | null;
     afkTimeoutMinutes?: number;

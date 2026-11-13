@@ -36,7 +36,7 @@ import {
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
-import { AvatarView } from './AvatarView';
+import { AvatarView, isImageAvatar } from './AvatarView';
 
 interface ChannelSidebarProps {
   onOpenCreateChannel: (type: 'text' | 'voice') => void;
@@ -175,19 +175,39 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       {/* iOS Server Header Card */}
       <header
         onClick={() => activeServer.id !== 'direct-messages' && setIsDropdownOpen(!isDropdownOpen)}
-        className="h-14 px-4 border-b border-white/[0.06] flex items-center justify-between font-semibold text-white/90 shadow-sm hover:bg-white/[0.04] cursor-pointer transition select-none"
+        className={`relative border-b border-white/[0.06] flex items-end justify-between font-semibold text-white/90 shadow-sm hover:brightness-110 cursor-pointer transition select-none overflow-hidden ${
+          activeServer.id !== 'direct-messages' && activeServer.bannerImage ? 'h-24 p-3.5' : 'h-14 px-4 items-center'
+        }`}
       >
-        <div className="flex items-center gap-2 truncate">
+        {activeServer.id !== 'direct-messages' && activeServer.bannerImage && (
+          <>
+            <img
+              src={activeServer.bannerImage}
+              alt={activeServer.name}
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-black/15" />
+          </>
+        )}
+        <div className="relative z-10 flex items-center gap-2 truncate">
           {activeServer.id === 'direct-messages' ? (
             <MessageCircle className="w-4 h-4 text-blue-400 shrink-0" />
+          ) : isImageAvatar(activeServer.icon) ? (
+            <img
+              src={activeServer.icon}
+              alt={activeServer.name}
+              className="w-6 h-6 rounded-lg object-cover shrink-0 border border-white/20 shadow"
+              draggable={false}
+            />
           ) : (
             <span className="text-base shrink-0">{activeServer.icon || '💬'}</span>
           )}
-          <span className="truncate tracking-tight font-bold text-sm">{activeServer.name}</span>
+          <span className="truncate tracking-tight font-bold text-sm drop-shadow">{activeServer.name}</span>
         </div>
         {activeServer.id !== 'direct-messages' && (
-          <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center">
-            <ChevronDown className={`w-3.5 h-3.5 text-white/60 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+          <div className="relative z-10 w-6 h-6 rounded-full bg-black/40 backdrop-blur-md border border-white/15 flex items-center justify-center shrink-0">
+            <ChevronDown className={`w-3.5 h-3.5 text-white/80 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
           </div>
         )}
       </header>

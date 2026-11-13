@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { Plus, Compass, MessageCircle, Download } from 'lucide-react';
+import { isImageAvatar } from './AvatarView';
 
 interface ServerSidebarProps {
   onOpenCreateServer: () => void;
@@ -69,7 +70,14 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
                   isActive ? '!bg-gradient-to-tr from-blue-600 to-indigo-500 !text-white ring-2 ring-blue-400/50 shadow-blue-500/30' : ''
                 }`}
               >
-                {server.icon ? (
+                {isImageAvatar(server.icon) ? (
+                  <img
+                    src={server.icon}
+                    alt={server.name}
+                    className="w-full h-full object-cover"
+                    draggable={false}
+                  />
+                ) : server.icon ? (
                   <span className="text-xl">{server.icon}</span>
                 ) : (
                   server.name.substring(0, 2).toUpperCase()

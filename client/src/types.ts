@@ -264,6 +264,7 @@ export interface Server {
   name: string;
   icon?: string;
   bannerGradient?: string;
+  bannerImage?: string;
   description?: string;
   ownerId: string;
   channels: Channel[];
