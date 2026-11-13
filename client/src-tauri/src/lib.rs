@@ -47,6 +47,32 @@ fn detect_running_game() -> Option<String> {
       }
     }
   }
+
+  #[cfg(target_os = "macos")]
+  {
+    let output = std::process::Command::new("ps")
+      .args(["-eo", "comm"])
+      .output()
+      .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+    let known_apps: &[(&str, &str)] = &[
+      ("league of legends", "League of Legends"),
+      ("cs2", "Counter-Strike 2"),
+      ("dota2", "Dota 2"),
+      ("minecraft", "Minecraft"),
+      ("obs", "OBS Studio"),
+      ("spotify", "Spotify"),
+      ("visual studio code", "Visual Studio Code"),
+      ("code helper", "Visual Studio Code"),
+    ];
+
+    for (proc_name, display_name) in known_apps {
+      if stdout.contains(proc_name) {
+        return Some((*display_name).to_string());
+      }
+    }
+  }
   None
 }
 
