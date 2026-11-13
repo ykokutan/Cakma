@@ -1272,7 +1272,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
             <form
               onSubmit={handleSend}
-              className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15"
+              className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15 focus-within:border-indigo-400/50 focus-within:shadow-[0_0_28px_rgba(99,102,241,0.2)] transition-all"
             >
               <button
                 type="button"

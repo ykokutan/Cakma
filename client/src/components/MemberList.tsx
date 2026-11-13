@@ -163,7 +163,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   }
 
   return (
-    <aside className="w-60 ios-glass-sidebar flex flex-col shrink-0 select-none overflow-y-auto p-4 border-l border-white/[0.06]">
+    <aside className="w-60 ios-glass-sidebar lg:rounded-2xl lg:border lg:border-white/[0.08] lg:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-y-auto p-4 border-l border-white/[0.06]">
       {roleGroups.map((group) => (
         <div key={group.roleName} className="mb-4">
           <div

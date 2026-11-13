@@ -62,7 +62,7 @@ const MainLayout: React.FC = () => {
   }
 
   return (
-    <div className="relative flex h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
+    <div className="relative flex h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white md:p-2.5 md:gap-2.5">
       {/* Dedicated Server Banner Indicator */}
       {isDedicatedServer && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 animate-fade-in pointer-events-auto">
@@ -121,7 +121,7 @@ const MainLayout: React.FC = () => {
       <div
         className={`${
           isMobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex max-w-[92vw] animate-fade-in' : 'hidden'
-        } md:relative md:flex h-full shrink-0`}
+        } md:relative md:flex md:gap-2 h-full shrink-0`}
       >
         <ServerSidebar
           onOpenCreateServer={() => { setIsCreateServerOpen(true); setIsMobileNavOpen(false); }}
@@ -144,12 +144,14 @@ const MainLayout: React.FC = () => {
       </div>
 
       {/* 3. Ana Mesajlaşma / Ses Odası Alanı */}
-      <ChatArea
-        showMembers={showMembers}
-        onToggleMembers={() => setShowMembers((prev) => !prev)}
-        onOpenProfile={(user) => setSelectedProfileUser(user)}
-        onOpenMobileNav={() => setIsMobileNavOpen(true)}
-      />
+      <div className="flex-1 min-w-0 h-full flex overflow-hidden md:rounded-2xl md:border md:border-white/[0.08] md:bg-[#0d0f16]/60 md:backdrop-blur-2xl md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.65)]">
+        <ChatArea
+          showMembers={showMembers}
+          onToggleMembers={() => setShowMembers((prev) => !prev)}
+          onOpenProfile={(user) => setSelectedProfileUser(user)}
+          onOpenMobileNav={() => setIsMobileNavOpen(true)}
+        />
+      </div>
 
       {/* 4. Sağ Üye Listesi Sütunu (Mobilde çekmece, masaüstünde sabit) */}
       {showMembers && (

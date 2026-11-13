@@ -21,12 +21,12 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
   );
 
   return (
-    <nav className="w-[72px] ios-glass-sidebar flex flex-col items-center py-4 gap-3 shrink-0 select-none z-20">
+    <nav className="w-[72px] ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col items-center py-4 gap-3 shrink-0 select-none z-20">
       {/* iOS Direct Messages Pill */}
       <div className="relative group flex items-center justify-center w-full">
         <div
-          className={`absolute left-0 w-1 bg-white rounded-r-full transition-all duration-200 ${
-            isDMActive ? 'h-8' : 'h-0 group-hover:h-4'
+          className={`absolute left-0 w-1 bg-gradient-to-b from-cyan-400 to-indigo-500 rounded-r-full transition-all duration-200 ${
+            isDMActive ? 'h-8 shadow-[0_0_12px_rgba(56,189,248,0.85)]' : 'h-0 group-hover:h-4'
           }`}
         />
         <button
@@ -57,8 +57,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
             >
               {/* Active Indicator Bar */}
               <div
-                className={`absolute left-0 w-1 bg-white rounded-r-full transition-all duration-200 ${
-                  isActive ? 'h-8' : isHovered ? 'h-4' : 'h-0'
+                className={`absolute left-0 w-1 bg-gradient-to-b from-cyan-400 to-indigo-500 rounded-r-full transition-all duration-200 ${
+                  isActive ? 'h-8 shadow-[0_0_12px_rgba(56,189,248,0.85)]' : isHovered ? 'h-4' : 'h-0'
                 }`}
               />
 

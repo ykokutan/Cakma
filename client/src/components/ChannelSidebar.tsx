@@ -171,7 +171,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   );
 
   return (
-    <aside className="w-72 ios-glass-sidebar flex flex-col shrink-0 select-none">
+    <aside className="w-72 ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-hidden">
       {/* iOS Server Header Card */}
       <header
         onClick={() => activeServer.id !== 'direct-messages' && setIsDropdownOpen(!isDropdownOpen)}
@@ -270,7 +270,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             onClick={() => closeDirectMessage()}
             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition ${
               !activeDMUser
-                ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20'
+                ? 'bg-gradient-to-r from-indigo-500/30 via-blue-500/20 to-transparent text-white border border-indigo-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(59,130,246,0.18)]'
                 : 'text-white/70 hover:bg-white/[0.06] hover:text-white'
             }`}
           >
@@ -384,7 +384,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                     onClick={() => selectChannel(channel.id)}
                     className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isActive
-                        ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20'
+                        ? 'bg-gradient-to-r from-indigo-500/30 via-blue-500/20 to-transparent text-white border border-indigo-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(59,130,246,0.18)]'
                         : unread > 0
                         ? 'text-white font-bold hover:bg-white/[0.06]'
                         : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
