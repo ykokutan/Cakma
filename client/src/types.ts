@@ -342,3 +342,20 @@ export interface ServerAnalyticsData {
   popularVoiceChannels: { channelName: string; userCount: number }[];
   tierDistribution: { tier: string; count: number }[];
 }
+
+export type ScreenSharePreset = '360' | '480' | '720' | '1080' | '1440' | 'source' | 'presentation';
+export type ScreenSharePrivacy = 'public' | 'contacts' | 'private';
+export type ScreenShareConnectionMode = 'p2p' | 'server';
+
+export interface ScreenShareSettings {
+  preset: ScreenSharePreset;
+  audioEnabled: boolean;
+  masterVolume: number;
+  privacy: ScreenSharePrivacy;
+  resolution: '360' | '480' | '720' | '1080' | '1440' | 'source';
+  fps: 5 | 30 | 60;
+  bitrateKbps: number;
+  audioBitrateKbps: 64 | 96 | 128 | 192 | 256 | 320;
+  viewerLimit: number;
+  connectionMode: ScreenShareConnectionMode;
+}

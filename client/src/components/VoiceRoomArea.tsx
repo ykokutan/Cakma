@@ -6,6 +6,7 @@ import { WhiteboardModal } from './WhiteboardModal';
 import { WatchTogetherModal } from './WatchTogetherModal';
 import { SpatialAudioModal } from './SpatialAudioModal';
 import { MiniGamesModal } from './MiniGamesModal';
+import { GoLiveModal } from './GoLiveModal';
 import { AvatarView } from './AvatarView';
 import {
   Mic,
@@ -158,6 +159,7 @@ export const VoiceRoomArea: React.FC = () => {
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
   const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
   const [isSpatialAudioOpen, setIsSpatialAudioOpen] = useState(false);
+  const [isGoLiveOpen, setIsGoLiveOpen] = useState(false);
   const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
   const [isScreenFocused, setIsScreenFocused] = useState(false);
 
@@ -628,7 +630,7 @@ export const VoiceRoomArea: React.FC = () => {
 
               {/* Screen Share Button */}
               <button
-                onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+                onClick={isScreenSharing ? stopScreenShare : () => setIsGoLiveOpen(true)}
                 className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
                   isScreenSharing
                     ? 'bg-blue-500 text-white shadow-blue-500/30 ring-2 ring-blue-400 animate-pulse'
@@ -756,6 +758,13 @@ export const VoiceRoomArea: React.FC = () => {
           onClose={() => setIsMiniGamesOpen(false)}
         />
       )}
+
+      {/* TeamSpeak-style Go Live Screen Share Settings Modal */}
+      <GoLiveModal
+        isOpen={isGoLiveOpen}
+        onClose={() => setIsGoLiveOpen(false)}
+        onGoLive={startScreenShare}
+      />
     </div>
   );
 };

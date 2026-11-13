@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerInvite, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData } from '../types';
+import { User, Server, ServerInvite, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission } from '../utils/tsSoundEffects';
 
@@ -80,7 +80,7 @@ interface SocketContextType {
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
-  startScreenShare: () => Promise<void>;
+  startScreenShare: (settings?: ScreenShareSettings, preCapturedStream?: MediaStream | null) => Promise<void>;
   stopScreenShare: () => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
@@ -2457,24 +2457,91 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('update_user_state', { isDeafened: nextDeafened });
   };
 
-  const startScreenShare = async () => {
+  const screenShareAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const startScreenShare = async (settings?: ScreenShareSettings, preCapturedStream?: MediaStream | null) => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
       alert('Ekran paylaşımı için güvenli bağlantı (HTTPS veya localhost) gereklidir.');
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { cursor: 'always' } as any,
-        audio: false
-      });
-      screenStreamRef.current = stream;
-      setScreenStream(stream);
-      setIsScreenSharing(true);
-      socket?.emit('screen_share_status', { isSharing: true });
+      const resMap: Record<string, { width: number; height: number }> = {
+        '360': { width: 640, height: 360 },
+        '480': { width: 854, height: 480 },
+        '720': { width: 1280, height: 720 },
+        '1080': { width: 1920, height: 1080 },
+        '1440': { width: 2560, height: 1440 },
+      };
 
-      const videoTrack = stream.getVideoTracks()[0];
+      const fps = settings?.fps ?? 30;
+      const videoConstraint: MediaTrackConstraints & { cursor?: string } = {
+        cursor: 'always',
+        frameRate: { ideal: fps, max: fps },
+      };
+      if (settings?.resolution && settings.resolution !== 'source' && resMap[settings.resolution]) {
+        const dims = resMap[settings.resolution];
+        videoConstraint.width = { ideal: dims.width, max: dims.width };
+        videoConstraint.height = { ideal: dims.height, max: dims.height };
+      }
+
+      const rawStream =
+        preCapturedStream ||
+        (await navigator.mediaDevices.getDisplayMedia({
+          video: videoConstraint,
+          audio: settings?.audioEnabled ?? false,
+        }));
+
+      const videoTrack = rawStream.getVideoTracks()[0];
+      if (videoTrack && preCapturedStream) {
+        await videoTrack.applyConstraints(videoConstraint).catch(() => {});
+      }
+
+      // Build final broadcast stream (applying Master Volume gain if audio track exists)
+      const broadcastStream = new MediaStream();
+      if (videoTrack) broadcastStream.addTrack(videoTrack);
+
+      const rawAudioTracks = rawStream.getAudioTracks();
+      if (settings?.audioEnabled && rawAudioTracks.length > 0) {
+        try {
+          const audioCtx = new AudioContext();
+          screenShareAudioCtxRef.current = audioCtx;
+          const src = audioCtx.createMediaStreamSource(new MediaStream([rawAudioTracks[0]]));
+          const gainNode = audioCtx.createGain();
+          gainNode.gain.value = Math.max(0, Math.min(1, (settings.masterVolume ?? 100) / 100));
+          const dest = audioCtx.createMediaStreamDestination();
+          src.connect(gainNode);
+          gainNode.connect(dest);
+          const processedTrack = dest.stream.getAudioTracks()[0];
+          if (processedTrack) broadcastStream.addTrack(processedTrack);
+        } catch {
+          broadcastStream.addTrack(rawAudioTracks[0]);
+        }
+      } else {
+        rawAudioTracks.forEach((t) => t.stop());
+      }
+
+      screenStreamRef.current = broadcastStream;
+      setScreenStream(broadcastStream);
+      setIsScreenSharing(true);
+      socket?.emit('screen_share_status', { isSharing: true, settings });
+
+      const videoBitrateBps = (settings?.bitrateKbps ?? 10000) * 1000;
+      const audioBitrateBps = (settings?.audioBitrateKbps ?? 320) * 1000;
+
       for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
-        pc.addTrack(videoTrack, stream);
+        for (const track of broadcastStream.getTracks()) {
+          const sender = pc.addTrack(track, broadcastStream);
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings || params.encodings.length === 0) {
+              params.encodings = [{}];
+            }
+            params.encodings[0].maxBitrate = track.kind === 'video' ? videoBitrateBps : audioBitrateBps;
+            await sender.setParameters(params);
+          } catch {
+            // Browser may not support all encoding params on every sender
+          }
+        }
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket?.emit('webrtc_signal', {
@@ -2484,15 +2551,22 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
       }
 
-      videoTrack.onended = () => {
-        stopScreenShare();
-      };
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          rawStream.getTracks().forEach((t) => t.stop());
+          stopScreenShare();
+        };
+      }
     } catch (err) {
       console.warn('Ekran paylaşımı iptal edildi veya izin verilmedi:', err);
     }
   };
 
   const stopScreenShare = () => {
+    if (screenShareAudioCtxRef.current) {
+      screenShareAudioCtxRef.current.close().catch(() => {});
+      screenShareAudioCtxRef.current = null;
+    }
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach(t => t.stop());
       screenStreamRef.current = null;

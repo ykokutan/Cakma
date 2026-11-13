@@ -2921,7 +2921,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Screen Share Status
-  socket.on('screen_share_status', ({ isSharing }: { isSharing: boolean }) => {
+  socket.on('screen_share_status', ({ isSharing, settings }: { isSharing: boolean; settings?: any }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
@@ -2929,7 +2929,8 @@ io.on('connection', (socket: Socket) => {
     if (user.currentVoiceChannelId) {
       io.to(user.currentVoiceChannelId).emit('screen_share_change', {
         userId: socket.id,
-        isSharing
+        isSharing,
+        settings: isSharing ? settings : undefined
       });
     }
 
