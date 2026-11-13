@@ -58,12 +58,54 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   // Group online users by highest role
   const roles = (activeServer?.roles || []).filter((r) => !r.isDefault).sort((a, b) => a.position - b.position);
 
-  const activeOnlineUsers = onlineUsers.filter((u) => u.status !== 'offline');
+  // Deduplicate online users across multiple devices/sessions (by lowercase username)
+  const uniqueOnlineMap = new Map<string, User>();
+  onlineUsers.forEach((u) => {
+    if (u.status === 'offline') return;
+    const key = u.username.toLowerCase();
+    const existing = uniqueOnlineMap.get(key);
+    if (!existing) {
+      uniqueOnlineMap.set(key, u);
+      return;
+    }
+    const uScore =
+      (u.isScreenSharing ? 8 : 0) +
+      (u.currentVoiceChannelId ? 4 : 0) +
+      (u.isSpeaking ? 2 : 0) +
+      (u.id === currentUser?.id ? 1 : 0);
+    const existingScore =
+      (existing.isScreenSharing ? 8 : 0) +
+      (existing.currentVoiceChannelId ? 4 : 0) +
+      (existing.isSpeaking ? 2 : 0) +
+      (existing.id === currentUser?.id ? 1 : 0);
+    if (uScore > existingScore) {
+      uniqueOnlineMap.set(key, {
+        ...u,
+        activity: u.activity || existing.activity,
+        statusMessage: u.statusMessage || existing.statusMessage,
+      });
+    } else {
+      uniqueOnlineMap.set(key, {
+        ...existing,
+        activity: existing.activity || u.activity,
+        statusMessage: existing.statusMessage || u.statusMessage,
+      });
+    }
+  });
+  const activeOnlineUsers = Array.from(uniqueOnlineMap.values());
   const onlineIdSet = new Set(activeOnlineUsers.map((u) => u.id));
   const onlineNameSet = new Set(activeOnlineUsers.map((u) => u.username.toLowerCase()));
 
+  const seenOfflineNames = new Set<string>();
   const offlineMembers: User[] = (activeServer?.members || [])
-    .filter((m) => !onlineIdSet.has(m.userId) && !onlineNameSet.has(m.username.toLowerCase()))
+    .filter((m) => {
+      const nameKey = m.username.toLowerCase();
+      if (onlineIdSet.has(m.userId) || onlineNameSet.has(nameKey) || seenOfflineNames.has(nameKey)) {
+        return false;
+      }
+      seenOfflineNames.add(nameKey);
+      return true;
+    })
     .map((m) => ({
       id: m.userId,
       username: m.username,
