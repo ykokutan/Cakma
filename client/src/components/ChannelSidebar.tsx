@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { User, Channel } from '../types';
+import { VoiceUserContextMenu } from './VoiceUserContextMenu';
 import {
   Hash,
   Volume2,
@@ -60,6 +61,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   onOpenProfile,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [voiceUserMenu, setVoiceUserMenu] = useState<{ user: User; x: number; y: number } | null>(null);
   const {
     activeServer,
     activeChannel,
@@ -625,7 +627,16 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         return (
                           <div
                             key={user.id}
-                            className={`flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition ${
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setVoiceUserMenu({
+                                user,
+                                x: Math.max(8, Math.min(e.clientX, window.innerWidth - 270)),
+                                y: Math.max(8, Math.min(e.clientY, window.innerHeight - 340)),
+                              });
+                            }}
+                            className={`flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition cursor-context-menu ${
                               speaking
                                 ? 'bg-emerald-500/10 text-emerald-400 font-medium'
                                 : 'text-white/70 hover:bg-white/5'
@@ -1033,6 +1044,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         )}
 
       {isEventsOpen && <ServerEventsModal onClose={() => setIsEventsOpen(false)} />}
+
+      <VoiceUserContextMenu
+        menu={voiceUserMenu}
+        onClose={() => setVoiceUserMenu(null)}
+      />
     </aside>
   );
 };
