@@ -214,6 +214,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [customSlotUnitPrice, setCustomSlotUnitPrice] = useState<number>(4);
   const [discountPercentage, setDiscountPercentage] = useState<number>(0);
   const [campaignBanner, setCampaignBanner] = useState<string>('');
+  const [mult90, setMult90] = useState<number>(2.5);
+  const [mult180, setMult180] = useState<number>(4.5);
+  const [mult365, setMult365] = useState<number>(8);
+  const [multLifetime, setMultLifetime] = useState<number>(12);
+  const [allowLifetimePurchase, setAllowLifetimePurchase] = useState<boolean>(true);
+  const [renewalDiscountPercentage, setRenewalDiscountPercentage] = useState<number>(0);
   const [payWallet, setPayWallet] = useState<boolean>(true);
   const [payWalletDesc, setPayWalletDesc] = useState<string>('Hesabınızdaki bakiye ile anında onay.');
   const [payCard, setPayCard] = useState<boolean>(true);
@@ -241,6 +247,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     setCustomSlotUnitPrice(s.customSlotUnitPrice ?? 4);
     setDiscountPercentage(s.discountPercentage ?? 0);
     setCampaignBanner(s.campaignBanner ?? '');
+    setMult90(s.durationMultipliers?.days90 ?? 2.5);
+    setMult180(s.durationMultipliers?.days180 ?? 4.5);
+    setMult365(s.durationMultipliers?.days365 ?? 8);
+    setMultLifetime(s.durationMultipliers?.lifetime ?? 12);
+    setAllowLifetimePurchase(s.allowLifetimePurchase ?? true);
+    setRenewalDiscountPercentage(s.renewalDiscountPercentage ?? 0);
 
     const mWallet = s.paymentMethods?.find(m => m.id === 'wallet');
     const mCard = s.paymentMethods?.find(m => m.id === 'credit_card');
@@ -318,6 +330,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       customSlotUnitPrice: Number(customSlotUnitPrice),
       discountPercentage: Number(discountPercentage),
       campaignBanner: campaignBanner.trim(),
+      durationMultipliers: {
+        days90: Number(mult90) || 2.5,
+        days180: Number(mult180) || 4.5,
+        days365: Number(mult365) || 8,
+        lifetime: Number(multLifetime) || 12,
+      },
+      allowLifetimePurchase,
+      renewalDiscountPercentage: Number(renewalDiscountPercentage) || 0,
       packages: {
         starter: {
           tier: 'Starter',
@@ -2457,6 +2477,100 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         className="w-20 bg-white/5 border border-white/10 rounded-xl px-2.5 py-1.5 text-white text-xs font-mono font-bold text-center outline-none focus:ring-2 focus:ring-amber-500"
                       />
                       <span className="text-[11px] text-white/40">/ slot</span>
+                    </div>
+                  </div>
+
+                  {/* Annual & Duration Multipliers + Store Policies */}
+                  <div className="pt-3 border-t border-white/10 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-white">Süre & Yıllık Fiyatlandırma Çarpanları</div>
+                        <div className="text-[10px] text-white/45">
+                          Aylık paket fiyatı × çarpan = dönem toplam fiyatı (örn. Yıllık 8x = 4 ay ücretsiz!)
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-3 rounded-xl bg-black/25 border border-white/5">
+                        <label className="block text-[10px] text-white/50 mb-1">3 Aylık (90 Gün)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="1"
+                          max="20"
+                          value={mult90}
+                          onChange={(e) => setMult90(Number(e.target.value))}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-white text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </div>
+                      <div className="p-3 rounded-xl bg-black/25 border border-white/5">
+                        <label className="block text-[10px] text-white/50 mb-1">6 Aylık (180 Gün)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="1"
+                          max="30"
+                          value={mult180}
+                          onChange={(e) => setMult180(Number(e.target.value))}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-white text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </div>
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                        <label className="block text-[10px] text-amber-300 font-bold mb-1">1 Yıllık (365 Gün)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="1"
+                          max="50"
+                          value={mult365}
+                          onChange={(e) => setMult365(Number(e.target.value))}
+                          className="w-full bg-black/30 border border-amber-500/30 rounded-lg px-2.5 py-1.5 text-amber-200 text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <div className="text-[9px] text-amber-300/70 mt-1">
+                          Pro Yıllık: ₺{Math.round(proPrice * (mult365 || 8))}
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-black/25 border border-white/5">
+                        <label className="block text-[10px] text-white/50 mb-1">Ömür Boyu (Lifetime)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="1"
+                          max="100"
+                          value={multLifetime}
+                          onChange={(e) => setMultLifetime(Number(e.target.value))}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-white text-xs font-mono font-bold outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <label className="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-white/5 cursor-pointer">
+                        <div>
+                          <div className="text-xs font-semibold text-white">Ömür Boyu (Lifetime) Satışı</div>
+                          <div className="text-[10px] text-white/40">Kapatıldığında mağazada yalnızca süreli planlar görünür</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={allowLifetimePurchase}
+                          onChange={(e) => setAllowLifetimePurchase(e.target.checked)}
+                          className="rounded border-white/20 bg-black/40 text-amber-500"
+                        />
+                      </label>
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-white/5">
+                        <div>
+                          <div className="text-xs font-semibold text-white">Lisans Uzatma İndirimi (%)</div>
+                          <div className="text-[10px] text-white/40">Mevcut lisansını yenileyenlere ek indirim</div>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          max="75"
+                          value={renewalDiscountPercentage}
+                          onChange={(e) => setRenewalDiscountPercentage(Number(e.target.value))}
+                          className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-white text-xs font-mono font-bold text-center outline-none"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

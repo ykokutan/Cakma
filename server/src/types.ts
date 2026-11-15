@@ -195,6 +195,17 @@ export interface StoreSettings {
   customSlotUnitPrice: number;
   discountPercentage: number;
   campaignBanner?: string;
+  durationMultipliers?: {
+    days90: number;
+    days180: number;
+    days365: number;
+    lifetime: number;
+  };
+  allowCustomSlots?: boolean;
+  minCustomSlots?: number;
+  maxCustomSlots?: number;
+  allowLifetimePurchase?: boolean;
+  renewalDiscountPercentage?: number;
   packages: {
     starter: StorePackageConfig;
     pro: StorePackageConfig;

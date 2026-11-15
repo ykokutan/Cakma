@@ -85,11 +85,12 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
       else if (s >= 512) base = 799;
     }
 
+    const mults = storeSettings?.durationMultipliers || { days90: 2.5, days180: 4.5, days365: 8, lifetime: 12 };
     let mult = 1;
-    if (d === 90) mult = 2.5;
-    else if (d === 180) mult = 4.5;
-    else if (d === 365) mult = 8;
-    else if (d === -1) mult = 12;
+    if (d === 90) mult = mults.days90 ?? 2.5;
+    else if (d === 180) mult = mults.days180 ?? 4.5;
+    else if (d === 365) mult = mults.days365 ?? 8;
+    else if (d === -1) mult = mults.lifetime ?? 12;
 
     let total = Math.round(base * mult);
     if (storeSettings && storeSettings.discountPercentage > 0) {
@@ -595,7 +596,9 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
                           <option value="90">3 Ay (%15 İndirimli)</option>
                           <option value="180">6 Ay (%25 İndirimli)</option>
                           <option value="365">1 Yıl (En Avantajlı)</option>
-                          <option value="-1">Ömür Boyu (Lifetime)</option>
+                          {(storeSettings?.allowLifetimePurchase ?? true) && (
+                            <option value="-1">Ömür Boyu (Lifetime)</option>
+                          )}
                         </select>
                       </div>
                     </div>

@@ -93,6 +93,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     unreadCounts,
     mentionCounts,
     createServerInvite,
+    storeSettings,
     reorderChannel,
     updateProfileDetails,
   } = useSocket();
@@ -703,19 +704,21 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         </div>
       )}
 
-      {/* LICENSE & DEDICATED SERVER STORE BUTTON */}
-      <button
-        onClick={onOpenStore}
-        className="mx-3 mb-2 px-3 py-2 rounded-2xl bg-gradient-to-r from-blue-500/20 via-indigo-500/20 to-purple-500/20 border border-blue-500/30 hover:border-blue-500/60 text-blue-200 font-bold text-xs flex items-center justify-between transition group shadow-lg shadow-blue-500/10 cursor-pointer"
-      >
-        <div className="flex items-center gap-2">
-          <ShoppingBag className="w-4 h-4 text-blue-400 group-hover:scale-110 transition" />
-          <span>Lisans Mağazası</span>
-        </div>
-        <span className="text-[10px] bg-blue-500/30 text-blue-300 border border-blue-500/40 px-2 py-0.5 rounded-full font-mono font-bold shadow-sm">
-          ₺{currentUser?.walletBalance ?? 1000}
-        </span>
-      </button>
+      {/* LICENSE & DEDICATED SERVER STORE BUTTON (Hidden when store is closed) */}
+      {(storeSettings?.isOpen ?? true) && (
+        <button
+          onClick={onOpenStore}
+          className="mx-3 mb-2 px-3 py-2 rounded-2xl bg-gradient-to-r from-blue-500/20 via-indigo-500/20 to-purple-500/20 border border-blue-500/30 hover:border-blue-500/60 text-blue-200 font-bold text-xs flex items-center justify-between transition group shadow-lg shadow-blue-500/10 cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <ShoppingBag className="w-4 h-4 text-blue-400 group-hover:scale-110 transition" />
+            <span>Lisans Mağazası</span>
+          </div>
+          <span className="text-[10px] bg-blue-500/30 text-blue-300 border border-blue-500/40 px-2 py-0.5 rounded-full font-mono font-bold shadow-sm">
+            ₺{currentUser?.walletBalance ?? 1000}
+          </span>
+        </button>
+      )}
 
       {/* EXCLUSIVE ADMIN CONSOLE BUTTON (Shown only if role is admin) */}
       {currentUser?.role === 'admin' && (

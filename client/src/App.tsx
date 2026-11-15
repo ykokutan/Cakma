@@ -26,6 +26,7 @@ const MainLayout: React.FC = () => {
     systemAnnouncement,
     pinnedBanner,
     maintenanceStatus,
+    storeSettings,
     dismissAnnouncement,
     currentUser,
     activeServer,
@@ -223,7 +224,7 @@ const MainLayout: React.FC = () => {
         <AdminDashboardModal onClose={() => setIsAdminDashboardOpen(false)} />
       )}
 
-      {isStoreOpen && (
+      {isStoreOpen && (storeSettings?.isOpen ?? true) && (
         <LicenseStoreModal onClose={() => setIsStoreOpen(false)} />
       )}
 

@@ -1184,6 +1184,7 @@ io.on('connection', (socket: Socket) => {
     message: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır.'
   });
   socket.emit('pinned_banner_updated', systemConfig.pinnedBanner || null);
+  socket.emit('store_settings_response', storeSettings);
 
   // Real-time Ping & Network Measurement Check
   socket.on('ping_check', (_ts: number, callback: any) => {
@@ -4440,6 +4441,19 @@ io.on('connection', (socket: Socket) => {
     storeSettings.customSlotUnitPrice = Math.max(1, Number(newSettings.customSlotUnitPrice) || 4);
     storeSettings.discountPercentage = Math.min(90, Math.max(0, Number(newSettings.discountPercentage) || 0));
     storeSettings.campaignBanner = typeof newSettings.campaignBanner === 'string' ? newSettings.campaignBanner.trim() : '';
+    if (newSettings.durationMultipliers && typeof newSettings.durationMultipliers === 'object') {
+      storeSettings.durationMultipliers = {
+        days90: Math.min(20, Math.max(1, Number(newSettings.durationMultipliers.days90) || 2.5)),
+        days180: Math.min(30, Math.max(1, Number(newSettings.durationMultipliers.days180) || 4.5)),
+        days365: Math.min(50, Math.max(1, Number(newSettings.durationMultipliers.days365) || 8)),
+        lifetime: Math.min(100, Math.max(1, Number(newSettings.durationMultipliers.lifetime) || 12)),
+      };
+    }
+    if (typeof newSettings.allowCustomSlots === 'boolean') storeSettings.allowCustomSlots = newSettings.allowCustomSlots;
+    if (typeof newSettings.minCustomSlots === 'number') storeSettings.minCustomSlots = Math.min(100, Math.max(2, Math.floor(newSettings.minCustomSlots)));
+    if (typeof newSettings.maxCustomSlots === 'number') storeSettings.maxCustomSlots = Math.min(500, Math.max(16, Math.floor(newSettings.maxCustomSlots)));
+    if (typeof newSettings.allowLifetimePurchase === 'boolean') storeSettings.allowLifetimePurchase = newSettings.allowLifetimePurchase;
+    if (typeof newSettings.renewalDiscountPercentage === 'number') storeSettings.renewalDiscountPercentage = Math.min(75, Math.max(0, Number(newSettings.renewalDiscountPercentage) || 0));
 
     if (newSettings.packages) {
       storeSettings.packages = {
@@ -4547,11 +4561,16 @@ io.on('connection', (socket: Socket) => {
       basePrice = slots * (storeSettings.customSlotUnitPrice || 4);
     }
 
+    if (days === -1 && storeSettings.allowLifetimePurchase === false) {
+      return socket.emit('store_purchase_response', { success: false, error: 'Ömür boyu lisans satışı şu anda devre dışıdır.' });
+    }
+
+    const mults = storeSettings.durationMultipliers || { days90: 2.5, days180: 4.5, days365: 8, lifetime: 12 };
     let multiplier = 1;
-    if (days === 90) multiplier = 2.5;
-    else if (days === 180) multiplier = 4.5;
-    else if (days === 365) multiplier = 8;
-    else if (days === -1) multiplier = 12; // Lifetime
+    if (days === 90) multiplier = mults.days90 ?? 2.5;
+    else if (days === 180) multiplier = mults.days180 ?? 4.5;
+    else if (days === 365) multiplier = mults.days365 ?? 8;
+    else if (days === -1) multiplier = mults.lifetime ?? 12; // Lifetime
 
     let totalPrice = Math.max(1, Math.round(basePrice * multiplier));
 
