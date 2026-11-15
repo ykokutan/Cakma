@@ -464,8 +464,8 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             )}
           </div>
         ) : (
-          /* Standard iOS Grid with Voice Pulsating Halo */
-          <div className="w-full max-w-6xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr">
+          /* Standard iOS Grid with Voice Pulsating Halo (Centered for any participant count) */
+          <div className="w-full max-w-6xl flex flex-wrap items-center justify-center gap-5">
             {usersInRoom.map((user) => {
               const isThisMe = user.id === currentUser?.id;
               const speaking = isThisMe ? isSpeaking : user.isSpeaking;
@@ -475,7 +475,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
               return (
                 <div
                   key={user.id}
-                  className={`relative aspect-square sm:aspect-video rounded-3xl ios-glass-card flex flex-col items-center justify-center p-5 shadow-xl transition-all duration-300 ${
+                  className={`relative w-full max-w-[260px] sm:w-64 aspect-video rounded-3xl ios-glass-card flex flex-col items-center justify-center p-5 shadow-xl transition-all duration-300 ${
                     speaking
                       ? 'border-emerald-500/60 bg-emerald-500/[0.08] shadow-emerald-500/20 shadow-2xl'
                       : ''
