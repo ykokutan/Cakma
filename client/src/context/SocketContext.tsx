@@ -2742,18 +2742,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setDirectCall(prev => prev ? { ...prev, status: 'connected' } : null);
 
-    const localStream = await getLocalAudioStream();
-    if (localStream) {
-      const pc = createPeerConnection(partner.id, localStream, socket);
-      peerConnectionsRef.current.set(partner.id, pc);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit('webrtc_signal', {
-        targetUserId: partner.id,
-        signal: offer,
-        type: 'offer'
-      });
-    }
+    // Pre-acquire local mic stream; caller will send the WebRTC offer upon receiving direct_call_accepted
+    await getLocalAudioStream();
   }, [socket, directCall, currentUser]);
 
   const declineDirectCall = useCallback(() => {

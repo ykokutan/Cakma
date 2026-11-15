@@ -1173,6 +1173,7 @@ function generateAIResponse(prompt: string, senderName: string): string {
 
 // --- WEBRTC & CHAT INTEGRITY SECURITY ---
 const activeDirectCallPairs = new Map<string, string>(); // socketId -> socketId
+const pendingDirectCalls = new Map<string, { callerSocketId: string; callerUserId: string; callerUsername: string }>(); // targetUsernameLower -> caller info
 const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
 
 function isMessageFlooding(userId: string): boolean {
@@ -2467,6 +2468,14 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (targetSocketIds.length > 0) {
+      const targetKey = resolvedUsername || (targetUserId || '').toLowerCase();
+      if (targetKey) {
+        pendingDirectCalls.set(targetKey, {
+          callerSocketId: socket.id,
+          callerUserId: caller.id,
+          callerUsername: caller.username.toLowerCase(),
+        });
+      }
       for (const sId of targetSocketIds) {
         io.to(sId).emit('direct_call_incoming', { callerUser: caller });
       }
@@ -2479,16 +2488,23 @@ io.on('connection', (socket: Socket) => {
     const acceptor = activeUsers.get(socket.id);
     if (!acceptor) return;
 
+    const pending = pendingDirectCalls.get(acceptor.username.toLowerCase());
+    pendingDirectCalls.delete(acceptor.username.toLowerCase());
+
     const targetName = (callerUsername || '').trim().toLowerCase();
     let callerSocketId: string | null = null;
-    for (const [sId, u] of activeUsers.entries()) {
-      if (
-        (callerUserId && u.id === callerUserId) ||
-        (targetName && u.username.toLowerCase() === targetName) ||
-        (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
-      ) {
-        callerSocketId = sId;
-        break;
+    if (pending && activeUsers.has(pending.callerSocketId)) {
+      callerSocketId = pending.callerSocketId;
+    } else {
+      for (const [sId, u] of activeUsers.entries()) {
+        if (
+          (callerUserId && u.id === callerUserId) ||
+          (targetName && u.username.toLowerCase() === targetName) ||
+          (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
+        ) {
+          callerSocketId = sId;
+          break;
+        }
       }
     }
 
@@ -2508,21 +2524,29 @@ io.on('connection', (socket: Socket) => {
 
   socket.on('direct_call_decline', ({ callerUserId, callerUsername }: { callerUserId?: string; callerUsername?: string }) => {
     const decliner = activeUsers.get(socket.id);
+    const pending = decliner ? pendingDirectCalls.get(decliner.username.toLowerCase()) : undefined;
+    if (decliner) {
+      pendingDirectCalls.delete(decliner.username.toLowerCase());
+    }
     const paired = activeDirectCallPairs.get(socket.id);
     if (paired) {
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
     }
-    const targetName = (callerUsername || '').trim().toLowerCase();
-    for (const [sId, u] of activeUsers.entries()) {
-      if (
-        (callerUserId && u.id === callerUserId) ||
-        (targetName && u.username.toLowerCase() === targetName) ||
-        (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
-      ) {
-        activeDirectCallPairs.delete(sId);
-        io.to(sId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
-        break;
+    if (pending && activeUsers.has(pending.callerSocketId)) {
+      activeDirectCallPairs.delete(pending.callerSocketId);
+      io.to(pending.callerSocketId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
+    } else {
+      const targetName = (callerUsername || '').trim().toLowerCase();
+      for (const [sId, u] of activeUsers.entries()) {
+        if (
+          (callerUserId && u.id === callerUserId) ||
+          (targetName && u.username.toLowerCase() === targetName) ||
+          (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
+        ) {
+          activeDirectCallPairs.delete(sId);
+          io.to(sId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
+        }
       }
     }
     if (decliner) {
