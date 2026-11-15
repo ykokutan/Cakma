@@ -155,7 +155,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.1.2');
+  const [appVersion, setAppVersion] = useState<string>('0.2.10');
   const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
@@ -1702,6 +1702,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </div>
                 ))}
               </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
+                <div className="text-sm font-semibold text-white">Masaüstü &amp; Hızlı Kullanım Kısayolları</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Global Mikrofon Sustur</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + M</kbd>
+                  </div>
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Global Sağırlaştır</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + D</kbd>
+                  </div>
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Üyeyi Odaya Taşıma</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Sürükle &amp; Bırak</kbd>
+                  </div>
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Uzaktan Yardım Klavye/Kısayol</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">1-e-1 Görüşme</kbd>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1931,6 +1953,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </div>
                 ))}
               </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
+                <div className="text-sm font-semibold text-white">Masaüstü &amp; Hızlı Kullanım Kısayolları</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Global Mikrofon Sustur</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + M</kbd>
+                  </div>
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Global Sağırlaştır</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + D</kbd>
+                  </div>
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Üyeyi Odaya Taşıma</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Sürükle &amp; Bırak</kbd>
+                  </div>
+                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+                    <span className="text-white/70">Uzaktan Yardım Klavye/Kısayol</span>
+                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">1-e-1 Görüşme</kbd>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1977,6 +2021,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div className="font-mono text-emerald-400">WebRTC Mesh + Opus / {advSettings.preferredCodec.toUpperCase()}</div>
                   </div>
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
+                <div className="text-sm font-bold text-white">Son Sürüm Yenilikleri (v0.2.x)</div>
+                <ul className="space-y-1.5 text-xs text-white/70 list-disc pl-4">
+                  <li><strong className="text-white">1-e-1 DM Görüşme Sahnesi:</strong> Direkt mesaj sayfasında canlı çift taraflı konuşma kartları, ekran önizleme ve zil/çaldırma sesi.</li>
+                  <li><strong className="text-white">TeamViewer Tarzı Uzaktan Yardım:</strong> İzin onaylı fare/klavye kontrolü, Türkçe Q ekran klavyesi, hızlı Windows kısayolları ve UAC yönetici ipucu.</li>
+                  <li><strong className="text-white">Sürükle-Bırak Oda Taşıma:</strong> Ses odalarındaki kullanıcıları sürükleyip başka odaya taşıma.</li>
+                  <li><strong className="text-white">Oyun Algılama &amp; Overlay:</strong> Ayarlardan açılıp kapatılabilen oyun içi konuşanlar penceresi ve gelişmiş oyun tespiti.</li>
+                </ul>
               </div>
             </div>
           )}

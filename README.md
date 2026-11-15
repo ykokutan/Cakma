@@ -13,11 +13,20 @@
   - `Ctrl + Shift + M` → Mikrofonu Sustur / Aç
   - `Ctrl + Shift + D` → Kulaklığı Sustur / Aç
 - **Otomatik Oyun Algılama (Rich Presence):** Windows ve macOS üzerinde çalışan oyun/uygulamalar (VALORANT, CS2, LoL, GTA V, FiveM, Minecraft, Fortnite, OBS, Spotify vb.) otomatik algılanıp üye listesinde aktivite olarak gösterilir.
-- **Oyun İçi Konuşanlar Overlay:** Üstte sabit, çerçevesiz mini overlay penceresi ile ses odasında kimlerin konuştuğu anlık olarak takip edilebilir.
+- **Oyun İçi Konuşanlar Overlay:** Üstte sabit, çerçevesiz mini overlay penceresi ile ses odasında kimlerin konuştuğu anlık olarak takip edilebilir; **Ayarlar → Görünüm & Tema** sekmesinden açılıp kapatılabilir.
 - **İmzalı Otomatik Güncelleme:** Masaüstü istemcisi açılışta yeni sürümü otomatik denetler ve imzalı güncellemeyi indirip kurar.
+
+### 📞 1-e-1 Direkt Görüşme & TeamViewer Tarzı Uzaktan Yardım
+- **Discord Tarzı 1-e-1 Görüşme Sahnesi:** Direkt Mesaj sayfasının üst kısmında genişletilip küçültülebilen canlı görüşme sahnesi; çift taraflı konuşma halosu, süre sayacı, mikrofon/kulaklık, ekran paylaşımı ve inline önizleme.
+- **Çoklu Oturum & Zil Sesi Desteği:** Gelen/giden arama zil sesleri, aynı hesabın açık tüm masaüstü/web oturumlarına çağrı düşürme ve yanıtlandığında diğer pencereleri otomatik kapatma.
+- **Uzaktan Masaüstü Kontrolü (TeamViewer Tarzı):** 1-e-1 görüşmede ekran paylaşan arkadaşınızdan izin isteyerek faresini ve klavyesini uzaktan kontrol edebilirsiniz:
+  - **Hızlı Kısayollar Çubuğu:** `Ctrl+C`, `Ctrl+V`, `Ctrl+X`, `Ctrl+Z`, `Ctrl+A`, `Alt+Tab`, `Alt+F4`, `Win+D`, `Win+R`, `Win+E`, `Görev Yöneticisi (Ctrl+Shift+Esc)`, `Esc`, `Del`.
+  - **Türkçe Q Ekran Klavyesi & Metin Gönderici:** Fare üzerinden tam klavye kullanımı, yapışkan `Shift / Ctrl / Win / Alt` tuşları ve tek seferde metin/komut yazdırma.
+  - **Windows UAC / UIPI İpucu:** Görev Yöneticisi veya Yönetici CMD gibi yükseltilmiş pencereler için uygulamayı **"Yönetici olarak çalıştır"** uyarısı.
 
 ### 🎨 Arayüz, Mobil Uyumluluk & Özelleştirme
 - **Spatial Floating Glass Tasarımı:** Nokta dokulu derin obsidian arka plan üzerinde yüzen cam paneller, ışık hatlı aktif kanal/sunucu göstergeleri ve seçilebilir UI temaları.
+- **Sürükle-Bırak Oda Taşıma:** Yetkili kullanıcılar ses odalarındaki üyeleri fareyle sürükleyip başka bir ses odasına taşıyabilir.
 - **Mobil & iPhone 12 Safari Uyumluluğu:** `100dvh` tam ekran yüksekliği, safe-area boşlukları, kaydırılabilir yan çekmece (drawer) menüleri ve taşmayan sohbet giriş alanı.
 - **Hızlı Durum & Özel Durum Değiştirici:** Sol alt kullanıcı kartına tıklayarak **Çevrimiçi / Boşta / Rahatsız Etmeyin / Görünmez** durumları ve özel durum mesajı anında güncellenebilir.
 - **Özel Sunucu Simgesi (`512×512`) & Banner (`960×540`):** Sunucu Ayarları üzerinden özel sunucu simgesi ve 16:9 banner görseli (PNG, JPG, WEBP, GIF) yüklenebilir; davet linki önizlemesinde de gösterilir.
@@ -126,7 +135,10 @@ discord-cakma/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── AuthModal.tsx               # Giriş, Kayıt & 2FA doğrulama
-│   │   │   ├── ChatArea.tsx                # Sohbet, yanıt, özel emoji, sesli not
+│   │   │   ├── ChannelSidebar.tsx          # Kanallar, DM listesi & sürükle-bırak oda taşıma
+│   │   │   ├── ChatArea.tsx                # Sohbet, DM 1-e-1 görüşme sahnesi, sesli not
+│   │   │   ├── DirectCallModal.tsx         # 1-e-1 arama kartı & zil sesi
+│   │   │   ├── RemoteAssistModal.tsx       # Uzaktan yardım, kısayollar & ekran klavyesi
 │   │   │   ├── VoiceRoomArea.tsx           # Ses odası, Go Live, El Kaldır, Overlay
 │   │   │   ├── VoiceRadioWidget.tsx        # YouTube IFrame API & SomaFM Radyo Botu
 │   │   │   ├── VoiceNotePlayer.tsx         # Sesli not oynatıcı & dalga formu
