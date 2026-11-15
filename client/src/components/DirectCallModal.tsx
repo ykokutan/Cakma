@@ -1,5 +1,6 @@
 import React from 'react';
 import { useSocket } from '../context/SocketContext';
+import { AvatarView } from './AvatarView';
 import {
   Phone,
   PhoneOff,
@@ -37,7 +38,7 @@ export const DirectCallModal: React.FC = () => {
         {/* Partner Avatar with animation */}
         <div className="relative shrink-0">
           <div
-            className={`w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-2xl transition-all ${
+            className={`w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-2xl transition-all overflow-hidden ${
               status === 'incoming' || status === 'calling'
                 ? 'animate-bounce'
                 : partner.isSpeaking
@@ -45,7 +46,7 @@ export const DirectCallModal: React.FC = () => {
                 : ''
             }`}
           >
-            {partner.avatar || '👤'}
+            <AvatarView avatar={partner.avatar} alt={partner.username} fallback="👤" className="w-full h-full object-cover" />
           </div>
           {status === 'connected' && (
             <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-black" />

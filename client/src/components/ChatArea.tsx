@@ -571,8 +571,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               title="Kullanıcı Profilini Görüntüle"
             >
               <div className="relative">
-                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm">
-                  {dmPartner?.avatar || '👤'}
+                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm overflow-hidden">
+                  <AvatarView avatar={dmPartner?.avatar} alt={dmPartner?.username} fallback="👤" className="w-full h-full object-cover" />
                 </div>
                 <div
                   className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black ${

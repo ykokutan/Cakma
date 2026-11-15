@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pin, X, Trash2 } from 'lucide-react';
+import { AvatarView } from './AvatarView';
 import { Message, User } from '../types';
 
 interface PinnedMessagesModalProps {
@@ -63,7 +64,9 @@ export const PinnedMessagesModal: React.FC<PinnedMessagesModalProps> = ({
                 key={msg.id}
                 className="group relative p-3 rounded-xl bg-white/5 border border-white/5 hover:border-amber-500/30 transition-all flex items-start gap-3"
               >
-                <div className="text-2xl select-none">{msg.author.avatar || '🎮'}</div>
+                <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-xl shrink-0 overflow-hidden select-none">
+                  <AvatarView avatar={msg.author.avatar} alt={msg.author.username} fallback="🎮" className="w-full h-full object-cover" />
+                </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-bold text-white">{msg.author.username}</span>

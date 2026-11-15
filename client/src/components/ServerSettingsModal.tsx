@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { Server, ServerRole, ServerPermission } from '../types';
-import { isImageAvatar, processUploadedImage } from './AvatarView';
+import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
 import {
   X,
   Settings,
@@ -1255,8 +1255,8 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                       className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-between hover:bg-white/[0.05] transition"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-lg shadow">
-                          {m.avatar || '👤'}
+                        <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-lg shadow overflow-hidden">
+                          <AvatarView avatar={m.avatar} alt={m.username} fallback="👤" className="w-full h-full object-cover" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">

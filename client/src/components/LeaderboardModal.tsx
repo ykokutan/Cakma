@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Trophy, MessageSquare, Mic, Search } from 'lucide-react';
+import { AvatarView } from './AvatarView';
 import { useSocket } from '../context/SocketContext';
 import { MemberLevelData } from '../types';
 
@@ -101,8 +102,8 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({ serverId, se
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-base font-bold w-6 text-center shrink-0">{medal}</span>
-                    <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-base shrink-0 shadow">
-                      {member.avatar || '👤'}
+                    <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-base shrink-0 shadow overflow-hidden">
+                      <AvatarView avatar={member.avatar} alt={member.username} fallback="👤" className="w-full h-full object-cover" />
                     </div>
                     <div className="min-w-0 truncate">
                       <div className="text-xs font-bold text-white flex items-center gap-2">

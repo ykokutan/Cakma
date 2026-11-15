@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { AvatarView } from './AvatarView';
 import { FriendUser, User } from '../types';
 import {
   Users,
@@ -399,11 +400,11 @@ export const FriendsDashboard: React.FC<FriendsDashboardProps> = ({ onOpenProfil
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="relative shrink-0">
                         <div
-                          className={`w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-lg ${
+                          className={`w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-lg overflow-hidden ${
                             (friend as any).isSpeaking ? 'ios-halo' : ''
                           }`}
                         >
-                          {friend.avatar || '👤'}
+                          <AvatarView avatar={friend.avatar} alt={friend.username} fallback="👤" className="w-full h-full object-cover" />
                         </div>
                         <div
                           className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-black ${

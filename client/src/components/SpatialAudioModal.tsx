@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Headphones, Compass, RotateCcw } from 'lucide-react';
+import { AvatarView } from './AvatarView';
 import { useSocket } from '../context/SocketContext';
 import { User } from '../types';
 
@@ -101,8 +102,8 @@ export const SpatialAudioModal: React.FC<SpatialAudioModalProps> = ({ participan
                   style={{ transform: `translate(${xOffset}px, -20px)` }}
                   className="absolute z-20 flex flex-col items-center transition-transform duration-150"
                 >
-                  <div className="w-8 h-8 rounded-full bg-white/20 border-2 border-cyan-400 text-white flex items-center justify-center text-xs shadow-md">
-                    {p.avatar || '👤'}
+                  <div className="w-8 h-8 rounded-full bg-white/20 border-2 border-cyan-400 text-white flex items-center justify-center text-xs shadow-md overflow-hidden">
+                    <AvatarView avatar={p.avatar} alt={p.username} fallback="👤" className="w-full h-full object-cover" />
                   </div>
                   <span className="text-[9px] font-semibold text-white/80 bg-black/60 px-1 rounded truncate max-w-[60px]">
                     {p.username}
@@ -150,8 +151,8 @@ export const SpatialAudioModal: React.FC<SpatialAudioModalProps> = ({ participan
                     key={p.id}
                     className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 flex items-center gap-3"
                   >
-                    <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0">
-                      {p.avatar || '👤'}
+                    <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0 overflow-hidden">
+                      <AvatarView avatar={p.avatar} alt={p.username} fallback="👤" className="w-full h-full object-cover" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between text-xs mb-1">
