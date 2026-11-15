@@ -744,6 +744,55 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
+  // Move user between voice channels
+  socket.on('move_voice_user', ({ targetUserId, targetChannelId }: { targetUserId: string; targetChannelId: string }) => {
+    const targetUser = connectedUsers.get(targetUserId);
+    if (!targetUser) return;
+
+    const targetChannel = serverChannels.find((c: any) => c.id === targetChannelId);
+    if (!targetChannel || targetChannel.type !== 'voice') return;
+
+    const isSelf = targetUserId === socket.id;
+    const isAdmin = user.role === 'admin';
+    if (!isSelf && !isAdmin) return;
+    if (targetUser.currentVoiceChannelId === targetChannelId) return;
+
+    const targetSock = io.sockets.sockets.get(targetUserId);
+    if (!targetSock) return;
+
+    if (targetUser.currentVoiceChannelId) {
+      const oldCh = targetUser.currentVoiceChannelId;
+      targetSock.leave(oldCh);
+      io.to(oldCh).emit('user_left_voice', { userId: targetUserId, channelId: oldCh });
+    }
+
+    targetUser.currentVoiceChannelId = targetChannelId;
+    targetSock.join(targetChannelId);
+
+    const peersInRoom: any[] = [];
+    for (const [sId, u] of connectedUsers.entries()) {
+      if (u.currentVoiceChannelId === targetChannelId && sId !== targetUserId) {
+        peersInRoom.push(u);
+      }
+    }
+
+    targetSock.emit('moved_to_voice_channel', {
+      channelId: targetChannelId,
+      channelName: targetChannel.name,
+      movedBy: user.username,
+      isSelf
+    });
+    targetSock.emit('voice_room_users', { channelId: targetChannelId, peers: peersInRoom });
+    targetSock.to(targetChannelId).emit('user_joined_voice', { user: targetUser, channelId: targetChannelId });
+
+    io.emit('voice_state_update', {
+      userId: targetUserId,
+      channelId: targetChannelId,
+      isMuted: targetUser.isMuted,
+      isDeafened: targetUser.isDeafened
+    });
+  });
+
   // Voice Leave
   socket.on('leave_voice', () => {
     if (!user.currentVoiceChannelId) return;

@@ -83,6 +83,7 @@ interface SocketContextType {
   deleteServerEmoji: (serverId: string, emojiId: string) => void;
   toggleOverlayWindow: () => Promise<void>;
   joinVoiceChannel: (channelId: string, password?: string) => void;
+  moveVoiceUser: (targetUserId: string, targetChannelId: string) => void;
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
@@ -1804,6 +1805,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       window.location.reload();
     });
 
+    newSocket.on('moved_to_voice_channel', ({ channelId }: { channelId: string; channelName?: string; movedBy?: string; isSelf?: boolean }) => {
+      cleanupWebRTC();
+      setVoicePasswordError(null);
+      setConnectedVoiceChannelId(channelId);
+      if (tsSoundEffectsRef.current) {
+        playTeamSpeakChime('join');
+      }
+    });
+
     // WebRTC Signaling Events
     newSocket.on('voice_room_users', async ({ peers }: { peers: User[] }) => {
       const localStream = await getLocalAudioStream();
@@ -2806,6 +2816,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('join_voice', { channelId, password });
   };
 
+  const moveVoiceUser = (targetUserId: string, targetChannelId: string) => {
+    if (!socket) return;
+    if (targetUserId === currentUser?.id) {
+      joinVoiceChannel(targetChannelId);
+      return;
+    }
+    socket.emit('move_voice_user', { targetUserId, targetChannelId });
+  };
+
   const leaveVoiceChannel = () => {
     if (!socket || !connectedVoiceChannelId) return;
     cleanupWebRTC();
@@ -3440,6 +3459,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         deleteServerEmoji,
         toggleOverlayWindow,
         joinVoiceChannel,
+        moveVoiceUser,
         leaveVoiceChannel,
         toggleMute,
         toggleDeafen,

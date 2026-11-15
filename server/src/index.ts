@@ -3446,6 +3446,78 @@ io.on('connection', (socket: Socket) => {
     updateUserConnectionLocation(socket.id, sName, `Ses: ${channelName}`);
   });
 
+  // Move user between voice channels (Self or Admin / Server Owner)
+  socket.on('move_voice_user', ({ targetUserId, targetChannelId }: { targetUserId: string; targetChannelId: string }) => {
+    const requester = activeUsers.get(socket.id);
+    const targetUser = activeUsers.get(targetUserId);
+    if (!requester || !targetUser) return;
+
+    const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === targetChannelId);
+    const parentServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
+    if (!targetChannel || targetChannel.type !== 'voice') return;
+    if (targetChannel.isTempCreatorChannel || targetChannel.name.includes('➕ Oda Kur')) return;
+
+    const isSelf = targetUserId === socket.id;
+    const isAdmin = requester.role === 'admin';
+    const isOwner = parentServer?.ownerId === requester.id;
+
+    if (!isSelf && !isAdmin && !isOwner) {
+      return socket.emit('server_action_error', { message: 'Kullanıcıları başka odaya taşıma yetkiniz yok.' });
+    }
+
+    if (targetUser.currentVoiceChannelId === targetChannelId) return;
+
+    const targetSock = io.sockets.sockets.get(targetUserId);
+    if (!targetSock) return;
+
+    const oldChannelId = targetUser.currentVoiceChannelId;
+    if (oldChannelId) {
+      targetSock.leave(oldChannelId);
+      io.to(oldChannelId).emit('user_left_voice', { userId: targetUserId, channelId: oldChannelId });
+      cleanupTemporaryChannels();
+    }
+
+    targetUser.currentVoiceChannelId = targetChannelId;
+    userVoiceActivity.set(targetUserId, Date.now());
+    targetSock.join(targetChannelId);
+
+    const peersInRoom: User[] = [];
+    for (const [sId, u] of activeUsers.entries()) {
+      if (u.currentVoiceChannelId === targetChannelId && sId !== targetUserId) {
+        peersInRoom.push(u);
+      }
+    }
+
+    targetSock.emit('moved_to_voice_channel', {
+      channelId: targetChannelId,
+      channelName: targetChannel.name,
+      movedBy: requester.username,
+      isSelf
+    });
+
+    targetSock.emit('voice_room_users', {
+      channelId: targetChannelId,
+      peers: peersInRoom
+    });
+
+    targetSock.to(targetChannelId).emit('user_joined_voice', {
+      user: targetUser,
+      channelId: targetChannelId
+    });
+
+    io.emit('voice_state_update', {
+      userId: targetUserId,
+      channelId: targetChannelId,
+      isMuted: targetUser.isMuted,
+      isDeafened: targetUser.isDeafened
+    });
+
+    if (!isSelf) {
+      addAuditLog('KULLANICI_TASINDI', `${requester.username}, ${targetUser.username} kullanıcısını #${targetChannel.name} odasına taşıdı.`, 'voice');
+    }
+    updateUserConnectionLocation(targetUserId, parentServer?.name || 'Ana Topluluk', `Ses: ${targetChannel.name}`);
+  });
+
   // Voice Channel Leave
   socket.on('leave_voice', () => {
     const user = activeUsers.get(socket.id);

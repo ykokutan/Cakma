@@ -62,12 +62,15 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [voiceUserMenu, setVoiceUserMenu] = useState<{ user: User; x: number; y: number } | null>(null);
+  const [draggingUserId, setDraggingUserId] = useState<string | null>(null);
+  const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
   const {
     activeServer,
     activeChannel,
     selectChannel,
     connectedVoiceChannelId,
     joinVoiceChannel,
+    moveVoiceUser,
     leaveVoiceChannel,
     currentUser,
     onlineUsers,
@@ -545,12 +548,40 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               );
 
               const isLocked = Boolean(channel.password || channel.isLocked);
+              const isTempCreator = Boolean(channel.isTempCreatorChannel || channel.name.includes('➕ Oda Kur'));
+              const isDropTarget = dragOverChannelId === channel.id && !isTempCreator;
+              const canMoveOthers = currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id;
 
               return (
-                <div key={channel.id} className="space-y-1">
+                <div
+                  key={channel.id}
+                  onDragOver={(e) => {
+                    if (!draggingUserId || isTempCreator) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (dragOverChannelId !== channel.id) setDragOverChannelId(channel.id);
+                  }}
+                  onDragLeave={(e) => {
+                    if (dragOverChannelId === channel.id && !e.currentTarget.contains(e.relatedTarget as Node)) {
+                      setDragOverChannelId(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const uid = e.dataTransfer.getData('text/plain') || draggingUserId;
+                    setDraggingUserId(null);
+                    setDragOverChannelId(null);
+                    if (uid && !isTempCreator) {
+                      moveVoiceUser(uid, channel.id);
+                    }
+                  }}
+                  className="space-y-1"
+                >
                   <div
                     className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                      isConnectedHere
+                      isDropTarget
+                        ? 'bg-indigo-500/20 text-white border border-indigo-400/60 ring-2 ring-indigo-400/30 shadow-[0_0_16px_rgba(99,102,241,0.28)]'
+                        : isConnectedHere
                         ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                         : isViewingHere
                         ? 'bg-white/10 text-white'
@@ -623,10 +654,22 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                       {usersInChannel.map((user) => {
                         const isThisMe = user.id === currentUser?.id;
                         const speaking = isThisMe ? isSpeaking : user.isSpeaking;
+                        const canDragUser = isThisMe || canMoveOthers;
 
                         return (
                           <div
                             key={user.id}
+                            draggable={canDragUser}
+                            onDragStart={(e) => {
+                              if (!canDragUser) return;
+                              e.dataTransfer.setData('text/plain', user.id);
+                              e.dataTransfer.effectAllowed = 'move';
+                              setDraggingUserId(user.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingUserId(null);
+                              setDragOverChannelId(null);
+                            }}
                             onContextMenu={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
@@ -636,7 +679,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                                 y: Math.max(8, Math.min(e.clientY, window.innerHeight - 340)),
                               });
                             }}
-                            className={`flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition cursor-context-menu ${
+                            className={`flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition ${
+                              canDragUser ? 'cursor-grab active:cursor-grabbing' : 'cursor-context-menu'
+                            } ${
+                              draggingUserId === user.id ? 'opacity-45 scale-95' : ''
+                            } ${
                               speaking
                                 ? 'bg-emerald-500/10 text-emerald-400 font-medium'
                                 : 'text-white/70 hover:bg-white/5'
