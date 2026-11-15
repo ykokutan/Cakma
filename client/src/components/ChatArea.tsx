@@ -1005,15 +1005,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
 
                 {remoteAssist.status === 'being_controlled' && (
-                  <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-2 flex items-center justify-between gap-2 text-xs text-emerald-200">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                      <span>{directCall.partner.username} şu anda bilgisayarınızı kontrol ediyor</span>
+                  <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-200">
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>{directCall.partner.username} şu anda bilgisayarınızı kontrol ediyor</span>
+                      </div>
+                      <p className="text-[11px] text-amber-200/85 pl-6">
+                        İpucu: Görev Yöneticisi veya Yönetici (UAC) pencerelerinin de kontrol edilebilmesi için Çakma&apos;yı &ldquo;Yönetici olarak çalıştır&rdquo; ile açabilirsiniz.
+                      </p>
                     </div>
                     <button
                       type="button"
                       onClick={stopRemoteAssist}
-                      className="px-3 py-1 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1 transition"
+                      className="px-3 py-1 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1 transition shrink-0"
                     >
                       <Hand className="w-3.5 h-3.5" />
                       <span>Kontrolü Kes</span>

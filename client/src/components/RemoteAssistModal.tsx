@@ -38,6 +38,7 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showKeyboard, setShowKeyboard] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
+  const [showUacTip, setShowUacTip] = useState(true);
   const [quickText, setQuickText] = useState('');
   const [stickyMods, setStickyMods] = useState<{
     ctrl: boolean;
@@ -412,6 +413,26 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
                 <span>Gönder</span>
               </button>
             </form>
+          </div>
+        )}
+
+        {/* Windows UAC / Administrator Tip Banner */}
+        {showUacTip && (
+          <div className="px-4 py-2 border-b border-amber-400/20 bg-amber-500/10 flex items-center justify-between gap-3 text-[11px] text-amber-100/90 shrink-0 select-none">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="leading-snug">
+                <strong className="text-amber-300">İpucu:</strong> Karşı bilgisayarda Yönetici (UAC) penceresi (Görev Yöneticisi, Yönetici CMD vb.) açılırsa Windows güvenlik kısıtlaması (UIPI) gereği standart yetkili Çakma o pencereye girdi gönderemez; Çakma&apos;yı <strong>&ldquo;Yönetici olarak çalıştır&rdquo;</strong> ile açmak bu durumu da çözer.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowUacTip(false)}
+              className="p-1 rounded-lg hover:bg-white/10 text-amber-200/70 hover:text-white transition shrink-0"
+              title="İpucunu Kapat"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
