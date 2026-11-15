@@ -288,6 +288,17 @@ export interface Server {
   autoRoleId?: string | null;
   customEmojis?: { id: string; name: string; url: string }[];
   autoModConfig?: { blockLinks?: boolean; antiSpam?: boolean; bannedWords?: string[] };
+  events?: ServerEvent[];
+}
+
+export interface ServerEvent {
+  id: string;
+  title: string;
+  description?: string;
+  startTime: string;
+  voiceChannelId?: string | null;
+  createdBy: string;
+  rsvps: string[];
 }
 
 export interface MemberLevelData {
@@ -337,6 +348,18 @@ export interface Message {
   isEdited?: boolean;
   poll?: PollData;
   replyTo?: { id: string; username: string; content: string };
+  threadMessages?: ThreadMessage[];
+}
+
+export interface ThreadMessage {
+  id: string;
+  author: {
+    id: string;
+    username: string;
+    avatar: string;
+  };
+  content: string;
+  timestamp: string;
 }
 
 export interface ServerAnalyticsData {

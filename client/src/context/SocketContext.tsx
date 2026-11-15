@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerInvite, Channel, Message, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings } from '../types';
+import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
-import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission } from '../utils/tsSoundEffects';
+import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 
 export interface RadioBotState {
   isPlaying: boolean;
@@ -295,8 +295,19 @@ interface SocketContextType {
   // TeamSpeak Sound Events & Push Notifications
   tsSoundEffectsEnabled: boolean;
   setTsSoundEffectsEnabled: (val: boolean) => void;
+  soundPack: SoundPackType;
+  setSoundPack: (pack: SoundPackType) => void;
+  pttBeepEnabled: boolean;
+  setPttBeepEnabled: (val: boolean) => void;
   desktopNotificationsEnabled: boolean;
   setDesktopNotificationsEnabled: (val: boolean) => void;
+
+  // Threads, Slash Clear & Server Events
+  sendThreadMessage: (channelId: string, parentMessageId: string, content: string) => void;
+  clearChannelMessages: (serverId: string, channelId: string, count: number) => void;
+  createServerEvent: (serverId: string, data: { title: string; description?: string; startTime: string; voiceChannelId?: string | null }) => void;
+  rsvpServerEvent: (serverId: string, eventId: string) => void;
+  deleteServerEvent: (serverId: string, eventId: string) => void;
 
   // TeamSpeak Whisper
   activeWhisperFrom: string | null;
@@ -846,6 +857,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     localStorage.setItem('dc_ts_sound_effects', String(val));
   }, []);
 
+  const [soundPack, setSoundPackState] = useState<SoundPackType>(() => {
+    const saved = localStorage.getItem('dsp_soundPack');
+    if (saved === 'modern' || saved === 'classic-ts' || saved === 'minimal' || saved === 'silent') return saved;
+    return 'modern';
+  });
+  const setSoundPack = useCallback((pack: SoundPackType) => {
+    setSoundPackState(pack);
+    localStorage.setItem('dsp_soundPack', pack);
+  }, []);
+
+  const [pttBeepEnabled, setPttBeepEnabledState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('dsp_pttBeep');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const setPttBeepEnabled = useCallback((val: boolean) => {
+    setPttBeepEnabledState(val);
+    localStorage.setItem('dsp_pttBeep', String(val));
+  }, []);
+  const pttBeepRef = useRef<boolean>(pttBeepEnabled);
+  useEffect(() => {
+    pttBeepRef.current = pttBeepEnabled;
+  }, [pttBeepEnabled]);
+
   const [desktopNotificationsEnabled, setDesktopNotificationsEnabledState] = useState<boolean>(() => {
     const saved = localStorage.getItem('dc_desktop_notifications');
     return saved !== null ? saved === 'true' : true;
@@ -1351,6 +1385,28 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           [channelId]: channelList.filter(m => m.id !== messageId)
         };
       });
+    });
+
+    newSocket.on('thread_message_added', ({ channelId, parentMessageId, threadMessage }: { channelId: string; parentMessageId: string; threadMessage: ThreadMessage }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m =>
+            m.id === parentMessageId
+              ? { ...m, threadMessages: [...(m.threadMessages || []), threadMessage] }
+              : m
+          )
+        };
+      });
+    });
+
+    newSocket.on('channel_messages_cleared', ({ channelId, messages: updatedMsgs }: { channelId: string; messages: Message[] }) => {
+      setMessagesMap(prev => ({
+        ...prev,
+        [channelId]: updatedMsgs
+      }));
     });
 
     newSocket.on('user_typing', ({ channelId, username, isTyping }: { channelId: string; username: string; isTyping: boolean }) => {
@@ -1914,6 +1970,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === pttKey && !isPttActive) {
         setIsPttActive(true);
+        if (pttBeepRef.current && tsSoundEffectsRef.current) {
+          playTeamSpeakChime('ptt_on');
+        }
         if (localStreamRef.current) {
           localStreamRef.current.getAudioTracks().forEach(t => (t.enabled = !isMuted));
         }
@@ -1925,6 +1984,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === pttKey && isPttActive) {
         setIsPttActive(false);
+        if (pttBeepRef.current && tsSoundEffectsRef.current) {
+          playTeamSpeakChime('ptt_off');
+        }
         if (localStreamRef.current) {
           localStreamRef.current.getAudioTracks().forEach(t => (t.enabled = false));
         }
@@ -2933,6 +2995,31 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('reorder_channels', { serverId, channelId, direction });
   }, [socket]);
 
+  const sendThreadMessage = useCallback((channelId: string, parentMessageId: string, content: string) => {
+    if (!socket) return;
+    socket.emit('send_thread_message', { channelId, parentMessageId, content });
+  }, [socket]);
+
+  const clearChannelMessages = useCallback((serverId: string, channelId: string, count: number) => {
+    if (!socket) return;
+    socket.emit('clear_channel_messages', { serverId, channelId, count });
+  }, [socket]);
+
+  const createServerEvent = useCallback((serverId: string, data: { title: string; description?: string; startTime: string; voiceChannelId?: string | null }) => {
+    if (!socket) return;
+    socket.emit('create_server_event', { serverId, ...data });
+  }, [socket]);
+
+  const rsvpServerEvent = useCallback((serverId: string, eventId: string) => {
+    if (!socket) return;
+    socket.emit('rsvp_server_event', { serverId, eventId });
+  }, [socket]);
+
+  const deleteServerEvent = useCallback((serverId: string, eventId: string) => {
+    if (!socket) return;
+    socket.emit('delete_server_event', { serverId, eventId });
+  }, [socket]);
+
   const joinServerByInvite = useCallback((code: string) => {
     return new Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>((resolve) => {
       if (!socket) {
@@ -3288,8 +3375,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // TeamSpeak Sound Events & Push Notifications
         tsSoundEffectsEnabled,
         setTsSoundEffectsEnabled,
+        soundPack,
+        setSoundPack,
+        pttBeepEnabled,
+        setPttBeepEnabled,
         desktopNotificationsEnabled,
         setDesktopNotificationsEnabled,
+        sendThreadMessage,
+        clearChannelMessages,
+        createServerEvent,
+        rsvpServerEvent,
+        deleteServerEvent,
 
         // TeamSpeak Whisper
         activeWhisperFrom,

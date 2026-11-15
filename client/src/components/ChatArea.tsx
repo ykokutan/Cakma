@@ -12,6 +12,7 @@ import { LeaderboardModal } from './LeaderboardModal';
 import { MiniGamesModal } from './MiniGamesModal';
 import { AdvancedSearchModal } from './AdvancedSearchModal';
 import { AvatarView } from './AvatarView';
+import { ThreadPanel } from './ThreadPanel';
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -42,7 +43,17 @@ import {
   CornerUpLeft,
   ArrowDown,
   Menu,
+  MessageSquare,
 } from 'lucide-react';
+
+const SLASH_COMMANDS = [
+  { cmd: '/zar', desc: '1-6 arası rastgele zar atar' },
+  { cmd: '/yazitura', desc: 'Yazı veya Tura atar' },
+  { cmd: '/anket', desc: 'Hızlı anket oluşturma penceresini açar' },
+  { cmd: '/temizle', desc: 'Son N mesajı temizler (Örn: /temizle 10)' },
+  { cmd: '/davet', desc: 'Sunucu davet bağlantısı oluşturup paylaşır' },
+  { cmd: '/yardim', desc: 'Kullanılabilir slash komutlarını listeler' },
+];
 
 interface ChatAreaProps {
   onToggleMembers: () => void;
@@ -146,7 +157,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     typingUsers,
     sendTyping,
     chatFontSize,
+    clearChannelMessages,
+    createServerInvite,
   } = useSocket();
+
+  const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
+  const activeThreadMessage = activeThreadMsgId ? messages.find((m) => m.id === activeThreadMsgId) || null : null;
 
   const [inputText, setInputText] = useState('');
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
@@ -379,11 +395,53 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     return userRoles.length > 0 ? userRoles[0].color : '#94a3b8';
   };
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (slowmodeRemaining > 0) return;
     if (!inputText.trim() && pendingAttachments.length === 0) return;
     const finalMessage = inputText.trim();
+
+    if (finalMessage.startsWith('/')) {
+      const [rawCmd, ...args] = finalMessage.split(/\s+/);
+      const cmd = rawCmd.toLowerCase();
+      if (cmd === '/zar') {
+        const roll = Math.floor(Math.random() * 6) + 1;
+        sendMessage(`🎲 **Zar Attı:** ${roll} geldi!`);
+        setInputText('');
+        return;
+      }
+      if (cmd === '/yazitura') {
+        const coin = Math.random() < 0.5 ? 'Yazı' : 'Tura';
+        sendMessage(`🪙 **Yazı-Tura:** **${coin}** geldi!`);
+        setInputText('');
+        return;
+      }
+      if (cmd === '/anket' && !isDM) {
+        setInputText('');
+        setIsPollModalOpen(true);
+        return;
+      }
+      if (cmd === '/temizle' && activeServer && activeChannel && !isDM) {
+        const count = Math.min(Math.max(parseInt(args[0] || '10', 10) || 10, 1), 100);
+        clearChannelMessages(activeServer.id, activeChannel.id, count);
+        setInputText('');
+        return;
+      }
+      if (cmd === '/davet' && activeServer && !isDM) {
+        setInputText('');
+        const inv = await createServerInvite(activeServer.id, 0, 0);
+        if (inv?.code) {
+          sendMessage(`🔗 **Sunucu Davet Linki:** ${window.location.origin}/?invite=${inv.code} (Kod: \`${inv.code}\`)`);
+        }
+        return;
+      }
+      if (cmd === '/yardim') {
+        sendMessage('⚡ **Slash Komutları:** `/zar`, `/yazitura`, `/anket`, `/temizle [sayı]`, `/davet`, `/yardim`');
+        setInputText('');
+        return;
+      }
+    }
+
     sendMessage(finalMessage, pendingAttachments, replyingTo || undefined);
     setInputText('');
     setPendingAttachments([]);
@@ -788,6 +846,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   >
                     <CornerUpLeft className="w-3 h-3" />
                   </button>
+                  {!isDM && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveThreadMsgId(msg.id)}
+                      title="Alt Konu (Thread) Aç"
+                      className="p-1 rounded-full text-xs text-slate-400 hover:text-cyan-400 transition-colors"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                    </button>
+                  )}
                   {msg.content && (
                     <button
                       type="button"
@@ -1071,6 +1139,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     })}
                   </div>
                 )}
+
+                {!isDM && msg.threadMessages && msg.threadMessages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveThreadMsgId(msg.id)}
+                    className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/25 text-[11px] font-semibold text-cyan-300 transition"
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    <span>{msg.threadMessages.length} alt konu yanıtı</span>
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -1267,6 +1346,25 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {inputText.startsWith('/') && !inputText.includes(' ') && (
+              <div className="mb-2 rounded-2xl bg-[#131620]/95 border border-white/15 p-2 shadow-2xl backdrop-blur-xl space-y-0.5">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                  Slash Komutları
+                </div>
+                {SLASH_COMMANDS.filter((c) => c.cmd.startsWith(inputText.toLowerCase())).map((c) => (
+                  <button
+                    key={c.cmd}
+                    type="button"
+                    onClick={() => setInputText(c.cmd === '/temizle' ? '/temizle 10' : c.cmd)}
+                    className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl hover:bg-white/10 text-left transition"
+                  >
+                    <span className="text-xs font-mono font-bold text-cyan-300">{c.cmd}</span>
+                    <span className="text-[11px] text-white/55">{c.desc}</span>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -1525,6 +1623,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {activeThreadMessage && (
+        <ThreadPanel
+          message={activeThreadMessage}
+          onClose={() => setActiveThreadMsgId(null)}
+        />
       )}
     </main>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { playTeamSpeakChime, SoundPackType } from '../utils/tsSoundEffects';
 import { AvatarView } from './AvatarView';
 import {
   X,
@@ -69,6 +70,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     isAuthenticated,
     tsSoundEffectsEnabled,
     setTsSoundEffectsEnabled,
+    soundPack,
+    setSoundPack,
+    pttBeepEnabled,
+    setPttBeepEnabled,
     desktopNotificationsEnabled,
     setDesktopNotificationsEnabled,
     changePassword,
@@ -1754,6 +1759,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     }`}
                   >
                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${tsSoundEffectsEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                {/* Sound Pack Selector */}
+                <div className="pt-3 border-t border-white/5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Ses Paketi (Sound Pack)</div>
+                      <div className="text-xs text-white/40">Oda giriş/çıkış ve susturma tonlarını özelleştirin.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => playTeamSpeakChime('join', soundPack)}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-medium text-white transition"
+                    >
+                      Sesi Dene
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {([
+                      { id: 'modern', label: 'Modern' },
+                      { id: 'classic-ts', label: 'TeamSpeak Klasik' },
+                      { id: 'minimal', label: 'Minimal' },
+                      { id: 'silent', label: 'Sessiz' },
+                    ] as { id: SoundPackType; label: string }[]).map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setSoundPack(p.id);
+                          if (p.id !== 'silent') playTeamSpeakChime('unmute', p.id);
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs font-medium border transition ${
+                          soundPack === p.id
+                            ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
+                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* PTT Beep Toggle */}
+                <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Bas-Konuş (PTT) Bip Sesi</div>
+                    <div className="text-xs text-white/40">PTT tuşuna basıldığında ve bırakıldığında telsiz bip sesi çalar.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !pttBeepEnabled;
+                      setPttBeepEnabled(next);
+                      if (next) playTeamSpeakChime('ptt_on');
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      pttBeepEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${pttBeepEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                   </button>
                 </div>
 

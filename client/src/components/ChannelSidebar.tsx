@@ -33,10 +33,12 @@ import {
   Copy,
   Check,
   X,
+  Calendar,
 } from 'lucide-react';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
+import { ServerEventsModal } from './ServerEventsModal';
 import { AvatarView, isImageAvatar } from './AvatarView';
 
 interface ChannelSidebarProps {
@@ -113,6 +115,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   );
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
+  const [isEventsOpen, setIsEventsOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const [customStatusInput, setCustomStatusInput] = useState(currentUser?.statusMessage || '');
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
@@ -389,6 +392,25 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         </div>
       ) : (
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        {/* Server Events Button */}
+        {activeServer && (
+          <button
+            type="button"
+            onClick={() => setIsEventsOpen(true)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.06] text-xs font-semibold text-white/80 hover:text-white transition"
+          >
+            <span className="flex items-center gap-2">
+              <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+              Etkinlikler
+            </span>
+            {(activeServer.events?.length || 0) > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-indigo-300 text-[10px] font-bold">
+                {activeServer.events?.length}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Text Channels */}
         <div>
           <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
@@ -1040,6 +1062,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </div>,
           document.body
         )}
+
+      {isEventsOpen && <ServerEventsModal onClose={() => setIsEventsOpen(false)} />}
     </aside>
   );
 };

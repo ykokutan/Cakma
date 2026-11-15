@@ -13,9 +13,27 @@ function getAudioContext(): AudioContext {
   return audioCtx;
 }
 
-// 1. Synthesize TeamSpeak & System Audio Chimes
-export function playTeamSpeakChime(type: 'join' | 'leave' | 'mute' | 'unmute' | 'whisper' | 'levelup') {
+export type SoundPackType = 'modern' | 'classic-ts' | 'minimal' | 'silent';
+
+export function getActiveSoundPack(): SoundPackType {
   try {
+    const saved = localStorage.getItem('dsp_soundPack');
+    if (saved === 'modern' || saved === 'classic-ts' || saved === 'minimal' || saved === 'silent') {
+      return saved;
+    }
+  } catch {}
+  return 'modern';
+}
+
+// 1. Synthesize TeamSpeak & System Audio Chimes
+export function playTeamSpeakChime(
+  type: 'join' | 'leave' | 'mute' | 'unmute' | 'whisper' | 'levelup' | 'ptt_on' | 'ptt_off',
+  overridePack?: SoundPackType
+) {
+  try {
+    const pack = overridePack || getActiveSoundPack();
+    if (pack === 'silent') return;
+
     const ctx = getAudioContext();
     const now = ctx.currentTime;
 
@@ -24,48 +42,65 @@ export function playTeamSpeakChime(type: 'join' | 'leave' | 'mute' | 'unmute' | 
     osc.connect(gain);
     gain.connect(ctx.destination);
 
-    if (type === 'join') {
-      // Pleasant rising two-tone chime (440Hz -> 880Hz)
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.15);
-      gain.gain.setValueAtTime(0.15, now);
+    const pitchFactor = pack === 'classic-ts' ? 1.15 : pack === 'minimal' ? 0.85 : 1.0;
+    const volFactor = pack === 'minimal' ? 0.65 : 1.0;
+
+    if (type === 'ptt_on') {
+      osc.type = pack === 'classic-ts' ? 'square' : 'sine';
+      osc.frequency.setValueAtTime(1180 * pitchFactor, now);
+      gain.gain.setValueAtTime(0.08 * volFactor, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+      osc.start(now);
+      osc.stop(now + 0.055);
+    } else if (type === 'ptt_off') {
+      osc.type = pack === 'classic-ts' ? 'square' : 'sine';
+      osc.frequency.setValueAtTime(820 * pitchFactor, now);
+      gain.gain.setValueAtTime(0.06 * volFactor, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+      osc.start(now);
+      osc.stop(now + 0.05);
+    } else if (type === 'join') {
+      // Pleasant rising two-tone chime
+      osc.type = pack === 'classic-ts' ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(440 * pitchFactor, now);
+      osc.frequency.exponentialRampToValueAtTime(880 * pitchFactor, now + 0.15);
+      gain.gain.setValueAtTime(0.15 * volFactor, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
       osc.start(now);
       osc.stop(now + 0.35);
     } else if (type === 'leave') {
-      // Falling two-tone chime (660Hz -> 330Hz)
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(660, now);
-      osc.frequency.exponentialRampToValueAtTime(330, now + 0.2);
-      gain.gain.setValueAtTime(0.15, now);
+      // Falling two-tone chime
+      osc.type = pack === 'classic-ts' ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(660 * pitchFactor, now);
+      osc.frequency.exponentialRampToValueAtTime(330 * pitchFactor, now + 0.2);
+      gain.gain.setValueAtTime(0.15 * volFactor, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
       osc.start(now);
       osc.stop(now + 0.35);
     } else if (type === 'mute') {
       // Short low double click
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(350, now);
-      osc.frequency.exponentialRampToValueAtTime(200, now + 0.1);
-      gain.gain.setValueAtTime(0.2, now);
+      osc.frequency.setValueAtTime(350 * pitchFactor, now);
+      osc.frequency.exponentialRampToValueAtTime(200 * pitchFactor, now + 0.1);
+      gain.gain.setValueAtTime(0.2 * volFactor, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
       osc.start(now);
       osc.stop(now + 0.12);
     } else if (type === 'unmute') {
       // Short rising bright click
       osc.type = 'triangle';
-      osc.frequency.setValueAtTime(300, now);
-      osc.frequency.exponentialRampToValueAtTime(600, now + 0.1);
-      gain.gain.setValueAtTime(0.2, now);
+      osc.frequency.setValueAtTime(300 * pitchFactor, now);
+      osc.frequency.exponentialRampToValueAtTime(600 * pitchFactor, now + 0.1);
+      gain.gain.setValueAtTime(0.2 * volFactor, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
       osc.start(now);
       osc.stop(now + 0.12);
     } else if (type === 'whisper') {
       // Subtle two-tone radio blip
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, now);
-      osc.frequency.setValueAtTime(1000, now + 0.08);
-      gain.gain.setValueAtTime(0.18, now);
+      osc.frequency.setValueAtTime(800 * pitchFactor, now);
+      osc.frequency.setValueAtTime(1000 * pitchFactor, now + 0.08);
+      gain.gain.setValueAtTime(0.18 * volFactor, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
       osc.start(now);
       osc.stop(now + 0.25);
@@ -76,7 +111,7 @@ export function playTeamSpeakChime(type: 'join' | 'leave' | 'mute' | 'unmute' | 
       osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
       osc.frequency.setValueAtTime(783.99, now + 0.16); // G5
       osc.frequency.setValueAtTime(1046.50, now + 0.24); // C6
-      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.setValueAtTime(0.2 * volFactor, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
       osc.start(now);
       osc.stop(now + 0.6);

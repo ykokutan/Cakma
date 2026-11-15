@@ -1,9 +1,50 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 
 interface CodeBlockProps {
   code: string;
   language?: string;
+}
+
+const KEYWORDS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'import', 'export', 'from', 'default',
+  'if', 'else', 'for', 'while', 'switch', 'case', 'break', 'continue', 'try', 'catch',
+  'finally', 'throw', 'new', 'class', 'extends', 'interface', 'type', 'enum', 'async',
+  'await', 'true', 'false', 'null', 'undefined', 'void', 'def', 'fn', 'pub', 'struct',
+  'impl', 'use', 'match', 'in', 'as', 'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE',
+  'DELETE', 'JOIN', 'ON', 'GROUP', 'BY', 'ORDER', 'LIMIT', 'select', 'from', 'where',
+]);
+
+function highlightLine(line: string): React.ReactNode[] {
+  const tokenRegex = /(\/\/.*$|#.*$|\/\*.*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIdx = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = tokenRegex.exec(line)) !== null) {
+    if (match.index > lastIdx) {
+      parts.push(line.slice(lastIdx, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith('//') || token.startsWith('#') || token.startsWith('/*')) {
+      parts.push(<span key={key++} className="text-white/35 italic">{token}</span>);
+    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) {
+      parts.push(<span key={key++} className="text-amber-300">{token}</span>);
+    } else if (/^\d/.test(token)) {
+      parts.push(<span key={key++} className="text-cyan-300">{token}</span>);
+    } else if (KEYWORDS.has(token)) {
+      parts.push(<span key={key++} className="text-fuchsia-400 font-semibold">{token}</span>);
+    } else {
+      parts.push(<span key={key++} className="text-emerald-300">{token}</span>);
+    }
+    lastIdx = tokenRegex.lastIndex;
+  }
+
+  if (lastIdx < line.length) {
+    parts.push(line.slice(lastIdx));
+  }
+  return parts.length > 0 ? parts : [' '];
 }
 
 export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
@@ -16,6 +57,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   };
 
   const detectedLang = language || 'code';
+  const lines = useMemo(() => code.split('\n'), [code]);
 
   return (
     <div className="my-2 rounded-2xl overflow-hidden border border-white/10 bg-[#0d0e12] shadow-2xl max-w-xl text-left select-text">
@@ -43,9 +85,16 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
         </button>
       </div>
 
-      {/* Code Content */}
-      <pre className="p-4 font-mono text-xs text-emerald-300 overflow-x-auto leading-relaxed no-scrollbar">
-        <code>{code}</code>
+      {/* Code Content with Syntax Highlighting & Line Numbers */}
+      <pre className="p-3.5 font-mono text-xs overflow-x-auto leading-relaxed no-scrollbar">
+        <code>
+          {lines.map((line, i) => (
+            <div key={i} className="flex gap-3 hover:bg-white/[0.03] px-1 rounded">
+              <span className="w-6 shrink-0 text-right text-white/20 select-none">{i + 1}</span>
+              <span className="text-white/85 whitespace-pre">{highlightLine(line)}</span>
+            </div>
+          ))}
+        </code>
       </pre>
     </div>
   );

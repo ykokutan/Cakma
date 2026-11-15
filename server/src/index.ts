@@ -2959,6 +2959,104 @@ io.on('connection', (socket: Socket) => {
     io.emit('server_updated', s);
   });
 
+  // Message Threads (Alt Konu Yanıtı)
+  socket.on('send_thread_message', ({ channelId, parentMessageId, content }: { channelId: string; parentMessageId: string; content: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !channelId || !parentMessageId) return;
+    const clean = sanitizeText(content).trim().slice(0, 2000);
+    if (!clean) return;
+
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    const parent = channelMsgs.find(m => m.id === parentMessageId);
+    if (!parent) return;
+
+    if (!parent.threadMessages) parent.threadMessages = [];
+    const threadMsg = {
+      id: `thr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      author: {
+        id: user.id,
+        username: user.username,
+        avatar: user.avatar,
+      },
+      content: clean,
+      timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+    };
+    parent.threadMessages.push(threadMsg);
+    saveMessages(messages);
+    io.emit('thread_message_added', { channelId, parentMessageId, threadMessage: threadMsg });
+  });
+
+  // Clear last N messages in a channel (Slash Command /temizle)
+  socket.on('clear_channel_messages', ({ serverId, channelId, count }: { serverId: string; channelId: string; count: number }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId || !channelId) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Mesaj temizlemek için Kanal/Sunucu Yönetimi yetkiniz yok.' });
+    }
+    const safeCount = Math.min(Math.max(Number(count) || 10, 1), 100);
+    const list = messages[channelId] || [];
+    if (list.length === 0) return;
+    messages[channelId] = list.slice(0, Math.max(0, list.length - safeCount));
+    saveMessages(messages);
+    io.emit('channel_messages_cleared', { channelId, messages: messages[channelId] });
+  });
+
+  // Server Events (Etkinlik Takvimi)
+  socket.on('create_server_event', ({ serverId, title, description, startTime, voiceChannelId }: { serverId: string; title: string; description?: string; startTime: string; voiceChannelId?: string | null }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId) return;
+    const s = servers.find(srv => srv.id === serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Etkinlik oluşturmak için yetkiniz yok.' });
+    }
+    const cleanTitle = sanitizeText(title).trim().slice(0, 100);
+    if (!cleanTitle || !startTime) return;
+    if (!s.events) s.events = [];
+    s.events.unshift({
+      id: `evt-${Date.now()}`,
+      title: cleanTitle,
+      description: sanitizeText(description || '').trim().slice(0, 400),
+      startTime: sanitizeText(startTime).trim().slice(0, 64),
+      voiceChannelId: voiceChannelId || null,
+      createdBy: user.username,
+      rsvps: [user.username],
+    });
+    if (s.events.length > 30) s.events = s.events.slice(0, 30);
+    saveServers(servers);
+    io.emit('server_updated', s);
+  });
+
+  socket.on('rsvp_server_event', ({ serverId, eventId }: { serverId: string; eventId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId || !eventId) return;
+    const s = servers.find(srv => srv.id === serverId);
+    const ev = s?.events?.find(e => e.id === eventId);
+    if (!s || !ev) return;
+    const idx = ev.rsvps.findIndex(u => u.toLowerCase() === user.username.toLowerCase());
+    if (idx === -1) {
+      ev.rsvps.push(user.username);
+    } else {
+      ev.rsvps.splice(idx, 1);
+    }
+    saveServers(servers);
+    io.emit('server_updated', s);
+  });
+
+  socket.on('delete_server_event', ({ serverId, eventId }: { serverId: string; eventId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId || !eventId) return;
+    const s = servers.find(srv => srv.id === serverId);
+    const ev = s?.events?.find(e => e.id === eventId);
+    if (!s || !ev) return;
+    const canDelete = ev.createdBy.toLowerCase() === user.username.toLowerCase() || checkServerPermission(user, s, 'manage_server');
+    if (!canDelete) return;
+    s.events = (s.events || []).filter(e => e.id !== eventId);
+    saveServers(servers);
+    io.emit('server_updated', s);
+  });
+
   // Delete Server
   socket.on('delete_server', ({ serverId }: { serverId: string }) => {
     const user = activeUsers.get(socket.id);
