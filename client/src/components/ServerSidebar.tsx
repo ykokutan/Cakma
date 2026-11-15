@@ -22,18 +22,18 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
   );
 
   return (
-    <nav className="w-[72px] ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col items-center py-4 gap-3 shrink-0 select-none z-20">
-      {/* iOS Direct Messages Pill */}
+    <nav className="w-[74px] ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col items-center py-4 gap-3 shrink-0 select-none z-20">
+      {/* Atelier Brand / Direct Messages Pill */}
       <div className="relative group flex items-center justify-center w-full">
         <div
-          className={`absolute left-0 w-1 bg-gradient-to-b from-cyan-400 to-indigo-500 rounded-r-full transition-all duration-200 ${
-            isDMActive ? 'h-8 shadow-[0_0_12px_rgba(56,189,248,0.85)]' : 'h-0 group-hover:h-4'
+          className={`absolute left-0 w-1 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 rounded-r-full transition-all duration-200 ${
+            isDMActive ? 'h-8 shadow-[0_0_12px_rgba(245,158,11,0.85)]' : 'h-0 group-hover:h-4'
           }`}
         />
         <button
           onClick={() => selectServer('direct-messages')}
-          className={`w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center bg-white/10 hover:bg-blue-500 text-white/80 hover:text-white shadow-lg ${
-            isDMActive ? '!bg-blue-500 !text-white ring-2 ring-blue-400/40 shadow-blue-500/30' : ''
+          className={`w-12 h-12 rounded-[18px] transition-all duration-200 flex items-center justify-center bg-white/[0.07] hover:bg-gradient-to-tr hover:from-amber-500 hover:to-teal-500 text-white/80 hover:text-white shadow-lg border border-white/[0.08] ${
+            isDMActive ? '!bg-gradient-to-tr !from-amber-500 !via-orange-500 !to-teal-500 !text-white ring-2 ring-amber-400/50 shadow-[0_8px_24px_rgba(245,158,11,0.32)]' : ''
           }`}
           title="Direkt Mesajlar (DMs)"
         >
@@ -60,9 +60,9 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
             >
               {/* Active / Unread Indicator Bar */}
               <div
-                className={`absolute left-0 w-1 bg-gradient-to-b from-cyan-400 to-indigo-500 rounded-r-full transition-all duration-200 ${
+                className={`absolute left-0 w-1 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 rounded-r-full transition-all duration-200 ${
                   isActive
-                    ? 'h-8 shadow-[0_0_12px_rgba(56,189,248,0.85)]'
+                    ? 'h-8 shadow-[0_0_12px_rgba(245,158,11,0.85)]'
                     : isHovered
                     ? 'h-4'
                     : serverUnreads > 0
@@ -71,11 +71,11 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({ onOpenCreateServer
                 }`}
               />
 
-              {/* iOS Squircle Server Button */}
+              {/* Atelier Squircle Server Button */}
               <button
                 onClick={() => selectServer(server.id)}
-                className={`w-12 h-12 rounded-2xl transition-all duration-200 flex items-center justify-center font-bold text-base overflow-hidden bg-white/10 text-white/90 hover:bg-white/20 hover:scale-105 shadow-md ${
-                  isActive ? '!bg-gradient-to-tr from-blue-600 to-indigo-500 !text-white ring-2 ring-blue-400/50 shadow-blue-500/30' : ''
+                className={`w-12 h-12 rounded-[18px] transition-all duration-200 flex items-center justify-center font-bold text-base overflow-hidden bg-white/[0.07] border border-white/[0.08] text-white/90 hover:bg-white/15 hover:scale-105 shadow-md ${
+                  isActive ? '!rounded-2xl !bg-gradient-to-tr from-amber-500/90 via-orange-500/80 to-teal-500/90 !text-white ring-2 ring-amber-400/55 shadow-[0_8px_24px_rgba(245,158,11,0.28)]' : ''
                 }`}
               >
                 {isImageAvatar(server.icon) ? (

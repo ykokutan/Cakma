@@ -552,7 +552,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* iOS Translucent Header */}
-      <header className="h-14 px-3 sm:px-6 border-b border-white/[0.06] flex items-center justify-between gap-2 shrink-0 bg-[#16161a]/60 backdrop-blur-2xl shadow-sm select-none">
+      <header className="h-14 px-3 sm:px-6 border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 bg-[#101218]/75 backdrop-blur-2xl shadow-sm select-none">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           {onOpenMobileNav && (
             <button
@@ -1370,7 +1370,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
             <form
               onSubmit={handleSend}
-              className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15 focus-within:border-indigo-400/50 focus-within:shadow-[0_0_28px_rgba(99,102,241,0.2)] transition-all"
+              className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15 focus-within:border-amber-400/50 focus-within:shadow-[0_0_28px_rgba(245,158,11,0.18)] transition-all"
             >
               <button
                 type="button"
@@ -1464,7 +1464,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <button
                   type="submit"
                   disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
-                  className="w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-blue-500/30"
+                  className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-teal-500 hover:brightness-110 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-amber-500/25"
                   title="Gönder"
                 >
                   <ArrowUp className="w-4 h-4 stroke-[2.5]" />

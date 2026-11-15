@@ -446,7 +446,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                     key={channel.id}
                     className={`group w-full flex items-center justify-between gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isActive
-                        ? 'bg-gradient-to-r from-indigo-500/30 via-blue-500/20 to-transparent text-white border border-indigo-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(59,130,246,0.18)]'
+                        ? 'bg-gradient-to-r from-amber-500/20 via-teal-500/12 to-transparent text-white border border-amber-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(245,158,11,0.14)]'
                         : unread > 0
                         ? 'text-white font-bold hover:bg-white/[0.06]'
                         : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
