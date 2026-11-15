@@ -1115,7 +1115,7 @@ async function notifyMasterShutdown() {
     await fetch(`${MASTER_SERVER_URL}/api/dedicated/shutdown`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: DEDICATED_SERVER_ID })
+      body: JSON.stringify({ id: DEDICATED_SERVER_ID, licenseKey: config.licenseKey })
     });
   } catch {}
 }

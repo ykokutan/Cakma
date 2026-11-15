@@ -2223,10 +2223,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // Also fetch dedicated server registry & master licenses directly from master server
     try {
+      const saved = localStorage.getItem('dc_clone_auth');
+      const token = saved ? JSON.parse(saved).token : '';
+      const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const apiBase = currentServerHost.startsWith('http://') || currentServerHost.startsWith('https://')
+        ? currentServerHost
+        : `${(currentServerHost.startsWith('localhost') || currentServerHost.startsWith('127.0.0.1')) ? 'http:' : 'https:'}//${currentServerHost}`;
       const [resDed, resLic, resStore] = await Promise.all([
-        fetch('http://127.0.0.1:4000/api/dedicated/list').catch(() => null),
-        fetch('http://127.0.0.1:4000/api/master/licenses').catch(() => null),
-        fetch('http://127.0.0.1:4000/api/master/store-settings').catch(() => null)
+        fetch(`${apiBase}/api/dedicated/list`, { headers: authHeaders }).catch(() => null),
+        fetch(`${apiBase}/api/master/licenses`, { headers: authHeaders }).catch(() => null),
+        fetch(`${apiBase}/api/master/store-settings`).catch(() => null)
       ]);
 
       if (resStore && resStore.ok) {
@@ -2432,7 +2438,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     if (currentUser?.username) {
       try {
-        const res = await fetch(`http://127.0.0.1:4000/api/master/user-licenses?username=${encodeURIComponent(currentUser.username)}`);
+        const saved = localStorage.getItem('dc_clone_auth');
+        const token = saved ? JSON.parse(saved).token : '';
+        if (!token) return;
+        const apiBase = currentServerHost.startsWith('http://') || currentServerHost.startsWith('https://')
+          ? currentServerHost
+          : `${(currentServerHost.startsWith('localhost') || currentServerHost.startsWith('127.0.0.1')) ? 'http:' : 'https:'}//${currentServerHost}`;
+        const res = await fetch(`${apiBase}/api/master/user-licenses?username=${encodeURIComponent(currentUser.username)}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
         if (res.ok) {
           const json = await res.json();
           if (json.licenses && json.licenses.length > 0) {

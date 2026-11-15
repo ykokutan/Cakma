@@ -829,9 +829,22 @@ app.post('/api/dedicated/heartbeat', (req, res) => {
 });
 
 app.post('/api/dedicated/shutdown', (req, res) => {
-  const { id } = req.body;
+  const { id, licenseKey } = req.body || {};
   if (id && dedicatedServersRegistry.has(id)) {
     const s = dedicatedServersRegistry.get(id)!;
+    const isMaster = isMasterRequest(req);
+    const hasMatchingLicense =
+      typeof licenseKey === 'string' &&
+      licenseKey.length > 0 &&
+      typeof s.licenseKey === 'string' &&
+      s.licenseKey.length > 0 &&
+      crypto.timingSafeEqual(
+        crypto.createHash('sha256').update(licenseKey).digest(),
+        crypto.createHash('sha256').update(s.licenseKey).digest()
+      );
+    if (!isMaster && !hasMatchingLicense) {
+      return res.status(401).json({ success: false, error: 'Yetkisiz erişim: Geçersiz sunucu lisans anahtarı.' });
+    }
     s.status = 'offline';
     addAuditLog('DEDICATED_SUNUCU_KAPANDI', `Dedicated Ses Sunucusu kapandi: "${s.serverName}" (${s.host})`, 'warn');
     io.to('admins').emit('admin_dedicated_updated', s);
@@ -840,6 +853,11 @@ app.post('/api/dedicated/shutdown', (req, res) => {
 });
 
 app.get('/api/dedicated/list', (req, res) => {
+  const sessionUser = getSessionUserFromRequest(req);
+  const isAdminSession = sessionUser ? registeredAccounts.get(sessionUser.toLowerCase())?.role === 'admin' : false;
+  if (!isMasterRequest(req) && !isAdminSession) {
+    return res.status(401).json({ success: false, error: 'Yetkisiz erişim.' });
+  }
   res.json({
     total: dedicatedServersRegistry.size,
     servers: Array.from(dedicatedServersRegistry.values())
@@ -952,16 +970,30 @@ export function verifyPending2faToken(token: string): string | null {
   }
 }
 
-function requireMasterAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+function isMasterRequest(req: express.Request): boolean {
   const authHeader = req.headers['authorization'];
   const adminKey = req.headers['x-admin-key'];
   const token = adminKey || (typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader);
   if (typeof token === 'string' && token.length > 0) {
     const tokenDigest = crypto.createHash('sha256').update(token).digest();
     const expectedDigest = crypto.createHash('sha256').update(MASTER_API_KEY).digest();
-    if (crypto.timingSafeEqual(tokenDigest, expectedDigest)) {
-      return next();
-    }
+    return crypto.timingSafeEqual(tokenDigest, expectedDigest);
+  }
+  return false;
+}
+
+function getSessionUserFromRequest(req: express.Request): string | null {
+  const authHeader = req.headers['authorization'];
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice(7).trim();
+    return verifySessionToken(bearer);
+  }
+  return null;
+}
+
+function requireMasterAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (isMasterRequest(req)) {
+    return next();
   }
   return res.status(401).json({ success: false, error: 'Yetkisiz erişim: Geçersiz master API anahtarı.' });
 }
@@ -976,6 +1008,14 @@ app.get('/api/master/licenses', requireMasterAuth, (req, res) => {
 
 app.get('/api/master/user-licenses', (req, res) => {
   const username = (req.query.username as string)?.trim()?.toLowerCase();
+  const isMaster = isMasterRequest(req);
+  const sessionUser = getSessionUserFromRequest(req);
+  const isAdminSession = sessionUser ? registeredAccounts.get(sessionUser.toLowerCase())?.role === 'admin' : false;
+
+  if (!isMaster && (!sessionUser || (!isAdminSession && sessionUser.toLowerCase() !== username))) {
+    return res.status(401).json({ success: false, error: 'Yetkisiz erişim.' });
+  }
+
   if (!username) {
     return res.json({ success: true, licenses: [] });
   }
