@@ -166,13 +166,25 @@ export function saveServerLevels(levels: Record<string, Record<string, MemberLev
 }
 
 // 10. SYSTEM CONFIGURATION (Sistem Yapılandırması)
+export interface PinnedBanner {
+  message: string;
+  sender: string;
+  updatedAt: string;
+}
+
 export interface SystemConfig {
   registrationEnabled: boolean;
   maintenanceMode: boolean;
+  maintenanceMessage?: string;
   maxMessageLength: number;
   defaultSlowmodeSeconds: number;
   maxUploadSizeMb: number;
   requireStrongPasswords: boolean;
+  maxLoginAttempts?: number;
+  loginLockoutMinutes?: number;
+  globalBlockLinks?: boolean;
+  globalBannedWords?: string[];
+  pinnedBanner?: PinnedBanner | null;
 }
 
 export function loadSystemConfig(defaultConfig: SystemConfig): SystemConfig {
@@ -184,4 +196,98 @@ export function loadSystemConfig(defaultConfig: SystemConfig): SystemConfig {
 
 export function saveSystemConfig(config: SystemConfig) {
   safeWriteJson('system_config.json', config);
+}
+
+// 11. BANNED IPS (IP Yasaklama Listesi)
+export interface BannedIpRecord {
+  ip: string;
+  reason: string;
+  bannedBy: string;
+  bannedAt: string;
+  expiresAt?: number | null;
+}
+
+export function loadBannedIps(): BannedIpRecord[] {
+  return safeReadJson<BannedIpRecord[]>('banned_ips.json', []);
+}
+
+export function saveBannedIps(ips: BannedIpRecord[]) {
+  safeWriteJson('banned_ips.json', ips);
+}
+
+// 12. STORAGE OBSERVABILITY & FULL BACKUP / RESTORE
+const BACKUP_FILENAMES = [
+  'users.json',
+  'servers.json',
+  'messages.json',
+  'licenses.json',
+  'store.json',
+  'audit.json',
+  'friend_requests.json',
+  'connection_logs.json',
+  'server_levels.json',
+  'system_config.json',
+  'banned_ips.json',
+] as const;
+
+export function getStorageStats(): {
+  dataDir: string;
+  totalBytes: number;
+  files: { name: string; bytes: number }[];
+} {
+  ensureDataDir();
+  const files: { name: string; bytes: number }[] = [];
+  let totalBytes = 0;
+  try {
+    const entries = fs.readdirSync(DATA_DIR);
+    for (const name of entries) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const st = fs.statSync(path.join(DATA_DIR, name));
+        if (st.isFile()) {
+          files.push({ name, bytes: st.size });
+          totalBytes += st.size;
+        }
+      } catch {}
+    }
+  } catch {}
+  files.sort((a, b) => b.bytes - a.bytes);
+  return { dataDir: DATA_DIR, totalBytes, files };
+}
+
+export function exportAllDataBundle(): {
+  version: number;
+  exportedAt: string;
+  files: Record<string, any>;
+} {
+  ensureDataDir();
+  const files: Record<string, any> = {};
+  for (const filename of BACKUP_FILENAMES) {
+    const filePath = path.join(DATA_DIR, filename);
+    if (fs.existsSync(filePath)) {
+      try {
+        files[filename] = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      } catch {}
+    }
+  }
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    files,
+  };
+}
+
+export function importAllDataBundle(bundle: { files?: Record<string, any> }): string[] {
+  if (!bundle || typeof bundle !== 'object' || !bundle.files || typeof bundle.files !== 'object') {
+    throw new Error('Geçersiz yedek dosyası formatı.');
+  }
+  ensureDataDir();
+  const restored: string[] = [];
+  for (const filename of BACKUP_FILENAMES) {
+    if (Object.prototype.hasOwnProperty.call(bundle.files, filename)) {
+      safeWriteJson(filename, bundle.files[filename]);
+      restored.push(filename);
+    }
+  }
+  return restored;
 }

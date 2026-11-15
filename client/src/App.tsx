@@ -24,6 +24,8 @@ import { Megaphone, X } from 'lucide-react';
 const MainLayout: React.FC = () => {
   const {
     systemAnnouncement,
+    pinnedBanner,
+    maintenanceStatus,
     dismissAnnouncement,
     currentUser,
     activeServer,
@@ -77,6 +79,24 @@ const MainLayout: React.FC = () => {
             >
               Ana Sunucuya Dön (Port 4000)
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Real-time Maintenance & Pinned System Banner */}
+      {(maintenanceStatus?.active || pinnedBanner) && !systemAnnouncement && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-full px-4 pointer-events-none">
+          <div className="space-y-1.5 pointer-events-auto">
+            {maintenanceStatus?.active && (
+              <div className="px-4 py-2 rounded-xl border border-rose-500/40 bg-rose-500/20 text-rose-100 text-xs font-semibold flex items-center justify-between gap-3 backdrop-blur-xl shadow-lg">
+                <span>🛠️ Bakım Modu Aktif: {maintenanceStatus.message}</span>
+              </div>
+            )}
+            {pinnedBanner && (
+              <div className="px-4 py-2 rounded-xl border border-amber-500/40 bg-amber-500/20 text-amber-100 text-xs font-semibold flex items-center justify-between gap-3 backdrop-blur-xl shadow-lg">
+                <span>📌 Sabit Duyuru ({pinnedBanner.sender}): {pinnedBanner.message}</span>
+              </div>
+            )}
           </div>
         </div>
       )}

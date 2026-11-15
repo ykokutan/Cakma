@@ -64,6 +64,7 @@ export interface User {
   xp?: number;
   isBanned?: boolean;
   bannedReason?: string;
+  bannedUntil?: number | null;
   twoFactorEnabled?: boolean;
 }
 
@@ -88,6 +89,7 @@ export interface RegisteredAccount {
   xp?: number;
   isBanned?: boolean;
   bannedReason?: string;
+  bannedUntil?: number | null;
   twoFactorEnabled?: boolean;
   twoFactorSecret?: string;
   pendingTwoFactorSecret?: string;

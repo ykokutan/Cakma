@@ -53,6 +53,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     adminKickUser,
     adminDeleteChannel,
     adminBroadcastAnnouncement,
+    adminClearPinnedBanner,
     generateDedicatedLicense,
     adminRevokeLicense,
     adminActivateLicense,
@@ -63,6 +64,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     adminUpdateWallet,
     adminBanUser,
     adminUnbanUser,
+    adminResetUser2fa,
+    adminBanIp,
+    adminUnbanIp,
+    adminExportFullBackup,
+    adminRestoreFullBackup,
     adminResetUserPassword,
     adminCreateChannel,
     adminDeleteServer,
@@ -99,11 +105,25 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   });
   const [sysRegEnabled, setSysRegEnabled] = useState<boolean>(true);
   const [sysMaintenance, setSysMaintenance] = useState<boolean>(false);
+  const [sysMaintMsg, setSysMaintMsg] = useState<string>('Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.');
   const [sysStrongPass, setSysStrongPass] = useState<boolean>(false);
   const [sysMaxMsgLen, setSysMaxMsgLen] = useState<number>(2000);
   const [sysSlowmode, setSysSlowmode] = useState<number>(0);
   const [sysMaxUploadMb, setSysMaxUploadMb] = useState<number>(5);
+  const [sysMaxLoginAttempts, setSysMaxLoginAttempts] = useState<number>(5);
+  const [sysLockoutMins, setSysLockoutMins] = useState<number>(15);
+  const [sysGlobalBlockLinks, setSysGlobalBlockLinks] = useState<boolean>(false);
+  const [sysGlobalBannedWordsText, setSysGlobalBannedWordsText] = useState<string>('');
   const [isSystemDirty, setIsSystemDirty] = useState<boolean>(false);
+
+  const [ipBanInput, setIpBanInput] = useState<string>('');
+  const [ipBanReason, setIpBanReason] = useState<string>('Şüpheli trafik / kural ihlali');
+  const [ipBanDuration, setIpBanDuration] = useState<number>(0);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  const [broadcastTarget, setBroadcastTarget] = useState<'all' | 'admins' | 'server'>('all');
+  const [broadcastServerId, setBroadcastServerId] = useState<string>('');
+  const [broadcastPinBanner, setBroadcastPinBanner] = useState<boolean>(false);
 
   useEffect(() => {
     try {
@@ -115,10 +135,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     if (adminData?.systemConfig && !isSystemDirty) {
       setSysRegEnabled(adminData.systemConfig.registrationEnabled);
       setSysMaintenance(adminData.systemConfig.maintenanceMode);
+      setSysMaintMsg(adminData.systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.');
       setSysStrongPass(adminData.systemConfig.requireStrongPasswords);
       setSysMaxMsgLen(adminData.systemConfig.maxMessageLength);
       setSysSlowmode(adminData.systemConfig.defaultSlowmodeSeconds);
       setSysMaxUploadMb(adminData.systemConfig.maxUploadSizeMb);
+      setSysMaxLoginAttempts(adminData.systemConfig.maxLoginAttempts ?? 5);
+      setSysLockoutMins(adminData.systemConfig.loginLockoutMinutes ?? 15);
+      setSysGlobalBlockLinks(Boolean(adminData.systemConfig.globalBlockLinks));
+      setSysGlobalBannedWordsText((adminData.systemConfig.globalBannedWords || []).join(', '));
     }
   }, [adminData?.systemConfig, isSystemDirty]);
 
@@ -134,7 +159,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [userFilter, setUserFilter] = useState<'all' | 'online' | 'banned' | 'admin'>('all');
   const [newChannelInputs, setNewChannelInputs] = useState<Record<string, { name: string; type: 'text' | 'voice' }>>({});
   const [logSearchQuery, setLogSearchQuery] = useState('');
-  const [logTypeFilter, setLogTypeFilter] = useState<'all' | 'info' | 'warn' | 'voice' | 'auth'>('all');
+  const [logTypeFilter, setLogTypeFilter] = useState<'all' | 'info' | 'warn' | 'voice' | 'auth' | 'security'>('all');
 
   // License Generator State
   const [licCustomer, setLicCustomer] = useState('');
@@ -237,7 +262,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const handleSendBroadcast = (e: React.FormEvent) => {
     e.preventDefault();
     if (!broadcastMessage.trim()) return;
-    adminBroadcastAnnouncement(broadcastMessage.trim());
+    adminBroadcastAnnouncement(broadcastMessage.trim(), {
+      target: broadcastTarget,
+      serverId: broadcastTarget === 'server' ? (broadcastServerId || adminData?.servers?.[0]?.id) : undefined,
+      pinBanner: broadcastPinBanner,
+    });
     setBroadcastMessage('');
     setAnnouncementSent(true);
     setTimeout(() => setAnnouncementSent(false), 3000);
@@ -485,8 +514,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
 
                   <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
                     <div>
-                      <div className="text-sm font-semibold text-white">Bakım Modu İşareti</div>
-                      <div className="text-xs text-white/45">Sistem bakım durumunu kayıt altında tutar.</div>
+                      <div className="text-sm font-semibold text-white">Bakım Modu (Aktif Erişim Duvarı)</div>
+                      <div className="text-xs text-white/45">Açıkken admin olmayanların giriş ve kayıt işlemleri engellenir.</div>
                     </div>
                     <button
                       type="button"
@@ -495,6 +524,71 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     >
                       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysMaintenance ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/50 mb-1.5">Bakım Modu Mesajı</label>
+                    <input
+                      type="text"
+                      value={sysMaintMsg}
+                      onChange={(e) => { setSysMaintMsg(e.target.value); setIsSystemDirty(true); }}
+                      placeholder="Örn: Sistem planlı bakım çalışması nedeniyle kısa süreliğine kapalıdır."
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+
+                {/* Brute-Force & Global Anti-Spam Card */}
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+                  <div className="text-xs font-bold uppercase tracking-wider text-rose-300">Brute-Force & Global Anti-Spam</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 mb-1.5">Maks. Hatalı Giriş Denemesi</label>
+                      <input
+                        type="number"
+                        min={3}
+                        max={20}
+                        value={sysMaxLoginAttempts}
+                        onChange={(e) => { setSysMaxLoginAttempts(Number(e.target.value)); setIsSystemDirty(true); }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 mb-1.5">IP Kilitleme Süresi (dk)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={sysLockoutMins}
+                        onChange={(e) => { setSysLockoutMins(Number(e.target.value)); setIsSystemDirty(true); }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Global Harici Link Engeli</div>
+                      <div className="text-xs text-white/45">Tüm sunucularda standart kullanıcıların URL paylaşmasını engeller.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setSysGlobalBlockLinks(!sysGlobalBlockLinks); setIsSystemDirty(true); }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysGlobalBlockLinks ? 'bg-rose-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysGlobalBlockLinks ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/50 mb-1.5">Global Yasaklı Kelimeler (virgülle ayırın)</label>
+                    <input
+                      type="text"
+                      value={sysGlobalBannedWordsText}
+                      onChange={(e) => { setSysGlobalBannedWordsText(e.target.value); setIsSystemDirty(true); }}
+                      placeholder="Örn: spamkelime, yasaksite, reklam"
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                    />
                   </div>
                 </div>
 
@@ -562,36 +656,155 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
 
+                {/* IP Ban Management Card */}
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-wider text-amber-300">IP Engelleme Listesi ({adminData?.bannedIps?.length || 0})</div>
+                      <div className="text-[11px] text-white/45">Engellenen IP adresleri yeni soket bağlantısı kuramaz.</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                    <input
+                      type="text"
+                      value={ipBanInput}
+                      onChange={(e) => setIpBanInput(e.target.value)}
+                      placeholder="IP adresi (örn. 192.168.1.50)"
+                      className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                    />
+                    <input
+                      type="text"
+                      value={ipBanReason}
+                      onChange={(e) => setIpBanReason(e.target.value)}
+                      placeholder="Sebep"
+                      className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                    />
+                    <select
+                      value={ipBanDuration}
+                      onChange={(e) => setIpBanDuration(Number(e.target.value))}
+                      className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                    >
+                      <option value={0}>Kalıcı</option>
+                      <option value={60}>1 Saat</option>
+                      <option value={1440}>24 Saat</option>
+                      <option value={10080}>7 Gün</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!ipBanInput.trim()) return;
+                        adminBanIp(ipBanInput.trim(), ipBanReason.trim(), ipBanDuration);
+                        setIpBanInput('');
+                      }}
+                      className="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-200 hover:text-white border border-rose-500/30 text-xs font-bold transition"
+                    >
+                      IP Engelle
+                    </button>
+                  </div>
+                  {(adminData?.bannedIps || []).length > 0 && (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {(adminData?.bannedIps || []).map((b) => (
+                        <div key={b.ip} className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between gap-2 text-xs">
+                          <div className="min-w-0">
+                            <span className="font-mono font-bold text-rose-300">{b.ip}</span>
+                            <span className="text-white/50 ml-2 truncate">{b.reason}</span>
+                            {b.expiresAt && (
+                              <span className="text-[10px] text-amber-300 ml-2">
+                                (Bitiş: {new Date(b.expiresAt).toLocaleString('tr-TR')})
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => adminUnbanIp(b.ip)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-bold shrink-0 transition"
+                          >
+                            Engeli Kaldır
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      exportJsonFile(`cakma-system-backup-${new Date().toISOString().slice(0, 10)}.json`, {
-                        exportedAt: new Date().toISOString(),
-                        stats: adminData?.stats,
-                        systemConfig: adminData?.systemConfig,
-                        storeSettings: adminData?.storeSettings,
-                        serversCount: adminData?.servers?.length || 0,
-                        usersCount: adminData?.registeredUsers?.length || 0,
-                        auditLogs: adminData?.auditLogs || [],
-                      })
-                    }
-                    className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white text-xs font-semibold flex items-center gap-2 transition"
-                  >
-                    <Download className="w-3.5 h-3.5 text-teal-400" />
-                    Sistem Yedeği İndir (JSON)
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        exportJsonFile(`cakma-system-backup-${new Date().toISOString().slice(0, 10)}.json`, {
+                          exportedAt: new Date().toISOString(),
+                          stats: adminData?.stats,
+                          systemConfig: adminData?.systemConfig,
+                          storeSettings: adminData?.storeSettings,
+                          serversCount: adminData?.servers?.length || 0,
+                          usersCount: adminData?.registeredUsers?.length || 0,
+                          auditLogs: adminData?.auditLogs || [],
+                        })
+                      }
+                      className="px-3.5 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white text-xs font-semibold flex items-center gap-2 transition"
+                    >
+                      <Download className="w-3.5 h-3.5 text-teal-400" />
+                      Özet JSON
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => adminExportFullBackup()}
+                      className="px-3.5 py-2.5 rounded-xl bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/30 text-teal-200 text-xs font-semibold flex items-center gap-2 transition"
+                    >
+                      <Download className="w-3.5 h-3.5 text-teal-300" />
+                      Tam Veri Yedeği İndir
+                    </button>
+
+                    <input
+                      ref={restoreInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        try {
+                          const text = await file.text();
+                          const parsed = JSON.parse(text);
+                          if (confirm(`"${file.name}" yedeğini geri yüklemek istediğinize emin misiniz? Mevcut verilerin üzerine yazılacaktır.`)) {
+                            adminRestoreFullBackup(parsed);
+                          }
+                        } catch {
+                          alert('Geçersiz JSON yedek dosyası.');
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => restoreInputRef.current?.click()}
+                      className="px-3.5 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-200 text-xs font-semibold transition"
+                    >
+                      Yedekten Geri Yükle
+                    </button>
+                  </div>
 
                   <button
                     type="button"
                     onClick={() => {
+                      const bannedWords = sysGlobalBannedWordsText
+                        .split(',')
+                        .map((w) => w.trim())
+                        .filter(Boolean);
                       adminUpdateSystemConfig({
                         registrationEnabled: sysRegEnabled,
                         maintenanceMode: sysMaintenance,
+                        maintenanceMessage: sysMaintMsg,
                         requireStrongPasswords: sysStrongPass,
                         maxMessageLength: sysMaxMsgLen,
                         defaultSlowmodeSeconds: sysSlowmode,
                         maxUploadSizeMb: sysMaxUploadMb,
+                        maxLoginAttempts: sysMaxLoginAttempts,
+                        loginLockoutMinutes: sysLockoutMins,
+                        globalBlockLinks: sysGlobalBlockLinks,
+                        globalBannedWords: bannedWords,
                       });
                       setIsSystemDirty(false);
                     }}
@@ -730,6 +943,29 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
               </div>
+
+              {/* Storage & Data Observability */}
+              {adminData?.storageStats && (
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Server className="w-4 h-4 text-teal-400" />
+                      Veri Depolama & Disk Analizi
+                    </h3>
+                    <span className="text-xs font-mono font-bold text-teal-300">
+                      Toplam: {(adminData.storageStats.totalBytes / 1024).toFixed(1)} KB
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {adminData.storageStats.files.slice(0, 8).map((f) => (
+                      <div key={f.name} className="p-2.5 rounded-xl bg-black/25 border border-white/5 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-mono text-white/75 truncate">{f.name}</span>
+                        <span className="font-mono text-amber-300 shrink-0">{(f.bytes / 1024).toFixed(1)} KB</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -969,6 +1205,29 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
               </div>
+
+              {/* Storage & Data Observability */}
+              {adminData?.storageStats && (
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <Server className="w-4 h-4 text-teal-400" />
+                      Veri Depolama & Disk Analizi
+                    </h3>
+                    <span className="text-xs font-mono font-bold text-teal-300">
+                      Toplam: {(adminData.storageStats.totalBytes / 1024).toFixed(1)} KB
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {adminData.storageStats.files.slice(0, 8).map((f) => (
+                      <div key={f.name} className="p-2.5 rounded-xl bg-black/25 border border-white/5 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-mono text-white/75 truncate">{f.name}</span>
+                        <span className="font-mono text-amber-300 shrink-0">{(f.bytes / 1024).toFixed(1)} KB</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1169,6 +1428,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                                 Şifre
                               </button>
 
+                              {u.twoFactorEnabled && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm(`${u.username} kullanıcısının 2FA korumasını sıfırlamak istediğinize emin misiniz?`)) {
+                                      adminResetUser2fa(u.username);
+                                    }
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold transition border border-amber-500/20"
+                                  title="2FA Sıfırla"
+                                >
+                                  2FA Sıfırla
+                                </button>
+                              )}
+
                               {u.isBanned ? (
                                 <button
                                   type="button"
@@ -1182,7 +1456,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                                   type="button"
                                   onClick={() => {
                                     const reason = prompt(`${u.username} hesabını yasaklama sebebi:`, 'Kural ihlali');
-                                    if (reason !== null) adminBanUser(u.username, reason || 'Kural ihlali');
+                                    if (reason === null) return;
+                                    const minsRaw = prompt('Yasaklama süresi (dakika, 0 = Kalıcı, 60 = 1 saat, 1440 = 1 gün):', '0');
+                                    if (minsRaw === null) return;
+                                    const mins = Math.max(0, Number(minsRaw) || 0);
+                                    adminBanUser(u.username, reason || 'Kural ihlali', mins);
                                   }}
                                   className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white text-[10px] font-bold transition border border-rose-500/30"
                                 >
@@ -1277,6 +1555,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                             <div className="flex items-center gap-3 text-[10px] text-white/45 shrink-0 font-mono">
                               <span>Giriş: {log.connectedAt}</span>
                               {log.disconnectedAt && <span>Çıkış: {log.disconnectedAt}</span>}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const reason = prompt(`${log.ip} IP adresini engelleme sebebi:`, `${inspectedUsername} üzerinden engellendi`);
+                                  if (reason !== null) adminBanIp(log.ip, reason || 'Yönetici engeli', 0);
+                                }}
+                                className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white font-sans font-semibold transition"
+                              >
+                                IP Engelle
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -2272,7 +2560,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
           {activeTab === 'logs' && (() => {
             const allLogs = adminData?.auditLogs || [];
             const filteredLogs = allLogs.filter((log) => {
-              if (logTypeFilter !== 'all' && log.type !== logTypeFilter) return false;
+              if (logTypeFilter === 'security') {
+                const act = (log.action || '').toUpperCase();
+                const isSec = act.includes('GUVENLIK') || act.includes('YASAK') || act.includes('IP_') || act.includes('2FA') || log.type === 'auth';
+                if (!isSec) return false;
+              } else if (logTypeFilter !== 'all' && log.type !== logTypeFilter) {
+                return false;
+              }
               if (logSearchQuery.trim()) {
                 const q = logSearchQuery.toLowerCase();
                 return log.action.toLowerCase().includes(q) || log.details.toLowerCase().includes(q);
@@ -2304,6 +2598,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   <div className="flex bg-white/5 p-0.5 rounded-xl border border-white/10 text-[11px]">
                     {[
                       { id: 'all', label: 'Tümü' },
+                      { id: 'security', label: 'Güvenlik' },
                       { id: 'info', label: 'Bilgi' },
                       { id: 'warn', label: 'Uyarı' },
                       { id: 'auth', label: 'Yetki' },
@@ -2390,7 +2685,62 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 </div>
               )}
 
+              {adminData?.pinnedBanner && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 flex items-center justify-between gap-3">
+                  <div className="text-xs text-amber-100">
+                    <span className="font-bold text-amber-300">📌 Aktif Sabit Banner: </span>
+                    {adminData.pinnedBanner.message}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => adminClearPinnedBanner()}
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-200 hover:text-white text-[10px] font-bold shrink-0 transition"
+                  >
+                    Bannerı Kaldır
+                  </button>
+                </div>
+              )}
+
               <form onSubmit={handleSendBroadcast} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/50 mb-1">Hedef Kitle</label>
+                    <select
+                      value={broadcastTarget}
+                      onChange={(e) => setBroadcastTarget(e.target.value as any)}
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                    >
+                      <option value="all">Tüm Bağlı Kullanıcılar</option>
+                      <option value="admins">Yalnızca Sistem Yöneticileri</option>
+                      <option value="server">Belirli Bir Sunucu Üyeleri</option>
+                    </select>
+                  </div>
+                  {broadcastTarget === 'server' && (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 mb-1">Hedef Sunucu</label>
+                      <select
+                        value={broadcastServerId || adminData?.servers?.[0]?.id || ''}
+                        onChange={(e) => setBroadcastServerId(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      >
+                        {(adminData?.servers || []).map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                <label className="flex items-center gap-2.5 text-xs text-white/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={broadcastPinBanner}
+                    onChange={(e) => setBroadcastPinBanner(e.target.checked)}
+                    className="rounded border-white/20 bg-black/40 text-amber-500 focus:ring-amber-500"
+                  />
+                  <span>Kalıcı Üst Banner olarak sabitle (yeni bağlananlar da görür)</span>
+                </label>
+
                 <textarea
                   required
                   rows={4}

@@ -29,7 +29,9 @@ import {
   loadFriendRequests, saveFriendRequests,
   loadConnectionLogs, saveConnectionLogs,
   loadServerLevels, saveServerLevels,
-  loadSystemConfig, saveSystemConfig, SystemConfig
+  loadSystemConfig, saveSystemConfig, SystemConfig,
+  loadBannedIps, saveBannedIps, BannedIpRecord,
+  getStorageStats, exportAllDataBundle, importAllDataBundle
 } from './storage.js';
 
 // --- SECURITY & CRYPTOGRAPHIC HELPERS ---
@@ -108,10 +110,12 @@ export function checkLoginRateLimit(ip: string): { allowed: boolean; retryAfterS
 
 export function recordFailedLogin(ip: string): void {
   const now = Date.now();
+  const maxAttempts = systemConfig?.maxLoginAttempts ? Math.min(Math.max(systemConfig.maxLoginAttempts, 3), 20) : 5;
+  const lockoutMins = systemConfig?.loginLockoutMinutes ? Math.min(Math.max(systemConfig.loginLockoutMinutes, 1), 120) : 15;
   const entry = loginRateLimits.get(ip) || { count: 0 };
   entry.count++;
-  if (entry.count >= 5) {
-    entry.blockedUntil = now + 15 * 60 * 1000; // 15 minutes block
+  if (entry.count >= maxAttempts) {
+    entry.blockedUntil = now + lockoutMins * 60 * 1000;
     entry.count = 0;
   }
   loginRateLimits.set(ip, entry);
@@ -467,12 +471,29 @@ if (issuedLicenses.size === 0) {
 const defaultSystemConfig: SystemConfig = {
   registrationEnabled: true,
   maintenanceMode: false,
+  maintenanceMessage: 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.',
   maxMessageLength: 2000,
   defaultSlowmodeSeconds: 0,
   maxUploadSizeMb: 5,
   requireStrongPasswords: false,
+  maxLoginAttempts: 5,
+  loginLockoutMinutes: 15,
+  globalBlockLinks: false,
+  globalBannedWords: [],
+  pinnedBanner: null,
 };
 let systemConfig: SystemConfig = loadSystemConfig(defaultSystemConfig);
+let bannedIps: BannedIpRecord[] = loadBannedIps();
+
+function findActiveIpBan(ip: string): BannedIpRecord | undefined {
+  const now = Date.now();
+  const active = bannedIps.filter((b) => !b.expiresAt || b.expiresAt > now);
+  if (active.length !== bannedIps.length) {
+    bannedIps = active;
+    saveBannedIps(bannedIps);
+  }
+  return bannedIps.find((b) => b.ip === ip);
+}
 
 // Store Settings & Pricing (Admin configurable)
 const defaultStoreSettings: StoreSettings = {
@@ -1092,6 +1113,21 @@ function hasDangerousAttachment(attachments?: MessageAttachment[]): boolean {
 
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
+  const initialIp = getClientIp(socket);
+  const activeIpBan = findActiveIpBan(initialIp);
+  if (activeIpBan) {
+    socket.emit('kicked_by_admin', {
+      reason: `IP adresiniz (${initialIp}) sistem yöneticisi tarafından engellendi. Sebep: ${activeIpBan.reason}`
+    });
+    socket.disconnect(true);
+    return;
+  }
+
+  socket.emit('system_maintenance_status', {
+    active: Boolean(systemConfig.maintenanceMode),
+    message: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır.'
+  });
+  socket.emit('pinned_banner_updated', systemConfig.pinnedBanner || null);
 
   // Real-time Ping & Network Measurement Check
   socket.on('ping_check', (_ts: number, callback: any) => {
@@ -1104,13 +1140,26 @@ io.on('connection', (socket: Socket) => {
 
   // 1. REGISTER (Kayıt Olma)
   socket.on('auth_register', ({ username, email, password, avatar }: any) => {
+    const clientIp = getClientIp(socket);
+    const ipBan = findActiveIpBan(clientIp);
+    if (ipBan) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
+      });
+    }
+    if (systemConfig.maintenanceMode) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.'
+      });
+    }
     if (!systemConfig.registrationEnabled) {
       return socket.emit('auth_response', {
         success: false,
         error: 'Yeni üye kayıtları sistem yöneticisi tarafından geçici olarak kapatılmıştır.'
       });
     }
-    const clientIp = getClientIp(socket);
     const regCheck = checkRegisterRateLimit(clientIp);
     if (!regCheck.allowed) {
       return socket.emit('auth_response', {
@@ -1215,6 +1264,13 @@ io.on('connection', (socket: Socket) => {
   // 2. LOGIN (Giriş Yapma)
   socket.on('auth_login', ({ usernameOrEmail, password }: any) => {
     const clientIp = getClientIp(socket);
+    const ipBan = findActiveIpBan(clientIp);
+    if (ipBan) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
+      });
+    }
     const rateCheck = checkLoginRateLimit(clientIp);
     if (!rateCheck.allowed) {
       addAuditLog('GUVENLIK_ENGELI', `IP (${clientIp}) çok fazla başarısız giriş denemesi nedeniyle engellendi.`, 'auth');
@@ -1244,9 +1300,27 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (foundAccount.isBanned) {
+      if (foundAccount.bannedUntil && Date.now() >= foundAccount.bannedUntil) {
+        foundAccount.isBanned = false;
+        foundAccount.bannedReason = '';
+        foundAccount.bannedUntil = null;
+        saveAccounts(registeredAccounts);
+        addAuditLog('YASAK_SURESI_DOLDU', `"${foundAccount.username}" hesabının süreli yasağı otomatik olarak sona erdi.`, 'info');
+      } else {
+        const remainingText = foundAccount.bannedUntil
+          ? ` (Kalan süre: ~${Math.max(1, Math.ceil((foundAccount.bannedUntil - Date.now()) / 60000))} dk)`
+          : '';
+        return socket.emit('auth_response', {
+          success: false,
+          error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${remainingText}${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
+        });
+      }
+    }
+
+    if (systemConfig.maintenanceMode && foundAccount.role !== 'admin') {
       return socket.emit('auth_response', {
         success: false,
-        error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
+        error: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Yalnızca sistem yöneticileri giriş yapabilir.'
       });
     }
 
@@ -1426,6 +1500,14 @@ io.on('connection', (socket: Socket) => {
   // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz)
   socket.on('auth_token_login', ({ token }: { token: string }) => {
     const clientIp = getClientIp(socket);
+    const ipBan = findActiveIpBan(clientIp);
+    if (ipBan) {
+      return socket.emit('auth_response', {
+        success: false,
+        tokenExpired: true,
+        error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
+      });
+    }
     const verified = verifySessionTokenWithMeta(token);
     if (!verified) {
       return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' });
@@ -1441,10 +1523,25 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (foundAccount.isBanned) {
+      if (foundAccount.bannedUntil && Date.now() >= foundAccount.bannedUntil) {
+        foundAccount.isBanned = false;
+        foundAccount.bannedReason = '';
+        foundAccount.bannedUntil = null;
+        saveAccounts(registeredAccounts);
+      } else {
+        return socket.emit('auth_response', {
+          success: false,
+          tokenExpired: true,
+          error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
+        });
+      }
+    }
+
+    if (systemConfig.maintenanceMode && foundAccount.role !== 'admin') {
       return socket.emit('auth_response', {
         success: false,
         tokenExpired: true,
-        error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
+        error: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.'
       });
     }
 
@@ -1536,7 +1633,29 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    // 0.5 AutoMod Link & Banned Word Filter (non-admins)
+    // 0.5 Global & Server AutoMod Filter (non-admins)
+    if (sender.role !== 'admin') {
+      const maxLen = systemConfig.maxMessageLength || 2000;
+      if (rawContent.length > maxLen) {
+        return socket.emit('chat_flood_error', {
+          message: `Mesajınız sistem mesaj uzunluğu sınırını (${maxLen} karakter) aşıyor.`
+        });
+      }
+      if (systemConfig.globalBlockLinks && /(https?:\/\/|discord\.gg\/|www\.)/i.test(rawContent)) {
+        return socket.emit('chat_flood_error', {
+          message: 'Sistem Güvenlik Filtresi: Harici bağlantı paylaşımı tüm sunucularda kapatılmıştır.'
+        });
+      }
+      if (Array.isArray(systemConfig.globalBannedWords) && systemConfig.globalBannedWords.length > 0) {
+        const lowerRawGlobal = rawContent.toLowerCase();
+        if (systemConfig.globalBannedWords.some((w) => w && lowerRawGlobal.includes(w.toLowerCase()))) {
+          return socket.emit('chat_flood_error', {
+            message: 'Sistem Güvenlik Filtresi: Mesajınız global yasaklı kelime içerdiği için engellendi.'
+          });
+        }
+      }
+    }
+
     if (targetSrv?.autoModEnabled && sender.role !== 'admin') {
       if (targetSrv.autoModConfig?.blockLinks && /(https?:\/\/|discord\.gg\/|www\.)/i.test(rawContent)) {
         return socket.emit('chat_flood_error', {
@@ -1559,16 +1678,25 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    // 2. Malware & Executable File Attachment Blocking
+    // 2. Malware & Executable File Attachment Blocking + Upload Size Limit
     if (hasDangerousAttachment(attachments)) {
       addAuditLog('GUVENLIK_ENGELI', `${sender.username} zararlı/çalıştırılabilir dosya (.exe, .bat vb.) yüklemeye çalıştı ve engellendi.`, 'warn');
       return socket.emit('file_security_error', {
         message: 'Güvenlik gereği çalıştırılabilir veya tehlikeli dosya türleri (.exe, .bat, .cmd, .scr vb.) yüklenemez.'
       });
     }
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      const maxBytes = (systemConfig.maxUploadSizeMb || 5) * 1024 * 1024;
+      const oversized = attachments.some((att) => (att.size || 0) > maxBytes || (att.url && att.url.length > maxBytes * 1.4));
+      if (oversized) {
+        return socket.emit('file_security_error', {
+          message: `Dosya boyutu sistem limitini (${systemConfig.maxUploadSizeMb || 5} MB) aşıyor.`
+        });
+      }
+    }
 
     // 3. Sanitize message content to prevent XSS / HTML injection attacks while preserving formatting
-    const textContent = sanitizeText(rawContent).slice(0, 4000);
+    const textContent = sanitizeText(rawContent).slice(0, systemConfig.maxMessageLength || 2000);
 
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -3547,7 +3675,9 @@ io.on('connection', (socket: Socket) => {
         createdAt: acc.createdAt,
         walletBalance: acc.walletBalance ?? 0,
         isBanned: Boolean(acc.isBanned),
-        bannedReason: acc.bannedReason || ''
+        bannedReason: acc.bannedReason || '',
+        bannedUntil: acc.bannedUntil || null,
+        twoFactorEnabled: Boolean(acc.twoFactorEnabled),
       })),
       servers,
       auditLogs,
@@ -3555,23 +3685,40 @@ io.on('connection', (socket: Socket) => {
       issuedLicenses: Array.from(issuedLicenses.values()),
       storeSettings,
       connectionLogs,
-      systemConfig
+      systemConfig,
+      bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
+      storageStats: getStorageStats(),
+      pinnedBanner: systemConfig.pinnedBanner || null
     });
   });
 
   // Admin: Update Runtime System Configuration
-  socket.on('admin_update_system_config', (nextCfg: Partial<typeof systemConfig>) => {
+  socket.on('admin_update_system_config', (nextCfg: Partial<SystemConfig>) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
     if (typeof nextCfg.registrationEnabled === 'boolean') systemConfig.registrationEnabled = nextCfg.registrationEnabled;
     if (typeof nextCfg.maintenanceMode === 'boolean') systemConfig.maintenanceMode = nextCfg.maintenanceMode;
+    if (typeof nextCfg.maintenanceMessage === 'string') systemConfig.maintenanceMessage = sanitizeText(nextCfg.maintenanceMessage.trim()).slice(0, 240);
     if (typeof nextCfg.requireStrongPasswords === 'boolean') systemConfig.requireStrongPasswords = nextCfg.requireStrongPasswords;
     if (typeof nextCfg.maxMessageLength === 'number') systemConfig.maxMessageLength = Math.min(Math.max(nextCfg.maxMessageLength, 200), 8000);
     if (typeof nextCfg.defaultSlowmodeSeconds === 'number') systemConfig.defaultSlowmodeSeconds = Math.min(Math.max(nextCfg.defaultSlowmodeSeconds, 0), 120);
     if (typeof nextCfg.maxUploadSizeMb === 'number') systemConfig.maxUploadSizeMb = Math.min(Math.max(nextCfg.maxUploadSizeMb, 1), 25);
+    if (typeof nextCfg.maxLoginAttempts === 'number') systemConfig.maxLoginAttempts = Math.min(Math.max(nextCfg.maxLoginAttempts, 3), 20);
+    if (typeof nextCfg.loginLockoutMinutes === 'number') systemConfig.loginLockoutMinutes = Math.min(Math.max(nextCfg.loginLockoutMinutes, 1), 120);
+    if (typeof nextCfg.globalBlockLinks === 'boolean') systemConfig.globalBlockLinks = nextCfg.globalBlockLinks;
+    if (Array.isArray(nextCfg.globalBannedWords)) {
+      systemConfig.globalBannedWords = nextCfg.globalBannedWords
+        .map((w) => sanitizeText(String(w).trim()).toLowerCase())
+        .filter(Boolean)
+        .slice(0, 100);
+    }
 
     saveSystemConfig(systemConfig);
-    addAuditLog('SISTEM_AYARLARI_GUNCELLENDI', `${requester.username} sistem yapılandırmasını güncelledi.`, 'info');
+    io.emit('system_maintenance_status', {
+      active: Boolean(systemConfig.maintenanceMode),
+      message: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır.'
+    });
+    addAuditLog('SISTEM_AYARLARI_GUNCELLENDI', `${requester.username} sistem yapılandırmasını güncelledi.${systemConfig.maintenanceMode ? ' [BAKIM MODU AKTİF]' : ''}`, systemConfig.maintenanceMode ? 'warn' : 'info');
     socket.emit('admin_feedback', { type: 'success', message: 'Sistem yapılandırması başarıyla kaydedildi.' });
     socket.emit('admin_action_success', 'Sistem yapılandırması başarıyla kaydedildi.');
     io.emit('audit_log_added', auditLogs[0]);
@@ -3632,8 +3779,8 @@ io.on('connection', (socket: Socket) => {
     socket.emit('admin_action_success', `"${acc.username}" bakiyesi ₺${nextBalance} olarak güncellendi.`);
   });
 
-  // Admin: Ban user account
-  socket.on('admin_ban_user', ({ targetUsername, reason }: { targetUsername: string; reason?: string }) => {
+  // Admin: Ban user account (supports permanent or temporary durationMinutes)
+  socket.on('admin_ban_user', ({ targetUsername, reason, durationMinutes }: { targetUsername: string; reason?: string; durationMinutes?: number }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
 
@@ -3646,20 +3793,22 @@ io.on('connection', (socket: Socket) => {
     }
 
     const cleanReason = sanitizeText((reason || 'Yönetici tarafından sistemden yasaklandı.').trim()).slice(0, 160);
+    const mins = typeof durationMinutes === 'number' && durationMinutes > 0 ? Math.min(durationMinutes, 525600) : 0;
     acc.isBanned = true;
     acc.bannedReason = cleanReason;
+    acc.bannedUntil = mins > 0 ? Date.now() + mins * 60 * 1000 : null;
     saveAccounts(registeredAccounts);
 
     for (const [sockId, u] of activeUsers.entries()) {
       if (u.username.toLowerCase() === acc.username.toLowerCase()) {
-        io.to(sockId).emit('kicked_by_admin', { reason: `Hesabınız yasaklandı: ${cleanReason}` });
+        io.to(sockId).emit('kicked_by_admin', { reason: `Hesabınız yasaklandı${mins > 0 ? ` (${mins} dk)` : ''}: ${cleanReason}` });
         const targetSock = io.sockets.sockets.get(sockId);
         if (targetSock) targetSock.disconnect(true);
       }
     }
 
-    addAuditLog('KULLANICI_YASAKLANDI', `${requester.username}, "${acc.username}" hesabını yasakladı. Sebep: ${cleanReason}`, 'warn');
-    socket.emit('admin_action_success', `"${acc.username}" hesabı yasaklandı.`);
+    addAuditLog('KULLANICI_YASAKLANDI', `${requester.username}, "${acc.username}" hesabını ${mins > 0 ? `${mins} dk süreli` : 'kalıcı'} yasakladı. Sebep: ${cleanReason}`, 'warn');
+    socket.emit('admin_action_success', `"${acc.username}" hesabı ${mins > 0 ? `${mins} dakika süreli` : 'kalıcı'} yasaklandı.`);
   });
 
   // Admin: Unban user account
@@ -3674,10 +3823,100 @@ io.on('connection', (socket: Socket) => {
 
     acc.isBanned = false;
     acc.bannedReason = '';
+    acc.bannedUntil = null;
     saveAccounts(registeredAccounts);
 
     addAuditLog('YASAK_KALDIRILDI', `${requester.username}, "${acc.username}" hesabının yasağını kaldırdı.`, 'info');
     socket.emit('admin_action_success', `"${acc.username}" hesabının yasağı kaldırıldı.`);
+  });
+
+  // Admin: Reset user 2FA
+  socket.on('admin_reset_user_2fa', ({ targetUsername }: { targetUsername: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+
+    const acc = registeredAccounts.get((targetUsername || '').toLowerCase());
+    if (!acc) {
+      return socket.emit('admin_action_error', 'Hedef kullanıcı hesabı bulunamadı.');
+    }
+    acc.twoFactorEnabled = false;
+    acc.twoFactorSecret = undefined;
+    acc.pendingTwoFactorSecret = undefined;
+    acc.twoFactorBackupCodes = undefined;
+    saveAccounts(registeredAccounts);
+
+    addAuditLog('2FA_SIFIRLANDI', `${requester.username}, "${acc.username}" kullanıcısının 2FA korumasını sıfırladı.`, 'warn');
+    socket.emit('admin_action_success', `"${acc.username}" kullanıcısının 2FA koruması sıfırlandı.`);
+  });
+
+  // Admin: Ban IP address
+  socket.on('admin_ban_ip', ({ ip, reason, durationMinutes }: { ip: string; reason?: string; durationMinutes?: number }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    const cleanIp = (ip || '').trim().slice(0, 64);
+    if (!cleanIp) return socket.emit('admin_action_error', 'Geçerli bir IP adresi girin.');
+    if (cleanIp === getClientIp(socket)) {
+      return socket.emit('admin_action_error', 'Kendi aktif IP adresinizi engelleyemezsiniz.');
+    }
+
+    const cleanReason = sanitizeText((reason || 'Yönetici tarafından engellendi.').trim()).slice(0, 160);
+    const mins = typeof durationMinutes === 'number' && durationMinutes > 0 ? Math.min(durationMinutes, 525600) : 0;
+    const record: BannedIpRecord = {
+      ip: cleanIp,
+      reason: cleanReason,
+      bannedBy: requester.username,
+      bannedAt: new Date().toISOString(),
+      expiresAt: mins > 0 ? Date.now() + mins * 60 * 1000 : null,
+    };
+    bannedIps = [record, ...bannedIps.filter((b) => b.ip !== cleanIp)];
+    saveBannedIps(bannedIps);
+
+    for (const [sockId] of activeUsers.entries()) {
+      const targetSock = io.sockets.sockets.get(sockId);
+      if (targetSock && getClientIp(targetSock) === cleanIp) {
+        targetSock.emit('kicked_by_admin', { reason: `IP adresiniz (${cleanIp}) engellendi: ${cleanReason}` });
+        targetSock.disconnect(true);
+      }
+    }
+
+    addAuditLog('IP_ENGELLENDI', `${requester.username}, ${cleanIp} IP adresini engelledi. Sebep: ${cleanReason}`, 'warn');
+    socket.emit('admin_action_success', `${cleanIp} IP adresi engellendi.`);
+  });
+
+  // Admin: Unban IP address
+  socket.on('admin_unban_ip', ({ ip }: { ip: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    const cleanIp = (ip || '').trim();
+    bannedIps = bannedIps.filter((b) => b.ip !== cleanIp);
+    saveBannedIps(bannedIps);
+    addAuditLog('IP_ENGELI_KALDIRILDI', `${requester.username}, ${cleanIp} IP engelini kaldırdı.`, 'info');
+    socket.emit('admin_action_success', `${cleanIp} IP engeli kaldırıldı.`);
+  });
+
+  // Admin: Full Backup Export
+  socket.on('admin_export_full_backup', () => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    const bundle = exportAllDataBundle();
+    addAuditLog('TAM_YEDEK_ALINDI', `${requester.username} tam sistem yedeğini dışa aktardı.`, 'info');
+    socket.emit('admin_full_backup_response', bundle);
+  });
+
+  // Admin: Full Backup Restore
+  socket.on('admin_restore_full_backup', (bundle: any) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    try {
+      const restoredFiles = importAllDataBundle(bundle);
+      // Reload runtime config & banned IPs immediately; full reload notice for heavy collections
+      systemConfig = loadSystemConfig(defaultSystemConfig);
+      bannedIps = loadBannedIps();
+      addAuditLog('YEDEK_GERI_YUKLENDI', `${requester.username} sistem yedeğini geri yükledi (${restoredFiles.length} dosya).`, 'warn');
+      socket.emit('admin_action_success', `${restoredFiles.length} veri dosyası geri yüklendi. Tüm verilerin tam etkinleşmesi için sunucuyu yeniden başlatmanız önerilir.`);
+    } catch (err: any) {
+      socket.emit('admin_action_error', err?.message || 'Yedek geri yüklenemedi.');
+    }
   });
 
   // Admin: Reset user password
@@ -3809,17 +4048,57 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  // Admin: System Broadcast Announcement
-  socket.on('admin_broadcast_announcement', ({ message }: { message: string }) => {
+  // Admin: System Broadcast Announcement (supports targeted & pinned banner)
+  socket.on('admin_broadcast_announcement', ({ message, target = 'all', serverId, pinBanner = false }: { message: string; target?: 'all' | 'admins' | 'server'; serverId?: string; pinBanner?: boolean }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
+    const cleanMsg = sanitizeText((message || '').trim()).slice(0, 500);
+    if (!cleanMsg) return;
 
-    addAuditLog('SISTEM_DUYURUSU', `Genel duyuru yapildi: "${message}" (Yetkili: ${requester.username})`, 'warn');
-    io.emit('system_announcement', {
+    const payload = {
       sender: requester.username,
-      message,
+      message: cleanMsg,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    });
+    };
+
+    if (pinBanner) {
+      systemConfig.pinnedBanner = {
+        message: cleanMsg,
+        sender: requester.username,
+        updatedAt: new Date().toISOString(),
+      };
+      saveSystemConfig(systemConfig);
+      io.emit('pinned_banner_updated', systemConfig.pinnedBanner);
+    }
+
+    if (target === 'admins') {
+      io.to('admins').emit('system_announcement', payload);
+      addAuditLog('SISTEM_DUYURUSU', `Yöneticilere özel duyuru yapıldı: "${cleanMsg}" (Yetkili: ${requester.username})`, 'warn');
+    } else if (target === 'server' && serverId) {
+      const srv = servers.find((s) => s.id === serverId);
+      const memberSet = new Set((srv?.members || []).map((m) => m.username.toLowerCase()));
+      for (const [sockId, u] of activeUsers.entries()) {
+        if (memberSet.has(u.username.toLowerCase())) {
+          io.to(sockId).emit('system_announcement', payload);
+        }
+      }
+      addAuditLog('SISTEM_DUYURUSU', `"${srv?.name || serverId}" sunucusuna duyuru yapıldı: "${cleanMsg}" (Yetkili: ${requester.username})`, 'warn');
+    } else {
+      io.emit('system_announcement', payload);
+      addAuditLog('SISTEM_DUYURUSU', `Genel duyuru yapıldı: "${cleanMsg}" (Yetkili: ${requester.username})`, 'warn');
+    }
+    socket.emit('admin_action_success', pinBanner ? 'Duyuru yayınlandı ve üst banner olarak sabitlendi.' : 'Duyuru başarıyla yayınlandı.');
+  });
+
+  // Admin: Clear Pinned Banner
+  socket.on('admin_clear_pinned_banner', () => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    systemConfig.pinnedBanner = null;
+    saveSystemConfig(systemConfig);
+    io.emit('pinned_banner_updated', null);
+    addAuditLog('SABIT_BANNER_KALDIRILDI', `${requester.username} sabit duyuru bannerını kaldırdı.`, 'info');
+    socket.emit('admin_action_success', 'Sabit duyuru bannerı kaldırıldı.');
   });
 
   // Admin: Generate Dedicated Server Cryptographic License (Assigned to registered user)

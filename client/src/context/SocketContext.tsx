@@ -57,6 +57,8 @@ interface SocketContextType {
 
   // System Announcement
   systemAnnouncement: { sender: string; message: string; timestamp: string } | null;
+  pinnedBanner: { message: string; sender: string; updatedAt: string } | null;
+  maintenanceStatus: { active: boolean; message: string };
   dismissAnnouncement: () => void;
 
   // Detailed Audio Settings
@@ -155,25 +157,50 @@ interface SocketContextType {
     systemConfig?: {
       registrationEnabled: boolean;
       maintenanceMode: boolean;
+      maintenanceMessage?: string;
       maxMessageLength: number;
       defaultSlowmodeSeconds: number;
       maxUploadSizeMb: number;
       requireStrongPasswords: boolean;
+      maxLoginAttempts?: number;
+      loginLockoutMinutes?: number;
+      globalBlockLinks?: boolean;
+      globalBannedWords?: string[];
+      pinnedBanner?: { message: string; sender: string; updatedAt: string } | null;
     };
+    bannedIps?: {
+      ip: string;
+      reason: string;
+      bannedBy: string;
+      bannedAt: string;
+      expiresAt?: number | null;
+    }[];
+    storageStats?: {
+      dataDir: string;
+      totalBytes: number;
+      files: { name: string; bytes: number }[];
+    };
+    pinnedBanner?: { message: string; sender: string; updatedAt: string } | null;
   } | null;
   fetchAdminData: () => void;
   adminUpdateSystemConfig: (cfg: {
     registrationEnabled?: boolean;
     maintenanceMode?: boolean;
+    maintenanceMessage?: string;
     maxMessageLength?: number;
     defaultSlowmodeSeconds?: number;
     maxUploadSizeMb?: number;
     requireStrongPasswords?: boolean;
+    maxLoginAttempts?: number;
+    loginLockoutMinutes?: number;
+    globalBlockLinks?: boolean;
+    globalBannedWords?: string[];
   }) => void;
   adminChangeRole: (targetUsername: string, newRole: 'admin' | 'user') => void;
   adminKickUser: (targetSocketId: string, reason?: string) => void;
   adminDeleteChannel: (serverId: string, channelId: string) => void;
-  adminBroadcastAnnouncement: (message: string) => void;
+  adminBroadcastAnnouncement: (message: string, options?: { target?: 'all' | 'admins' | 'server'; serverId?: string; pinBanner?: boolean }) => void;
+  adminClearPinnedBanner: () => void;
   generateDedicatedLicense: (data: { licensee: string; maxSlots: number; expireDays: number; tier: 'Starter' | 'Pro' | 'Enterprise'; assignedUsername?: string }) => void;
   adminRevokeLicense: (licenseId: string, reason?: string) => void;
   adminActivateLicense: (licenseId: string) => void;
@@ -181,8 +208,13 @@ interface SocketContextType {
   adminUpdateStoreSettings: (settings: StoreSettings) => void;
   adminClearConnectionLogs: () => void;
   adminUpdateWallet: (targetUsername: string, amount: number, mode?: 'set' | 'add') => void;
-  adminBanUser: (targetUsername: string, reason?: string) => void;
+  adminBanUser: (targetUsername: string, reason?: string, durationMinutes?: number) => void;
   adminUnbanUser: (targetUsername: string) => void;
+  adminResetUser2fa: (targetUsername: string) => void;
+  adminBanIp: (ip: string, reason?: string, durationMinutes?: number) => void;
+  adminUnbanIp: (ip: string) => void;
+  adminExportFullBackup: () => void;
+  adminRestoreFullBackup: (bundle: any) => void;
   adminResetUserPassword: (targetUsername: string, newPassword: string) => void;
   adminCreateChannel: (serverId: string, name: string, type: 'text' | 'voice') => void;
   adminDeleteServer: (serverId: string) => void;
@@ -444,6 +476,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
   const [systemAnnouncement, setSystemAnnouncement] = useState<{ sender: string; message: string; timestamp: string } | null>(null);
+  const [pinnedBanner, setPinnedBanner] = useState<{ message: string; sender: string; updatedAt: string } | null>(null);
+  const [maintenanceStatus, setMaintenanceStatus] = useState<{ active: boolean; message: string }>({ active: false, message: '' });
   const [currentServerHost, setCurrentServerHost] = useState<string>('localhost:4000');
 
   // Admin Dashboard State
@@ -1697,6 +1731,28 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSystemAnnouncement(announcement);
     });
 
+    newSocket.on('pinned_banner_updated', (banner) => {
+      setPinnedBanner(banner || null);
+    });
+
+    newSocket.on('system_maintenance_status', (status: { active: boolean; message: string }) => {
+      setMaintenanceStatus(status || { active: false, message: '' });
+    });
+
+    newSocket.on('admin_full_backup_response', (bundle: any) => {
+      try {
+        const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cakma-full-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch {}
+    });
+
     newSocket.on('kicked_by_admin', ({ reason }) => {
       alert(`Sunucudan atıldınız!\nSebep: ${reason}`);
       localStorage.removeItem('dc_clone_auth');
@@ -2191,8 +2247,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_delete_channel', { serverId, channelId });
   };
 
-  const adminBroadcastAnnouncement = (message: string) => {
-    socket?.emit('admin_broadcast_announcement', { message });
+  const adminBroadcastAnnouncement = (
+    message: string,
+    options?: { target?: 'all' | 'admins' | 'server'; serverId?: string; pinBanner?: boolean }
+  ) => {
+    socket?.emit('admin_broadcast_announcement', { message, ...options });
+  };
+
+  const adminClearPinnedBanner = () => {
+    socket?.emit('admin_clear_pinned_banner');
   };
 
   const generateDedicatedLicense = (data: {
@@ -2224,10 +2287,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const adminUpdateSystemConfig = (cfg: {
     registrationEnabled?: boolean;
     maintenanceMode?: boolean;
+    maintenanceMessage?: string;
     maxMessageLength?: number;
     defaultSlowmodeSeconds?: number;
     maxUploadSizeMb?: number;
     requireStrongPasswords?: boolean;
+    maxLoginAttempts?: number;
+    loginLockoutMinutes?: number;
+    globalBlockLinks?: boolean;
+    globalBannedWords?: string[];
   }) => {
     socket?.emit('admin_update_system_config', cfg);
     setTimeout(() => fetchAdminData(), 200);
@@ -2241,12 +2309,32 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_update_wallet', { targetUsername, amount, mode });
   };
 
-  const adminBanUser = (targetUsername: string, reason?: string) => {
-    socket?.emit('admin_ban_user', { targetUsername, reason });
+  const adminBanUser = (targetUsername: string, reason?: string, durationMinutes?: number) => {
+    socket?.emit('admin_ban_user', { targetUsername, reason, durationMinutes });
   };
 
   const adminUnbanUser = (targetUsername: string) => {
     socket?.emit('admin_unban_user', { targetUsername });
+  };
+
+  const adminResetUser2fa = (targetUsername: string) => {
+    socket?.emit('admin_reset_user_2fa', { targetUsername });
+  };
+
+  const adminBanIp = (ip: string, reason?: string, durationMinutes?: number) => {
+    socket?.emit('admin_ban_ip', { ip, reason, durationMinutes });
+  };
+
+  const adminUnbanIp = (ip: string) => {
+    socket?.emit('admin_unban_ip', { ip });
+  };
+
+  const adminExportFullBackup = () => {
+    socket?.emit('admin_export_full_backup');
+  };
+
+  const adminRestoreFullBackup = (bundle: any) => {
+    socket?.emit('admin_restore_full_backup', bundle);
   };
 
   const adminResetUserPassword = (targetUsername: string, newPassword: string) => {
@@ -3238,6 +3326,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         // System Announcement
         systemAnnouncement,
+        pinnedBanner,
+        maintenanceStatus,
         dismissAnnouncement,
 
         // Detailed Audio Settings
@@ -3310,6 +3400,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminKickUser,
         adminDeleteChannel,
         adminBroadcastAnnouncement,
+        adminClearPinnedBanner,
         generateDedicatedLicense,
         adminRevokeLicense,
         adminActivateLicense,
@@ -3320,6 +3411,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminUpdateWallet,
         adminBanUser,
         adminUnbanUser,
+        adminResetUser2fa,
+        adminBanIp,
+        adminUnbanIp,
+        adminExportFullBackup,
+        adminRestoreFullBackup,
         adminResetUserPassword,
         adminCreateChannel,
         adminDeleteServer,
