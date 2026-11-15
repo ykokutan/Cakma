@@ -2424,70 +2424,133 @@ io.on('connection', (socket: Socket) => {
     addAuditLog('PROFIL_GUNCELLE', `${user.username} profil bilgilerini güncelledi.`, 'info');
   });
 
-  // Direct 1-on-1 Voice Calling Relay
-  socket.on('direct_call_start', ({ targetUserId }: { targetUserId: string }) => {
+  // Direct 1-on-1 Voice Calling Relay (multi-session & username-aware)
+  socket.on('direct_call_start', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
     const caller = activeUsers.get(socket.id);
     if (!caller) return;
 
-    let targetSocketId: string | null = null;
-    for (const [sId, u] of activeUsers.entries()) {
-      if (u.id === targetUserId || u.username.toLowerCase() === targetUserId.toLowerCase()) {
-        targetSocketId = sId;
-        break;
+    // Resolve canonical target username from targetUsername, activeUsers, or registeredAccounts
+    let resolvedUsername = (targetUsername || '').trim().toLowerCase();
+    if (!resolvedUsername && targetUserId) {
+      const bySocket = activeUsers.get(targetUserId);
+      if (bySocket) {
+        resolvedUsername = bySocket.username.toLowerCase();
+      } else {
+        for (const u of activeUsers.values()) {
+          if (u.id === targetUserId || u.username.toLowerCase() === targetUserId.toLowerCase()) {
+            resolvedUsername = u.username.toLowerCase();
+            break;
+          }
+        }
+        if (!resolvedUsername) {
+          resolvedUsername = targetUserId.toLowerCase();
+        }
       }
     }
 
-    if (targetSocketId) {
-      const targetUser = activeUsers.get(targetSocketId);
-      if (targetUser?.blockedUsers?.includes(caller.username.toLowerCase())) {
-        return socket.emit('direct_call_declined', { reason: 'Bu kullanıcıya şu anda ulaşılamıyor.' });
+    const targetSocketIds: string[] = [];
+    let isBlocked = false;
+    for (const [sId, u] of activeUsers.entries()) {
+      if (sId === socket.id) continue;
+      const matchesId = Boolean(targetUserId && u.id === targetUserId);
+      const matchesName = Boolean(resolvedUsername && u.username.toLowerCase() === resolvedUsername);
+      if (matchesId || matchesName) {
+        if (u.blockedUsers?.includes(caller.username.toLowerCase())) {
+          isBlocked = true;
+        }
+        targetSocketIds.push(sId);
       }
-      io.to(targetSocketId).emit('direct_call_incoming', { callerUser: caller });
+    }
+
+    if (isBlocked) {
+      return socket.emit('direct_call_declined', { reason: 'Bu kullanıcıya şu anda ulaşılamıyor.' });
+    }
+
+    if (targetSocketIds.length > 0) {
+      for (const sId of targetSocketIds) {
+        io.to(sId).emit('direct_call_incoming', { callerUser: caller });
+      }
     } else {
       socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
     }
   });
 
-  socket.on('direct_call_accept', ({ callerUserId }: { callerUserId: string }) => {
+  socket.on('direct_call_accept', ({ callerUserId, callerUsername }: { callerUserId?: string; callerUsername?: string }) => {
     const acceptor = activeUsers.get(socket.id);
     if (!acceptor) return;
 
+    const targetName = (callerUsername || '').trim().toLowerCase();
+    let callerSocketId: string | null = null;
     for (const [sId, u] of activeUsers.entries()) {
-      if (u.id === callerUserId || u.username.toLowerCase() === callerUserId.toLowerCase()) {
-        activeDirectCallPairs.set(socket.id, sId);
-        activeDirectCallPairs.set(sId, socket.id);
-        io.to(sId).emit('direct_call_accepted', { targetUser: acceptor });
+      if (
+        (callerUserId && u.id === callerUserId) ||
+        (targetName && u.username.toLowerCase() === targetName) ||
+        (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
+      ) {
+        callerSocketId = sId;
         break;
+      }
+    }
+
+    if (callerSocketId) {
+      activeDirectCallPairs.set(socket.id, callerSocketId);
+      activeDirectCallPairs.set(callerSocketId, socket.id);
+      io.to(callerSocketId).emit('direct_call_accepted', { targetUser: acceptor });
+    }
+
+    // Dismiss incoming ring on any other open sessions of the acceptor
+    for (const [sId, u] of activeUsers.entries()) {
+      if (sId !== socket.id && u.username.toLowerCase() === acceptor.username.toLowerCase()) {
+        io.to(sId).emit('direct_call_handled');
       }
     }
   });
 
-  socket.on('direct_call_decline', ({ callerUserId }: { callerUserId: string }) => {
+  socket.on('direct_call_decline', ({ callerUserId, callerUsername }: { callerUserId?: string; callerUsername?: string }) => {
+    const decliner = activeUsers.get(socket.id);
     const paired = activeDirectCallPairs.get(socket.id);
     if (paired) {
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
     }
+    const targetName = (callerUsername || '').trim().toLowerCase();
     for (const [sId, u] of activeUsers.entries()) {
-      if (u.id === callerUserId || u.username.toLowerCase() === callerUserId.toLowerCase()) {
+      if (
+        (callerUserId && u.id === callerUserId) ||
+        (targetName && u.username.toLowerCase() === targetName) ||
+        (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
+      ) {
         activeDirectCallPairs.delete(sId);
         io.to(sId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
         break;
       }
     }
+    if (decliner) {
+      for (const [sId, u] of activeUsers.entries()) {
+        if (sId !== socket.id && u.username.toLowerCase() === decliner.username.toLowerCase()) {
+          io.to(sId).emit('direct_call_handled');
+        }
+      }
+    }
   });
 
-  socket.on('direct_call_end', ({ targetUserId }: { targetUserId: string }) => {
+  socket.on('direct_call_end', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
     const paired = activeDirectCallPairs.get(socket.id);
     if (paired) {
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
+      io.to(paired).emit('direct_call_ended');
     }
+    const targetName = (targetUsername || '').trim().toLowerCase();
     for (const [sId, u] of activeUsers.entries()) {
-      if (u.id === targetUserId || u.username.toLowerCase() === targetUserId.toLowerCase()) {
+      if (
+        sId !== paired &&
+        ((targetUserId && u.id === targetUserId) ||
+          (targetName && u.username.toLowerCase() === targetName) ||
+          (targetUserId && u.username.toLowerCase() === targetUserId.toLowerCase()))
+      ) {
         activeDirectCallPairs.delete(sId);
         io.to(sId).emit('direct_call_ended');
-        break;
       }
     }
   });

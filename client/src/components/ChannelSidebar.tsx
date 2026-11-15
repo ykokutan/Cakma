@@ -356,7 +356,15 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
           <div className="space-y-1">
             {onlineUsers
-              .filter((u) => u.id !== currentUser?.id)
+              .filter((u) => {
+                if (u.id === currentUser?.id) return false;
+                if (currentUser?.username && u.username.toLowerCase() === currentUser.username.toLowerCase()) return false;
+                return true;
+              })
+              .filter(
+                (u, idx, arr) =>
+                  arr.findIndex((other) => other.username.toLowerCase() === u.username.toLowerCase()) === idx
+              )
               .map((user) => {
                 const isSelected = activeDMUser?.id === user.id;
                 return (

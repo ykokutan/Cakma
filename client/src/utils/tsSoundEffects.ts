@@ -121,6 +121,58 @@ export function playTeamSpeakChime(
   }
 }
 
+// 1b. 1-on-1 Call Ringtone & Ringback Tone
+export function playCallRingtone(mode: 'incoming' | 'outgoing') {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+
+    if (mode === 'outgoing') {
+      // Classic gentle ringback tone (440Hz + 480Hz dual-tone pulse)
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc1.type = 'sine';
+      osc2.type = 'sine';
+      osc1.frequency.setValueAtTime(440, now);
+      osc2.frequency.setValueAtTime(480, now);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 0.85);
+      osc2.stop(now + 0.85);
+    } else {
+      // Incoming call melodic double-chime (C5 -> E5 -> G5)
+      const notes = [523.25, 659.25, 783.99];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const t = now + idx * 0.14;
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.16, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.25);
+      });
+    }
+
+    setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 1200);
+  } catch {
+    // ignore autoplay restriction
+  }
+}
+
 // 2. Web Speech API for TeamSpeak-style voice announcements
 export function speakAnnouncement(text: string) {
   if (!('speechSynthesis' in window)) return;

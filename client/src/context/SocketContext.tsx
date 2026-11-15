@@ -1994,6 +1994,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
     });
 
+    newSocket.on('direct_call_handled', () => {
+      setDirectCall(null);
+      setIsDirectScreenSharing(false);
+      setPartnerDirectScreenSharing(false);
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    });
+
     newSocket.on('direct_call_ended', () => {
       if (directCallRef.current) {
         const partnerId = directCallRef.current.partner.id;
@@ -2013,6 +2020,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         directScreenStreamRef.current.getTracks().forEach(t => t.stop());
         directScreenStreamRef.current = null;
       }
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    });
+
+    newSocket.on('direct_call_handled', () => {
+      setDirectCall(null);
+      setIsDirectScreenSharing(false);
+      setPartnerDirectScreenSharing(false);
       setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
     });
 
@@ -2718,13 +2732,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isDeafened: false,
       durationSeconds: 0
     });
-    socket.emit('direct_call_start', { targetUserId: targetUser.id });
+    socket.emit('direct_call_start', { targetUserId: targetUser.id, targetUsername: targetUser.username });
   }, [socket, currentUser]);
 
   const acceptDirectCall = useCallback(async () => {
     if (!socket || !directCall || !currentUser) return;
     const partner = directCall.partner;
-    socket.emit('direct_call_accept', { callerUserId: partner.id });
+    socket.emit('direct_call_accept', { callerUserId: partner.id, callerUsername: partner.username });
 
     setDirectCall(prev => prev ? { ...prev, status: 'connected' } : null);
 
@@ -2744,7 +2758,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const declineDirectCall = useCallback(() => {
     if (!socket || !directCall) return;
-    socket.emit('direct_call_decline', { callerUserId: directCall.partner.id });
+    socket.emit('direct_call_decline', { callerUserId: directCall.partner.id, callerUsername: directCall.partner.username });
     setDirectCall(null);
     setIsDirectScreenSharing(false);
     setPartnerDirectScreenSharing(false);
@@ -2757,7 +2771,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const endDirectCall = useCallback(() => {
     if (!socket || !directCall) return;
-    socket.emit('direct_call_end', { targetUserId: directCall.partner.id });
+    socket.emit('direct_call_end', { targetUserId: directCall.partner.id, targetUsername: directCall.partner.username });
     if (peerConnectionsRef.current.has(directCall.partner.id)) {
       peerConnectionsRef.current.get(directCall.partner.id)?.close();
       peerConnectionsRef.current.delete(directCall.partner.id);

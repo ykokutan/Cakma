@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { AvatarView } from './AvatarView';
 import { RemoteAssistModal } from './RemoteAssistModal';
+import { playCallRingtone } from '../utils/tsSoundEffects';
 import {
   Phone,
   PhoneOff,
@@ -48,6 +49,21 @@ export const DirectCallModal: React.FC = () => {
     }
   }, [remoteAssist.status]);
 
+  useEffect(() => {
+    const callStatus = directCall?.status;
+    if (callStatus !== 'incoming' && callStatus !== 'calling') return;
+
+    const mode = callStatus === 'incoming' ? 'incoming' : 'outgoing';
+    playCallRingtone(mode);
+    const timer = window.setInterval(() => {
+      playCallRingtone(mode);
+    }, 2200);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [directCall?.status]);
+
   if (!directCall) return null;
 
   const { partner, status, durationSeconds } = directCall;
@@ -60,8 +76,14 @@ export const DirectCallModal: React.FC = () => {
 
   return (
     <>
-      <div className="fixed top-4 right-6 z-50 animate-fade-in pointer-events-auto select-none space-y-2 max-w-[440px]">
-        <div className="ios-glass border border-white/20 bg-neutral-900/90 rounded-3xl p-4 shadow-2xl backdrop-blur-2xl flex items-center gap-3.5 min-w-[330px]">
+      <div className="fixed top-4 right-6 z-[9990] animate-fade-in pointer-events-auto select-none space-y-2 max-w-[440px]">
+        <div
+          className={`ios-glass border bg-neutral-900/95 rounded-3xl p-4 shadow-2xl backdrop-blur-2xl flex items-center gap-3.5 min-w-[330px] transition-all ${
+            status === 'incoming'
+              ? 'border-emerald-400/80 ring-4 ring-emerald-500/25 shadow-emerald-500/20'
+              : 'border-white/20'
+          }`}
+        >
           {/* Partner Avatar with animation */}
           <div className="relative shrink-0">
             <div
