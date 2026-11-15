@@ -182,6 +182,7 @@ mod win_input {
 
   pub const SM_CXSCREEN: i32 = 0;
   pub const SM_CYSCREEN: i32 = 1;
+  pub const MOUSEEVENTF_MOVE: u32 = 0x0001;
   pub const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
   pub const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
   pub const MOUSEEVENTF_RIGHTDOWN: u32 = 0x0008;
@@ -189,6 +190,7 @@ mod win_input {
   pub const MOUSEEVENTF_MIDDLEDOWN: u32 = 0x0020;
   pub const MOUSEEVENTF_MIDDLEUP: u32 = 0x0040;
   pub const MOUSEEVENTF_WHEEL: u32 = 0x0800;
+  pub const MOUSEEVENTF_ABSOLUTE: u32 = 0x8000;
   pub const KEYEVENTF_KEYUP: u32 = 0x0002;
 }
 
@@ -251,9 +253,20 @@ fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> {
       let screen_h = win_input::GetSystemMetrics(win_input::SM_CYSCREEN).max(1);
 
       if let (Some(nx), Some(ny)) = (payload.x, payload.y) {
-        let px = ((nx.clamp(0.0, 1.0)) * (screen_w - 1) as f64).round() as i32;
-        let py = ((ny.clamp(0.0, 1.0)) * (screen_h - 1) as f64).round() as i32;
+        let clamped_x = nx.clamp(0.0, 1.0);
+        let clamped_y = ny.clamp(0.0, 1.0);
+        let px = (clamped_x * (screen_w - 1) as f64).round() as i32;
+        let py = (clamped_y * (screen_h - 1) as f64).round() as i32;
+        let abs_x = (clamped_x * 65535.0).round() as i32;
+        let abs_y = (clamped_y * 65535.0).round() as i32;
         win_input::SetCursorPos(px, py);
+        win_input::mouse_event(
+          win_input::MOUSEEVENTF_MOVE | win_input::MOUSEEVENTF_ABSOLUTE,
+          abs_x,
+          abs_y,
+          0,
+          0,
+        );
       }
 
       match payload.kind.as_str() {

@@ -33,6 +33,8 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastMoveSentRef = useRef<number>(0);
+  const pressedKeysRef = useRef<Map<string, { key: string; code: string }>>(new Map());
+  const pressedButtonsRef = useRef<Set<number>>(new Set());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showKeyboard, setShowKeyboard] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
@@ -54,6 +56,65 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
       videoRef.current.srcObject = stream;
     }
   }, [stream, isOpen]);
+
+  const releaseAllRemoteInputs = () => {
+    for (const [, info] of pressedKeysRef.current.entries()) {
+      sendRemoteInput({ kind: 'keyup', key: info.key, code: info.code });
+    }
+    pressedKeysRef.current.clear();
+    for (const btn of pressedButtonsRef.current.values()) {
+      sendRemoteInput({ kind: 'mouseup', button: btn });
+    }
+    pressedButtonsRef.current.clear();
+  };
+
+  // Global keyboard & input-release listeners while controlling so focus shifts or Alt+Tab never freeze/stick keys
+  useEffect(() => {
+    if (!isOpen || !isControlling) {
+      releaseAllRemoteInputs();
+      return;
+    }
+
+    const onWinKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      e.preventDefault();
+      pressedKeysRef.current.set(e.code, { key: e.key, code: e.code });
+      sendRemoteInput({ kind: 'keydown', key: e.key, code: e.code });
+    };
+
+    const onWinKeyUp = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+      e.preventDefault();
+      pressedKeysRef.current.delete(e.code);
+      sendRemoteInput({ kind: 'keyup', key: e.key, code: e.code });
+    };
+
+    const onWinMouseUp = (e: MouseEvent) => {
+      if (pressedButtonsRef.current.has(e.button)) {
+        pressedButtonsRef.current.delete(e.button);
+        sendRemoteInput({ kind: 'mouseup', button: e.button });
+      }
+    };
+
+    const onWinBlur = () => {
+      releaseAllRemoteInputs();
+    };
+
+    window.addEventListener('keydown', onWinKeyDown);
+    window.addEventListener('keyup', onWinKeyUp);
+    window.addEventListener('mouseup', onWinMouseUp);
+    window.addEventListener('blur', onWinBlur);
+
+    return () => {
+      window.removeEventListener('keydown', onWinKeyDown);
+      window.removeEventListener('keyup', onWinKeyUp);
+      window.removeEventListener('mouseup', onWinMouseUp);
+      window.removeEventListener('blur', onWinBlur);
+      releaseAllRemoteInputs();
+    };
+  }, [isOpen, isControlling]);
 
   if (!isOpen || !directCall || !partner) return null;
 
@@ -104,6 +165,7 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
     containerRef.current?.focus();
     const coords = getNormalizedCoords(e);
     if (!coords) return;
+    pressedButtonsRef.current.add(e.button);
     sendRemoteInput({ kind: 'mousedown', x: coords.x, y: coords.y, button: e.button });
   };
 
@@ -112,24 +174,13 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
     e.preventDefault();
     const coords = getNormalizedCoords(e);
     if (!coords) return;
+    pressedButtonsRef.current.delete(e.button);
     sendRemoteInput({ kind: 'mouseup', x: coords.x, y: coords.y, button: e.button });
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLVideoElement>) => {
     if (!isControlling) return;
     sendRemoteInput({ kind: 'wheel', delta_y: e.deltaY });
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isControlling) return;
-    e.preventDefault();
-    sendRemoteInput({ kind: 'keydown', key: e.key, code: e.code });
-  };
-
-  const handleKeyUp = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isControlling) return;
-    e.preventDefault();
-    sendRemoteInput({ kind: 'keyup', key: e.key, code: e.code });
   };
 
   const MODIFIER_CODE_MAP: Record<'ctrl' | 'alt' | 'shift' | 'meta', { key: string; code: string }> = {
@@ -201,8 +252,6 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
       <div
         ref={containerRef}
         tabIndex={0}
-        onKeyDown={handleKeyDown}
-        onKeyUp={handleKeyUp}
         className="w-full max-w-6xl h-[85vh] rounded-3xl bg-[#0b0d14] border border-white/15 shadow-[0_30px_90px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden outline-none"
       >
         {/* TeamViewer-style Header Toolbar */}

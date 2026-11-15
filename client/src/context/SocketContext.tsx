@@ -644,6 +644,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const tauriInvokeRef = useRef<((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null>(null);
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -2109,17 +2110,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }) => {
       if (remoteAssistRef.current.status !== 'being_controlled') return;
 
-      if (typeof payload.x === 'number' && typeof payload.y === 'number') {
-        setRemoteAssist(prev => ({
-          ...prev,
-          remoteCursor: {
-            x: payload.x!,
-            y: payload.y!,
-            clicking: payload.kind === 'mousedown',
-          },
-        }));
-      }
-
       const isTauri = typeof window !== 'undefined' && (
         '__TAURI_INTERNALS__' in window ||
         window.location.hostname === 'tauri.localhost' ||
@@ -2127,8 +2117,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
       if (isTauri) {
         try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          await invoke('simulate_remote_input', { payload });
+          if (!tauriInvokeRef.current) {
+            const mod = await import('@tauri-apps/api/core');
+            tauriInvokeRef.current = mod.invoke as (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+          }
+          await tauriInvokeRef.current('simulate_remote_input', { payload });
         } catch {
           // Ignore input simulation errors on unsupported platforms
         }
