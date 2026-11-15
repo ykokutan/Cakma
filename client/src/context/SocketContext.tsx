@@ -167,6 +167,16 @@ interface SocketContextType {
       globalBlockLinks?: boolean;
       globalBannedWords?: string[];
       pinnedBanner?: { message: string; sender: string; updatedAt: string } | null;
+      autoBackupEnabled?: boolean;
+      autoBackupIntervalHours?: number;
+      maxBackupsToKeep?: number;
+      webhookUrl?: string;
+      webhookEvents?: {
+        security?: boolean;
+        bans?: boolean;
+        dedicated?: boolean;
+        backups?: boolean;
+      };
     };
     bannedIps?: {
       ip: string;
@@ -181,6 +191,18 @@ interface SocketContextType {
       files: { name: string; bytes: number }[];
     };
     pinnedBanner?: { message: string; sender: string; updatedAt: string } | null;
+    activeSessions?: {
+      socketId: string;
+      username: string;
+      ip: string;
+      userAgent: string;
+      connectedAt: string;
+    }[];
+    scheduledBackups?: {
+      filename: string;
+      bytes: number;
+      createdAt: string;
+    }[];
   } | null;
   fetchAdminData: () => void;
   adminUpdateSystemConfig: (cfg: {
@@ -195,6 +217,16 @@ interface SocketContextType {
     loginLockoutMinutes?: number;
     globalBlockLinks?: boolean;
     globalBannedWords?: string[];
+    autoBackupEnabled?: boolean;
+    autoBackupIntervalHours?: number;
+    maxBackupsToKeep?: number;
+    webhookUrl?: string;
+    webhookEvents?: {
+      security?: boolean;
+      bans?: boolean;
+      dedicated?: boolean;
+      backups?: boolean;
+    };
   }) => void;
   adminChangeRole: (targetUsername: string, newRole: 'admin' | 'user') => void;
   adminKickUser: (targetSocketId: string, reason?: string) => void;
@@ -215,6 +247,11 @@ interface SocketContextType {
   adminUnbanIp: (ip: string) => void;
   adminExportFullBackup: () => void;
   adminRestoreFullBackup: (bundle: any) => void;
+  adminTriggerBackupNow: () => void;
+  adminRestoreScheduledBackup: (filename: string) => void;
+  adminDeleteScheduledBackup: (filename: string) => void;
+  adminTestWebhook: () => void;
+  adminPurgeMessages: (channelId: string, mode: 'last_n' | 'all', count?: number) => void;
   adminResetUserPassword: (targetUsername: string, newPassword: string) => void;
   adminCreateChannel: (serverId: string, name: string, type: 'text' | 'voice') => void;
   adminDeleteServer: (serverId: string) => void;
@@ -1735,6 +1772,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setPinnedBanner(banner || null);
     });
 
+    newSocket.on('channel_messages_purged', ({ channelId, remainingMessages }: { channelId: string; remainingMessages: Message[] }) => {
+      setMessagesMap((prev: Record<string, Message[]>) => ({
+        ...prev,
+        [channelId]: remainingMessages || [],
+      }));
+    });
+
     newSocket.on('system_maintenance_status', (status: { active: boolean; message: string }) => {
       setMaintenanceStatus(status || { active: false, message: '' });
     });
@@ -2296,6 +2340,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     loginLockoutMinutes?: number;
     globalBlockLinks?: boolean;
     globalBannedWords?: string[];
+    autoBackupEnabled?: boolean;
+    autoBackupIntervalHours?: number;
+    maxBackupsToKeep?: number;
+    webhookUrl?: string;
+    webhookEvents?: {
+      security?: boolean;
+      bans?: boolean;
+      dedicated?: boolean;
+      backups?: boolean;
+    };
   }) => {
     socket?.emit('admin_update_system_config', cfg);
     setTimeout(() => fetchAdminData(), 200);
@@ -2335,6 +2389,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const adminRestoreFullBackup = (bundle: any) => {
     socket?.emit('admin_restore_full_backup', bundle);
+  };
+
+  const adminTriggerBackupNow = () => {
+    socket?.emit('admin_trigger_backup_now');
+  };
+
+  const adminRestoreScheduledBackup = (filename: string) => {
+    socket?.emit('admin_restore_scheduled_backup', { filename });
+  };
+
+  const adminDeleteScheduledBackup = (filename: string) => {
+    socket?.emit('admin_delete_scheduled_backup', { filename });
+  };
+
+  const adminTestWebhook = () => {
+    socket?.emit('admin_test_webhook');
+  };
+
+  const adminPurgeMessages = (channelId: string, mode: 'last_n' | 'all', count?: number) => {
+    socket?.emit('admin_purge_messages', { channelId, mode, count });
   };
 
   const adminResetUserPassword = (targetUsername: string, newPassword: string) => {
@@ -3416,6 +3490,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminUnbanIp,
         adminExportFullBackup,
         adminRestoreFullBackup,
+        adminTriggerBackupNow,
+        adminRestoreScheduledBackup,
+        adminDeleteScheduledBackup,
+        adminTestWebhook,
+        adminPurgeMessages,
         adminResetUserPassword,
         adminCreateChannel,
         adminDeleteServer,

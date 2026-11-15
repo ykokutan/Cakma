@@ -31,7 +31,8 @@ import {
   loadServerLevels, saveServerLevels,
   loadSystemConfig, saveSystemConfig, SystemConfig,
   loadBannedIps, saveBannedIps, BannedIpRecord,
-  getStorageStats, exportAllDataBundle, importAllDataBundle
+  getStorageStats, exportAllDataBundle, importAllDataBundle,
+  createScheduledBackup, listScheduledBackups, readScheduledBackup, deleteScheduledBackup
 } from './storage.js';
 
 // --- SECURITY & CRYPTOGRAPHIC HELPERS ---
@@ -481,9 +482,64 @@ const defaultSystemConfig: SystemConfig = {
   globalBlockLinks: false,
   globalBannedWords: [],
   pinnedBanner: null,
+  autoBackupEnabled: false,
+  autoBackupIntervalHours: 24,
+  maxBackupsToKeep: 7,
+  webhookUrl: '',
+  webhookEvents: {
+    security: true,
+    bans: true,
+    dedicated: true,
+    backups: false,
+  },
 };
 let systemConfig: SystemConfig = loadSystemConfig(defaultSystemConfig);
 let bannedIps: BannedIpRecord[] = loadBannedIps();
+
+async function sendAdminWebhook(
+  eventType: 'security' | 'bans' | 'dedicated' | 'backups' | 'test',
+  title: string,
+  details: string
+): Promise<boolean> {
+  const url = (systemConfig.webhookUrl || '').trim();
+  if (!url || (!url.startsWith('https://') && !url.startsWith('http://'))) return false;
+  if (eventType !== 'test') {
+    const enabled = systemConfig.webhookEvents?.[eventType];
+    if (!enabled) return false;
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(5000),
+      body: JSON.stringify({
+        content: `🛡️ **[Sistem Uyarı — ${eventType.toUpperCase()}] ${title}**\n${details}`,
+        event: eventType,
+        title,
+        details,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Background Scheduled Auto-Backup Checker (every 15 minutes)
+setInterval(() => {
+  if (!systemConfig.autoBackupEnabled) return;
+  try {
+    const intervalMs = Math.max(1, systemConfig.autoBackupIntervalHours || 24) * 3600 * 1000;
+    const existing = listScheduledBackups();
+    const lastTs = existing.length > 0 ? new Date(existing[0].createdAt).getTime() : 0;
+    if (Date.now() - lastTs >= intervalMs) {
+      const info = createScheduledBackup(systemConfig.maxBackupsToKeep || 7);
+      addAuditLog('OTOMATIK_YEDEK', `Zamanlanmış otomatik yedek oluşturuldu: ${info.filename}`, 'info');
+      sendAdminWebhook('backups', 'Otomatik Yedek Oluşturuldu', `${info.filename} (${(info.bytes / 1024).toFixed(1)} KB)`);
+    }
+  } catch {}
+}, 15 * 60 * 1000);
 
 function findActiveIpBan(ip: string): BannedIpRecord | undefined {
   const now = Date.now();
@@ -1274,6 +1330,7 @@ io.on('connection', (socket: Socket) => {
     const rateCheck = checkLoginRateLimit(clientIp);
     if (!rateCheck.allowed) {
       addAuditLog('GUVENLIK_ENGELI', `IP (${clientIp}) çok fazla başarısız giriş denemesi nedeniyle engellendi.`, 'auth');
+      sendAdminWebhook('security', 'Brute-Force Giriş Engeli', `IP: ${clientIp} (${rateCheck.retryAfterSeconds}sn kilitlendi)`);
       return socket.emit('auth_response', {
         success: false,
         error: `Çok fazla başarısız giriş denemesi! Güvenlik gereği ${rateCheck.retryAfterSeconds} saniye boyunca giriş engellendi.`
@@ -3688,7 +3745,9 @@ io.on('connection', (socket: Socket) => {
       systemConfig,
       bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
       storageStats: getStorageStats(),
-      pinnedBanner: systemConfig.pinnedBanner || null
+      pinnedBanner: systemConfig.pinnedBanner || null,
+      activeSessions: Array.from(activeSessions.values()),
+      scheduledBackups: listScheduledBackups(),
     });
   });
 
@@ -3711,6 +3770,18 @@ io.on('connection', (socket: Socket) => {
         .map((w) => sanitizeText(String(w).trim()).toLowerCase())
         .filter(Boolean)
         .slice(0, 100);
+    }
+    if (typeof nextCfg.autoBackupEnabled === 'boolean') systemConfig.autoBackupEnabled = nextCfg.autoBackupEnabled;
+    if (typeof nextCfg.autoBackupIntervalHours === 'number') systemConfig.autoBackupIntervalHours = Math.min(Math.max(nextCfg.autoBackupIntervalHours, 1), 168);
+    if (typeof nextCfg.maxBackupsToKeep === 'number') systemConfig.maxBackupsToKeep = Math.min(Math.max(nextCfg.maxBackupsToKeep, 1), 50);
+    if (typeof nextCfg.webhookUrl === 'string') systemConfig.webhookUrl = nextCfg.webhookUrl.trim().slice(0, 500);
+    if (nextCfg.webhookEvents && typeof nextCfg.webhookEvents === 'object') {
+      systemConfig.webhookEvents = {
+        security: Boolean(nextCfg.webhookEvents.security),
+        bans: Boolean(nextCfg.webhookEvents.bans),
+        dedicated: Boolean(nextCfg.webhookEvents.dedicated),
+        backups: Boolean(nextCfg.webhookEvents.backups),
+      };
     }
 
     saveSystemConfig(systemConfig);
@@ -3808,6 +3879,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     addAuditLog('KULLANICI_YASAKLANDI', `${requester.username}, "${acc.username}" hesabını ${mins > 0 ? `${mins} dk süreli` : 'kalıcı'} yasakladı. Sebep: ${cleanReason}`, 'warn');
+    sendAdminWebhook('bans', 'Kullanıcı Yasaklandı', `Yetkili: ${requester.username} | Hedef: ${acc.username} | Süre: ${mins > 0 ? `${mins} dk` : 'Kalıcı'} | Sebep: ${cleanReason}`);
     socket.emit('admin_action_success', `"${acc.username}" hesabı ${mins > 0 ? `${mins} dakika süreli` : 'kalıcı'} yasaklandı.`);
   });
 
@@ -3880,6 +3952,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     addAuditLog('IP_ENGELLENDI', `${requester.username}, ${cleanIp} IP adresini engelledi. Sebep: ${cleanReason}`, 'warn');
+    sendAdminWebhook('bans', 'IP Adresi Engellendi', `Yetkili: ${requester.username} | IP: ${cleanIp} | Sebep: ${cleanReason}`);
     socket.emit('admin_action_success', `${cleanIp} IP adresi engellendi.`);
   });
 
@@ -3917,6 +3990,81 @@ io.on('connection', (socket: Socket) => {
     } catch (err: any) {
       socket.emit('admin_action_error', err?.message || 'Yedek geri yüklenemedi.');
     }
+  });
+
+  // Admin: Trigger Scheduled Backup Now
+  socket.on('admin_trigger_backup_now', () => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    try {
+      const info = createScheduledBackup(systemConfig.maxBackupsToKeep || 7);
+      addAuditLog('MANUEL_YEDEK_ALINDI', `${requester.username} sunucu yedeği oluşturdu: ${info.filename}`, 'info');
+      sendAdminWebhook('backups', 'Manuel Sunucu Yedeği Oluşturuldu', `Yetkili: ${requester.username} | Dosya: ${info.filename}`);
+      socket.emit('admin_action_success', `Sunucu yedeği oluşturuldu: ${info.filename}`);
+    } catch (err: any) {
+      socket.emit('admin_action_error', err?.message || 'Yedek oluşturulamadı.');
+    }
+  });
+
+  // Admin: Restore Scheduled Backup
+  socket.on('admin_restore_scheduled_backup', ({ filename }: { filename: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    try {
+      const bundle = readScheduledBackup(filename);
+      const restoredFiles = importAllDataBundle(bundle);
+      systemConfig = loadSystemConfig(defaultSystemConfig);
+      bannedIps = loadBannedIps();
+      addAuditLog('YEDEK_GERI_YUKLENDI', `${requester.username}, "${filename}" yedeğini geri yükledi (${restoredFiles.length} dosya).`, 'warn');
+      socket.emit('admin_action_success', `"${filename}" yedeği geri yüklendi (${restoredFiles.length} dosya).`);
+    } catch (err: any) {
+      socket.emit('admin_action_error', err?.message || 'Yedek geri yüklenemedi.');
+    }
+  });
+
+  // Admin: Delete Scheduled Backup
+  socket.on('admin_delete_scheduled_backup', ({ filename }: { filename: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    if (deleteScheduledBackup(filename)) {
+      addAuditLog('YEDEK_SILINDI', `${requester.username}, "${filename}" yedeğini sildi.`, 'info');
+      socket.emit('admin_action_success', `"${filename}" yedeği silindi.`);
+    } else {
+      socket.emit('admin_action_error', 'Yedek dosyası bulunamadı.');
+    }
+  });
+
+  // Admin: Test Webhook
+  socket.on('admin_test_webhook', async () => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    const ok = await sendAdminWebhook('test', 'Webhook Bağlantı Testi', `Yetkili ${requester.username} tarafından test bildirimi gönderildi.`);
+    if (ok) {
+      socket.emit('admin_action_success', 'Test webhook bildirimi başarıyla gönderildi.');
+    } else {
+      socket.emit('admin_action_error', 'Webhook gönderilemedi! URL adresini kontrol edin.');
+    }
+  });
+
+  // Admin: Bulk Purge Channel Messages
+  socket.on('admin_purge_messages', ({ channelId, mode, count }: { channelId: string; mode: 'last_n' | 'all'; count?: number }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    if (!channelId || !messages[channelId]) {
+      return socket.emit('admin_action_error', 'Kanalda temizlenecek mesaj bulunamadı.');
+    }
+    const totalBefore = messages[channelId].length;
+    if (mode === 'all') {
+      messages[channelId] = [];
+    } else {
+      const n = Math.min(Math.max(Number(count) || 50, 1), 1000);
+      messages[channelId] = messages[channelId].slice(0, Math.max(0, totalBefore - n));
+    }
+    const deletedCount = totalBefore - messages[channelId].length;
+    saveMessages(messages);
+    io.emit('channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
+    addAuditLog('MESAJ_TEMIZLENDI', `${requester.username}, #${channelId} kanalından ${deletedCount} mesaj temizledi.`, 'warn');
+    socket.emit('admin_action_success', `${deletedCount} mesaj başarıyla temizlendi.`);
   });
 
   // Admin: Reset user password

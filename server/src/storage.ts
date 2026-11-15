@@ -185,6 +185,16 @@ export interface SystemConfig {
   globalBlockLinks?: boolean;
   globalBannedWords?: string[];
   pinnedBanner?: PinnedBanner | null;
+  autoBackupEnabled?: boolean;
+  autoBackupIntervalHours?: number;
+  maxBackupsToKeep?: number;
+  webhookUrl?: string;
+  webhookEvents?: {
+    security?: boolean;
+    bans?: boolean;
+    dedicated?: boolean;
+    backups?: boolean;
+  };
 }
 
 export function loadSystemConfig(defaultConfig: SystemConfig): SystemConfig {
@@ -290,4 +300,92 @@ export function importAllDataBundle(bundle: { files?: Record<string, any> }): st
     }
   }
   return restored;
+}
+
+// 13. SCHEDULED AUTO-BACKUPS (data/backups/)
+const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+
+function ensureBackupsDir() {
+  ensureDataDir();
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  }
+}
+
+export interface ScheduledBackupInfo {
+  filename: string;
+  bytes: number;
+  createdAt: string;
+}
+
+export function createScheduledBackup(maxToKeep = 10): ScheduledBackupInfo {
+  ensureBackupsDir();
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const filename = `backup-${stamp}.json`;
+  const bundle = exportAllDataBundle();
+  const filePath = path.join(BACKUPS_DIR, filename);
+  fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), 'utf-8');
+  const stat = fs.statSync(filePath);
+
+  // Prune old backups beyond maxToKeep
+  const limit = Math.min(Math.max(maxToKeep || 10, 1), 50);
+  const all = listScheduledBackups();
+  if (all.length > limit) {
+    for (const old of all.slice(limit)) {
+      try {
+        fs.unlinkSync(path.join(BACKUPS_DIR, old.filename));
+      } catch {}
+    }
+  }
+
+  return {
+    filename,
+    bytes: stat.size,
+    createdAt: now.toISOString(),
+  };
+}
+
+export function listScheduledBackups(): ScheduledBackupInfo[] {
+  ensureBackupsDir();
+  const list: ScheduledBackupInfo[] = [];
+  try {
+    const entries = fs.readdirSync(BACKUPS_DIR);
+    for (const name of entries) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const st = fs.statSync(path.join(BACKUPS_DIR, name));
+        if (st.isFile()) {
+          list.push({
+            filename: name,
+            bytes: st.size,
+            createdAt: st.mtime.toISOString(),
+          });
+        }
+      } catch {}
+    }
+  } catch {}
+  list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return list;
+}
+
+export function readScheduledBackup(filename: string): any {
+  ensureBackupsDir();
+  const safeName = path.basename(filename);
+  const filePath = path.join(BACKUPS_DIR, safeName);
+  if (!fs.existsSync(filePath)) {
+    throw new Error('Yedek dosyası bulunamadı.');
+  }
+  return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+}
+
+export function deleteScheduledBackup(filename: string): boolean {
+  ensureBackupsDir();
+  const safeName = path.basename(filename);
+  const filePath = path.join(BACKUPS_DIR, safeName);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+    return true;
+  }
+  return false;
 }
