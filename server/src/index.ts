@@ -3929,6 +3929,13 @@ io.on('connection', (socket: Socket) => {
         isSpeaking
       });
     }
+    const directPartnerSocketId = activeDirectCallPairs.get(socket.id);
+    if (directPartnerSocketId) {
+      io.to(directPartnerSocketId).emit('user_speaking_change', {
+        userId: socket.id,
+        isSpeaking
+      });
+    }
   });
 
   // Screen Share Status

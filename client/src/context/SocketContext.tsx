@@ -643,6 +643,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const pendingIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -1706,6 +1707,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('user_speaking_change', ({ userId, isSpeaking }: { userId: string; isSpeaking: boolean }) => {
       setOnlineUsers(prev => prev.map(u => u.id === userId ? { ...u, isSpeaking } : u));
+      setDirectCall(prev =>
+        prev && prev.partner.id === userId
+          ? { ...prev, partner: { ...prev.partner, isSpeaking } }
+          : prev
+      );
     });
 
     newSocket.on('afk_moved', ({ channelId, channelName }: { channelId: string; channelName: string }) => {
@@ -1919,6 +1925,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         await pc.setRemoteDescription(new RTCSessionDescription(signal));
+        const queued = pendingIceCandidatesRef.current.get(senderUserId) || [];
+        pendingIceCandidatesRef.current.delete(senderUserId);
+        for (const cand of queued) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch (e) {
+            console.warn('Queued ICE candidate error:', e);
+          }
+        }
         const answer = await pc.createAnswer();
         const targetKbps = activeServerRef.current?.bitrateKbps || 128;
         const modifiedAnswer = new RTCSessionDescription({
@@ -1936,13 +1951,28 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       } else if (type === 'answer') {
         if (pc) {
           await pc.setRemoteDescription(new RTCSessionDescription(signal));
+          const queued = pendingIceCandidatesRef.current.get(senderUserId) || [];
+          pendingIceCandidatesRef.current.delete(senderUserId);
+          for (const cand of queued) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.warn('Queued ICE candidate error:', e);
+            }
+          }
         }
       } else if (type === 'candidate') {
-        if (pc && signal) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(signal));
-          } catch (e) {
-            console.warn('ICE candidate addition error:', e);
+        if (signal) {
+          if (pc && pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(signal));
+            } catch (e) {
+              console.warn('ICE candidate addition error:', e);
+            }
+          } else {
+            const existing = pendingIceCandidatesRef.current.get(senderUserId) || [];
+            existing.push(signal);
+            pendingIceCandidatesRef.current.set(senderUserId, existing);
           }
         }
       }
@@ -2207,11 +2237,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     pc.ontrack = (event) => {
+      const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
       if (event.track.kind === 'video') {
-        const stream = event.streams[0];
         setRemoteScreenStreams(prev => {
           const next = new Map(prev);
-          next.set(peerId, stream);
+          next.set(peerId, remoteStream);
           return next;
         });
       } else {
@@ -2221,7 +2251,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           audio.autoplay = true;
           audioElementsRef.current.set(peerId, audio);
         }
-        audio.srcObject = event.streams[0];
+        audio.srcObject = remoteStream;
         const userVol = userVolumes[peerId] ?? 100;
         const isLocallyMuted = userLocalMutes[peerId] ?? false;
         audio.muted = isDeafened || isLocallyMuted;
@@ -2229,6 +2259,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if ('setSinkId' in audio && selectedOutputDeviceId) {
           (audio as any).setSinkId(selectedOutputDeviceId).catch(() => {});
         }
+        audio.play().catch((err) => {
+          console.warn('Remote audio playback blocked:', err);
+        });
       }
     };
 
@@ -2237,7 +2270,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Push-to-Talk Keybind listener
   useEffect(() => {
-    if (inputMode !== 'ptt' || !connectedVoiceChannelId) return;
+    const inAnyVoice = Boolean(connectedVoiceChannelId || directCall?.status === 'connected');
+    if (inputMode !== 'ptt' || !inAnyVoice) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === pttKey && !isPttActive) {
@@ -2273,7 +2307,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [inputMode, pttKey, isPttActive, connectedVoiceChannelId, isMuted, socket]);
+  }, [inputMode, pttKey, isPttActive, connectedVoiceChannelId, directCall?.status, isMuted, socket]);
 
   // Auth Methods
   const login = (usernameOrEmail: string, password: string): Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }> => {

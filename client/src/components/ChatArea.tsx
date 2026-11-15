@@ -27,10 +27,14 @@ import {
   FileText,
   Download,
   Phone,
+  PhoneOff,
   MessageCircle,
   BarChart2,
   Clock,
   Mic,
+  MicOff,
+  Headphones,
+  Volume2,
   Sparkles,
   Image as ImageIcon,
   Trophy,
@@ -146,6 +150,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     currentUser,
     activeDMUser,
     startDirectCall,
+    directCall,
+    acceptDirectCall,
+    declineDirectCall,
+    endDirectCall,
+    isMuted,
+    isDeafened,
+    isSpeaking,
+    toggleMute,
+    toggleDeafen,
     onlineUsers,
     addReaction,
     togglePinMessage,
@@ -647,14 +660,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         {/* Header Action Icons */}
         <div className="flex items-center gap-1 sm:gap-2.5 text-white/60 shrink-0">
           {isDM && dmPartner && (
-            <button
-              onClick={() => startDirectCall(dmPartner)}
-              className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 hover:border-emerald-400 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
-              title="1-e-1 Sesli Arama Başlat"
-            >
-              <Phone className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sesli Ara</span>
-            </button>
+            directCall &&
+            (directCall.partner.id === dmPartner.id ||
+              directCall.partner.username.toLowerCase() === dmPartner.username.toLowerCase()) ? (
+              <button
+                onClick={endDirectCall}
+                className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-red-500/20 hover:bg-red-500 border border-red-400/40 text-red-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                title="1-e-1 Görüşmeyi Sonlandır"
+              >
+                <PhoneOff className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Görüşmede</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => startDirectCall(dmPartner)}
+                className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 hover:border-emerald-400 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                title="1-e-1 Sesli Arama Başlat"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Sesli Ara</span>
+              </button>
+            )
           )}
 
           <button
@@ -737,6 +763,138 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
       </header>
+
+      {/* Active 1-on-1 Call Banner inside DM Chat */}
+      {isDM &&
+        dmPartner &&
+        directCall &&
+        (directCall.partner.id === dmPartner.id ||
+          directCall.partner.username.toLowerCase() === dmPartner.username.toLowerCase()) && (
+          <div className="border-b border-emerald-500/25 bg-gradient-to-r from-emerald-950/60 via-[#121c18]/90 to-blue-950/50 backdrop-blur-md px-5 py-3 flex flex-wrap items-center justify-between gap-3 select-none">
+            <div className="flex items-center gap-4 min-w-0">
+              {/* Dual Avatars with Speaking Halo */}
+              <div className="flex items-center -space-x-2 shrink-0">
+                <div
+                  className={`relative w-10 h-10 rounded-2xl bg-white/10 overflow-hidden border-2 transition-all ${
+                    isSpeaking && !isMuted
+                      ? 'border-emerald-400 ring-2 ring-emerald-400/40 scale-105'
+                      : 'border-[#121c18]'
+                  }`}
+                >
+                  <AvatarView
+                    avatar={currentUser?.avatar}
+                    alt={currentUser?.username || 'Sen'}
+                    fallback="👤"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div
+                  className={`relative w-10 h-10 rounded-2xl bg-white/10 overflow-hidden border-2 transition-all ${
+                    directCall.partner.isSpeaking
+                      ? 'border-emerald-400 ring-2 ring-emerald-400/40 scale-105'
+                      : 'border-[#121c18]'
+                  }`}
+                >
+                  <AvatarView
+                    avatar={directCall.partner.avatar}
+                    alt={directCall.partner.username}
+                    fallback="👤"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-white truncate">
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        directCall.status === 'connected'
+                          ? 'bg-emerald-400 animate-pulse'
+                          : 'bg-amber-400 animate-ping'
+                      }`}
+                    />
+                    {currentUser?.username} ↔ {directCall.partner.username}
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                    {directCall.status === 'connected'
+                      ? `Görüşmede • ${Math.floor(directCall.durationSeconds / 60)
+                          .toString()
+                          .padStart(2, '0')}:${(directCall.durationSeconds % 60).toString().padStart(2, '0')}`
+                      : directCall.status === 'incoming'
+                      ? 'Gelen Arama...'
+                      : 'Aranıyor...'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-white/60 mt-0.5 truncate">
+                  {directCall.status === 'connected'
+                    ? directCall.partner.isSpeaking
+                      ? `${directCall.partner.username} konuşuyor...`
+                      : isSpeaking && !isMuted
+                      ? 'Sen konuşuyorsun...'
+                      : '1-e-1 sesli görüşme aktif'
+                    : directCall.status === 'incoming'
+                    ? `${directCall.partner.username} seni arıyor`
+                    : `${directCall.partner.username} aranıyor...`}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {directCall.status === 'incoming' ? (
+                <>
+                  <button
+                    onClick={acceptDirectCall}
+                    className="px-3 py-1.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold flex items-center gap-1.5 transition shadow"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    Yanıtla
+                  </button>
+                  <button
+                    onClick={declineDirectCall}
+                    className="px-3 py-1.5 rounded-full bg-red-500/80 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <PhoneOff className="w-3.5 h-3.5" />
+                    Reddet
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={toggleMute}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+                      isMuted
+                        ? 'bg-red-500/25 text-red-300 border border-red-400/30'
+                        : 'bg-white/10 hover:bg-white/20 text-white'
+                    }`}
+                    title={isMuted ? 'Mikrofonu Aç' : 'Mikrofonu Kapat'}
+                  >
+                    {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={toggleDeafen}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+                      isDeafened
+                        ? 'bg-red-500/25 text-red-300 border border-red-400/30'
+                        : 'bg-white/10 hover:bg-white/20 text-white'
+                    }`}
+                    title={isDeafened ? 'Sesi Aç' : 'Sağırlaştır'}
+                  >
+                    {isDeafened ? <Volume2 className="w-3.5 h-3.5" /> : <Headphones className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={endDirectCall}
+                    className="px-3 py-1.5 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                    title="Görüşmeyi Bitir"
+                  >
+                    <PhoneOff className="w-3.5 h-3.5" />
+                    Kapat
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
       {/* Channel Sticky Notice & Topic Bar */}
       {activeServer.id !== 'direct-messages' && activeChannel.type === 'text' && (
