@@ -26,7 +26,6 @@ import {
   Users,
   Sliders,
   Gamepad2,
-  Activity,
   Lock,
   BarChart2,
   UserPlus,
@@ -670,34 +669,27 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       </div>
       )}
 
-      {/* Connected Voice Capsule */}
+      {/* Connected Voice Capsule (Compact) */}
       {connectedVoiceChannel && (
         <div
           onClick={openDiagnostics}
-          className="mx-3 mb-2 px-3 py-2.5 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 backdrop-blur-md flex items-center justify-between cursor-pointer transition group"
+          className="mx-3 mb-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-between gap-2 cursor-pointer transition group"
           title="Bağlantı ve Ağ Teşhisi Detaylarını Aç"
         >
-          <div className="flex items-center gap-2.5 truncate">
-            <Radio className="w-4 h-4 text-emerald-400 animate-pulse shrink-0" />
-            <div className="truncate">
-              <div className="text-emerald-400 font-semibold text-xs truncate flex items-center gap-1.5">
-                <span>Ses Bağlantısı Açık</span>
-                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded font-mono font-bold">
-                  {ping}ms
-                </span>
-              </div>
-              <div className="text-white/50 text-[10px] truncate group-hover:text-white/70 transition">
-                {connectedVoiceChannel.name} · Teşhis & Ping
-              </div>
-            </div>
+          <div className="flex items-center gap-2 min-w-0">
+            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
+            <span className="text-xs font-semibold text-emerald-300 truncate">{connectedVoiceChannel.name}</span>
+            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-md font-mono font-bold shrink-0">
+              {ping}ms
+            </span>
           </div>
           <button
             onClick={(e) => {
               e.stopPropagation();
               leaveVoiceChannel();
             }}
-            className="w-7 h-7 rounded-full bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white flex items-center justify-center transition shrink-0"
-            title="Ayrıl"
+            className="w-6 h-6 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-400 hover:text-white flex items-center justify-center transition shrink-0"
+            title="Ses Odasından Ayrıl"
           >
             <PhoneOff className="w-3.5 h-3.5" />
           </button>
@@ -724,15 +716,13 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       {currentUser?.role === 'admin' && (
         <button
           onClick={onOpenAdminDashboard}
-          className="mx-3 mb-2 px-3 py-2 rounded-2xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/30 hover:border-amber-500/60 text-amber-300 font-bold text-xs flex items-center justify-between transition group shadow-lg shadow-amber-500/10 cursor-pointer"
+          className="mx-3 mb-2 px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/30 text-amber-300/90 font-semibold text-xs flex items-center justify-between transition group cursor-pointer"
         >
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-amber-400 group-hover:scale-110 transition" />
+            <Shield className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition" />
             <span>Sistem Yönetimi</span>
           </div>
-          <span className="text-[9px] bg-amber-500 text-black px-1.5 py-0.5 rounded-full font-extrabold shadow">
-            ADMIN
-          </span>
+          <span className="text-[10px] text-amber-400/70 group-hover:translate-x-0.5 transition">→</span>
         </button>
       )}
 
@@ -870,26 +860,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             </div>
           </div>
 
-          {isAuthenticated && (
-            <button
-              type="button"
-              onClick={() => setIsStatusMenuOpen((p) => !p)}
-              className={`w-7 h-7 rounded-lg flex items-center justify-center border transition shrink-0 ${
-                isStatusMenuOpen
-                  ? 'bg-white/20 border-white/30 text-white'
-                  : 'bg-white/[0.06] hover:bg-white/15 border-white/10 text-white/70 hover:text-white'
-              }`}
-              title={`Durumu Değiştir (${currentStatusMeta.label})`}
-            >
-              <span className={`w-2.5 h-2.5 rounded-full ${currentStatusMeta.dot}`} />
-            </button>
-          )}
-
           {/* Quick Logout / Login Button */}
           {isAuthenticated ? (
             <button
               onClick={logout}
-              className="w-7 h-7 rounded-lg flex items-center justify-center bg-red-500/15 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 transition shadow-sm shrink-0"
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/[0.05] hover:bg-rose-500/20 text-white/50 hover:text-rose-300 border border-white/10 hover:border-rose-500/30 transition shrink-0"
               title="Çıkış Yap"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -905,7 +880,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           )}
         </div>
 
-        {/* Tier 2: Controls Toolbar */}
+        {/* Tier 2: Controls Toolbar (Clean 4-icon dock) */}
         <div className="flex items-center justify-between gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/[0.06]">
           <button
             onClick={toggleMute}
@@ -941,15 +916,6 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             title="Oyun / Aktivite Durumunu Ayarla"
           >
             <Gamepad2 className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={openDiagnostics}
-            className="flex-1 h-7 rounded-lg flex items-center justify-center text-emerald-400 hover:bg-emerald-500/20 transition border border-emerald-500/20 gap-1"
-            title={`Bağlantı & Ping Teşhisi (${ping}ms)`}
-          >
-            <Activity className="w-3.5 h-3.5 animate-pulse" />
-            <span className="text-[10px] font-mono font-bold">{ping}ms</span>
           </button>
 
           <button
