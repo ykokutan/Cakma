@@ -20,15 +20,22 @@ fn detect_running_game() -> Option<String> {
     let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
     let known_apps: &[(&str, &str)] = &[
       ("valorant-win64-shipping.exe", "VALORANT"),
+      ("valorant.exe", "VALORANT"),
       ("cs2.exe", "Counter-Strike 2"),
+      ("csgo.exe", "Counter-Strike"),
       ("league of legends.exe", "League of Legends"),
-      ("leagueclient.exe", "League of Legends"),
+      ("leagueclientux.exe", "League of Legends"),
       ("gta5.exe", "Grand Theft Auto V"),
+      ("gtav_enhanced.exe", "Grand Theft Auto V"),
+      ("gtaprocess.exe", "FiveM (GTA RP)"),
       ("fivem.exe", "FiveM (GTA RP)"),
+      ("rdr2.exe", "Red Dead Redemption 2"),
+      ("minecraft.windows.exe", "Minecraft"),
       ("minecraft.exe", "Minecraft"),
       ("javaw.exe", "Minecraft"),
       ("fortniteclient-win64-shipping.exe", "Fortnite"),
       ("r5apex.exe", "Apex Legends"),
+      ("r5apex_dx12.exe", "Apex Legends"),
       ("rocketleague.exe", "Rocket League"),
       ("dota2.exe", "Dota 2"),
       ("overwatch.exe", "Overwatch 2"),
@@ -36,8 +43,33 @@ fn detect_running_game() -> Option<String> {
       ("eldenring.exe", "Elden Ring"),
       ("rustclient.exe", "Rust"),
       ("tslgame.exe", "PUBG: Battlegrounds"),
+      ("robloxplayerbeta.exe", "Roblox"),
+      ("fc25.exe", "EA SPORTS FC 25"),
+      ("fc24.exe", "EA SPORTS FC 24"),
+      ("fifa23.exe", "FIFA 23"),
+      ("helldivers2.exe", "Helldivers 2"),
+      ("palworld-win64-shipping.exe", "Palworld"),
+      ("bg3.exe", "Baldur's Gate 3"),
+      ("bg3_dx11.exe", "Baldur's Gate 3"),
+      ("witcher3.exe", "The Witcher 3"),
+      ("escapefromtarkov.exe", "Escape from Tarkov"),
+      ("rainbowsix.exe", "Rainbow Six Siege"),
+      ("rainbowsix_vulkan.exe", "Rainbow Six Siege"),
+      ("deadbydaylight-win64-shipping.exe", "Dead by Daylight"),
+      ("phasmophobia.exe", "Phasmophobia"),
+      ("lethal company.exe", "Lethal Company"),
+      ("among us.exe", "Among Us"),
+      ("eurotrucks2.exe", "Euro Truck Simulator 2"),
+      ("amtrucks.exe", "American Truck Simulator"),
+      ("genshinimpact.exe", "Genshin Impact"),
+      ("zenlesszonezero.exe", "Zenless Zone Zero"),
+      ("terraria.exe", "Terraria"),
+      ("stardew valley.exe", "Stardew Valley"),
+      ("metin2client.exe", "Metin2"),
+      ("knightonline.exe", "Knight Online"),
       ("obs64.exe", "OBS Studio"),
       ("spotify.exe", "Spotify"),
+      ("vlc.exe", "VLC Media Player"),
       ("code.exe", "Visual Studio Code"),
     ];
 
@@ -76,16 +108,17 @@ fn detect_running_game() -> Option<String> {
   None
 }
 
-#[tauri::command]
-fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
-  if let Some(win) = app.get_webview_window("overlay") {
-    win.close().map_err(|e| e.to_string())?;
-    return Ok(false);
+fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
+  if app.get_webview_window("overlay").is_some() {
+    return Ok(());
   }
 
-  WebviewWindowBuilder::new(&app, "overlay", WebviewUrl::App("index.html?overlay=1".into()))
+  WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html?overlay=1".into()))
     .title("Çakma Overlay")
-    .inner_size(270.0, 220.0)
+    .inner_size(290.0, 260.0)
+    .min_inner_size(220.0, 150.0)
+    .position(24.0, 24.0)
+    .background_color(tauri::window::Color(11, 13, 20, 255))
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
@@ -93,7 +126,36 @@ fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
     .build()
     .map_err(|e| e.to_string())?;
 
+  Ok(())
+}
+
+#[tauri::command]
+fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
+  if let Some(win) = app.get_webview_window("overlay") {
+    win.close().map_err(|e| e.to_string())?;
+    return Ok(false);
+  }
+
+  open_overlay_window(&app)?;
   Ok(true)
+}
+
+#[tauri::command]
+fn set_overlay_window(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+  if enabled {
+    open_overlay_window(&app)?;
+    Ok(true)
+  } else {
+    if let Some(win) = app.get_webview_window("overlay") {
+      win.close().map_err(|e| e.to_string())?;
+    }
+    Ok(false)
+  }
+}
+
+#[tauri::command]
+fn get_overlay_window_state(app: tauri::AppHandle) -> bool {
+  app.get_webview_window("overlay").is_some()
 }
 
 #[derive(serde::Deserialize)]
@@ -247,6 +309,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       detect_running_game,
       toggle_overlay_window,
+      set_overlay_window,
+      get_overlay_window_state,
       simulate_remote_input
     ]);
 

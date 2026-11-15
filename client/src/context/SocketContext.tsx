@@ -104,6 +104,10 @@ interface SocketContextType {
   addServerEmoji: (serverId: string, name: string, url: string) => void;
   deleteServerEmoji: (serverId: string, emojiId: string) => void;
   toggleOverlayWindow: () => Promise<void>;
+  overlayEnabled: boolean;
+  setOverlayEnabled: (enabled: boolean) => Promise<void>;
+  detectedGame: string | null;
+  refreshDetectedGame: () => Promise<string | null>;
   joinVoiceChannel: (channelId: string, password?: string) => void;
   moveVoiceUser: (targetUserId: string, targetChannelId: string) => void;
   leaveVoiceChannel: () => void;
@@ -2970,6 +2974,34 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('delete_server_emoji', { serverId, emojiId });
   }, [socket]);
 
+  const [overlayEnabled, setOverlayEnabledState] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem('dc_overlay_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [detectedGame, setDetectedGame] = useState<string | null>(null);
+
+  const setOverlayEnabled = useCallback(async (enabled: boolean) => {
+    setOverlayEnabledState(enabled);
+    try {
+      localStorage.setItem('dc_overlay_enabled', String(enabled));
+    } catch {}
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke<boolean>('set_overlay_window', { enabled });
+    } catch (err) {
+      console.warn('Overlay set failed:', err);
+    }
+  }, []);
+
   const toggleOverlayWindow = useCallback(async () => {
     const isTauri =
       typeof window !== 'undefined' &&
@@ -2979,11 +3011,35 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!isTauri) return;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('toggle_overlay_window');
+      const opened = await invoke<boolean>('toggle_overlay_window');
+      setOverlayEnabledState(opened);
+      try {
+        localStorage.setItem('dc_overlay_enabled', String(opened));
+      } catch {}
     } catch (err) {
       console.warn('Overlay toggle failed:', err);
     }
   }, []);
+
+  const refreshDetectedGame = useCallback(async (): Promise<string | null> => {
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return null;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const game = await invoke<string | null>('detect_running_game');
+      setDetectedGame(game || null);
+      if (socket && isAuthenticated) {
+        socket.emit('user_update_activity', { activity: game ? { type: 'playing', name: game } : null });
+      }
+      return game || null;
+    } catch {
+      return null;
+    }
+  }, [socket, isAuthenticated]);
 
   const playSoundboard = useCallback((soundId: string) => {
     if (!socket || !connectedVoiceChannelId) {
@@ -3571,20 +3627,24 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       try {
         const { invoke } = await import('@tauri-apps/api/core');
+        if (localStorage.getItem('dc_overlay_enabled') === 'true' && isAuthenticated) {
+          invoke('set_overlay_window', { enabled: true }).catch(() => {});
+        }
         const pollGame = async () => {
           if (!socket || !isAuthenticated) return;
           try {
             const game = await invoke<string | null>('detect_running_game');
+            setDetectedGame(game || null);
             if (game !== lastDetectedGame) {
               lastDetectedGame = game;
-              socket.emit('update_activity', game ? { type: 'playing', name: game } : null);
+              socket.emit('user_update_activity', { activity: game ? { type: 'playing', name: game } : null });
             }
           } catch {
             // ignore
           }
         };
         pollGame();
-        gameTimer = setInterval(pollGame, 25000);
+        gameTimer = setInterval(pollGame, 10000);
       } catch {
         // ignore
       }
@@ -3599,7 +3659,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [socket, isAuthenticated]);
 
-  // Emit speaker updates to Tauri Overlay window
+  // Emit speaker updates to Tauri Overlay window & handle overlay actions
+  const emitOverlayStateRef = useRef<() => void>(() => {});
   useEffect(() => {
     const isTauri =
       typeof window !== 'undefined' &&
@@ -3609,6 +3670,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!isTauri) return;
     if (typeof window !== 'undefined' && window.location.search.includes('overlay=1')) return;
 
+    const currentVoiceCh = servers
+      .flatMap((s) => s.channels)
+      .find((c) => c.id === connectedVoiceChannelId);
+
     const speakers = onlineUsers
       .filter((u) => connectedVoiceChannelId && u.currentVoiceChannelId === connectedVoiceChannelId)
       .map((u) => ({
@@ -3617,13 +3682,53 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         avatar: u.avatar,
         isSpeaking: u.id === currentUser?.id ? isSpeaking : u.isSpeaking,
         isMuted: u.id === currentUser?.id ? isMuted : u.isMuted,
+        isDeafened: u.id === currentUser?.id ? isDeafened : u.isDeafened,
         isHandRaised: u.isHandRaised,
       }));
 
+    const pushOverlay = () => {
+      import('@tauri-apps/api/event')
+        .then(({ emit }) =>
+          emit('overlay-speakers-update', {
+            speakers,
+            inVoice: Boolean(connectedVoiceChannelId),
+            channelName: currentVoiceCh?.name || '',
+            ping,
+            isMuted,
+            isDeafened,
+          })
+        )
+        .catch(() => {});
+    };
+
+    emitOverlayStateRef.current = pushOverlay;
+    pushOverlay();
+  }, [onlineUsers, connectedVoiceChannelId, isSpeaking, isMuted, isDeafened, ping, currentUser, servers]);
+
+  useEffect(() => {
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (!isTauri) return;
+    if (typeof window !== 'undefined' && window.location.search.includes('overlay=1')) return;
+
+    let unlisteners: Array<() => void> = [];
     import('@tauri-apps/api/event')
-      .then(({ emit }) => emit('overlay-speakers-update', { speakers, inVoice: Boolean(connectedVoiceChannelId) }))
+      .then(async ({ listen }) => {
+        const u1 = await listen('overlay-ready', () => emitOverlayStateRef.current());
+        const u2 = await listen('overlay-close-requested', () => setOverlayEnabled(false));
+        const u3 = await listen('overlay-toggle-mute', () => toggleMuteRef.current());
+        const u4 = await listen('overlay-toggle-deafen', () => toggleDeafenRef.current());
+        unlisteners = [u1, u2, u3, u4];
+      })
       .catch(() => {});
-  }, [onlineUsers, connectedVoiceChannelId, isSpeaking, isMuted, currentUser]);
+
+    return () => {
+      unlisteners.forEach((u) => u());
+    };
+  }, [setOverlayEnabled]);
 
   return (
     <SocketContext.Provider
@@ -3705,6 +3810,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addServerEmoji,
         deleteServerEmoji,
         toggleOverlayWindow,
+        overlayEnabled,
+        setOverlayEnabled,
+        detectedGame,
+        refreshDetectedGame,
         joinVoiceChannel,
         moveVoiceUser,
         leaveVoiceChannel,

@@ -83,6 +83,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     chatFontSize,
     setChatFontSize,
     currentServerHost,
+    overlayEnabled,
+    setOverlayEnabled,
+    detectedGame,
+    refreshDetectedGame,
   } = useSocket();
 
   const [username, setUsername] = useState(currentUser?.username || '');
@@ -1306,6 +1310,60 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <p className="text-xs text-white/50 mt-1">
                   Masaüstü bildirimlerinizi açın ve uygulamayı yerel uygulama olarak bilgisayarınıza veya telefonunuza kurun.
                 </p>
+              </div>
+
+              {/* In-Game Overlay & Game Detection Card */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                      <Radio className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-white">Oyun İçi Konuşanlar Overlay&apos;i</div>
+                      <div className="text-xs text-white/45">
+                        Ses odasındayken konuşanları ve ping durumunu her zaman üstte göster (Masaüstü)
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOverlayEnabled(!overlayEnabled)}
+                    className={`w-12 h-6 rounded-full transition-all relative shrink-0 ${
+                      overlayEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
+                        overlayEnabled ? 'left-7' : 'left-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Cpu className="w-4 h-4 text-purple-400 shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-white">Otomatik Oyun Algılama</div>
+                      <div className="text-[11px] text-white/45 truncate">
+                        {detectedGame ? (
+                          <span className="text-emerald-400 font-semibold">Algılanan: {detectedGame}</span>
+                        ) : (
+                          'Şu anda çalışan bilinen bir oyun algılanmadı'
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => refreshDetectedGame()}
+                    className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white flex items-center gap-1.5 transition shrink-0"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Şimdi Tara</span>
+                  </button>
+                </div>
               </div>
 
               {/* Push Notifications Card */}
