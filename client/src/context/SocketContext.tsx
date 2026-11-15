@@ -152,8 +152,24 @@ interface SocketContextType {
     issuedLicenses?: IssuedLicense[];
     storeSettings?: StoreSettings;
     connectionLogs?: UserConnectionRecord[];
+    systemConfig?: {
+      registrationEnabled: boolean;
+      maintenanceMode: boolean;
+      maxMessageLength: number;
+      defaultSlowmodeSeconds: number;
+      maxUploadSizeMb: number;
+      requireStrongPasswords: boolean;
+    };
   } | null;
   fetchAdminData: () => void;
+  adminUpdateSystemConfig: (cfg: {
+    registrationEnabled?: boolean;
+    maintenanceMode?: boolean;
+    maxMessageLength?: number;
+    defaultSlowmodeSeconds?: number;
+    maxUploadSizeMb?: number;
+    requireStrongPasswords?: boolean;
+  }) => void;
   adminChangeRole: (targetUsername: string, newRole: 'admin' | 'user') => void;
   adminKickUser: (targetSocketId: string, reason?: string) => void;
   adminDeleteChannel: (serverId: string, channelId: string) => void;
@@ -2205,6 +2221,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_update_store_settings', settings);
   };
 
+  const adminUpdateSystemConfig = (cfg: {
+    registrationEnabled?: boolean;
+    maintenanceMode?: boolean;
+    maxMessageLength?: number;
+    defaultSlowmodeSeconds?: number;
+    maxUploadSizeMb?: number;
+    requireStrongPasswords?: boolean;
+  }) => {
+    socket?.emit('admin_update_system_config', cfg);
+    setTimeout(() => fetchAdminData(), 200);
+  };
+
   const adminClearConnectionLogs = () => {
     socket?.emit('admin_clear_connection_logs');
   };
@@ -3287,6 +3315,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminActivateLicense,
         adminExtendLicense,
         adminUpdateStoreSettings,
+        adminUpdateSystemConfig,
         adminClearConnectionLogs,
         adminUpdateWallet,
         adminBanUser,

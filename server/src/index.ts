@@ -462,6 +462,16 @@ if (issuedLicenses.size === 0) {
   saveLicenses(issuedLicenses);
 }
 
+// Runtime System Configuration (Admin configurable)
+let systemConfig = {
+  registrationEnabled: true,
+  maintenanceMode: false,
+  maxMessageLength: 2000,
+  defaultSlowmodeSeconds: 0,
+  maxUploadSizeMb: 5,
+  requireStrongPasswords: false,
+};
+
 // Store Settings & Pricing (Admin configurable)
 const defaultStoreSettings: StoreSettings = {
   isOpen: true,
@@ -1092,6 +1102,12 @@ io.on('connection', (socket: Socket) => {
 
   // 1. REGISTER (Kayıt Olma)
   socket.on('auth_register', ({ username, email, password, avatar }: any) => {
+    if (!systemConfig.registrationEnabled) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: 'Yeni üye kayıtları sistem yöneticisi tarafından geçici olarak kapatılmıştır.'
+      });
+    }
     const clientIp = getClientIp(socket);
     const regCheck = checkRegisterRateLimit(clientIp);
     if (!regCheck.allowed) {
@@ -1104,8 +1120,13 @@ io.on('connection', (socket: Socket) => {
     const cleanUsername = sanitizeText(username?.trim()).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, 32);
     const cleanEmail = email?.trim()?.toLowerCase().slice(0, 64);
 
-    if (!cleanUsername || cleanUsername.length < 3 || !password || password.length < 4) {
-      return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı en az 3, şifre en az 4 karakter olmalıdır.' });
+    if (!cleanUsername || cleanUsername.length < 3 || !password || password.length < (systemConfig.requireStrongPasswords ? 8 : 4)) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: systemConfig.requireStrongPasswords
+          ? 'Kullanıcı adı en az 3, güçlü şifre politikası gereği şifre en az 8 karakter olmalıdır.'
+          : 'Kullanıcı adı en az 3, şifre en az 4 karakter olmalıdır.'
+      });
     }
 
     if (registeredAccounts.has(cleanUsername.toLowerCase())) {
@@ -3531,8 +3552,25 @@ io.on('connection', (socket: Socket) => {
       dedicatedServers: Array.from(dedicatedServersRegistry.values()),
       issuedLicenses: Array.from(issuedLicenses.values()),
       storeSettings,
-      connectionLogs
+      connectionLogs,
+      systemConfig
     });
+  });
+
+  // Admin: Update Runtime System Configuration
+  socket.on('admin_update_system_config', (nextCfg: Partial<typeof systemConfig>) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    if (typeof nextCfg.registrationEnabled === 'boolean') systemConfig.registrationEnabled = nextCfg.registrationEnabled;
+    if (typeof nextCfg.maintenanceMode === 'boolean') systemConfig.maintenanceMode = nextCfg.maintenanceMode;
+    if (typeof nextCfg.requireStrongPasswords === 'boolean') systemConfig.requireStrongPasswords = nextCfg.requireStrongPasswords;
+    if (typeof nextCfg.maxMessageLength === 'number') systemConfig.maxMessageLength = Math.min(Math.max(nextCfg.maxMessageLength, 200), 8000);
+    if (typeof nextCfg.defaultSlowmodeSeconds === 'number') systemConfig.defaultSlowmodeSeconds = Math.min(Math.max(nextCfg.defaultSlowmodeSeconds, 0), 120);
+    if (typeof nextCfg.maxUploadSizeMb === 'number') systemConfig.maxUploadSizeMb = Math.min(Math.max(nextCfg.maxUploadSizeMb, 1), 25);
+
+    addAuditLog('SISTEM_AYARLARI_GUNCELLENDI', `${requester.username} sistem yapılandırmasını güncelledi.`, 'info');
+    socket.emit('admin_feedback', { type: 'success', message: 'Sistem yapılandırması başarıyla kaydedildi.' });
+    io.emit('audit_log_added', auditLogs[0]);
   });
 
   // Admin: Clear connection logs

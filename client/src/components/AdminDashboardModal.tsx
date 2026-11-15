@@ -36,6 +36,7 @@ import {
   Tag,
   Calendar,
   Search,
+  Sliders,
 } from 'lucide-react';
 import { IssuedLicense } from '../types';
 
@@ -56,6 +57,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     adminActivateLicense,
     adminExtendLicense,
     adminUpdateStoreSettings,
+    adminUpdateSystemConfig,
     adminClearConnectionLogs,
     adminUpdateWallet,
     adminBanUser,
@@ -74,7 +76,31 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     resetToMainServer,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'dedicated' | 'users' | 'licenses' | 'store' | 'servers' | 'logs' | 'broadcast' | 'connections'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'system' | 'dedicated' | 'users' | 'licenses' | 'store' | 'servers' | 'logs' | 'broadcast' | 'connections'>('overview');
+  const [autoRefreshSec, setAutoRefreshSec] = useState<number>(0);
+  const [sysRegEnabled, setSysRegEnabled] = useState<boolean>(true);
+  const [sysMaintenance, setSysMaintenance] = useState<boolean>(false);
+  const [sysStrongPass, setSysStrongPass] = useState<boolean>(false);
+  const [sysMaxMsgLen, setSysMaxMsgLen] = useState<number>(2000);
+  const [sysSlowmode, setSysSlowmode] = useState<number>(0);
+  const [sysMaxUploadMb, setSysMaxUploadMb] = useState<number>(5);
+
+  useEffect(() => {
+    if (adminData?.systemConfig) {
+      setSysRegEnabled(adminData.systemConfig.registrationEnabled);
+      setSysMaintenance(adminData.systemConfig.maintenanceMode);
+      setSysStrongPass(adminData.systemConfig.requireStrongPasswords);
+      setSysMaxMsgLen(adminData.systemConfig.maxMessageLength);
+      setSysSlowmode(adminData.systemConfig.defaultSlowmodeSeconds);
+      setSysMaxUploadMb(adminData.systemConfig.maxUploadSizeMb);
+    }
+  }, [adminData?.systemConfig]);
+
+  useEffect(() => {
+    if (autoRefreshSec <= 0) return;
+    const id = setInterval(() => fetchAdminData(), autoRefreshSec * 1000);
+    return () => clearInterval(id);
+  }, [autoRefreshSec, fetchAdminData]);
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [announcementSent, setAnnouncementSent] = useState(false);
   const [copiedServerId, setCopiedServerId] = useState<string | null>(null);
@@ -278,23 +304,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-3xl flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl ios-glass rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-amber-500/30 h-[650px] relative">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-2xl flex items-center justify-center p-2 sm:p-4">
+      <div className="w-full max-w-6xl ios-glass rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-white/15 h-[92dvh] md:h-[720px] relative">
         {/* Admin Header */}
-        <header className="h-16 px-6 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/30">
+        <header className="h-16 px-5 sm:px-6 border-b border-white/[0.08] flex items-center justify-between shrink-0 bg-gradient-to-r from-amber-500/10 via-teal-500/5 to-transparent">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/25 shrink-0">
               <Shield className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white tracking-tight">Sistem Yönetim Konsolu</h2>
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
-                  ROOT ADMIN
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight truncate">Sistem Yönetim Konsolu</h2>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 text-[10px] font-bold border border-amber-400/30 shrink-0">
+                  ROOT
                 </span>
               </div>
-              <p className="text-[11px] text-white/50">
-                Backend durum izleme, dedicated sunucular, kullanıcı yetkileri, lisans takibi ve mağaza yönetim merkezi
+              <p className="text-[11px] text-white/45 truncate hidden sm:block">
+                Sistem yapılandırması, güvenlik, altyapı ve topluluk yönetimi
               </p>
             </div>
           </div>
@@ -339,125 +365,213 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
           </div>
         )}
 
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 px-6 py-2.5 border-b border-white/[0.06] bg-black/30 overflow-x-auto shrink-0 scrollbar-none">
-          <button
-            onClick={() => setActiveTab('overview')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'overview'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            Sistem Metrikleri
-          </button>
+        {/* Body: Categorized Sidebar + Content */}
+        <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
+          <aside className="md:w-56 shrink-0 border-b md:border-b-0 md:border-r border-white/[0.07] bg-black/25 p-2.5 md:p-3 flex md:flex-col gap-1.5 overflow-x-auto md:overflow-y-auto no-scrollbar">
+            {[
+              {
+                group: 'Genel & Ayarlar',
+                items: [
+                  { id: 'overview', label: 'Genel Bakış', icon: Activity },
+                  { id: 'system', label: 'Sistem Ayarları', icon: Sliders },
+                ],
+              },
+              {
+                group: 'Topluluk & Güvenlik',
+                items: [
+                  { id: 'users', label: `Kullanıcılar (${adminData?.registeredUsers.length || 0})`, icon: Users },
+                  { id: 'servers', label: 'Sunucular', icon: Server },
+                  { id: 'connections', label: `Bağlantılar (${adminData?.connectionLogs?.length || 0})`, icon: Globe },
+                  { id: 'logs', label: `Denetim (${adminData?.auditLogs.length || 0})`, icon: FileText },
+                ],
+              },
+              {
+                group: 'Altyapı & Mağaza',
+                items: [
+                  { id: 'dedicated', label: `Dedicated (${adminData?.dedicatedServers?.length || 0})`, icon: Cpu },
+                  { id: 'licenses', label: `Lisanslar (${adminData?.issuedLicenses?.length || 0})`, icon: Key },
+                  { id: 'store', label: `Mağaza ${storeIsOpen ? '●' : '○'}`, icon: ShoppingBag },
+                ],
+              },
+              {
+                group: 'İletişim',
+                items: [
+                  { id: 'broadcast', label: 'Sistem Duyurusu', icon: Megaphone },
+                ],
+              },
+            ].map((sec) => (
+              <div key={sec.group} className="flex md:flex-col gap-1 md:mb-2 shrink-0">
+                <div className="hidden md:block px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/35">
+                  {sec.group}
+                </div>
+                {sec.items.map((item) => {
+                  const Icon = item.icon;
+                  const isAct = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveTab(item.id as any)}
+                      className={`px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 whitespace-nowrap ${
+                        isAct
+                          ? 'bg-gradient-to-r from-amber-500/25 via-teal-500/15 to-transparent text-white border border-amber-400/35 shadow-sm'
+                          : 'text-white/60 hover:bg-white/[0.06] hover:text-white border border-transparent'
+                      }`}
+                    >
+                      <Icon className={`w-3.5 h-3.5 shrink-0 ${isAct ? 'text-amber-300' : 'opacity-75'}`} />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </aside>
 
-          <button
-            onClick={() => setActiveTab('dedicated')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'dedicated'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            Dedicated Sunucular ({adminData?.dedicatedServers?.length || 0})
-          </button>
+          {/* Admin Content Area */}
+          <div className="flex-1 p-5 sm:p-6 overflow-y-auto">
+            {/* NEW TAB: RUNTIME SYSTEM SETTINGS */}
+            {activeTab === 'system' && (
+              <div className="space-y-5 max-w-3xl">
+                <div>
+                  <h3 className="text-base font-bold text-white">Detaylı Sistem & Güvenlik Ayarları</h3>
+                  <p className="text-xs text-white/45 mt-0.5">
+                    Kayıt politikası, mesaj limitleri ve panel otomatik yenileme ayarlarını canlı olarak yönetin.
+                  </p>
+                </div>
 
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'users'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            Kullanıcı Hesapları ({adminData?.registeredUsers.length || 0})
-          </button>
+                {/* Access & Security Card */}
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+                  <div className="text-xs font-bold uppercase tracking-wider text-amber-300">Erişim & Güvenlik Politikası</div>
 
-          <button
-            onClick={() => setActiveTab('licenses')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'licenses'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Key className="w-3.5 h-3.5" />
-            Lisans & Takip ({adminData?.issuedLicenses?.length || 0})
-          </button>
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Yeni Üye Kayıtları</div>
+                      <div className="text-xs text-white/45">Kapatıldığında yeni kullanıcı kayıtları engellenir.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSysRegEnabled(!sysRegEnabled)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysRegEnabled ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysRegEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
 
-          <button
-            onClick={() => setActiveTab('store')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'store'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            Mağaza Yönetimi
-            <span
-              className={`w-2 h-2 rounded-full ${
-                storeIsOpen ? 'bg-emerald-400' : 'bg-rose-500 animate-pulse'
-              }`}
-            />
-          </button>
+                  <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Güçlü Şifre Zorunluluğu</div>
+                      <div className="text-xs text-white/45">Yeni kayıtlarda minimum şifre uzunluğunu 8 karaktere çıkarır.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSysStrongPass(!sysStrongPass)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysStrongPass ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysStrongPass ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
 
-          <button
-            onClick={() => setActiveTab('servers')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'servers'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Server className="w-3.5 h-3.5" />
-            Sunucular & Kanallar
-          </button>
+                  <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Bakım Modu İşareti</div>
+                      <div className="text-xs text-white/45">Sistem bakım durumunu kayıt altında tutar.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSysMaintenance(!sysMaintenance)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysMaintenance ? 'bg-amber-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysMaintenance ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                </div>
 
-          <button
-            onClick={() => setActiveTab('logs')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'logs'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Güvenlik Günlüğü ({adminData?.auditLogs.length || 0})
-          </button>
+                {/* Chat & Upload Limits Card */}
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+                  <div className="text-xs font-bold uppercase tracking-wider text-teal-300">Sohbet & Medya Limitleri</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 mb-1.5">Maks. Mesaj Uzunluğu</label>
+                      <input
+                        type="number"
+                        min={200}
+                        max={8000}
+                        value={sysMaxMsgLen}
+                        onChange={(e) => setSysMaxMsgLen(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 mb-1.5">Varsayılan Yavaş Mod (sn)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={120}
+                        value={sysSlowmode}
+                        onChange={(e) => setSysSlowmode(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 mb-1.5">Maks. Dosya Limiti (MB)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={25}
+                        value={sysMaxUploadMb}
+                        onChange={(e) => setSysMaxUploadMb(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+                </div>
 
-          <button
-            onClick={() => setActiveTab('connections')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'connections'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            Bağlantı & IP Kayıtları ({adminData?.connectionLogs?.length || 0})
-          </button>
+                {/* Auto Refresh + Save */}
+                <div className="p-5 rounded-2xl ios-glass-card border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Panel Otomatik Yenileme</div>
+                    <div className="text-xs text-white/45">Metrikleri ve logları belirli aralıklarla otomatik yeniler.</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {[0, 5, 15, 30].map((sec) => (
+                      <button
+                        key={sec}
+                        type="button"
+                        onClick={() => setAutoRefreshSec(sec)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+                          autoRefreshSec === sec
+                            ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {sec === 0 ? 'Kapalı' : `${sec}sn`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-          <button
-            onClick={() => setActiveTab('broadcast')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
-              activeTab === 'broadcast'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/25'
-                : 'text-white/60 hover:bg-white/5 hover:text-white'
-            }`}
-          >
-            <Megaphone className="w-3.5 h-3.5" />
-            Genel Duyuru Gönder
-          </button>
-        </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      adminUpdateSystemConfig({
+                        registrationEnabled: sysRegEnabled,
+                        maintenanceMode: sysMaintenance,
+                        requireStrongPasswords: sysStrongPass,
+                        maxMessageLength: sysMaxMsgLen,
+                        defaultSlowmodeSeconds: sysSlowmode,
+                        maxUploadSizeMb: sysMaxUploadMb,
+                      })
+                    }
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-teal-500 hover:brightness-110 text-white text-xs font-bold shadow-lg shadow-amber-500/20 transition"
+                  >
+                    Sistem Ayarlarını Kaydet
+                  </button>
+                </div>
+              </div>
+            )}
 
-        {/* Admin Content Area */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {/* TAB 1: OVERVIEW METRICS */}
+            {/* TAB 1: OVERVIEW METRICS */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2236,6 +2350,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
               </div>
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>
