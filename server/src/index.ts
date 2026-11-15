@@ -2592,9 +2592,9 @@ io.on('connection', (socket: Socket) => {
     if (data.verificationLevel !== undefined) s.verificationLevel = data.verificationLevel;
     if (data.defaultNotification !== undefined) s.defaultNotification = data.defaultNotification;
     if (data.autoModEnabled !== undefined) s.autoModEnabled = data.autoModEnabled;
-    if (data.vanityCode !== undefined) s.vanityCode = data.vanityCode;
+    if (data.vanityCode !== undefined) s.vanityCode = data.vanityCode.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
     if (data.welcomeChannelId !== undefined) s.welcomeChannelId = data.welcomeChannelId;
-    if (data.welcomeMessage !== undefined) s.welcomeMessage = data.welcomeMessage;
+    if (data.welcomeMessage !== undefined) s.welcomeMessage = sanitizeText(data.welcomeMessage).trim().slice(0, 500);
     if (data.welcomeEnabled !== undefined) s.welcomeEnabled = data.welcomeEnabled;
     if (data.autoRoleId !== undefined) s.autoRoleId = data.autoRoleId;
 
