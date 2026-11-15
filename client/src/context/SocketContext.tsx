@@ -53,6 +53,28 @@ interface SocketContextType {
   acceptDirectCall: () => void;
   declineDirectCall: () => void;
   endDirectCall: () => void;
+  isDirectScreenSharing: boolean;
+  partnerDirectScreenSharing: boolean;
+  remoteAssist: {
+    status: 'idle' | 'requesting' | 'incoming_request' | 'controlling' | 'being_controlled';
+    hostDesktopCapable: boolean;
+    requesterName?: string;
+    remoteCursor: { x: number; y: number; clicking?: boolean } | null;
+  };
+  startDirectScreenShare: () => Promise<void>;
+  stopDirectScreenShare: () => void;
+  requestRemoteAssist: () => void;
+  respondRemoteAssist: (accepted: boolean) => void;
+  stopRemoteAssist: () => void;
+  sendRemoteInput: (payload: {
+    kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup';
+    x?: number;
+    y?: number;
+    button?: number;
+    delta_y?: number;
+    key?: string;
+    code?: string;
+  }) => void;
   updateProfileDetails: (details: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => void;
 
   // System Announcement
@@ -629,6 +651,23 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [directCall, setDirectCall] = useState<DirectCallState | null>(null);
   const directCallRef = useRef<DirectCallState | null>(null);
   const directCallTimerRef = useRef<any>(null);
+  const [isDirectScreenSharing, setIsDirectScreenSharing] = useState(false);
+  const [partnerDirectScreenSharing, setPartnerDirectScreenSharing] = useState(false);
+  const directScreenStreamRef = useRef<MediaStream | null>(null);
+  const [remoteAssist, setRemoteAssist] = useState<{
+    status: 'idle' | 'requesting' | 'incoming_request' | 'controlling' | 'being_controlled';
+    hostDesktopCapable: boolean;
+    requesterName?: string;
+    remoteCursor: { x: number; y: number; clicking?: boolean } | null;
+  }>({
+    status: 'idle',
+    hostDesktopCapable: false,
+    remoteCursor: null,
+  });
+  const remoteAssistRef = useRef(remoteAssist);
+  useEffect(() => {
+    remoteAssistRef.current = remoteAssist;
+  }, [remoteAssist]);
 
   // Friends System State
   const [friends, setFriends] = useState<FriendUser[]>([]);
@@ -1942,6 +1981,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('direct_call_declined', ({ reason }: { reason?: string }) => {
       alert(reason || 'Arama reddedildi.');
       setDirectCall(null);
+      setIsDirectScreenSharing(false);
+      setPartnerDirectScreenSharing(false);
+      if (directScreenStreamRef.current) {
+        directScreenStreamRef.current.getTracks().forEach(t => t.stop());
+        directScreenStreamRef.current = null;
+      }
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
     });
 
     newSocket.on('direct_call_ended', () => {
@@ -1957,6 +2003,88 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
       setDirectCall(null);
+      setIsDirectScreenSharing(false);
+      setPartnerDirectScreenSharing(false);
+      if (directScreenStreamRef.current) {
+        directScreenStreamRef.current.getTracks().forEach(t => t.stop());
+        directScreenStreamRef.current = null;
+      }
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    });
+
+    newSocket.on('direct_screen_share_state', ({ userId, isSharing }: { userId: string; isSharing: boolean }) => {
+      setPartnerDirectScreenSharing(Boolean(isSharing));
+      if (!isSharing) {
+        setRemoteScreenStreams(prev => {
+          if (!prev.has(userId)) return prev;
+          const next = new Map(prev);
+          next.delete(userId);
+          return next;
+        });
+        setRemoteAssist(prev => (prev.status === 'controlling' || prev.status === 'requesting' ? { status: 'idle', hostDesktopCapable: false, remoteCursor: null } : prev));
+      }
+    });
+
+    newSocket.on('remote_assist_incoming_request', ({ fromUsername }: { fromUsername: string }) => {
+      setRemoteAssist(prev => ({
+        ...prev,
+        status: 'incoming_request',
+        requesterName: fromUsername,
+      }));
+    });
+
+    newSocket.on('remote_assist_response', ({ accepted, hostDesktopCapable }: { accepted: boolean; hostDesktopCapable: boolean }) => {
+      if (accepted) {
+        setRemoteAssist({
+          status: 'controlling',
+          hostDesktopCapable: Boolean(hostDesktopCapable),
+          remoteCursor: null,
+        });
+      } else {
+        setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+        alert('Karşı taraf uzaktan kontrol isteğini reddetti.');
+      }
+    });
+
+    newSocket.on('remote_assist_stopped', () => {
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    });
+
+    newSocket.on('remote_assist_input', async (payload: {
+      kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup';
+      x?: number;
+      y?: number;
+      button?: number;
+      delta_y?: number;
+      key?: string;
+      code?: string;
+    }) => {
+      if (remoteAssistRef.current.status !== 'being_controlled') return;
+
+      if (typeof payload.x === 'number' && typeof payload.y === 'number') {
+        setRemoteAssist(prev => ({
+          ...prev,
+          remoteCursor: {
+            x: payload.x!,
+            y: payload.y!,
+            clicking: payload.kind === 'mousedown',
+          },
+        }));
+      }
+
+      const isTauri = typeof window !== 'undefined' && (
+        '__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:'
+      );
+      if (isTauri) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('simulate_remote_input', { payload });
+        } catch {
+          // Ignore input simulation errors on unsupported platforms
+        }
+      }
     });
 
     newSocket.on('profile_updated', (updatedUser: User) => {
@@ -2614,6 +2742,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!socket || !directCall) return;
     socket.emit('direct_call_decline', { callerUserId: directCall.partner.id });
     setDirectCall(null);
+    setIsDirectScreenSharing(false);
+    setPartnerDirectScreenSharing(false);
+    if (directScreenStreamRef.current) {
+      directScreenStreamRef.current.getTracks().forEach(t => t.stop());
+      directScreenStreamRef.current = null;
+    }
+    setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
   }, [socket, directCall]);
 
   const endDirectCall = useCallback(() => {
@@ -2628,7 +2763,110 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audioElementsRef.current.delete(directCall.partner.id);
     }
     setDirectCall(null);
+    setIsDirectScreenSharing(false);
+    setPartnerDirectScreenSharing(false);
+    if (directScreenStreamRef.current) {
+      directScreenStreamRef.current.getTracks().forEach(t => t.stop());
+      directScreenStreamRef.current = null;
+    }
+    setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
   }, [socket, directCall]);
+
+  const stopDirectScreenShare = useCallback(() => {
+    if (directScreenStreamRef.current) {
+      const partnerId = directCallRef.current?.partner.id;
+      const pc = partnerId ? peerConnectionsRef.current.get(partnerId) : undefined;
+      directScreenStreamRef.current.getTracks().forEach(track => {
+        if (pc) {
+          const sender = pc.getSenders().find(s => s.track === track);
+          if (sender) {
+            try { pc.removeTrack(sender); } catch {}
+          }
+        }
+        track.stop();
+      });
+      directScreenStreamRef.current = null;
+    }
+    setIsDirectScreenSharing(false);
+    socket?.emit('direct_screen_share_state', { isSharing: false });
+    if (remoteAssistRef.current.status === 'being_controlled') {
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+      socket?.emit('remote_assist_stop');
+    }
+  }, [socket]);
+
+  const startDirectScreenShare = useCallback(async () => {
+    if (!socket || !directCallRef.current) return;
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+      alert('Ekran paylaşımı için güvenli bağlantı (HTTPS veya masaüstü uygulaması) gereklidir.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 30, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      directScreenStreamRef.current = stream;
+      const videoTrack = stream.getVideoTracks()[0];
+      const partnerId = directCallRef.current.partner.id;
+      const pc = peerConnectionsRef.current.get(partnerId);
+      if (pc && videoTrack) {
+        pc.addTrack(videoTrack, stream);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('webrtc_signal', {
+          targetUserId: partnerId,
+          signal: offer,
+          type: 'offer',
+        });
+      }
+      videoTrack.onended = () => {
+        stopDirectScreenShare();
+      };
+      setIsDirectScreenSharing(true);
+      socket.emit('direct_screen_share_state', { isSharing: true });
+    } catch {
+      // User cancelled screen picker
+    }
+  }, [socket, stopDirectScreenShare]);
+
+  const requestRemoteAssist = useCallback(() => {
+    if (!socket || !directCallRef.current) return;
+    setRemoteAssist(prev => ({ ...prev, status: 'requesting' }));
+    socket.emit('remote_assist_request');
+  }, [socket]);
+
+  const respondRemoteAssist = useCallback((accepted: boolean) => {
+    if (!socket) return;
+    const isTauri = typeof window !== 'undefined' && (
+      '__TAURI_INTERNALS__' in window ||
+      window.location.hostname === 'tauri.localhost' ||
+      window.location.protocol === 'tauri:'
+    );
+    socket.emit('remote_assist_response', { accepted, hostDesktopCapable: isTauri });
+    if (accepted) {
+      setRemoteAssist({ status: 'being_controlled', hostDesktopCapable: isTauri, remoteCursor: null });
+    } else {
+      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    }
+  }, [socket]);
+
+  const stopRemoteAssist = useCallback(() => {
+    setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    socket?.emit('remote_assist_stop');
+  }, [socket]);
+
+  const sendRemoteInput = useCallback((payload: {
+    kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup';
+    x?: number;
+    y?: number;
+    button?: number;
+    delta_y?: number;
+    key?: string;
+    code?: string;
+  }) => {
+    socket?.emit('remote_assist_input', payload);
+  }, [socket]);
 
   const updateProfileDetails = useCallback(({ statusMessage, bio, bannerColor, bannerImage, avatar, status }: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => {
     if (!socket) return;
@@ -3429,6 +3667,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         acceptDirectCall,
         declineDirectCall,
         endDirectCall,
+        isDirectScreenSharing,
+        partnerDirectScreenSharing,
+        remoteAssist,
+        startDirectScreenShare,
+        stopDirectScreenShare,
+        requestRemoteAssist,
+        respondRemoteAssist,
+        stopRemoteAssist,
+        sendRemoteInput,
         updateProfileDetails,
 
         // System Announcement

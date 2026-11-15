@@ -2492,6 +2492,58 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
+  // 1-on-1 Remote Assistance (TeamViewer-style) Relay — strictly scoped to activeDirectCallPairs
+  socket.on('remote_assist_request', () => {
+    const caller = activeUsers.get(socket.id);
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!caller || !pairedSocketId) return;
+    io.to(pairedSocketId).emit('remote_assist_incoming_request', {
+      fromUserId: socket.id,
+      fromUsername: caller.username
+    });
+  });
+
+  socket.on('remote_assist_response', ({ accepted, hostDesktopCapable }: { accepted: boolean; hostDesktopCapable?: boolean }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId) return;
+    io.to(pairedSocketId).emit('remote_assist_response', {
+      accepted: Boolean(accepted),
+      hostDesktopCapable: Boolean(hostDesktopCapable)
+    });
+  });
+
+  socket.on('remote_assist_stop', () => {
+    const user = activeUsers.get(socket.id);
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId) return;
+    io.to(pairedSocketId).emit('remote_assist_stopped', {
+      stoppedBy: user?.username || 'Karşı taraf'
+    });
+  });
+
+  socket.on('remote_assist_input', (payload: {
+    kind: string;
+    x?: number;
+    y?: number;
+    button?: number;
+    delta_y?: number;
+    key?: string;
+    code?: string;
+  }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId || !payload || typeof payload.kind !== 'string') return;
+    io.to(pairedSocketId).emit('remote_assist_input', payload);
+  });
+
+  socket.on('direct_screen_share_state', ({ isSharing }: { isSharing: boolean }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId) return;
+    io.to(pairedSocketId).emit('direct_screen_share_state', {
+      userId: socket.id,
+      isSharing: Boolean(isSharing)
+    });
+  });
+
   // Friends System Events
   socket.on('get_friends_data', () => {
     const user = activeUsers.get(socket.id);

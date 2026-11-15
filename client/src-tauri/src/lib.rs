@@ -96,13 +96,158 @@ fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
   Ok(true)
 }
 
+#[derive(serde::Deserialize)]
+struct RemoteInputPayload {
+  kind: String, // "move" | "mousedown" | "mouseup" | "wheel" | "keydown" | "keyup"
+  x: Option<f64>,
+  y: Option<f64>,
+  button: Option<u8>, // 0=left, 1=middle, 2=right
+  delta_y: Option<f64>,
+  key: Option<String>,
+  code: Option<String>,
+}
+
+#[cfg(target_os = "windows")]
+mod win_input {
+  #[link(name = "user32")]
+  unsafe extern "system" {
+    pub fn GetSystemMetrics(nIndex: i32) -> i32;
+    pub fn SetCursorPos(x: i32, y: i32) -> i32;
+    pub fn mouse_event(dwFlags: u32, dx: i32, dy: i32, dwData: i32, dwExtraInfo: usize);
+    pub fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
+    pub fn VkKeyScanW(ch: u16) -> i16;
+  }
+
+  pub const SM_CXSCREEN: i32 = 0;
+  pub const SM_CYSCREEN: i32 = 1;
+  pub const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
+  pub const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
+  pub const MOUSEEVENTF_RIGHTDOWN: u32 = 0x0008;
+  pub const MOUSEEVENTF_RIGHTUP: u32 = 0x0010;
+  pub const MOUSEEVENTF_MIDDLEDOWN: u32 = 0x0020;
+  pub const MOUSEEVENTF_MIDDLEUP: u32 = 0x0040;
+  pub const MOUSEEVENTF_WHEEL: u32 = 0x0800;
+  pub const KEYEVENTF_KEYUP: u32 = 0x0002;
+}
+
+#[cfg(target_os = "windows")]
+fn map_web_key_to_vk(key: &str, code: &str) -> Option<u8> {
+  match code {
+    "Backspace" => Some(0x08),
+    "Tab" => Some(0x09),
+    "Enter" | "NumpadEnter" => Some(0x0D),
+    "ShiftLeft" | "ShiftRight" => Some(0x10),
+    "ControlLeft" | "ControlRight" => Some(0x11),
+    "AltLeft" | "AltRight" => Some(0x12),
+    "Pause" => Some(0x13),
+    "CapsLock" => Some(0x14),
+    "Escape" => Some(0x1B),
+    "Space" => Some(0x20),
+    "PageUp" => Some(0x21),
+    "PageDown" => Some(0x22),
+    "End" => Some(0x23),
+    "Home" => Some(0x24),
+    "ArrowLeft" => Some(0x25),
+    "ArrowUp" => Some(0x26),
+    "ArrowRight" => Some(0x27),
+    "ArrowDown" => Some(0x28),
+    "Insert" => Some(0x2D),
+    "Delete" => Some(0x2E),
+    "MetaLeft" | "MetaRight" => Some(0x5B),
+    "F1" => Some(0x70),
+    "F2" => Some(0x71),
+    "F3" => Some(0x72),
+    "F4" => Some(0x73),
+    "F5" => Some(0x74),
+    "F6" => Some(0x75),
+    "F7" => Some(0x76),
+    "F8" => Some(0x77),
+    "F9" => Some(0x78),
+    "F10" => Some(0x79),
+    "F11" => Some(0x7A),
+    "F12" => Some(0x7B),
+    _ => {
+      if let Some(ch) = key.chars().next() {
+        if key.chars().count() == 1 {
+          let vk = unsafe { win_input::VkKeyScanW(ch as u16) };
+          if vk != -1 {
+            return Some((vk & 0xFF) as u8);
+          }
+        }
+      }
+      None
+    }
+  }
+}
+
+#[tauri::command]
+fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    unsafe {
+      let screen_w = win_input::GetSystemMetrics(win_input::SM_CXSCREEN).max(1);
+      let screen_h = win_input::GetSystemMetrics(win_input::SM_CYSCREEN).max(1);
+
+      if let (Some(nx), Some(ny)) = (payload.x, payload.y) {
+        let px = ((nx.clamp(0.0, 1.0)) * (screen_w - 1) as f64).round() as i32;
+        let py = ((ny.clamp(0.0, 1.0)) * (screen_h - 1) as f64).round() as i32;
+        win_input::SetCursorPos(px, py);
+      }
+
+      match payload.kind.as_str() {
+        "move" => {}
+        "mousedown" => {
+          let flag = match payload.button.unwrap_or(0) {
+            1 => win_input::MOUSEEVENTF_MIDDLEDOWN,
+            2 => win_input::MOUSEEVENTF_RIGHTDOWN,
+            _ => win_input::MOUSEEVENTF_LEFTDOWN,
+          };
+          win_input::mouse_event(flag, 0, 0, 0, 0);
+        }
+        "mouseup" => {
+          let flag = match payload.button.unwrap_or(0) {
+            1 => win_input::MOUSEEVENTF_MIDDLEUP,
+            2 => win_input::MOUSEEVENTF_RIGHTUP,
+            _ => win_input::MOUSEEVENTF_LEFTUP,
+          };
+          win_input::mouse_event(flag, 0, 0, 0, 0);
+        }
+        "wheel" => {
+          let dy = payload.delta_y.unwrap_or(0.0);
+          let wheel_delta = if dy < 0.0 { 120 } else if dy > 0.0 { -120 } else { 0 };
+          if wheel_delta != 0 {
+            win_input::mouse_event(win_input::MOUSEEVENTF_WHEEL, 0, 0, wheel_delta, 0);
+          }
+        }
+        "keydown" | "keyup" => {
+          let key_str = payload.key.as_deref().unwrap_or("");
+          let code_str = payload.code.as_deref().unwrap_or("");
+          if let Some(vk) = map_web_key_to_vk(key_str, code_str) {
+            let flags = if payload.kind == "keyup" { win_input::KEYEVENTF_KEYUP } else { 0 };
+            win_input::keybd_event(vk, 0, flags, 0);
+          }
+        }
+        _ => {}
+      }
+    }
+    return Ok(());
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = payload;
+    Err("Uzaktan fare/klavye kontrolü şu anda yalnızca Windows masaüstü uygulamasında desteklenmektedir.".to_string())
+  }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default()
     .plugin(tauri_plugin_process::init())
     .invoke_handler(tauri::generate_handler![
       detect_running_game,
-      toggle_overlay_window
+      toggle_overlay_window,
+      simulate_remote_input
     ]);
 
   #[cfg(desktop)]
