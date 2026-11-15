@@ -37,6 +37,7 @@ import {
   Calendar,
   Search,
   Sliders,
+  Download,
 } from 'lucide-react';
 import { IssuedLicense } from '../types';
 
@@ -76,7 +77,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     resetToMainServer,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'system' | 'dedicated' | 'users' | 'licenses' | 'store' | 'servers' | 'logs' | 'broadcast' | 'connections'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'system' | 'dedicated' | 'users' | 'licenses' | 'store' | 'servers' | 'logs' | 'broadcast'>('overview');
+  const [inspectedUsername, setInspectedUsername] = useState<string | null>(null);
+
+  const exportJsonFile = (filename: string, payload: any) => {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   const [autoRefreshSec, setAutoRefreshSec] = useState<number>(0);
   const [sysRegEnabled, setSysRegEnabled] = useState<boolean>(true);
   const [sysMaintenance, setSysMaintenance] = useState<boolean>(false);
@@ -104,7 +116,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [announcementSent, setAnnouncementSent] = useState(false);
   const [copiedServerId, setCopiedServerId] = useState<string | null>(null);
-  const [connSearchQuery, setConnSearchQuery] = useState('');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userFilter, setUserFilter] = useState<'all' | 'online' | 'banned' | 'admin'>('all');
   const [newChannelInputs, setNewChannelInputs] = useState<Record<string, { name: string; type: 'text' | 'voice' }>>({});
@@ -198,18 +209,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   }, [adminData?.storeSettings, storeSettings, isStoreDirty]);
 
   const stats = adminData?.stats;
-
-  const filteredConnectionLogs = (adminData?.connectionLogs || []).filter((log) => {
-    if (!connSearchQuery.trim()) return true;
-    const q = connSearchQuery.toLowerCase();
-    return (
-      log.username.toLowerCase().includes(q) ||
-      log.ip.toLowerCase().includes(q) ||
-      log.connectedServer.toLowerCase().includes(q) ||
-      (log.connectedChannel && log.connectedChannel.toLowerCase().includes(q)) ||
-      log.userAgent.toLowerCase().includes(q)
-    );
-  });
 
   const formatUptime = (seconds?: number) => {
     if (!seconds) return '0 sn';
@@ -381,7 +380,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 items: [
                   { id: 'users', label: `Kullanıcılar (${adminData?.registeredUsers.length || 0})`, icon: Users },
                   { id: 'servers', label: 'Sunucular', icon: Server },
-                  { id: 'connections', label: `Bağlantılar (${adminData?.connectionLogs?.length || 0})`, icon: Globe },
                   { id: 'logs', label: `Denetim (${adminData?.auditLogs.length || 0})`, icon: FileText },
                 ],
               },
@@ -550,7 +548,26 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      exportJsonFile(`cakma-system-backup-${new Date().toISOString().slice(0, 10)}.json`, {
+                        exportedAt: new Date().toISOString(),
+                        stats: adminData?.stats,
+                        systemConfig: adminData?.systemConfig,
+                        storeSettings: adminData?.storeSettings,
+                        serversCount: adminData?.servers?.length || 0,
+                        usersCount: adminData?.registeredUsers?.length || 0,
+                        auditLogs: adminData?.auditLogs || [],
+                      })
+                    }
+                    className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white text-xs font-semibold flex items-center gap-2 transition"
+                  >
+                    <Download className="w-3.5 h-3.5 text-teal-400" />
+                    Sistem Yedeği İndir (JSON)
+                  </button>
+
                   <button
                     type="button"
                     onClick={() =>
@@ -656,6 +673,47 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                       ))}
                   </div>
                 )}
+              </div>
+
+              {/* Quick System Status & Actions */}
+              <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-amber-400" />
+                    Sistem Durumu & Hızlı İşlemler
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('system')}
+                    className="text-[11px] font-semibold text-amber-300 hover:underline"
+                  >
+                    Ayarları Düzenle →
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Üye Kaydı</div>
+                    <div className={`font-bold mt-0.5 ${sysRegEnabled ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {sysRegEnabled ? 'Açık' : 'Kapalı'}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Bakım Modu</div>
+                    <div className={`font-bold mt-0.5 ${sysMaintenance ? 'text-amber-400' : 'text-white/70'}`}>
+                      {sysMaintenance ? 'Aktif' : 'Normal'}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Benzersiz IP</div>
+                    <div className="font-bold text-teal-300 mt-0.5">
+                      {new Set((adminData?.connectionLogs || []).map((c) => c.ip)).size} IP
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Mesaj Limiti</div>
+                    <div className="font-bold text-white mt-0.5">{sysMaxMsgLen} krk</div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -855,6 +913,47 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 )}
               </div>
+
+              {/* Quick System Status & Actions */}
+              <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-amber-400" />
+                    Sistem Durumu & Hızlı İşlemler
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('system')}
+                    className="text-[11px] font-semibold text-amber-300 hover:underline"
+                  >
+                    Ayarları Düzenle →
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Üye Kaydı</div>
+                    <div className={`font-bold mt-0.5 ${sysRegEnabled ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {sysRegEnabled ? 'Açık' : 'Kapalı'}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Bakım Modu</div>
+                    <div className={`font-bold mt-0.5 ${sysMaintenance ? 'text-amber-400' : 'text-white/70'}`}>
+                      {sysMaintenance ? 'Aktif' : 'Normal'}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Benzersiz IP</div>
+                    <div className="font-bold text-teal-300 mt-0.5">
+                      {new Set((adminData?.connectionLogs || []).map((c) => c.ip)).size} IP
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase">Mesaj Limiti</div>
+                    <div className="font-bold text-white mt-0.5">{sysMaxMsgLen} krk</div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -936,17 +1035,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                       return (
                         <tr key={u.id} className={`hover:bg-white/[0.03] transition ${u.isBanned ? 'bg-rose-500/[0.04]' : ''}`}>
                           <td className="px-4 py-3 flex items-center gap-2.5">
-                            <span className="text-base">{u.avatar || '👤'}</span>
-                            <div>
+                            <div className="w-8 h-8 rounded-xl bg-white/10 overflow-hidden shrink-0 flex items-center justify-center">
+                              <AvatarView avatar={u.avatar} alt={u.username} fallback="👤" className="w-full h-full object-cover" />
+                            </div>
+                            <div className="min-w-0">
                               <div className="font-semibold text-white flex items-center gap-1.5">
-                                <span>{u.username}</span>
+                                <span className="truncate">{u.username}</span>
                                 {u.isBanned && (
-                                  <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                  <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-bold shrink-0">
                                     YASAKLI
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[10px] text-white/30">Kayıt: {u.createdAt || '-'}</div>
+                              <div className="text-[10px] text-white/35">Kayıt: {u.createdAt || '-'}</div>
                             </div>
                           </td>
                           <td className="px-4 py-3 text-white/50">{u.email}</td>
@@ -964,6 +1065,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
                               <span className="font-mono font-bold text-emerald-400">₺{u.walletBalance ?? 0}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setInspectedUsername((prev) =>
+                                    prev?.toLowerCase() === u.username.toLowerCase() ? null : u.username
+                                  )
+                                }
+                                className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition border flex items-center gap-1 ${
+                                  inspectedUsername?.toLowerCase() === u.username.toLowerCase()
+                                    ? 'bg-teal-500/25 border-teal-400/50 text-teal-200'
+                                    : 'bg-white/5 hover:bg-white/15 border-white/10 text-white/75'
+                                }`}
+                                title="Kullanıcının IP ve Bağlantı Geçmişini Gör"
+                              >
+                                <Globe className="w-3 h-3" />
+                                IP ({(adminData?.connectionLogs || []).filter((c) => c.username.toLowerCase() === u.username.toLowerCase()).length})
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1003,6 +1121,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                                 </button>
                               )}
 
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setInspectedUsername((prev) =>
+                                    prev?.toLowerCase() === u.username.toLowerCase() ? null : u.username
+                                  )
+                                }
+                                className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition border flex items-center gap-1 ${
+                                  inspectedUsername?.toLowerCase() === u.username.toLowerCase()
+                                    ? 'bg-teal-500/25 border-teal-400/50 text-teal-200'
+                                    : 'bg-white/5 hover:bg-white/15 border-white/10 text-white/75'
+                                }`}
+                                title="Kullanıcının IP ve Bağlantı Geçmişini Gör"
+                              >
+                                <Globe className="w-3 h-3" />
+                                IP ({(adminData?.connectionLogs || []).filter((c) => c.username.toLowerCase() === u.username.toLowerCase()).length})
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1060,6 +1195,81 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </tbody>
                 </table>
               </div>
+
+              {/* Per-User Connection & IP History Inspector */}
+              {inspectedUsername && (() => {
+                const userLogs = (adminData?.connectionLogs || []).filter(
+                  (c) => c.username.toLowerCase() === inspectedUsername.toLowerCase()
+                );
+                return (
+                  <div className="p-4 rounded-2xl ios-glass-card border border-teal-400/30 space-y-3 animate-fade-in">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                          <Globe className="w-3.5 h-3.5 text-teal-400" />
+                          <span>{inspectedUsername} — IP & Bağlantı Geçmişi ({userLogs.length})</span>
+                        </h4>
+                        <p className="text-[11px] text-white/45">
+                          Son bağlantılar, cihaz bilgisi ve IP adresleri
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {userLogs.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm('Tüm bağlantı ve IP geçmişini temizlemek istediğinize emin misiniz?')) {
+                                adminClearConnectionLogs();
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-semibold transition"
+                          >
+                            Tüm Logları Temizle
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setInspectedUsername(null)}
+                          className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {userLogs.length === 0 ? (
+                      <div className="text-xs text-white/40 py-2">
+                        Bu kullanıcıya ait kayıtlı bağlantı geçmişi bulunamadı.
+                      </div>
+                    ) : (
+                      <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                        {userLogs.slice(0, 25).map((log) => (
+                          <div
+                            key={log.id}
+                            className="p-2.5 rounded-xl bg-black/30 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  log.status === 'online' ? 'bg-emerald-400' : 'bg-white/25'
+                                }`}
+                              />
+                              <span className="font-mono font-bold text-amber-300 shrink-0">{log.ip}</span>
+                              <span className="text-white/50 truncate" title={log.userAgent}>
+                                {log.userAgent || 'Bilinmeyen Cihaz'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] text-white/45 shrink-0 font-mono">
+                              <span>Giriş: {log.connectedAt}</span>
+                              {log.disconnectedAt && <span>Çıkış: {log.disconnectedAt}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             );
           })()}
@@ -2098,6 +2308,16 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                   <button
                     type="button"
+                    onClick={() =>
+                      exportJsonFile(`cakma-audit-logs-${new Date().toISOString().slice(0, 10)}.json`, filteredLogs)
+                    }
+                    className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 text-[11px] font-bold transition flex items-center gap-1"
+                  >
+                    <Download className="w-3.5 h-3.5 text-teal-400" />
+                    JSON
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => {
                       if (confirm('Tüm denetim günlüklerini temizlemek istediğinize emin misiniz?')) {
                         adminClearAuditLogs();
@@ -2177,179 +2397,6 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
             </div>
           )}
 
-          {/* TAB 9: USER CONNECTION & IP LOGS */}
-          {activeTab === 'connections' && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-amber-400" />
-                    Kullanıcı Bağlantı, IP ve Oturum Kayıtları
-                  </h3>
-                  <p className="text-xs text-white/50 mt-0.5">
-                    Uygulamaya bağlanan kullanıcıların IP adresleri, bağlandıkları sunucu ve kanallar, tarayıcı/cihaz bilgileri ve oturum geçmişi.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (confirm('Tüm bağlantı ve IP geçmişini silmek istediğinize emin misiniz?')) {
-                        adminClearConnectionLogs();
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-red-500/15 hover:bg-red-500 border border-red-500/30 text-red-400 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Geçmişi Temizle</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => fetchAdminData()}
-                    className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border border-white/10 transition"
-                    title="Yenile"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Stats Bar */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10">
-                  <div className="text-[11px] font-semibold uppercase text-white/40">Şu An Çevrimiçi</div>
-                  <div className="text-xl font-black text-emerald-400 mt-1 flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                    {(adminData?.connectionLogs || []).filter(c => c.status === 'online').length} Kullanıcı
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10">
-                  <div className="text-[11px] font-semibold uppercase text-white/40">Farklı Benzersiz IP</div>
-                  <div className="text-xl font-black text-amber-400 mt-1">
-                    {new Set((adminData?.connectionLogs || []).map(c => c.ip)).size} IP Adresi
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10">
-                  <div className="text-[11px] font-semibold uppercase text-white/40">Toplam Kaydedilen Oturum</div>
-                  <div className="text-xl font-black text-white mt-1">
-                    {adminData?.connectionLogs?.length || 0} Giriş
-                  </div>
-                </div>
-              </div>
-
-              {/* Filter search bar */}
-              <div className="relative">
-                <input
-                  type="text"
-                  value={connSearchQuery}
-                  onChange={(e) => setConnSearchQuery(e.target.value)}
-                  placeholder="Kullanıcı adı, IP adresi veya sunucu adı ile ara..."
-                  className="w-full bg-white/5 border border-white/10 text-xs text-white rounded-2xl px-4 py-2.5 pl-10 outline-none focus:border-amber-500 placeholder:text-white/30"
-                />
-                <Search className="w-4 h-4 text-white/40 absolute left-3.5 top-3" />
-                {connSearchQuery && (
-                  <button
-                    onClick={() => setConnSearchQuery('')}
-                    className="absolute right-3.5 top-2.5 text-white/40 hover:text-white text-xs"
-                  >
-                    Temizle
-                  </button>
-                )}
-              </div>
-
-              {/* Connection Records List */}
-              <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
-                {filteredConnectionLogs.length === 0 ? (
-                  <div className="text-center py-12 text-white/40 text-xs rounded-2xl bg-white/[0.02] border border-white/5">
-                    Kayıtlı bağlantı bulunamadı.
-                  </div>
-                ) : (
-                  filteredConnectionLogs.map((log) => {
-                    const isOnline = log.status === 'online';
-                    return (
-                      <div
-                        key={log.id}
-                        className={`p-3.5 rounded-2xl border transition flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-                          isOnline
-                            ? 'bg-emerald-500/[0.04] border-emerald-500/30'
-                            : 'bg-white/[0.02] border-white/5'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div
-                            className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 ${
-                              isOnline
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                : 'bg-white/10 text-white/50 border border-white/10'
-                            }`}
-                          >
-                            {isOnline ? '🟢' : '⚪'}
-                          </div>
-
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-sm text-white truncate">
-                                {log.username}
-                              </span>
-                              <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold bg-white/10 text-white/70">
-                                {log.role}
-                              </span>
-                              {isOnline && (
-                                <span className="text-[10px] text-emerald-400 font-medium">
-                                  Çevrimiçi
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2 text-xs text-white/50 mt-0.5">
-                              <span className="font-mono text-amber-300 font-semibold">
-                                🌐 {log.ip}
-                              </span>
-                              <span>•</span>
-                              <span className="text-white/70">
-                                💻 {log.userAgent}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between md:justify-end gap-4 text-xs shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-white/5">
-                          <div className="text-left md:text-right">
-                            <div className="text-white/90 font-medium">
-                              📍 {log.connectedServer} / {log.connectedChannel}
-                            </div>
-                            <div className="text-[11px] text-white/40">
-                              Giriş: {log.connectedAt}
-                              {log.disconnectedAt && ` • Çıkış: ${log.disconnectedAt}`}
-                            </div>
-                          </div>
-
-                          {isOnline && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (confirm(`${log.username} adlı kullanıcıyı sunucudan atmak (kick) istediğinize emin misiniz?`)) {
-                                  adminKickUser(log.socketId, 'Yönetici tarafından bağlantı sonlandırıldı.');
-                                }
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 text-[11px] font-semibold transition"
-                              title="Kullanıcıyı Sunucudan At"
-                            >
-                              Bağlantıyı Kes
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
           </div>
         </div>
       </div>
