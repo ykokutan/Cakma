@@ -34,6 +34,7 @@ import {
   Check,
   X,
   Calendar,
+  Trash2,
 } from 'lucide-react';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
@@ -64,6 +65,21 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   const [voiceUserMenu, setVoiceUserMenu] = useState<{ user: User; x: number; y: number } | null>(null);
   const [draggingUserId, setDraggingUserId] = useState<string | null>(null);
   const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
+  const [channelMenu, setChannelMenu] = useState<{ channel: Channel; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!channelMenu) return;
+    const handleClose = () => setChannelMenu(null);
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setChannelMenu(null);
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [channelMenu]);
   const {
     activeServer,
     activeChannel,
@@ -99,6 +115,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     createServerInvite,
     storeSettings,
     reorderChannel,
+    adminDeleteChannel,
     updateProfileDetails,
   } = useSocket();
 
@@ -449,6 +466,15 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 return (
                   <div
                     key={channel.id}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setChannelMenu({
+                        channel,
+                        x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
+                        y: Math.max(8, Math.min(e.clientY, window.innerHeight - 200)),
+                      });
+                    }}
                     className={`group w-full flex items-center justify-between gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isActive
                         ? 'bg-gradient-to-r from-amber-500/20 via-teal-500/12 to-transparent text-white border border-amber-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(245,158,11,0.14)]'
@@ -578,6 +604,15 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                   className="space-y-1"
                 >
                   <div
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setChannelMenu({
+                        channel,
+                        x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
+                        y: Math.max(8, Math.min(e.clientY, window.innerHeight - 200)),
+                      });
+                    }}
                     className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
                       isDropTarget
                         ? 'bg-indigo-500/20 text-white border border-indigo-400/60 ring-2 ring-indigo-400/30 shadow-[0_0_16px_rgba(99,102,241,0.28)]'
@@ -1096,6 +1131,121 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         menu={voiceUserMenu}
         onClose={() => setVoiceUserMenu(null)}
       />
+
+      {channelMenu &&
+        createPortal(
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ left: channelMenu.x, top: channelMenu.y }}
+            className="fixed z-[9999] w-52 rounded-2xl bg-[#13151d]/95 border border-white/15 shadow-2xl backdrop-blur-2xl p-1.5 text-xs text-white animate-fade-in"
+          >
+            <div className="px-2.5 py-1.5 border-b border-white/10 mb-1 flex items-center gap-2 text-[11px] font-bold text-white/80 truncate">
+              {channelMenu.channel.type === 'voice' ? (
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              ) : (
+                <Hash className="w-3.5 h-3.5 text-white/50 shrink-0" />
+              )}
+              <span className="truncate">{channelMenu.channel.name}</span>
+            </div>
+
+            {channelMenu.channel.type === 'voice' ? (
+              connectedVoiceChannelId === channelMenu.channel.id ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    leaveVoiceChannel();
+                    setChannelMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-rose-500/20 text-rose-300 transition text-left"
+                >
+                  <PhoneOff className="w-3.5 h-3.5" />
+                  <span>Odadan Ayrıl</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleVoiceChannelClick(channelMenu.channel);
+                    setChannelMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-emerald-500/20 text-emerald-300 transition text-left"
+                >
+                  <Volume2 className="w-3.5 h-3.5" />
+                  <span>Odaya Katıl</span>
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  selectChannel(channelMenu.channel.id);
+                  setChannelMenu(null);
+                }}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+              >
+                <Hash className="w-3.5 h-3.5 text-white/70" />
+                <span>Kanalı Aç / Okundu Say</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(channelMenu.channel.name);
+                setChannelMenu(null);
+              }}
+              className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+            >
+              <Copy className="w-3.5 h-3.5 text-white/60" />
+              <span>Kanal Adını Kopyala</span>
+            </button>
+
+            {canManageChannels && activeServer && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    reorderChannel(activeServer.id, channelMenu.channel.id, 'up');
+                    setChannelMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                >
+                  <ChevronUp className="w-3.5 h-3.5 text-white/60" />
+                  <span>Yukarı Taşı</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    reorderChannel(activeServer.id, channelMenu.channel.id, 'down');
+                    setChannelMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                >
+                  <ChevronDown className="w-3.5 h-3.5 text-white/60" />
+                  <span>Aşağı Taşı</span>
+                </button>
+
+                {currentUser?.role === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`"${channelMenu.channel.name}" kanalını silmek istediğinize emin misiniz?`)) {
+                        adminDeleteChannel(activeServer.id, channelMenu.channel.id);
+                      }
+                      setChannelMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-rose-500/20 text-rose-400 transition text-left mt-0.5 border-t border-white/10 pt-2"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Kanalı Sil</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>,
+          document.body
+        )}
     </aside>
   );
 };

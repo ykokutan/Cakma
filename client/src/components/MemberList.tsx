@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { User, ServerRole } from '../types';
-import { Volume2, Crown, Tv, Shield, Radio, Gamepad2 } from 'lucide-react';
+import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
 interface MemberListProps {
@@ -9,7 +10,31 @@ interface MemberListProps {
 }
 
 export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
-  const { onlineUsers, currentUser, activeServer } = useSocket();
+  const {
+    onlineUsers,
+    currentUser,
+    activeServer,
+    connectedVoiceChannelId,
+    openDirectMessage,
+    startDirectCall,
+    moveVoiceUser,
+    adminKickUser,
+  } = useSocket();
+  const [contextMenu, setContextMenu] = useState<{ user: User; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleClose = () => setContextMenu(null);
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [contextMenu]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -191,10 +216,19 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                 <div
                   key={user.id}
                   onClick={() => onOpenProfile(user)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setContextMenu({
+                      user,
+                      x: Math.max(8, Math.min(e.clientX, window.innerWidth - 230)),
+                      y: Math.max(8, Math.min(e.clientY, window.innerHeight - 240)),
+                    });
+                  }}
                   className={`flex items-center gap-3 px-2.5 py-2 rounded-xl hover:bg-white/[0.06] cursor-pointer transition group ${
                     isOffline ? 'opacity-55 hover:opacity-100' : ''
                   }`}
-                  title={`${user.username} profilini görüntüle`}
+                  title={`${user.username} profilini görüntüle (Sağ tık: işlemler)`}
                 >
                   <div className="relative shrink-0">
                     <div
@@ -267,6 +301,101 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
           </div>
         </div>
       ))}
+
+      {contextMenu &&
+        createPortal(
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            className="fixed z-[9999] w-56 rounded-2xl bg-[#13151d]/95 border border-white/15 shadow-2xl backdrop-blur-2xl p-1.5 text-xs text-white animate-fade-in"
+          >
+            <div className="px-2.5 py-2 border-b border-white/10 mb-1 flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full overflow-hidden bg-white/10 shrink-0">
+                <AvatarView avatar={contextMenu.user.avatar} alt={contextMenu.user.username} fallback="👤" className="w-full h-full object-cover" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-bold truncate">{contextMenu.user.username}</div>
+                <div className="text-[10px] text-white/45 truncate">
+                  {contextMenu.user.status === 'offline' ? 'Çevrimdışı' : 'Çevrimiçi'}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                onOpenProfile(contextMenu.user);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+            >
+              <UserIcon className="w-3.5 h-3.5 text-white/70" />
+              <span>Profili Görüntüle</span>
+            </button>
+
+            {contextMenu.user.id !== currentUser?.id && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openDirectMessage(contextMenu.user);
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Özel Mesaj Gönder</span>
+                </button>
+
+                {contextMenu.user.status !== 'offline' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startDirectCall(contextMenu.user);
+                      setContextMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                  >
+                    <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Sesli Ara</span>
+                  </button>
+                )}
+
+                {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) &&
+                  contextMenu.user.status !== 'offline' &&
+                  connectedVoiceChannelId &&
+                  contextMenu.user.currentVoiceChannelId !== connectedVoiceChannelId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        moveVoiceUser(contextMenu.user.id, connectedVoiceChannelId);
+                        setContextMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-indigo-500/20 text-indigo-300 transition text-left"
+                    >
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                      <span>Bulunduğum Odaya Çek</span>
+                    </button>
+                  )}
+
+                {currentUser?.role === 'admin' && contextMenu.user.status !== 'offline' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      adminKickUser(contextMenu.user.id, 'Üye listesinden yönetici tarafından atıldı.');
+                      setContextMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-rose-500/20 text-rose-400 transition text-left mt-0.5 border-t border-white/10 pt-2"
+                  >
+                    <UserX className="w-3.5 h-3.5" />
+                    <span>Sunucudan At</span>
+                  </button>
+                )}
+              </>
+            )}
+          </div>,
+          document.body
+        )}
     </aside>
   );
 };

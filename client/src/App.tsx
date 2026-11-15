@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SocketProvider, useSocket } from './context/SocketContext';
 import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelSidebar } from './components/ChannelSidebar';
@@ -18,6 +18,8 @@ import { ExploreModal } from './components/ExploreModal';
 import { DownloadAppModal } from './components/DownloadAppModal';
 import { AutoUpdater } from './components/AutoUpdater';
 import { SpeakersOverlay } from './components/SpeakersOverlay';
+import { QuickSwitcherModal } from './components/QuickSwitcherModal';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -36,7 +38,48 @@ const MainLayout: React.FC = () => {
     resetToMainServer,
     isDiagnosticsOpen,
     setIsDiagnosticsOpen,
+    toggleMute,
+    toggleDeafen,
   } = useSocket();
+  const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+
+  useEffect(() => {
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+
+      if (key === 'k') {
+        e.preventDefault();
+        setIsQuickSwitcherOpen((prev) => !prev);
+        return;
+      }
+
+      if (key === '/' || key === '?') {
+        e.preventDefault();
+        setIsShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (isTyping) return;
+
+      if (key === 'm') {
+        e.preventDefault();
+        toggleMute();
+      } else if (key === 'd') {
+        e.preventDefault();
+        toggleDeafen();
+      }
+    };
+
+    window.addEventListener('keydown', onGlobalKeyDown);
+    return () => window.removeEventListener('keydown', onGlobalKeyDown);
+  }, [toggleMute, toggleDeafen]);
   const [showMembers, setShowMembers] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
@@ -257,6 +300,18 @@ const MainLayout: React.FC = () => {
           }
         />
       )}
+
+      <QuickSwitcherModal
+        isOpen={isQuickSwitcherOpen}
+        onClose={() => setIsQuickSwitcherOpen(false)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
+      />
+
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
+      />
     </div>
   );
 };

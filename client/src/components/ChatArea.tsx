@@ -344,6 +344,41 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+
+  const mentionMatch = inputText.match(/(?:^|\s)@([a-zA-Z0-9_ğüşıöçĞÜŞİÖÇ.-]*)$/);
+  const mentionQuery = mentionMatch ? mentionMatch[1].toLowerCase() : null;
+  const mentionCandidates = (() => {
+    if (mentionQuery === null) return [];
+    const seen = new Set<string>();
+    const list: { id: string; username: string; avatar: string; status: string }[] = [];
+    onlineUsers.forEach((u) => {
+      const key = u.username.toLowerCase();
+      if (seen.has(key)) return;
+      if (u.id === currentUser?.id) return;
+      if (!mentionQuery || key.includes(mentionQuery)) {
+        seen.add(key);
+        list.push({ id: u.id, username: u.username, avatar: u.avatar, status: u.status });
+      }
+    });
+    (activeServer?.members || []).forEach((m) => {
+      const key = m.username.toLowerCase();
+      if (seen.has(key)) return;
+      if (m.userId === currentUser?.id) return;
+      if (!mentionQuery || key.includes(mentionQuery)) {
+        seen.add(key);
+        list.push({ id: m.userId, username: m.username, avatar: m.avatar || '🎮', status: 'offline' });
+      }
+    });
+    return list.slice(0, 6);
+  })();
+
+  const applyMention = (username: string) => {
+    if (!mentionMatch) return;
+    const prefix = inputText.slice(0, inputText.length - mentionMatch[1].length - 1);
+    setInputText(`${prefix}@${username} `);
+    setMentionIndex(0);
+  };
 
   // Slowmode timer effect
   useEffect(() => {
@@ -1349,6 +1384,35 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </div>
             )}
 
+            {mentionCandidates.length > 0 && (
+              <div className="mb-2 rounded-2xl bg-[#131620]/95 border border-white/15 p-2 shadow-2xl backdrop-blur-xl space-y-0.5">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                  Kullanıcı Etiketle (@)
+                </div>
+                {mentionCandidates.map((u, idx) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onMouseEnter={() => setMentionIndex(idx)}
+                    onClick={() => applyMention(u.username)}
+                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-left transition ${
+                      idx === mentionIndex ? 'bg-amber-500/20 text-white' : 'hover:bg-white/10 text-white/80'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-5 h-5 rounded-full overflow-hidden bg-white/10 shrink-0">
+                        <AvatarView avatar={u.avatar} alt={u.username} fallback="👤" className="w-full h-full object-cover" />
+                      </div>
+                      <span className="text-xs font-bold">@{u.username}</span>
+                    </div>
+                    <span className={`text-[10px] ${u.status === 'offline' ? 'text-white/35' : 'text-emerald-400'}`}>
+                      {u.status === 'offline' ? 'Çevrimdışı' : 'Çevrimiçi'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {inputText.startsWith('/') && !inputText.includes(' ') && (
               <div className="mb-2 rounded-2xl bg-[#131620]/95 border border-white/15 p-2 shadow-2xl backdrop-blur-xl space-y-0.5">
                 <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
@@ -1410,9 +1474,34 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <input
                   type="text"
                   value={inputText}
+                  onKeyDown={(e) => {
+                    if (mentionCandidates.length > 0) {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setMentionIndex((prev) => (prev + 1) % mentionCandidates.length);
+                        return;
+                      }
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setMentionIndex((prev) => (prev - 1 + mentionCandidates.length) % mentionCandidates.length);
+                        return;
+                      }
+                      if (e.key === 'Tab' || e.key === 'Enter') {
+                        e.preventDefault();
+                        applyMention(mentionCandidates[mentionIndex]?.username || mentionCandidates[0].username);
+                        return;
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setMentionIndex(0);
+                        return;
+                      }
+                    }
+                  }}
                   onChange={(e) => {
                     const val = e.target.value;
                     setInputText(val);
+                    setMentionIndex(0);
                     if (val.trim().length > 0) {
                       if (!isTypingRef.current) {
                         isTypingRef.current = true;
