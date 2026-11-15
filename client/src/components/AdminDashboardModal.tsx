@@ -89,16 +89,30 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     a.click();
     URL.revokeObjectURL(url);
   };
-  const [autoRefreshSec, setAutoRefreshSec] = useState<number>(0);
+  const [autoRefreshSec, setAutoRefreshSec] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('dsp_admin_auto_refresh'));
+      return [0, 5, 15, 30].includes(saved) ? saved : 0;
+    } catch {
+      return 0;
+    }
+  });
   const [sysRegEnabled, setSysRegEnabled] = useState<boolean>(true);
   const [sysMaintenance, setSysMaintenance] = useState<boolean>(false);
   const [sysStrongPass, setSysStrongPass] = useState<boolean>(false);
   const [sysMaxMsgLen, setSysMaxMsgLen] = useState<number>(2000);
   const [sysSlowmode, setSysSlowmode] = useState<number>(0);
   const [sysMaxUploadMb, setSysMaxUploadMb] = useState<number>(5);
+  const [isSystemDirty, setIsSystemDirty] = useState<boolean>(false);
 
   useEffect(() => {
-    if (adminData?.systemConfig) {
+    try {
+      localStorage.setItem('dsp_admin_auto_refresh', String(autoRefreshSec));
+    } catch {}
+  }, [autoRefreshSec]);
+
+  useEffect(() => {
+    if (adminData?.systemConfig && !isSystemDirty) {
       setSysRegEnabled(adminData.systemConfig.registrationEnabled);
       setSysMaintenance(adminData.systemConfig.maintenanceMode);
       setSysStrongPass(adminData.systemConfig.requireStrongPasswords);
@@ -106,7 +120,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysSlowmode(adminData.systemConfig.defaultSlowmodeSeconds);
       setSysMaxUploadMb(adminData.systemConfig.maxUploadSizeMb);
     }
-  }, [adminData?.systemConfig]);
+  }, [adminData?.systemConfig, isSystemDirty]);
 
   useEffect(() => {
     if (autoRefreshSec <= 0) return;
@@ -448,7 +462,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSysRegEnabled(!sysRegEnabled)}
+                      onClick={() => { setSysRegEnabled(!sysRegEnabled); setIsSystemDirty(true); }}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysRegEnabled ? 'bg-emerald-500' : 'bg-white/15'}`}
                     >
                       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysRegEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -462,7 +476,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSysStrongPass(!sysStrongPass)}
+                      onClick={() => { setSysStrongPass(!sysStrongPass); setIsSystemDirty(true); }}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysStrongPass ? 'bg-emerald-500' : 'bg-white/15'}`}
                     >
                       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysStrongPass ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -476,7 +490,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     </div>
                     <button
                       type="button"
-                      onClick={() => setSysMaintenance(!sysMaintenance)}
+                      onClick={() => { setSysMaintenance(!sysMaintenance); setIsSystemDirty(true); }}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysMaintenance ? 'bg-amber-500' : 'bg-white/15'}`}
                     >
                       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysMaintenance ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -495,7 +509,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         min={200}
                         max={8000}
                         value={sysMaxMsgLen}
-                        onChange={(e) => setSysMaxMsgLen(Number(e.target.value))}
+                        onChange={(e) => { setSysMaxMsgLen(Number(e.target.value)); setIsSystemDirty(true); }}
                         className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
                       />
                     </div>
@@ -506,7 +520,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         min={0}
                         max={120}
                         value={sysSlowmode}
-                        onChange={(e) => setSysSlowmode(Number(e.target.value))}
+                        onChange={(e) => { setSysSlowmode(Number(e.target.value)); setIsSystemDirty(true); }}
                         className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
                       />
                     </div>
@@ -517,7 +531,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         min={1}
                         max={25}
                         value={sysMaxUploadMb}
-                        onChange={(e) => setSysMaxUploadMb(Number(e.target.value))}
+                        onChange={(e) => { setSysMaxUploadMb(Number(e.target.value)); setIsSystemDirty(true); }}
                         className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
                       />
                     </div>
@@ -570,7 +584,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
 
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
                       adminUpdateSystemConfig({
                         registrationEnabled: sysRegEnabled,
                         maintenanceMode: sysMaintenance,
@@ -578,8 +592,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         maxMessageLength: sysMaxMsgLen,
                         defaultSlowmodeSeconds: sysSlowmode,
                         maxUploadSizeMb: sysMaxUploadMb,
-                      })
-                    }
+                      });
+                      setIsSystemDirty(false);
+                    }}
                     className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-teal-500 hover:brightness-110 text-white text-xs font-bold shadow-lg shadow-amber-500/20 transition"
                   >
                     Sistem Ayarlarını Kaydet

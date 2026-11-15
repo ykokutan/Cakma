@@ -28,7 +28,8 @@ import {
   loadAuditLogs, saveAuditLogs,
   loadFriendRequests, saveFriendRequests,
   loadConnectionLogs, saveConnectionLogs,
-  loadServerLevels, saveServerLevels
+  loadServerLevels, saveServerLevels,
+  loadSystemConfig, saveSystemConfig, SystemConfig
 } from './storage.js';
 
 // --- SECURITY & CRYPTOGRAPHIC HELPERS ---
@@ -463,7 +464,7 @@ if (issuedLicenses.size === 0) {
 }
 
 // Runtime System Configuration (Admin configurable)
-let systemConfig = {
+const defaultSystemConfig: SystemConfig = {
   registrationEnabled: true,
   maintenanceMode: false,
   maxMessageLength: 2000,
@@ -471,6 +472,7 @@ let systemConfig = {
   maxUploadSizeMb: 5,
   requireStrongPasswords: false,
 };
+let systemConfig: SystemConfig = loadSystemConfig(defaultSystemConfig);
 
 // Store Settings & Pricing (Admin configurable)
 const defaultStoreSettings: StoreSettings = {
@@ -3568,8 +3570,10 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.defaultSlowmodeSeconds === 'number') systemConfig.defaultSlowmodeSeconds = Math.min(Math.max(nextCfg.defaultSlowmodeSeconds, 0), 120);
     if (typeof nextCfg.maxUploadSizeMb === 'number') systemConfig.maxUploadSizeMb = Math.min(Math.max(nextCfg.maxUploadSizeMb, 1), 25);
 
+    saveSystemConfig(systemConfig);
     addAuditLog('SISTEM_AYARLARI_GUNCELLENDI', `${requester.username} sistem yapılandırmasını güncelledi.`, 'info');
     socket.emit('admin_feedback', { type: 'success', message: 'Sistem yapılandırması başarıyla kaydedildi.' });
+    socket.emit('admin_action_success', 'Sistem yapılandırması başarıyla kaydedildi.');
     io.emit('audit_log_added', auditLogs[0]);
   });
 

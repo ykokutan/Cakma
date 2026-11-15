@@ -164,3 +164,24 @@ export function loadServerLevels(): Record<string, Record<string, MemberLevelDat
 export function saveServerLevels(levels: Record<string, Record<string, MemberLevelData>>) {
   safeWriteJson('server_levels.json', levels);
 }
+
+// 10. SYSTEM CONFIGURATION (Sistem Yapılandırması)
+export interface SystemConfig {
+  registrationEnabled: boolean;
+  maintenanceMode: boolean;
+  maxMessageLength: number;
+  defaultSlowmodeSeconds: number;
+  maxUploadSizeMb: number;
+  requireStrongPasswords: boolean;
+}
+
+export function loadSystemConfig(defaultConfig: SystemConfig): SystemConfig {
+  return {
+    ...defaultConfig,
+    ...safeReadJson<Partial<SystemConfig>>('system_config.json', {}),
+  };
+}
+
+export function saveSystemConfig(config: SystemConfig) {
+  safeWriteJson('system_config.json', config);
+}
