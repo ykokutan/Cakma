@@ -63,6 +63,20 @@ export function sanitizeText(input: string): string {
     .replace(/>/g, '&gt;');
 }
 
+export function isSafeImageMedia(val: string): boolean {
+  if (val.startsWith('data:image/')) {
+    return /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=\r\n]+$/.test(val) && val.length <= 3_500_000;
+  }
+  if (val.startsWith('https://') || val.startsWith('http://')) {
+    return val.length <= 600 && !/[<>"']/.test(val);
+  }
+  return false;
+}
+
+export function isSafeEmojiOrShortIcon(val: string): boolean {
+  return val.length > 0 && val.length <= 16 && !/[:/<>"']/.test(val);
+}
+
 export function getClientIp(socket: Socket): string {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
@@ -2119,16 +2133,6 @@ io.on('connection', (socket: Socket) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
-    const isSafeImageMedia = (val: string) => {
-      if (val.startsWith('data:image/')) {
-        return /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=\r\n]+$/.test(val) && val.length <= 3_500_000;
-      }
-      if (val.startsWith('https://') || val.startsWith('http://')) {
-        return val.length <= 600 && !/[<>"']/.test(val);
-      }
-      return false;
-    };
-
     const acc = registeredAccounts.get(user.username.toLowerCase());
 
     if (statusMessage !== undefined) {
@@ -2153,7 +2157,7 @@ io.on('connection', (socket: Socket) => {
     }
     if (avatar !== undefined && typeof avatar === 'string') {
       const trimmedAvatar = avatar.trim();
-      if (isSafeImageMedia(trimmedAvatar) || (trimmedAvatar.length > 0 && trimmedAvatar.length <= 32)) {
+      if (isSafeImageMedia(trimmedAvatar) || isSafeEmojiOrShortIcon(trimmedAvatar)) {
         user.avatar = trimmedAvatar;
         if (acc) acc.avatar = trimmedAvatar;
       }
@@ -2566,11 +2570,20 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('server_action_error', { message: 'Bu ayarları değiştirmek için Sunucu Yönetimi yetkiniz yok.' });
     }
 
-    if (data.name) s.name = data.name.trim();
-    if (data.icon && data.icon.length < 3_000_000) s.icon = data.icon;
+    if (data.name) s.name = sanitizeText(data.name).trim().slice(0, 80);
+    if (data.icon !== undefined && typeof data.icon === 'string') {
+      const trimmedIcon = data.icon.trim();
+      if (isSafeImageMedia(trimmedIcon) || isSafeEmojiOrShortIcon(trimmedIcon)) {
+        s.icon = trimmedIcon;
+      }
+    }
     if (data.bannerGradient !== undefined) s.bannerGradient = data.bannerGradient;
-    if (data.bannerImage !== undefined && data.bannerImage.length < 3_500_000) s.bannerImage = data.bannerImage;
-    if (data.description !== undefined) s.description = data.description;
+    if (data.bannerImage !== undefined && typeof data.bannerImage === 'string') {
+      if (data.bannerImage === '' || isSafeImageMedia(data.bannerImage)) {
+        s.bannerImage = data.bannerImage;
+      }
+    }
+    if (data.description !== undefined) s.description = sanitizeText(data.description).trim().slice(0, 500);
     if (data.afkChannelId !== undefined) s.afkChannelId = data.afkChannelId;
     if (data.afkTimeoutMinutes !== undefined) s.afkTimeoutMinutes = data.afkTimeoutMinutes;
     if (data.bitrateKbps !== undefined) s.bitrateKbps = data.bitrateKbps;
