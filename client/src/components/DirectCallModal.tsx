@@ -21,6 +21,8 @@ import {
 export const DirectCallModal: React.FC = () => {
   const {
     directCall,
+    activeServer,
+    activeDMUser,
     acceptDirectCall,
     declineDirectCall,
     endDirectCall,
@@ -67,6 +69,20 @@ export const DirectCallModal: React.FC = () => {
   if (!directCall) return null;
 
   const { partner, status, durationSeconds } = directCall;
+  const isViewingPartnerDM =
+    activeServer?.id === 'direct-messages' &&
+    Boolean(activeDMUser) &&
+    (activeDMUser?.id === partner.id ||
+      activeDMUser?.username.toLowerCase() === partner.username.toLowerCase());
+
+  if (isViewingPartnerDM && status === 'connected') {
+    return (
+      <RemoteAssistModal
+        isOpen={isRemoteAssistOpen}
+        onClose={() => setIsRemoteAssistOpen(false)}
+      />
+    );
+  }
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
