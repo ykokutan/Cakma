@@ -358,10 +358,20 @@ interface SocketContextType {
   }>;
   joinServerByInvite: (code: string) => Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>;
   reorderChannel: (serverId: string, channelId: string, direction: 'up' | 'down') => void;
-  uiTheme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold';
-  setUiTheme: (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold') => void;
+  uiTheme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black';
+  setUiTheme: (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black') => void;
   chatFontSize: 'sm' | 'base' | 'lg';
   setChatFontSize: (size: 'sm' | 'base' | 'lg') => void;
+  glassIntensity: 'low' | 'normal' | 'high';
+  setGlassIntensity: (v: 'low' | 'normal' | 'high') => void;
+  messageDensity: 'cozy' | 'compact';
+  setMessageDensity: (v: 'cozy' | 'compact') => void;
+  cornerStyle: 'rounded' | 'sharp';
+  setCornerStyle: (v: 'rounded' | 'sharp') => void;
+  bgPattern: 'grid' | 'dots' | 'clean';
+  setBgPattern: (v: 'grid' | 'dots' | 'clean') => void;
+  reduceMotion: boolean;
+  setReduceMotion: (v: boolean) => void;
 
   // Diagnostics & Network Telemetry
   ping: number;
@@ -532,11 +542,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold'>(() => {
+  const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black'>(() => {
     return (localStorage.getItem('dc_ui_theme') as any) || 'vision-dark';
   });
   const [chatFontSize, setChatFontSizeState] = useState<'sm' | 'base' | 'lg'>(() => {
     return (localStorage.getItem('dc_chat_font_size') as any) || 'base';
+  });
+  const [glassIntensity, setGlassIntensityState] = useState<'low' | 'normal' | 'high'>(() => {
+    return (localStorage.getItem('dc_glass_intensity') as any) || 'normal';
+  });
+  const [messageDensity, setMessageDensityState] = useState<'cozy' | 'compact'>(() => {
+    return (localStorage.getItem('dc_message_density') as any) || 'cozy';
+  });
+  const [cornerStyle, setCornerStyleState] = useState<'rounded' | 'sharp'>(() => {
+    return (localStorage.getItem('dc_corner_style') as any) || 'rounded';
+  });
+  const [bgPattern, setBgPatternState] = useState<'grid' | 'dots' | 'clean'>(() => {
+    return (localStorage.getItem('dc_bg_pattern') as any) || 'grid';
+  });
+  const [reduceMotion, setReduceMotionState] = useState<boolean>(() => {
+    return localStorage.getItem('dc_reduce_motion') === 'true';
   });
 
   useEffect(() => {
@@ -544,9 +569,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try { localStorage.setItem('dc_ui_theme', uiTheme); } catch {}
   }, [uiTheme]);
 
-  const setUiTheme = (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold') => {
+  useEffect(() => {
+    document.documentElement.setAttribute('data-glass', glassIntensity);
+    try { localStorage.setItem('dc_glass_intensity', glassIntensity); } catch {}
+  }, [glassIntensity]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-density', messageDensity);
+    try { localStorage.setItem('dc_message_density', messageDensity); } catch {}
+  }, [messageDensity]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-corners', cornerStyle);
+    try { localStorage.setItem('dc_corner_style', cornerStyle); } catch {}
+  }, [cornerStyle]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-pattern', bgPattern);
+    try { localStorage.setItem('dc_bg_pattern', bgPattern); } catch {}
+  }, [bgPattern]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-reduce-motion', reduceMotion ? 'true' : 'false');
+    try { localStorage.setItem('dc_reduce_motion', reduceMotion ? 'true' : 'false'); } catch {}
+  }, [reduceMotion]);
+
+  const setUiTheme = (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black') => {
     setUiThemeState(theme);
   };
+
+  const setGlassIntensity = (v: 'low' | 'normal' | 'high') => setGlassIntensityState(v);
+  const setMessageDensity = (v: 'cozy' | 'compact') => setMessageDensityState(v);
+  const setCornerStyle = (v: 'rounded' | 'sharp') => setCornerStyleState(v);
+  const setBgPattern = (v: 'grid' | 'dots' | 'clean') => setBgPatternState(v);
+  const setReduceMotion = (v: boolean) => setReduceMotionState(v);
 
   const setChatFontSize = (size: 'sm' | 'base' | 'lg') => {
     setChatFontSizeState(size);
@@ -4284,6 +4340,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setUiTheme,
         chatFontSize,
         setChatFontSize,
+        glassIntensity,
+        setGlassIntensity,
+        messageDensity,
+        setMessageDensity,
+        cornerStyle,
+        setCornerStyle,
+        bgPattern,
+        setBgPattern,
+        reduceMotion,
+        setReduceMotion,
       }}
     >
       {children}

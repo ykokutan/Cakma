@@ -43,6 +43,75 @@
       radial-gradient(circle at 50% 50%, #18120b 0%, #0b0805 100%);
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
+
+  html[data-theme="crimson-rose"] body {
+    background-image:
+      radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      radial-gradient(circle at 18% 18%, rgba(244, 63, 94, 0.18) 0%, transparent 45%),
+      radial-gradient(circle at 82% 82%, rgba(236, 72, 153, 0.14) 0%, transparent 45%),
+      radial-gradient(circle at 50% 50%, #190a10 0%, #090406 100%);
+    background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
+  }
+
+  html[data-theme="royal-violet"] body {
+    background-image:
+      radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      radial-gradient(circle at 16% 20%, rgba(139, 92, 246, 0.2) 0%, transparent 45%),
+      radial-gradient(circle at 84% 80%, rgba(192, 38, 211, 0.14) 0%, transparent 45%),
+      radial-gradient(circle at 50% 50%, #120b22 0%, #070510 100%);
+    background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
+  }
+
+  html[data-theme="nordic-frost"] body {
+    background-image:
+      radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      radial-gradient(circle at 18% 18%, rgba(56, 189, 248, 0.16) 0%, transparent 45%),
+      radial-gradient(circle at 82% 82%, rgba(148, 163, 184, 0.14) 0%, transparent 45%),
+      radial-gradient(circle at 50% 50%, #0c141d 0%, #060a10 100%);
+    background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
+  }
+
+  html[data-theme="oled-black"] body {
+    background-color: #000000;
+    background-image: none;
+  }
+
+  html[data-pattern="clean"] body {
+    background-image: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.015) 0%, transparent 70%) !important;
+  }
+
+  html[data-pattern="dots"] body {
+    background-size: 20px 20px, 100% 100%, 100% 100%, 100% 100% !important;
+  }
+
+  html[data-glass="low"] .ios-glass,
+  html[data-glass="low"] .ios-glass-sidebar,
+  html[data-glass="low"] .ios-glass-panel {
+    backdrop-filter: blur(8px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(8px) saturate(140%) !important;
+  }
+
+  html[data-glass="high"] .ios-glass,
+  html[data-glass="high"] .ios-glass-sidebar,
+  html[data-glass="high"] .ios-glass-panel {
+    backdrop-filter: blur(52px) saturate(240%) !important;
+    -webkit-backdrop-filter: blur(52px) saturate(240%) !important;
+  }
+
+  html[data-corners="sharp"] .rounded-3xl {
+    border-radius: 0.75rem !important;
+  }
+  html[data-corners="sharp"] .rounded-2xl {
+    border-radius: 0.5rem !important;
+  }
+
+  html[data-reduce-motion="true"] *,
+  html[data-reduce-motion="true"] *::before,
+  html[data-reduce-motion="true"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 /* Ultra-Modern Obsidian Atelier Glassmorphism */

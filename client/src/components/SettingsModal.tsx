@@ -82,6 +82,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setUiTheme,
     chatFontSize,
     setChatFontSize,
+    glassIntensity,
+    setGlassIntensity,
+    messageDensity,
+    setMessageDensity,
+    cornerStyle,
+    setCornerStyle,
+    bgPattern,
+    setBgPattern,
+    reduceMotion,
+    setReduceMotion,
     currentServerHost,
     overlayEnabled,
     setOverlayEnabled,
@@ -155,7 +165,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.0');
+  const [appVersion, setAppVersion] = useState<string>('0.3.1');
   const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
@@ -1304,12 +1314,218 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           {activeTab === 'appearance' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-base font-semibold text-white tracking-tight">
-                  Bildirimler & Masaüstü Uygulaması (PWA)
+                <h3 className="text-xl font-bold text-white tracking-tight">
+                  Görünüm, Tema &amp; Masaüstü Overlay
                 </h3>
-                <p className="text-xs text-white/50 mt-1">
-                  Masaüstü bildirimlerinizi açın ve uygulamayı yerel uygulama olarak bilgisayarınıza veya telefonunuza kurun.
+                <p className="text-xs text-white/50 mt-0.5">
+                  Renk temalarını, cam saydamlığını, yazı boyutunu, animasyonları ve oyun içi overlay&apos;i özelleştirin.
                 </p>
+              </div>
+
+              {/* Theme Presets & Live Preview */}
+              <div className="p-5 rounded-2xl bg-white/[0.04] border border-white/10 space-y-5">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-xs font-semibold text-white/90">Arayüz Teması (8 Tema)</div>
+                    <span className="text-[11px] text-white/45 font-mono">{uiTheme}</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {[
+                      { id: 'vision-dark', label: 'Vision Dark', desc: 'Obsidian & Amber', grad: 'from-slate-800 via-zinc-900 to-amber-900/60', dot: 'bg-slate-300' },
+                      { id: 'midnight-blue', label: 'Midnight Blue', desc: 'Safir & İndigo', grad: 'from-blue-950 via-indigo-950 to-slate-900', dot: 'bg-blue-400' },
+                      { id: 'cyber-emerald', label: 'Cyber Emerald', desc: 'Zümrüt & Camgöbeği', grad: 'from-emerald-950 via-teal-950 to-slate-900', dot: 'bg-emerald-400' },
+                      { id: 'amber-gold', label: 'Amber Gold', desc: 'Sıcak Altın', grad: 'from-amber-950 via-orange-950 to-stone-950', dot: 'bg-amber-400' },
+                      { id: 'crimson-rose', label: 'Crimson Rose', desc: 'Yakut & Pembe', grad: 'from-rose-950 via-pink-950 to-zinc-950', dot: 'bg-rose-400' },
+                      { id: 'royal-violet', label: 'Royal Violet', desc: 'Kozmik Mor', grad: 'from-violet-950 via-purple-950 to-slate-950', dot: 'bg-violet-400' },
+                      { id: 'nordic-frost', label: 'Nordic Frost', desc: 'Buz Mavisi', grad: 'from-sky-950 via-slate-900 to-zinc-950', dot: 'bg-sky-400' },
+                      { id: 'oled-black', label: 'OLED Siyah', desc: 'Saf AMOLED #000', grad: 'from-black via-neutral-950 to-black', dot: 'bg-white' },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setUiTheme(t.id as any)}
+                        className={`text-left p-2.5 rounded-xl border transition-all group ${
+                          uiTheme === t.id
+                            ? 'bg-blue-500/15 border-blue-400 text-white shadow-lg shadow-blue-500/10'
+                            : 'bg-black/25 border-white/10 text-white/70 hover:text-white hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        <div className={`w-full h-7 rounded-lg bg-gradient-to-r ${t.grad} border border-white/10 mb-2 flex items-center px-2`}>
+                          <span className={`w-2.5 h-2.5 rounded-full ${t.dot} shadow`} />
+                        </div>
+                        <div className="text-xs font-bold truncate">{t.label}</div>
+                        <div className="text-[10px] text-white/45 truncate">{t.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Live Mini Preview */}
+                <div className="p-3.5 rounded-xl ios-glass border border-white/10 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-sm shrink-0">
+                      🎨
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-white">Canlı Görünüm Önizlemesi</div>
+                      <div
+                        className={`text-white/70 truncate ${
+                          chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
+                        }`}
+                      >
+                        Merhaba! Seçtiğin tema ve yazı boyutu anlık olarak uygulanır.
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-white/10 text-[10px] font-mono text-white/75 shrink-0">
+                    {glassIntensity} • {cornerStyle}
+                  </span>
+                </div>
+
+                {/* Font Size & Density */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-white/10">
+                  <div>
+                    <div className="text-xs font-semibold text-white/80 mb-2">Sohbet Yazı Boyutu</div>
+                    <div className="flex gap-2">
+                      {[
+                        { id: 'sm', label: 'Küçük' },
+                        { id: 'base', label: 'Normal' },
+                        { id: 'lg', label: 'Büyük' },
+                      ].map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setChatFontSize(s.id as any)}
+                          className={`flex-1 py-1.5 px-2.5 rounded-xl border text-xs font-semibold transition ${
+                            chatFontSize === s.id
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-white/80 mb-2">Mesaj Görünüm Yoğunluğu</div>
+                    <div className="flex gap-2">
+                      {[
+                        { id: 'cozy', label: 'Rahat (Cozy)' },
+                        { id: 'compact', label: 'Sıkışık (Compact)' },
+                      ].map((d) => (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => setMessageDensity(d.id as any)}
+                          className={`flex-1 py-1.5 px-2.5 rounded-xl border text-xs font-semibold transition ${
+                            messageDensity === d.id
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          {d.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Glass, Corners & Background Pattern */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-white/10">
+                  <div>
+                    <div className="text-xs font-semibold text-white/80 mb-2">Cam Efekti (Blur)</div>
+                    <div className="flex gap-1.5">
+                      {[
+                        { id: 'low', label: 'Hafif' },
+                        { id: 'normal', label: 'Dengeli' },
+                        { id: 'high', label: 'Yoğun' },
+                      ].map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => setGlassIntensity(g.id as any)}
+                          className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
+                            glassIntensity === g.id
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-white/80 mb-2">Köşe Stili</div>
+                    <div className="flex gap-1.5">
+                      {[
+                        { id: 'rounded', label: 'Yumuşak' },
+                        { id: 'sharp', label: 'Keskin' },
+                      ].map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setCornerStyle(c.id as any)}
+                          className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
+                            cornerStyle === c.id
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          {c.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-semibold text-white/80 mb-2">Arka Plan Deseni</div>
+                    <div className="flex gap-1.5">
+                      {[
+                        { id: 'grid', label: 'Izgara' },
+                        { id: 'dots', label: 'Nokta' },
+                        { id: 'clean', label: 'Sade' },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setBgPattern(p.id as any)}
+                          className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
+                            bgPattern === p.id
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Reduce Motion Toggle */}
+                <div className="flex items-center justify-between pt-3 border-t border-white/10">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Animasyonları Azalt (Performans Modu)</div>
+                    <div className="text-[11px] text-white/45">Oyun oynarken veya düşük GPU kullanımında geçiş animasyonlarını kapatır.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReduceMotion(!reduceMotion)}
+                    className={`w-12 h-6 rounded-full transition-all relative shrink-0 ${
+                      reduceMotion ? 'bg-blue-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
+                        reduceMotion ? 'left-7' : 'left-1'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
 
               {/* In-Game Overlay & Game Detection Card */}
@@ -1406,61 +1622,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-sm font-semibold text-white">PWA / Bağımsız Uygulama Olarak Yükle</div>
                     <div className="text-xs text-purple-200/70">
-                      Chrome, Edge veya Safari'de adres çubuğundaki "Uygulamayı Yükle" ikonuna tıklayarak doğrudan masaüstü uygulaması yapabilirsiniz.
+                      Chrome, Edge veya Safari&apos;de adres çubuğundaki &ldquo;Uygulamayı Yükle&rdquo; ikonuna tıklayarak doğrudan masaüstü uygulaması yapabilirsiniz.
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Theme Presets & Chat Font Size */}
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-4">
-                <div>
-                  <div className="text-xs font-semibold text-white/80 mb-2">Arayüz Teması</div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {[
-                      { id: 'vision-dark', label: 'Vision Dark', dot: 'bg-slate-400' },
-                      { id: 'midnight-blue', label: 'Midnight Blue', dot: 'bg-blue-400' },
-                      { id: 'cyber-emerald', label: 'Cyber Emerald', dot: 'bg-emerald-400' },
-                      { id: 'amber-gold', label: 'Amber Gold', dot: 'bg-amber-400' },
-                    ].map((t) => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setUiTheme(t.id as any)}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold transition ${
-                          uiTheme === t.id
-                            ? 'bg-blue-500/20 border-blue-400 text-white shadow'
-                            : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        <span className={`w-2.5 h-2.5 rounded-full ${t.dot}`} />
-                        <span className="truncate">{t.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-white/5">
-                  <div className="text-xs font-semibold text-white/80 mb-2">Sohbet Yazı Boyutu</div>
-                  <div className="flex gap-2">
-                    {[
-                      { id: 'sm', label: 'Küçük (12px)' },
-                      { id: 'base', label: 'Normal (14px)' },
-                      { id: 'lg', label: 'Büyük (16px)' },
-                    ].map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => setChatFontSize(s.id as any)}
-                        className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
-                          chatFontSize === s.id
-                            ? 'bg-blue-500 text-white border-blue-400 shadow'
-                            : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
                   </div>
                 </div>
               </div>
