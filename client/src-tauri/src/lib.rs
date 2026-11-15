@@ -182,6 +182,10 @@ mod win_input {
 
   pub const SM_CXSCREEN: i32 = 0;
   pub const SM_CYSCREEN: i32 = 1;
+  pub const SM_XVIRTUALSCREEN: i32 = 76;
+  pub const SM_YVIRTUALSCREEN: i32 = 77;
+  pub const SM_CXVIRTUALSCREEN: i32 = 78;
+  pub const SM_CYVIRTUALSCREEN: i32 = 79;
   pub const MOUSEEVENTF_MOVE: u32 = 0x0001;
   pub const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
   pub const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
@@ -249,14 +253,18 @@ fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> {
   #[cfg(target_os = "windows")]
   {
     unsafe {
-      let screen_w = win_input::GetSystemMetrics(win_input::SM_CXSCREEN).max(1);
-      let screen_h = win_input::GetSystemMetrics(win_input::SM_CYSCREEN).max(1);
+      let virt_w = win_input::GetSystemMetrics(win_input::SM_CXVIRTUALSCREEN);
+      let virt_h = win_input::GetSystemMetrics(win_input::SM_CYVIRTUALSCREEN);
+      let virt_x = if virt_w > 0 { win_input::GetSystemMetrics(win_input::SM_XVIRTUALSCREEN) } else { 0 };
+      let virt_y = if virt_h > 0 { win_input::GetSystemMetrics(win_input::SM_YVIRTUALSCREEN) } else { 0 };
+      let screen_w = if virt_w > 0 { virt_w } else { win_input::GetSystemMetrics(win_input::SM_CXSCREEN).max(1) };
+      let screen_h = if virt_h > 0 { virt_h } else { win_input::GetSystemMetrics(win_input::SM_CYSCREEN).max(1) };
 
       if let (Some(nx), Some(ny)) = (payload.x, payload.y) {
         let clamped_x = nx.clamp(0.0, 1.0);
         let clamped_y = ny.clamp(0.0, 1.0);
-        let px = (clamped_x * (screen_w - 1) as f64).round() as i32;
-        let py = (clamped_y * (screen_h - 1) as f64).round() as i32;
+        let px = virt_x + (clamped_x * (screen_w - 1) as f64).round() as i32;
+        let py = virt_y + (clamped_y * (screen_h - 1) as f64).round() as i32;
         let abs_x = (clamped_x * 65535.0).round() as i32;
         let abs_y = (clamped_y * 65535.0).round() as i32;
         win_input::SetCursorPos(px, py);
@@ -315,6 +323,17 @@ fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> {
   }
 }
 
+#[tauri::command]
+fn request_window_attention(app: tauri::AppHandle) -> Result<(), String> {
+  if let Some(window) = app.get_webview_window("main") {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+  }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default()
@@ -324,7 +343,8 @@ pub fn run() {
       toggle_overlay_window,
       set_overlay_window,
       get_overlay_window_state,
-      simulate_remote_input
+      simulate_remote_input,
+      request_window_attention
     ]);
 
   #[cfg(desktop)]

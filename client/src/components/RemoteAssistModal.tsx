@@ -13,6 +13,8 @@ import {
   Keyboard,
   Send,
   Zap,
+  Clipboard,
+  Crosshair,
 } from 'lucide-react';
 
 interface RemoteAssistModalProps {
@@ -28,6 +30,9 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
     requestRemoteAssist,
     stopRemoteAssist,
     sendRemoteInput,
+    sendRemoteClipboard,
+    remoteLaser,
+    sendRemoteLaser,
   } = useSocket();
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -39,6 +44,9 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
   const [showKeyboard, setShowKeyboard] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [showUacTip, setShowUacTip] = useState(true);
+  const [isLaserActive, setIsLaserActive] = useState(false);
+  const [localLaserPos, setLocalLaserPos] = useState<{ x: number; y: number } | null>(null);
+  const [clipboardToast, setClipboardToast] = useState<string | null>(null);
   const [quickText, setQuickText] = useState('');
   const [stickyMods, setStickyMods] = useState<{
     ctrl: boolean;
@@ -151,13 +159,36 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLVideoElement>) => {
-    if (!isControlling) return;
+    if (!isControlling && !isLaserActive) return;
     const now = performance.now();
     if (now - lastMoveSentRef.current < 28) return; // ~35fps smooth throttle
     const coords = getNormalizedCoords(e);
     if (!coords) return;
     lastMoveSentRef.current = now;
-    sendRemoteInput({ kind: 'move', x: coords.x, y: coords.y });
+    if (isControlling) {
+      sendRemoteInput({ kind: 'move', x: coords.x, y: coords.y });
+    }
+    if (isLaserActive) {
+      setLocalLaserPos(coords);
+      sendRemoteLaser(coords.x, coords.y, true);
+    }
+  };
+
+  const handleSendClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        setClipboardToast('Pano boş');
+        setTimeout(() => setClipboardToast(null), 2000);
+        return;
+      }
+      sendRemoteClipboard(text);
+      setClipboardToast('Pano gönderildi!');
+      setTimeout(() => setClipboardToast(null), 2200);
+    } catch {
+      setClipboardToast('Pano okunamadı');
+      setTimeout(() => setClipboardToast(null), 2200);
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLVideoElement>) => {
@@ -311,6 +342,39 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
 
             <button
               type="button"
+              onClick={handleSendClipboard}
+              disabled={!stream}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white/85"
+              title="Panondaki metni karşı bilgisayara gönder"
+            >
+              <Clipboard className="w-3.5 h-3.5 text-emerald-300" />
+              <span className="hidden sm:inline">{clipboardToast || 'Panoyu Gönder'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isLaserActive;
+                setIsLaserActive(next);
+                if (!next) {
+                  setLocalLaserPos(null);
+                  sendRemoteLaser(0, 0, false);
+                }
+              }}
+              disabled={!stream}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-40 ${
+                isLaserActive
+                  ? 'bg-rose-500/25 text-rose-300 border border-rose-400/45'
+                  : 'bg-white/10 hover:bg-white/20 text-white/80'
+              }`}
+              title="Lazer İşaretçi (kontrol almadan ekranda nokta göster)"
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Lazer</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowShortcuts((v) => !v)}
               className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
                 showShortcuts
@@ -447,11 +511,17 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
               onMouseMove={handleMouseMove}
               onMouseDown={handleMouseDown}
               onMouseUp={handleMouseUp}
+              onMouseLeave={() => {
+                if (isLaserActive) {
+                  setLocalLaserPos(null);
+                  sendRemoteLaser(0, 0, false);
+                }
+              }}
               onWheel={handleWheel}
               onContextMenu={(e) => {
                 if (isControlling) e.preventDefault();
               }}
-              className={`w-full h-full object-contain ${isControlling ? 'cursor-crosshair' : 'cursor-default'}`}
+              className={`w-full h-full object-contain ${isControlling || isLaserActive ? 'cursor-crosshair' : 'cursor-default'}`}
             />
           ) : (
             <div className="text-center space-y-2 text-white/50 p-6">
@@ -462,6 +532,20 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
               <div className="text-xs text-white/45">
                 Arkadaşınız görüşme kartındaki &ldquo;Ekran Paylaş&rdquo; butonuna bastığında ekranı burada canlı görünecektir.
               </div>
+            </div>
+          )}
+
+          {/* Laser Pointer Visual Dot */}
+          {(localLaserPos || remoteLaser?.active) && (
+            <div
+              className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 z-20"
+              style={{
+                left: `${((localLaserPos?.x ?? remoteLaser?.x ?? 0.5) * 100).toFixed(2)}%`,
+                top: `${((localLaserPos?.y ?? remoteLaser?.y ?? 0.5) * 100).toFixed(2)}%`,
+              }}
+            >
+              <div className="w-5 h-5 rounded-full bg-rose-500/80 ring-4 ring-rose-400/40 animate-ping absolute inset-0" />
+              <div className="w-3.5 h-3.5 rounded-full bg-rose-500 border-2 border-white shadow-[0_0_16px_rgba(244,63,94,0.95)] relative" />
             </div>
           )}
         </div>

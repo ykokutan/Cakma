@@ -103,6 +103,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     closeDirectMessage,
     startDirectCall,
     incomingFriendRequests,
+    friends,
+    unreadDMByUser,
     updateUserActivity,
     openDiagnostics,
     ping,
@@ -396,24 +398,84 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          startDirectCall(user);
-                        }}
-                        className="w-7 h-7 rounded-lg hover:bg-white/20 text-emerald-400 flex items-center justify-center transition"
-                        title="Sesli Ara"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                      </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {(() => {
+                        const dmUnread = unreadDMByUser[user.username.toLowerCase()] || 0;
+                        return dmUnread > 0 ? (
+                          <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                            {dmUnread > 9 ? '9+' : dmUnread}
+                          </span>
+                        ) : null;
+                      })()}
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startDirectCall(user);
+                          }}
+                          className="w-7 h-7 rounded-lg hover:bg-white/20 text-emerald-400 flex items-center justify-center transition"
+                          title="Sesli Ara"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
               })}
 
-            {onlineUsers.filter((u) => u.id !== currentUser?.id).length === 0 && (
+            {friends
+              .filter((f) => {
+                const fname = f.username.toLowerCase();
+                if (currentUser?.username && fname === currentUser.username.toLowerCase()) return false;
+                return !onlineUsers.some((u) => u.username.toLowerCase() === fname);
+              })
+              .map((friend) => {
+                const offlineUser = {
+                  id: friend.username,
+                  username: friend.username,
+                  avatar: friend.avatar || '👤',
+                  status: 'offline' as const,
+                  isMuted: false,
+                  isDeafened: false,
+                  isSpeaking: false,
+                  role: 'user' as const,
+                };
+                const isSelected = activeDMUser?.username.toLowerCase() === friend.username.toLowerCase();
+                const dmUnread = unreadDMByUser[friend.username.toLowerCase()] || 0;
+                return (
+                  <div
+                    key={`offline-${friend.username}`}
+                    onClick={() => openDirectMessage(offlineUser)}
+                    className={`group w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-blue-500/20 text-white border border-blue-500/40'
+                        : 'text-white/55 hover:bg-white/[0.06] hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="relative shrink-0">
+                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm overflow-hidden opacity-75">
+                          <AvatarView avatar={friend.avatar} alt={friend.username} fallback="👤" className="w-full h-full object-cover" />
+                        </div>
+                        <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black bg-white/25" />
+                      </div>
+                      <div className="truncate">
+                        <div className="truncate font-semibold text-white/80">{friend.username}</div>
+                        <div className="truncate text-[10px] text-white/35">Çevrimdışı (Arkadaş)</div>
+                      </div>
+                    </div>
+                    {dmUnread > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold shrink-0">
+                        {dmUnread > 9 ? '9+' : dmUnread}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+
+            {onlineUsers.filter((u) => u.id !== currentUser?.id).length === 0 && friends.length === 0 && (
               <div className="text-center py-8 text-white/30 text-xs">
                 Şu anda çevrim içi başka kullanıcı yok.
               </div>

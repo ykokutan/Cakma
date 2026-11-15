@@ -1,25 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { SocketProvider, useSocket } from './context/SocketContext';
 import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelSidebar } from './components/ChannelSidebar';
 import { ChatArea } from './components/ChatArea';
 import { MemberList } from './components/MemberList';
-import { SettingsModal } from './components/SettingsModal';
 import { CreateChannelModal } from './components/CreateChannelModal';
 import { CreateServerModal } from './components/CreateServerModal';
 import { AuthModal } from './components/AuthModal';
-import { AdminDashboardModal } from './components/AdminDashboardModal';
-import { LicenseStoreModal } from './components/LicenseStoreModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { DirectCallModal } from './components/DirectCallModal';
-import { ServerSettingsModal } from './components/ServerSettingsModal';
-import { ConnectionDiagnosticsModal } from './components/ConnectionDiagnosticsModal';
-import { ExploreModal } from './components/ExploreModal';
 import { DownloadAppModal } from './components/DownloadAppModal';
 import { AutoUpdater } from './components/AutoUpdater';
 import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { QuickSwitcherModal } from './components/QuickSwitcherModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+
+const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
+const AdminDashboardModal = lazy(() => import('./components/AdminDashboardModal').then((m) => ({ default: m.AdminDashboardModal })));
+const LicenseStoreModal = lazy(() => import('./components/LicenseStoreModal').then((m) => ({ default: m.LicenseStoreModal })));
+const ServerSettingsModal = lazy(() => import('./components/ServerSettingsModal').then((m) => ({ default: m.ServerSettingsModal })));
+const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDiagnosticsModal').then((m) => ({ default: m.ConnectionDiagnosticsModal })));
+const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
 import { User } from './types';
 import { Megaphone, X } from 'lucide-react';
 
@@ -249,48 +250,50 @@ const MainLayout: React.FC = () => {
       )}
 
       {/* Network & Voice Connection Diagnostics Modal */}
-      <ConnectionDiagnosticsModal
-        isOpen={isDiagnosticsOpen}
-        onClose={() => setIsDiagnosticsOpen(false)}
-      />
-
-      {/* Modallar */}
-      {isSettingsOpen && (
-        <SettingsModal onClose={() => setIsSettingsOpen(false)} />
-      )}
-
-      {isAuthOpen && (
-        <AuthModal onClose={() => setIsAuthOpen(false)} />
-      )}
-
-      {isAdminDashboardOpen && currentUser?.role === 'admin' && (
-        <AdminDashboardModal onClose={() => setIsAdminDashboardOpen(false)} />
-      )}
-
-      {isStoreOpen && (storeSettings?.isOpen ?? true) && (
-        <LicenseStoreModal onClose={() => setIsStoreOpen(false)} />
-      )}
-
-      <ExploreModal
-        isOpen={isExploreOpen}
-        onClose={() => setIsExploreOpen(false)}
-      />
-
-      <DownloadAppModal
-        isOpen={isDownloadOpen}
-        onClose={() => setIsDownloadOpen(false)}
-      />
-
-      {isCreateServerOpen && (
-        <CreateServerModal onClose={() => setIsCreateServerOpen(false)} />
-      )}
-
-      {isServerSettingsOpen && activeServer && (
-        <ServerSettingsModal
-          server={activeServer}
-          onClose={() => setIsServerSettingsOpen(false)}
+      <Suspense fallback={null}>
+        <ConnectionDiagnosticsModal
+          isOpen={isDiagnosticsOpen}
+          onClose={() => setIsDiagnosticsOpen(false)}
         />
-      )}
+
+        {/* Modallar */}
+        {isSettingsOpen && (
+          <SettingsModal onClose={() => setIsSettingsOpen(false)} />
+        )}
+
+        {isAuthOpen && (
+          <AuthModal onClose={() => setIsAuthOpen(false)} />
+        )}
+
+        {isAdminDashboardOpen && currentUser?.role === 'admin' && (
+          <AdminDashboardModal onClose={() => setIsAdminDashboardOpen(false)} />
+        )}
+
+        {isStoreOpen && (storeSettings?.isOpen ?? true) && (
+          <LicenseStoreModal onClose={() => setIsStoreOpen(false)} />
+        )}
+
+        <ExploreModal
+          isOpen={isExploreOpen}
+          onClose={() => setIsExploreOpen(false)}
+        />
+
+        <DownloadAppModal
+          isOpen={isDownloadOpen}
+          onClose={() => setIsDownloadOpen(false)}
+        />
+
+        {isCreateServerOpen && (
+          <CreateServerModal onClose={() => setIsCreateServerOpen(false)} />
+        )}
+
+        {isServerSettingsOpen && activeServer && (
+          <ServerSettingsModal
+            server={activeServer}
+            onClose={() => setIsServerSettingsOpen(false)}
+          />
+        )}
+      </Suspense>
 
       {createChannelModal.isOpen && (
         <CreateChannelModal

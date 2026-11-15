@@ -1173,6 +1173,7 @@ function generateAIResponse(prompt: string, senderName: string): string {
 
 // --- WEBRTC & CHAT INTEGRITY SECURITY ---
 const activeDirectCallPairs = new Map<string, string>(); // socketId -> socketId
+const activeDirectCallStartTimes = new Map<string, number>(); // socketId -> connected timestamp
 const pendingDirectCalls = new Map<string, { callerSocketId: string; callerUserId: string; callerUsername: string }>(); // targetUsernameLower -> caller info
 const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
 
@@ -1226,6 +1227,18 @@ io.on('connection', (socket: Socket) => {
   });
   socket.emit('pinned_banner_updated', systemConfig.pinnedBanner || null);
   socket.emit('store_settings_response', storeSettings);
+
+  if (process.env.TURN_URL) {
+    socket.emit('ice_servers', [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      {
+        urls: process.env.TURN_URL,
+        ...(process.env.TURN_USERNAME ? { username: process.env.TURN_USERNAME } : {}),
+        ...(process.env.TURN_CREDENTIAL ? { credential: process.env.TURN_CREDENTIAL } : {}),
+      }
+    ]);
+  }
 
   // Real-time Ping & Network Measurement Check
   socket.on('ping_check', (_ts: number, callback: any) => {
@@ -2509,8 +2522,11 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (callerSocketId) {
+      const now = Date.now();
       activeDirectCallPairs.set(socket.id, callerSocketId);
       activeDirectCallPairs.set(callerSocketId, socket.id);
+      activeDirectCallStartTimes.set(socket.id, now);
+      activeDirectCallStartTimes.set(callerSocketId, now);
       io.to(callerSocketId).emit('direct_call_accepted', { targetUser: acceptor });
     }
 
@@ -2535,7 +2551,13 @@ io.on('connection', (socket: Socket) => {
     }
     if (pending && activeUsers.has(pending.callerSocketId)) {
       activeDirectCallPairs.delete(pending.callerSocketId);
+      activeDirectCallStartTimes.delete(pending.callerSocketId);
+      activeDirectCallStartTimes.delete(socket.id);
       io.to(pending.callerSocketId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
+      if (decliner) {
+        io.to(pending.callerSocketId).emit('direct_call_log', { peerUsername: decliner.username, status: 'missed', durationSeconds: 0 });
+        socket.emit('direct_call_log', { peerUsername: pending.callerUsername, status: 'missed', durationSeconds: 0 });
+      }
     } else {
       const targetName = (callerUsername || '').trim().toLowerCase();
       for (const [sId, u] of activeUsers.entries()) {
@@ -2559,11 +2581,24 @@ io.on('connection', (socket: Socket) => {
   });
 
   socket.on('direct_call_end', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
+    const ender = activeUsers.get(socket.id);
     const paired = activeDirectCallPairs.get(socket.id);
+    const startedAt = activeDirectCallStartTimes.get(socket.id) || (paired ? activeDirectCallStartTimes.get(paired) : undefined);
+    const durationSeconds = startedAt ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
+    activeDirectCallStartTimes.delete(socket.id);
+
     if (paired) {
+      const partner = activeUsers.get(paired);
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
+      activeDirectCallStartTimes.delete(paired);
       io.to(paired).emit('direct_call_ended');
+      if (ender && partner) {
+        io.to(paired).emit('direct_call_log', { peerUsername: ender.username, status: 'ended', durationSeconds });
+        socket.emit('direct_call_log', { peerUsername: partner.username, status: 'ended', durationSeconds });
+      }
+    } else if (ender && targetUsername) {
+      socket.emit('direct_call_log', { peerUsername: targetUsername, status: 'missed', durationSeconds: 0 });
     }
     const targetName = (targetUsername || '').trim().toLowerCase();
     for (const [sId, u] of activeUsers.entries()) {
@@ -2574,7 +2609,11 @@ io.on('connection', (socket: Socket) => {
           (targetUserId && u.username.toLowerCase() === targetUserId.toLowerCase()))
       ) {
         activeDirectCallPairs.delete(sId);
+        activeDirectCallStartTimes.delete(sId);
         io.to(sId).emit('direct_call_ended');
+        if (!paired && ender) {
+          io.to(sId).emit('direct_call_log', { peerUsername: ender.username, status: 'missed', durationSeconds: 0 });
+        }
       }
     }
   });
@@ -2628,6 +2667,35 @@ io.on('connection', (socket: Socket) => {
     io.to(pairedSocketId).emit('direct_screen_share_state', {
       userId: socket.id,
       isSharing: Boolean(isSharing)
+    });
+  });
+
+  socket.on('direct_camera_state', ({ isCameraOn }: { isCameraOn: boolean }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId) return;
+    io.to(pairedSocketId).emit('direct_camera_state', {
+      userId: socket.id,
+      isCameraOn: Boolean(isCameraOn)
+    });
+  });
+
+  socket.on('remote_assist_clipboard', ({ text }: { text: string }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    const sender = activeUsers.get(socket.id);
+    if (!pairedSocketId || typeof text !== 'string' || !text.trim()) return;
+    io.to(pairedSocketId).emit('remote_assist_clipboard', {
+      fromUsername: sender?.username || 'Kullanıcı',
+      text: text.slice(0, 8000),
+    });
+  });
+
+  socket.on('remote_assist_laser', (payload: { x: number; y: number; active: boolean }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId || !payload) return;
+    io.to(pairedSocketId).emit('remote_assist_laser', {
+      x: Number(payload.x) || 0,
+      y: Number(payload.y) || 0,
+      active: Boolean(payload.active),
     });
   });
 

@@ -58,6 +58,8 @@ import {
   ShieldAlert,
   Maximize2,
   Hand,
+  Video,
+  VideoOff,
 } from 'lucide-react';
 
 const SLASH_COMMANDS = [
@@ -171,6 +173,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     toggleDeafen,
     isDirectScreenSharing,
     partnerDirectScreenSharing,
+    isDirectCameraOn,
+    partnerDirectCameraOn,
+    toggleDirectCamera,
+    lastClipboardNotice,
     remoteScreenStreams,
     remoteAssist,
     startDirectScreenShare,
@@ -956,14 +962,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                   </div>
 
-                  {/* Inline Partner Screen Share Preview */}
-                  {(partnerDirectScreenSharing || Boolean(dmCallPartnerStream)) && (
+                  {/* Inline Partner Screen Share / Camera Preview */}
+                  {(partnerDirectScreenSharing || partnerDirectCameraOn || Boolean(dmCallPartnerStream)) && (
                     <div className="relative w-full max-w-xs h-32 rounded-2xl overflow-hidden border border-sky-400/35 bg-black shadow-lg group">
                       {dmCallPartnerStream ? (
                         <video ref={dmScreenVideoRef} autoPlay playsInline muted className="w-full h-full object-contain" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-xs text-white/50">
-                          Ekran akışı hazırlanıyor...
+                          Görüntü akışı hazırlanıyor...
                         </div>
                       )}
                       <button
@@ -1014,6 +1020,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       <p className="text-[11px] text-amber-200/85 pl-6">
                         İpucu: Görev Yöneticisi veya Yönetici (UAC) pencerelerinin de kontrol edilebilmesi için Çakma&apos;yı &ldquo;Yönetici olarak çalıştır&rdquo; ile açabilirsiniz.
                       </p>
+                      {lastClipboardNotice && (
+                        <p className="text-[11px] text-sky-300 pl-6 font-semibold">
+                          📋 {lastClipboardNotice}
+                        </p>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -1073,6 +1084,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
                       {directCall.status === 'connected' && (
                         <>
+                          <button
+                            onClick={toggleDirectCamera}
+                            className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
+                              isDirectCameraOn
+                                ? 'bg-emerald-500 hover:bg-emerald-400 text-black font-bold'
+                                : 'bg-white/10 hover:bg-white/20 text-white'
+                            }`}
+                          >
+                            {isDirectCameraOn ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
+                            <span>{isDirectCameraOn ? 'Kamera Açık' : 'Kamera'}</span>
+                          </button>
+
                           <button
                             onClick={() => (isDirectScreenSharing ? stopDirectScreenShare() : startDirectScreenShare())}
                             className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
