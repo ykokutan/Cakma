@@ -210,14 +210,15 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
           <div className="min-w-0">
             <h2 className="font-semibold text-white text-sm tracking-tight flex items-center gap-2 truncate">
               <span className="truncate">{activeChannel.name}</span>
-              <span className="hidden sm:inline-flex text-[11px] bg-white/10 text-white/80 font-normal px-2 py-0.5 rounded-full shrink-0">
-                FaceTime / WebRTC Odası
+              <span className="hidden sm:inline-flex items-center gap-1 text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 font-semibold px-2 py-0.5 rounded-full shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {usersInRoom.length} Katılımcı
               </span>
             </h2>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[52vw] sm:max-w-[70vw] shrink-0">
+        <div className="flex items-center gap-1.5 text-[11px] text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[56vw] sm:max-w-[72vw] shrink-0">
           {/* Voice Room Audio Recorder */}
           {isConnected && (
             <button
@@ -352,10 +353,10 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
       )}
 
       {/* Main Grid or Screen Share Stage */}
-      <div className="flex-1 p-6 overflow-y-auto flex flex-col items-center justify-center">
+      <div className="flex-1 min-h-0 p-3 sm:p-5 overflow-y-auto flex flex-col items-center justify-center">
         {usersInRoom.length === 0 ? (
           /* Empty Room State - iOS style */
-          <div className="text-center max-w-sm space-y-5 p-8 rounded-3xl ios-glass-card shadow-2xl">
+          <div className="text-center max-w-sm space-y-5 p-8 rounded-3xl ios-glass-card border border-white/10 shadow-2xl">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-emerald-500/20 to-cyan-500/20 border border-white/10 flex items-center justify-center mx-auto text-4xl shadow-inner">
               🎙️
             </div>
@@ -376,10 +377,10 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             )}
           </div>
         ) : hasAnyScreenShare ? (
-          /* Screen Sharing Stage (Split Screen: Video on top, iOS Avatars Below) */
-          <div className={`w-full h-full flex flex-col gap-4 ${isScreenFocused ? 'max-w-none' : 'max-w-6xl'}`}>
+          /* Screen Sharing Stage (Theater Layout: Video on top, Sleek Participant Strip Below) */
+          <div className={`w-full h-full min-h-0 flex flex-col gap-3 ${isScreenFocused ? 'max-w-none' : 'max-w-6xl'}`}>
             {/* Live Video Player */}
-            <div className="flex-1 w-full min-h-[320px] rounded-2xl overflow-hidden shadow-2xl">
+            <div className="flex-1 w-full min-h-[260px] rounded-2xl overflow-hidden border border-white/10 bg-black/50 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.8)]">
               {isScreenSharing && screenStream ? (
                 <VideoStreamPlayer
                   stream={screenStream}
@@ -399,34 +400,63 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
 
             {/* Bottom Row of Voice Participants */}
             {!isScreenFocused && (
-            <div className="h-24 flex items-center justify-center gap-4 overflow-x-auto py-1">
+            <div className="shrink-0 flex items-center justify-center gap-2.5 overflow-x-auto py-1 px-2 no-scrollbar">
               {usersInRoom.map((user) => {
                 const isThisMe = user.id === currentUser?.id;
                 const speaking = isThisMe ? isSpeaking : user.isSpeaking;
                 const muted = isThisMe ? isMuted : user.isMuted;
+                const deafened = isThisMe ? isDeafened : user.isDeafened;
+                const isPresenter = (isThisMe && isScreenSharing) || (!isThisMe && activePresenter?.id === user.id);
 
                 return (
                   <div
                     key={user.id}
-                    className="flex flex-col items-center gap-1.5 shrink-0 px-3 py-2 rounded-2xl ios-glass-card"
+                    className={`flex items-center gap-2.5 shrink-0 px-3 py-2 rounded-2xl border backdrop-blur-xl transition-all duration-200 ${
+                      speaking
+                        ? 'bg-emerald-500/15 border-emerald-400/50 shadow-[0_0_20px_rgba(52,211,153,0.2)]'
+                        : 'bg-white/[0.04] border-white/10 hover:bg-white/[0.07]'
+                    }`}
                   >
-                    <div className="relative">
+                    <div className="relative shrink-0">
                       <div
-                        className={`w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-xl transition-all duration-200 ${
-                          speaking ? 'ios-halo' : ''
+                        className={`w-10 h-10 rounded-full bg-white/10 flex items-center justify-center overflow-hidden transition-all duration-200 ${
+                          speaking ? 'ring-2 ring-emerald-400' : 'ring-1 ring-white/15'
                         }`}
                       >
-                        {user.avatar || '👤'}
+                        <AvatarView avatar={user.avatar} alt={user.username} fallback="👤" className="w-full h-full object-cover" />
                       </div>
                       {muted && (
-                        <div className="absolute -bottom-1 -right-1 bg-red-500/90 text-white p-0.5 rounded-full border border-black/40">
-                          <MicOff className="w-3 h-3" />
+                        <div className="absolute -bottom-1 -right-1 bg-rose-500 text-white p-0.5 rounded-full border border-black/60 shadow">
+                          <MicOff className="w-2.5 h-2.5" />
+                        </div>
+                      )}
+                      {!muted && deafened && (
+                        <div className="absolute -bottom-1 -right-1 bg-rose-500 text-white p-0.5 rounded-full border border-black/60 shadow">
+                          <VolumeX className="w-2.5 h-2.5" />
                         </div>
                       )}
                     </div>
-                    <span className="text-[11px] font-medium text-white/90 max-w-[130px] truncate">
-                      {user.username}
-                    </span>
+
+                    <div className="min-w-0 pr-1">
+                      <div className="text-xs font-semibold text-white/95 max-w-[130px] truncate flex items-center gap-1.5">
+                        <span className="truncate">{user.username}</span>
+                        {isThisMe && <span className="text-[10px] text-white/45 font-normal">(Sen)</span>}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {isPresenter ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                            Yayında
+                          </span>
+                        ) : speaking ? (
+                          <span className="text-[10px] text-emerald-400 font-medium">Konuşuyor</span>
+                        ) : muted ? (
+                          <span className="text-[10px] text-rose-400/80">Mikrofon Kapalı</span>
+                        ) : (
+                          <span className="text-[10px] text-white/40">Dinliyor</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -435,7 +465,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
           </div>
         ) : (
           /* Standard iOS Grid with Voice Pulsating Halo */
-          <div className="w-full max-w-5xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 auto-rows-fr">
+          <div className="w-full max-w-6xl grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr">
             {usersInRoom.map((user) => {
               const isThisMe = user.id === currentUser?.id;
               const speaking = isThisMe ? isSpeaking : user.isSpeaking;
