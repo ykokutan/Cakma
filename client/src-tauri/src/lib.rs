@@ -147,13 +147,13 @@ fn detect_running_game() -> Option<String> {
 }
 
 fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
-  if app.get_webview_window("overlay").is_some() {
+  if let Some(win) = app.get_webview_window("overlay") {
+    let _ = win.show();
     return Ok(());
   }
 
-  WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html".into()))
+  WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
     .title("Çakma Overlay")
-    .initialization_script("window.__CAKMA_OVERLAY__ = true;")
     .inner_size(290.0, 260.0)
     .min_inner_size(220.0, 150.0)
     .position(24.0, 24.0)
@@ -169,7 +169,7 @@ fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
+async fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
   if let Some(win) = app.get_webview_window("overlay") {
     win.close().map_err(|e| e.to_string())?;
     return Ok(false);
@@ -180,7 +180,7 @@ fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn set_overlay_window(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+async fn set_overlay_window(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
   if enabled {
     open_overlay_window(&app)?;
     Ok(true)
@@ -440,11 +440,11 @@ fn set_autostart(enabled: bool) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn position_overlay_window(app: tauri::AppHandle, corner: String) -> Result<(), String> {
+async fn position_overlay_window(app: tauri::AppHandle, corner: String) -> Result<(), String> {
   if let Some(overlay) = app.get_webview_window("overlay") {
     let margin = 16i32;
-    let overlay_w = 270i32;
-    let overlay_h = 340i32;
+    let overlay_w = 290i32;
+    let overlay_h = 260i32;
     let (sw, sh) = if let Ok(Some(mon)) = overlay.primary_monitor() {
       let size = mon.size();
       let scale = mon.scale_factor();
@@ -464,7 +464,7 @@ fn position_overlay_window(app: tauri::AppHandle, corner: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn set_overlay_ignore_cursor(app: tauri::AppHandle, ignore: bool) -> Result<(), String> {
+async fn set_overlay_ignore_cursor(app: tauri::AppHandle, ignore: bool) -> Result<(), String> {
   if let Some(overlay) = app.get_webview_window("overlay") {
     overlay.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())?;
   }

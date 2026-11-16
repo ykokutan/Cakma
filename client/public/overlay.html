@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Çakma Overlay</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+        color: #f8fafc;
+        user-select: none;
+      }
+      .shell {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: rgba(11, 13, 20, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        overflow: hidden;
+        transition: opacity 0.15s ease;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        background: rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+        cursor: move;
+        flex-shrink: 0;
+      }
+      .title-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        flex: 1;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #34d399;
+        box-shadow: 0 0 8px rgba(52, 211, 153, 0.7);
+        flex-shrink: 0;
+      }
+      .dot.idle { background: #64748b; box-shadow: none; }
+      .title {
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+      }
+      .ping {
+        font-size: 10px;
+        font-family: ui-monospace, monospace;
+        padding: 2px 6px;
+        border-radius: 6px;
+        background: rgba(16, 185, 129, 0.16);
+        color: #6ee7b7;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        display: none;
+      }
+      .count {
+        font-size: 10px;
+        font-family: ui-monospace, monospace;
+        color: rgba(255, 255, 255, 0.5);
+        padding: 0 2px;
+      }
+      .icon-btn {
+        border: none;
+        background: rgba(255, 255, 255, 0.07);
+        color: rgba(255, 255, 255, 0.72);
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        transition: background 0.15s, color 0.15s;
+      }
+      .icon-btn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
+      .icon-btn.locked { background: rgba(245, 158, 11, 0.25); color: #fcd34d; }
+      .body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .empty {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.45);
+        padding: 12px;
+        gap: 6px;
+      }
+      .speaker {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        transition: all 0.15s ease;
+      }
+      .speaker.speaking {
+        background: rgba(16, 185, 129, 0.18);
+        border-color: rgba(52, 211, 153, 0.65);
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.22);
+      }
+      .sp-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .avatar {
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        overflow: hidden;
+        flex-shrink: 0;
+      }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .speaker.speaking .avatar { box-shadow: 0 0 0 2px #34d399; }
+      .name {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.88);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .speaker.speaking .name { font-weight: 700; color: #6ee7b7; }
+      .sp-right {
+        font-size: 11px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 7px 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.09);
+        background: rgba(255, 255, 255, 0.03);
+        flex-shrink: 0;
+      }
+      .footer-label { font-size: 10px; color: rgba(255, 255, 255, 0.45); }
+      .footer-btns { display: flex; align-items: center; gap: 6px; }
+      .ctrl-btn {
+        border: none;
+        padding: 4px 8px;
+        border-radius: 7px;
+        font-size: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        background: rgba(255, 255, 255, 0.1);
+        color: #f8fafc;
+        transition: background 0.15s;
+      }
+      .ctrl-btn:hover { background: rgba(255, 255, 255, 0.2); }
+      .ctrl-btn.danger { background: rgba(244, 63, 94, 0.28); color: #fda4af; }
+    </style>
+  </head>
+  <body>
+    <div id="shell" class="shell">
+      <div class="header" data-tauri-drag-region>
+        <div class="title-wrap" data-tauri-drag-region>
+          <span id="dot" class="dot idle" data-tauri-drag-region></span>
+          <span id="channelTitle" class="title" data-tauri-drag-region>Çakma Overlay</span>
+        </div>
+        <div class="header-actions">
+          <span id="pingBadge" class="ping"></span>
+          <span id="speakerCount" class="count">0</span>
+          <button id="lockBtn" class="icon-btn" title="Tıklama Geçirgenliği (Ctrl+Shift+O)">🔓</button>
+          <button id="closeBtn" class="icon-btn" title="Overlay'i Kapat">✕</button>
+        </div>
+      </div>
+
+      <div id="speakersBody" class="body">
+        <div class="empty">
+          <div style="font-size:18px;">🎙️</div>
+          <div>Ses odasına katıldığınızda konuşanlar burada görünür.</div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <span class="footer-label">Hızlı Kontrol</span>
+        <div class="footer-btns">
+          <button id="muteBtn" class="ctrl-btn">🎤 Mikrofon</button>
+          <button id="deafenBtn" class="ctrl-btn">🎧</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const shell = document.getElementById('shell');
+        const dot = document.getElementById('dot');
+        const channelTitle = document.getElementById('channelTitle');
+        const pingBadge = document.getElementById('pingBadge');
+        const speakerCount = document.getElementById('speakerCount');
+        const speakersBody = document.getElementById('speakersBody');
+        const lockBtn = document.getElementById('lockBtn');
+        const closeBtn = document.getElementById('closeBtn');
+        const muteBtn = document.getElementById('muteBtn');
+        const deafenBtn = document.getElementById('deafenBtn');
+
+        let isLocked = localStorage.getItem('dc_overlay_locked') === '1';
+
+        function applyOpacity(val) {
+          const num = Number(val);
+          const clamped = Number.isFinite(num) ? Math.min(100, Math.max(30, num)) : 92;
+          shell.style.opacity = String(clamped / 100);
+        }
+
+        function applyLockUi(locked) {
+          isLocked = Boolean(locked);
+          lockBtn.textContent = isLocked ? '🔒' : '🔓';
+          lockBtn.classList.toggle('locked', isLocked);
+        }
+
+        function renderState(payload) {
+          const speakers = Array.isArray(payload?.speakers) ? payload.speakers : [];
+          const inVoice = Boolean(payload?.inVoice);
+          const chName = payload?.channelName || '';
+          const ping = Number(payload?.ping || 0);
+          const isMuted = Boolean(payload?.isMuted);
+          const isDeafened = Boolean(payload?.isDeafened);
+
+          channelTitle.textContent = inVoice && chName ? chName : 'Çakma Overlay';
+          dot.classList.toggle('idle', !inVoice);
+          speakerCount.textContent = String(speakers.length);
+
+          if (inVoice && ping > 0) {
+            pingBadge.style.display = 'inline-block';
+            pingBadge.textContent = ping + 'ms';
+          } else {
+            pingBadge.style.display = 'none';
+          }
+
+          muteBtn.textContent = isMuted ? '🔇 Susturuldu' : '🎤 Mikrofon';
+          muteBtn.classList.toggle('danger', isMuted);
+          deafenBtn.classList.toggle('danger', isDeafened);
+
+          if (!inVoice || speakers.length === 0) {
+            speakersBody.innerHTML =
+              '<div class="empty"><div style="font-size:18px;">🎙️</div><div>Ses odasına katıldığınızda konuşanlar burada görünür.</div></div>';
+            return;
+          }
+
+          speakersBody.innerHTML = '';
+          for (const s of speakers) {
+            const row = document.createElement('div');
+            row.className = 'speaker' + (s.isSpeaking ? ' speaking' : '');
+
+            const left = document.createElement('div');
+            left.className = 'sp-left';
+
+            const av = document.createElement('div');
+            av.className = 'avatar';
+            const avVal = String(s.avatar || '👤');
+            if (avVal.startsWith('data:image/') || avVal.startsWith('http://') || avVal.startsWith('https://')) {
+              const img = document.createElement('img');
+              img.src = avVal;
+              av.appendChild(img);
+            } else {
+              av.textContent = avVal;
+            }
+
+            const name = document.createElement('span');
+            name.className = 'name';
+            name.textContent = s.username || 'Kullanıcı';
+
+            left.appendChild(av);
+            left.appendChild(name);
+
+            const right = document.createElement('div');
+            right.className = 'sp-right';
+            let statusIcons = '';
+            if (s.isHandRaised) statusIcons += '✋ ';
+            if (s.isDeafened) statusIcons += '🔇';
+            else if (s.isMuted) statusIcons += '🚫';
+            else statusIcons += s.isSpeaking ? '🔊' : '🎤';
+            right.textContent = statusIcons;
+
+            row.appendChild(left);
+            row.appendChild(right);
+            speakersBody.appendChild(row);
+          }
+        }
+
+        applyOpacity(localStorage.getItem('dc_overlay_opacity') || '92');
+        applyLockUi(isLocked);
+
+        window.addEventListener('storage', (e) => {
+          if (e.key === 'dc_overlay_opacity') applyOpacity(e.newValue);
+        });
+
+        function initTauri() {
+          const tauri = window.__TAURI__;
+          if (!tauri || !tauri.event || !tauri.core) {
+            setTimeout(initTauri, 100);
+            return;
+          }
+
+          const corner = localStorage.getItem('dc_overlay_corner') || 'top-left';
+          tauri.core.invoke('position_overlay_window', { corner }).catch(() => {});
+          if (isLocked) {
+            tauri.core.invoke('set_overlay_ignore_cursor', { ignore: true }).catch(() => {});
+          }
+
+          tauri.event.listen('overlay-speakers-update', (ev) => renderState(ev.payload)).catch(() => {});
+          tauri.event.listen('overlay-opacity-changed', (ev) => applyOpacity(ev.payload)).catch(() => {});
+          tauri.event.listen('overlay-lock-changed', (ev) => applyLockUi(ev.payload)).catch(() => {});
+          tauri.event.emit('overlay-ready').catch(() => {});
+
+          lockBtn.addEventListener('click', () => {
+            const next = !isLocked;
+            applyLockUi(next);
+            try { localStorage.setItem('dc_overlay_locked', next ? '1' : '0'); } catch {}
+            tauri.core.invoke('set_overlay_ignore_cursor', { ignore: next }).catch(() => {});
+          });
+
+          closeBtn.addEventListener('click', () => {
+            tauri.event.emit('overlay-close-requested').catch(() => {});
+          });
+          muteBtn.addEventListener('click', () => {
+            tauri.event.emit('overlay-toggle-mute').catch(() => {});
+          });
+          deafenBtn.addEventListener('click', () => {
+            tauri.event.emit('overlay-toggle-deafen').catch(() => {});
+          });
+        }
+
+        initTauri();
+      })();
+    </script>
+  </body>
+</html>
