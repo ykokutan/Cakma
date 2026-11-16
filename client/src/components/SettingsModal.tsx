@@ -131,6 +131,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [profileBannerColor, setProfileBannerColor] = useState(
     currentUser?.bannerColor || 'from-indigo-600 via-purple-600 to-pink-600'
   );
+  const [profileBannerImage, setProfileBannerImage] = useState(currentUser?.bannerImage || '');
+  const [bannerUrlInput, setBannerUrlInput] = useState('');
   const [avatarUrlInput, setAvatarUrlInput] = useState('');
   const [idCopied, setIdCopied] = useState(false);
   const [profileUploadErr, setProfileUploadErr] = useState<string | null>(null);
@@ -434,6 +436,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')
         ? trimmedUrl
         : avatar;
+    const trimmedBannerUrl = bannerUrlInput.trim();
+    const finalBannerImage =
+      trimmedBannerUrl.startsWith('http://') || trimmedBannerUrl.startsWith('https://')
+        ? trimmedBannerUrl
+        : profileBannerImage;
     updateProfile(username.trim(), finalAvatar);
     updateProfileDetails({
       avatar: finalAvatar,
@@ -441,8 +448,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       statusMessage: profileStatusMessage.trim(),
       bio: profileBio.trim(),
       bannerColor: profileBannerColor,
+      bannerImage: finalBannerImage,
     });
     setAvatar(finalAvatar);
+    setProfileBannerImage(finalBannerImage);
+    setBannerUrlInput('');
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
   };
@@ -1126,14 +1136,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
               {/* Live Profile Banner & Card Preview */}
               <div className="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] shadow-lg">
-                <div className={`h-20 bg-gradient-to-r ${profileBannerColor} relative`}>
+                <div className={`h-24 bg-gradient-to-r ${profileBannerColor} relative overflow-hidden`}>
+                  {(bannerUrlInput.trim().startsWith('http://') ||
+                    bannerUrlInput.trim().startsWith('https://') ||
+                    profileBannerImage) && (
+                    <img
+                      src={
+                        bannerUrlInput.trim().startsWith('http://') ||
+                        bannerUrlInput.trim().startsWith('https://')
+                          ? bannerUrlInput.trim()
+                          : profileBannerImage
+                      }
+                      alt="Profil Banner"
+                      className="absolute inset-0 w-full h-full object-cover"
+                      draggable={false}
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/20 pointer-events-none" />
                   {currentUser?.role && (
-                    <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full bg-black/50 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-white/15 uppercase">
+                    <span className="relative z-10 float-right m-3 px-2.5 py-0.5 rounded-full bg-black/50 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-white/15 uppercase">
                       {currentUser.role}
                     </span>
                   )}
                 </div>
-                <div className="px-5 pb-4 -mt-8 flex flex-wrap items-end justify-between gap-4">
+                <div className="relative z-10 px-5 pb-4 -mt-8 flex flex-wrap items-end justify-between gap-4">
                   <div className="flex items-end gap-3.5">
                     <div className="relative w-16 h-16 rounded-2xl bg-[#131620] ring-4 ring-[#131620] flex items-center justify-center text-3xl shadow-xl overflow-hidden shrink-0">
                       <AvatarView avatar={avatar} alt={username} fallback="🎮" className="w-full h-full object-cover" />
@@ -1321,11 +1347,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   />
                 </div>
 
-                {/* Banner Color */}
-                <div>
-                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1.5">
-                    Profil Afiş Rengi
-                  </label>
+                {/* Banner Color & Image */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase">
+                      Profil Afiş Rengi &amp; Görseli
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {profileBannerImage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfileBannerImage('');
+                            setBannerUrlInput('');
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-[11px] font-medium transition"
+                        >
+                          Görseli Kaldır
+                        </button>
+                      )}
+                      <label className="cursor-pointer px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-200 text-[11px] font-medium transition">
+                        Afiş / GIF Yükle
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!file) return;
+                            setProfileUploadErr(null);
+                            const res = await processUploadedImage(file, {
+                              maxWidth: 960,
+                              maxHeight: 380,
+                              maxGifBytes: 2 * 1024 * 1024,
+                            });
+                            if (res.ok) {
+                              setProfileBannerImage(res.dataUrl);
+                              setBannerUrlInput('');
+                            } else {
+                              setProfileUploadErr(res.error);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {[
                       'from-indigo-600 via-purple-600 to-pink-600',
@@ -1346,6 +1413,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       />
                     ))}
                   </div>
+                  <input
+                    type="url"
+                    value={bannerUrlInput}
+                    onChange={(e) => setBannerUrlInput(e.target.value)}
+                    placeholder="Veya doğrudan Afiş (Banner) URL yapıştırın (https://...)"
+                    className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
 
                 <div className="pt-2 flex items-center justify-between">
