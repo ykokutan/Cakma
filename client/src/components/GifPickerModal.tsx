@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { X, Search, Sparkles } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, Search, Sparkles, Loader2 } from 'lucide-react';
+import { useSocket } from '../context/SocketContext';
 
 interface GifPickerModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface GifItem {
   id: string;
   title: string;
   url: string;
+  previewUrl?: string;
   category: string;
 }
 
@@ -37,19 +39,63 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
   onClose,
   onSelectGif,
 }) => {
+  const { currentServerHost } = useSocket();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Tümü');
+  const [liveGifs, setLiveGifs] = useState<GifItem[] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isGiphyActive, setIsGiphyActive] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setIsLoading(true);
+      try {
+        const params = new URLSearchParams({
+          q: search.trim(),
+          category: selectedCategory,
+          limit: '24',
+        });
+        const res = await fetch(`${currentServerHost}/api/gifs?${params.toString()}`);
+        if (!res.ok) throw new Error('HTTP error');
+        const data = await res.json();
+        if (cancelled) return;
+        if (data?.source === 'giphy' && Array.isArray(data.gifs)) {
+          setLiveGifs(data.gifs);
+          setIsGiphyActive(true);
+        } else {
+          setLiveGifs(null);
+          setIsGiphyActive(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setLiveGifs(null);
+          setIsGiphyActive(false);
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }, 320);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, search, selectedCategory, currentServerHost]);
 
   if (!isOpen) return null;
 
-  const filteredGifs = POPULAR_GIFS.filter((gif) => {
+  const fallbackGifs = POPULAR_GIFS.filter((gif) => {
     const matchesCategory = selectedCategory === 'Tümü' || gif.category === selectedCategory;
     const matchesSearch = !search.trim() || gif.title.toLowerCase().includes(search.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
+  const displayedGifs = liveGifs !== null ? liveGifs : fallbackGifs;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in" onClick={onClose}>
       <div
         className="relative w-full max-w-lg bg-[#14151b]/95 border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col text-white animate-scale-up"
         onClick={(e) => e.stopPropagation()}
@@ -59,6 +105,11 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-pink-400" />
             <h3 className="text-sm font-bold text-white tracking-tight">GIF Galerisi</h3>
+            {isGiphyActive && (
+              <span className="px-2 py-0.5 rounded-full bg-pink-500/20 border border-pink-500/30 text-[10px] font-bold text-pink-300">
+                GIPHY
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -77,9 +128,12 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="GIF Ara (CS2, GG, Gülme, Zafer, Dans)..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-pink-500"
+              className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-9 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-pink-500"
               autoFocus
             />
+            {isLoading && (
+              <Loader2 className="w-4 h-4 text-pink-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+            )}
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
@@ -101,7 +155,7 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
 
         {/* GIF Grid */}
         <div className="p-4 overflow-y-auto max-h-[380px] grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-          {filteredGifs.map((gif) => (
+          {displayedGifs.map((gif) => (
             <div
               key={gif.id}
               onClick={() => {
@@ -111,7 +165,7 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
               className="relative group rounded-xl overflow-hidden aspect-video bg-black/40 border border-white/5 hover:border-pink-500/60 cursor-pointer transition-all hover:scale-[1.02] shadow"
             >
               <img
-                src={gif.url}
+                src={gif.previewUrl || gif.url}
                 alt={gif.title}
                 loading="lazy"
                 className="w-full h-full object-cover"
@@ -122,7 +176,7 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
             </div>
           ))}
 
-          {filteredGifs.length === 0 && (
+          {!isLoading && displayedGifs.length === 0 && (
             <div className="col-span-full py-12 text-center text-white/30 text-xs">
               Eşleşen GIF bulunamadı.
             </div>

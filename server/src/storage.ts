@@ -189,6 +189,7 @@ export interface SystemConfig {
   autoBackupIntervalHours?: number;
   maxBackupsToKeep?: number;
   webhookUrl?: string;
+  giphyApiKey?: string;
   webhookEvents?: {
     security?: boolean;
     bans?: boolean;

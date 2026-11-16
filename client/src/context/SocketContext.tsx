@@ -221,6 +221,7 @@ interface SocketContextType {
       autoBackupIntervalHours?: number;
       maxBackupsToKeep?: number;
       webhookUrl?: string;
+      giphyApiKey?: string;
       webhookEvents?: {
         security?: boolean;
         bans?: boolean;
@@ -271,6 +272,7 @@ interface SocketContextType {
     autoBackupIntervalHours?: number;
     maxBackupsToKeep?: number;
     webhookUrl?: string;
+    giphyApiKey?: string;
     webhookEvents?: {
       security?: boolean;
       bans?: boolean;
@@ -2916,6 +2918,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     autoBackupIntervalHours?: number;
     maxBackupsToKeep?: number;
     webhookUrl?: string;
+    giphyApiKey?: string;
     webhookEvents?: {
       security?: boolean;
       bans?: boolean;

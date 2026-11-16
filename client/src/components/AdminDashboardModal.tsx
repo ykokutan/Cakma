@@ -124,6 +124,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysAutoBackupHours, setSysAutoBackupHours] = useState<number>(24);
   const [sysMaxBackups, setSysMaxBackups] = useState<number>(7);
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
+  const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
+  const [showGiphyKey, setShowGiphyKey] = useState<boolean>(false);
   const [sysWebhookEvents, setSysWebhookEvents] = useState<{ security: boolean; bans: boolean; dedicated: boolean; backups: boolean }>({
     security: true,
     bans: true,
@@ -164,6 +166,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysAutoBackupHours(adminData.systemConfig.autoBackupIntervalHours ?? 24);
       setSysMaxBackups(adminData.systemConfig.maxBackupsToKeep ?? 7);
       setSysWebhookUrl(adminData.systemConfig.webhookUrl || '');
+      setSysGiphyApiKey(adminData.systemConfig.giphyApiKey || '');
       setSysWebhookEvents({
         security: adminData.systemConfig.webhookEvents?.security ?? true,
         bans: adminData.systemConfig.webhookEvents?.bans ?? true,
@@ -904,6 +907,43 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
 
+                {/* GIPHY API Key (GIF Gallery) */}
+                <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-white">GIPHY API Anahtarı (GIF Galerisi)</div>
+                      <div className="text-[11px] text-white/50">
+                        developers.giphy.com üzerinden alınan API anahtarını girin. Boş bırakılırsa yerleşik GIF galerisi kullanılır.
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${
+                        sysGiphyApiKey.trim()
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-white/50'
+                      }`}
+                    >
+                      {sysGiphyApiKey.trim() ? 'Aktif' : 'Varsayılan Galeri'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={showGiphyKey ? 'text' : 'password'}
+                      value={sysGiphyApiKey}
+                      onChange={(e) => { setSysGiphyApiKey(e.target.value); setIsSystemDirty(true); }}
+                      placeholder="GIPHY API Key yapıştırın..."
+                      className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-pink-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowGiphyKey((v) => !v)}
+                      className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-white/75 font-semibold transition shrink-0"
+                    >
+                      {showGiphyKey ? 'Gizle' : 'Göster'}
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -986,6 +1026,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         autoBackupIntervalHours: sysAutoBackupHours,
                         maxBackupsToKeep: sysMaxBackups,
                         webhookUrl: sysWebhookUrl,
+                        giphyApiKey: sysGiphyApiKey,
                         webhookEvents: sysWebhookEvents,
                       });
                       setIsSystemDirty(false);

@@ -487,6 +487,7 @@ const defaultSystemConfig: SystemConfig = {
   autoBackupIntervalHours: 24,
   maxBackupsToKeep: 7,
   webhookUrl: '',
+  giphyApiKey: '',
   webhookEvents: {
     security: true,
     bans: true,
@@ -751,6 +752,71 @@ app.get('/api/health', (req, res) => {
     serverCount: servers.length,
     stats: getSystemStats()
   });
+});
+
+// GIPHY Proxy Endpoint with 5-minute in-memory cache
+const gifCache = new Map<string, { ts: number; gifs: Array<{ id: string; title: string; url: string; previewUrl: string; category: string }> }>();
+const GIF_CATEGORY_QUERY_MAP: Record<string, string> = {
+  Oyun: 'gaming',
+  Tepki: 'reaction',
+  Müzik: 'music',
+  Anime: 'anime',
+};
+
+app.get('/api/gifs', async (req, res) => {
+  const apiKey = (systemConfig.giphyApiKey || process.env.GIPHY_API_KEY || '').trim();
+  if (!apiKey) {
+    return res.json({ configured: false, source: 'fallback', gifs: [] });
+  }
+
+  const rawQuery = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+  const rawCategory = typeof req.query.category === 'string' ? req.query.category.trim() : 'Tümü';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 24, 6), 36);
+
+  const mappedCategoryQuery = GIF_CATEGORY_QUERY_MAP[rawCategory] || '';
+  const effectiveQuery = rawQuery || mappedCategoryQuery;
+  const cacheKey = `${effectiveQuery.toLowerCase()}|${rawCategory}|${limit}`;
+
+  const cached = gifCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 5 * 60 * 1000) {
+    return res.json({ configured: true, source: 'giphy', cached: true, gifs: cached.gifs });
+  }
+
+  try {
+    const endpoint = effectiveQuery
+      ? `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(effectiveQuery)}&limit=${limit}&rating=pg-13&lang=tr`
+      : `https://api.giphy.com/v1/gifs/trending?api_key=${encodeURIComponent(apiKey)}&limit=${limit}&rating=pg-13`;
+
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      return res.json({ configured: true, source: 'fallback', error: `GIPHY HTTP ${response.status}`, gifs: [] });
+    }
+
+    const payload = (await response.json()) as { data?: any[] };
+    const gifs = (Array.isArray(payload?.data) ? payload.data : [])
+      .map((item) => {
+        const url = item?.images?.fixed_height?.url || item?.images?.original?.url || '';
+        const previewUrl = item?.images?.fixed_width_small?.url || item?.images?.fixed_height_small?.url || url;
+        if (!url) return null;
+        return {
+          id: String(item.id || Math.random()),
+          title: String(item.title || 'GIF').trim() || 'GIF',
+          url,
+          previewUrl,
+          category: rawCategory || 'Tümü',
+        };
+      })
+      .filter((x): x is { id: string; title: string; url: string; previewUrl: string; category: string } => Boolean(x));
+
+    if (gifCache.size > 100) {
+      const oldestKey = gifCache.keys().next().value;
+      if (oldestKey) gifCache.delete(oldestKey);
+    }
+    gifCache.set(cacheKey, { ts: Date.now(), gifs });
+    return res.json({ configured: true, source: 'giphy', gifs });
+  } catch {
+    return res.json({ configured: true, source: 'fallback', error: 'GIPHY bağlantı hatası', gifs: [] });
+  }
 });
 
 // Dedicated Server Heartbeat & Registry Endpoints
@@ -4215,6 +4281,10 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.autoBackupIntervalHours === 'number') systemConfig.autoBackupIntervalHours = Math.min(Math.max(nextCfg.autoBackupIntervalHours, 1), 168);
     if (typeof nextCfg.maxBackupsToKeep === 'number') systemConfig.maxBackupsToKeep = Math.min(Math.max(nextCfg.maxBackupsToKeep, 1), 50);
     if (typeof nextCfg.webhookUrl === 'string') systemConfig.webhookUrl = nextCfg.webhookUrl.trim().slice(0, 500);
+    if (typeof nextCfg.giphyApiKey === 'string') {
+      systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);
+      gifCache.clear();
+    }
     if (nextCfg.webhookEvents && typeof nextCfg.webhookEvents === 'object') {
       systemConfig.webhookEvents = {
         security: Boolean(nextCfg.webhookEvents.security),
