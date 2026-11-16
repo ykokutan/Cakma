@@ -186,4 +186,100 @@ export function registerCloudSyncAndEvents(
     }
     res.json({ ok: true, revoked });
   });
+
+  // 5. Admin Panel Utilities: Disk Usage, Uploaded Sounds Management, All Events, Webhook Test & Force Logout
+  app.get('/api/admin/disk-usage', (_req, res) => {
+    ensureDirs();
+    const getDirStats = (dir: string) => {
+      let totalBytes = 0;
+      let fileCount = 0;
+      const files: Array<{ name: string; sizeBytes: number; mtime: string }> = [];
+      try {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+          if (entry.isFile()) {
+            const st = fs.statSync(full);
+            totalBytes += st.size;
+            fileCount++;
+            files.push({ name: entry.name, sizeBytes: st.size, mtime: st.mtime.toISOString() });
+          } else if (entry.isDirectory()) {
+            for (const sub of fs.readdirSync(full, { withFileTypes: true })) {
+              if (sub.isFile()) {
+                const st = fs.statSync(path.join(full, sub.name));
+                totalBytes += st.size;
+                fileCount++;
+              }
+            }
+          }
+        }
+      } catch {}
+      return { totalBytes, fileCount, files };
+    };
+
+    const dataStats = getDirStats(DATA_DIR);
+    const soundsStats = getDirStats(SOUNDS_DIR);
+    res.json({
+      ok: true,
+      dataBytes: dataStats.totalBytes,
+      dataFiles: dataStats.fileCount,
+      soundsBytes: soundsStats.totalBytes,
+      sounds: soundsStats.files.map((f) => ({
+        name: f.name,
+        sizeBytes: f.sizeBytes,
+        mtime: f.mtime,
+        url: `/api/sounds/${f.name}`,
+      })),
+    });
+  });
+
+  app.delete('/api/admin/sounds/:filename', (req, res) => {
+    const safeName = path.basename(String(req.params.filename || ''));
+    const fullPath = path.join(SOUNDS_DIR, safeName);
+    if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'Dosya bulunamadı' });
+    fs.unlinkSync(fullPath);
+    res.json({ ok: true });
+  });
+
+  app.get('/api/admin/all-events', (_req, res) => {
+    const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
+    const flat: ServerEventItem[] = [];
+    for (const list of Object.values(all)) {
+      if (Array.isArray(list)) flat.push(...list);
+    }
+    res.json({ ok: true, events: flat });
+  });
+
+  app.post('/api/admin/webhook-test', express.json({ limit: '32kb' }), async (req, res) => {
+    const webhookUrl = String(req.body?.webhookUrl || '').trim();
+    if (!webhookUrl.startsWith('http://') && !webhookUrl.startsWith('https://')) {
+      return res.status(400).json({ ok: false, error: 'Geçerli bir http/https Webhook URL girin.' });
+    }
+    try {
+      const resp = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: '✅ **Çakma Sistem Yönetim Paneli:** Webhook test bildirimi başarıyla ulaştı!',
+          username: 'Çakma Sistem Botu',
+        }),
+      });
+      res.json({ ok: resp.ok, status: resp.status });
+    } catch (err: any) {
+      res.json({ ok: false, error: err?.message || 'Bağlantı hatası' });
+    }
+  });
+
+  app.post('/api/admin/users/:username/force-logout', (req, res) => {
+    const uname = String(req.params.username || '').trim().toLowerCase();
+    let count = 0;
+    for (const [id, sock] of io.sockets.sockets) {
+      const sUser = activeUsers.get(id)?.username || (sock as any).data?.username || (sock.handshake.auth as any)?.username;
+      if (sUser && String(sUser).toLowerCase() === uname) {
+        sock.emit('force_logout', { reason: 'Sistem yöneticisi tarafından oturumunuz sonlandırıldı.' });
+        sock.disconnect(true);
+        count++;
+      }
+    }
+    res.json({ ok: true, disconnected: count });
+  });
 }

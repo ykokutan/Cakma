@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { AvatarView } from './AvatarView';
+import { AdminToolsPanel } from './admin/AdminToolsPanel';
 import {
   Shield,
   X,
@@ -88,7 +89,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     resetToMainServer,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'system' | 'dedicated' | 'users' | 'licenses' | 'store' | 'servers' | 'logs' | 'broadcast'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'system' | 'dedicated' | 'users' | 'licenses' | 'store' | 'servers' | 'logs' | 'broadcast' | 'tools'>('overview');
   const [inspectedUsername, setInspectedUsername] = useState<string | null>(null);
 
   const exportJsonFile = (filename: string, payload: any) => {
@@ -483,6 +484,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 group: 'İletişim',
                 items: [
                   { id: 'broadcast', label: 'Sistem Duyurusu', icon: Megaphone },
+                  { id: 'tools', label: 'Raporlar & Disk', icon: HardDrive },
                 ],
               },
             ].map((sec) => (
@@ -3098,6 +3100,24 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 </button>
               </form>
             </div>
+          )}
+
+          {activeTab === 'tools' && (
+            <AdminToolsPanel
+              currentServerHost={currentServerHost}
+              users={(adminData?.registeredUsers || []).map((a: any) => ({
+                username: a.username,
+                role: a.role,
+                isBanned: a.isBanned,
+                isOnline: onlineUsers.some((o) => o.username.toLowerCase() === a.username.toLowerCase()),
+              }))}
+              licenses={adminData?.issuedLicenses || []}
+              logs={adminData?.auditLogs || []}
+              servers={adminData?.servers || []}
+              defaultWebhookUrl={sysWebhookUrl}
+              onBanUser={(uname) => adminBanUser(uname, 'Admin Paneli Toplu İşlem')}
+              onUnbanUser={(uname) => adminUnbanUser(uname)}
+            />
           )}
 
           </div>
