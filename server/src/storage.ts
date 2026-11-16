@@ -188,6 +188,13 @@ export interface SystemConfig {
   defaultWalletBalance?: number;
   maxAccountsPerIpPerDay?: number;
   requireUniqueEmail?: boolean;
+  requireEmailVerification?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPass?: string;
+  smtpFrom?: string;
   maintenanceMode: boolean;
   maintenanceMessage?: string;
   maxMessageLength: number;

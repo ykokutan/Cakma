@@ -76,6 +76,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     adminTestWebhook,
     adminCreateRegInvite,
     adminDeleteRegInvite,
+    adminTestSmtp,
     adminPurgeMessages,
     adminResetUserPassword,
     adminCreateChannel,
@@ -135,6 +136,15 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
   const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
   const [showGiphyKey, setShowGiphyKey] = useState<boolean>(false);
+  const [sysRequireEmailVerif, setSysRequireEmailVerif] = useState<boolean>(false);
+  const [sysSmtpHost, setSysSmtpHost] = useState<string>('');
+  const [sysSmtpPort, setSysSmtpPort] = useState<number>(587);
+  const [sysSmtpSecure, setSysSmtpSecure] = useState<boolean>(false);
+  const [sysSmtpUser, setSysSmtpUser] = useState<string>('');
+  const [sysSmtpPass, setSysSmtpPass] = useState<string>('');
+  const [sysSmtpFrom, setSysSmtpFrom] = useState<string>('');
+  const [showSmtpPass, setShowSmtpPass] = useState<boolean>(false);
+  const [smtpTestTo, setSmtpTestTo] = useState<string>('');
   const [sysWebhookEvents, setSysWebhookEvents] = useState<{ security: boolean; bans: boolean; dedicated: boolean; backups: boolean }>({
     security: true,
     bans: true,
@@ -181,6 +191,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysMaxBackups(adminData.systemConfig.maxBackupsToKeep ?? 7);
       setSysWebhookUrl(adminData.systemConfig.webhookUrl || '');
       setSysGiphyApiKey(adminData.systemConfig.giphyApiKey || '');
+      setSysRequireEmailVerif(Boolean(adminData.systemConfig.requireEmailVerification));
+      setSysSmtpHost(adminData.systemConfig.smtpHost || '');
+      setSysSmtpPort(adminData.systemConfig.smtpPort ?? 587);
+      setSysSmtpSecure(Boolean(adminData.systemConfig.smtpSecure));
+      setSysSmtpUser(adminData.systemConfig.smtpUser || '');
+      setSysSmtpPass(adminData.systemConfig.smtpPass || '');
+      setSysSmtpFrom(adminData.systemConfig.smtpFrom || '');
       setSysWebhookEvents({
         security: adminData.systemConfig.webhookEvents?.security ?? true,
         bans: adminData.systemConfig.webhookEvents?.bans ?? true,
@@ -1155,6 +1172,103 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
 
+                {/* Email OTP Verification & SMTP Settings */}
+                <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-white">E-Posta Doğrulama (6 Haneli OTP) &amp; SMTP</div>
+                      <div className="text-[11px] text-white/50">
+                        Açıldığında yeni kayıtlarda e-postaya 6 haneli doğrulama kodu gönderilir.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setSysRequireEmailVerif(!sysRequireEmailVerif); setIsSystemDirty(true); }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${sysRequireEmailVerif ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysRequireEmailVerif ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <input
+                      type="text"
+                      value={sysSmtpHost}
+                      onChange={(e) => { setSysSmtpHost(e.target.value); setIsSystemDirty(true); }}
+                      placeholder="SMTP Host (örn: smtp.gmail.com)"
+                      className="sm:col-span-2 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-cyan-400"
+                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={sysSmtpPort}
+                        onChange={(e) => { setSysSmtpPort(Number(e.target.value)); setIsSystemDirty(true); }}
+                        placeholder="587"
+                        className="w-20 px-2.5 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-cyan-400"
+                      />
+                      <label className="flex items-center gap-1.5 text-[11px] text-white/75 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sysSmtpSecure}
+                          onChange={(e) => { setSysSmtpSecure(e.target.checked); setIsSystemDirty(true); }}
+                          className="rounded border-white/20 bg-black/40"
+                        />
+                        SSL (465)
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <input
+                      type="text"
+                      value={sysSmtpUser}
+                      onChange={(e) => { setSysSmtpUser(e.target.value); setIsSystemDirty(true); }}
+                      placeholder="SMTP Kullanıcı / E-Posta"
+                      className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-cyan-400"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type={showSmtpPass ? 'text' : 'password'}
+                        value={sysSmtpPass}
+                        onChange={(e) => { setSysSmtpPass(e.target.value); setIsSystemDirty(true); }}
+                        placeholder="SMTP Şifre / Uygulama Şifresi"
+                        className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowSmtpPass((v) => !v)}
+                        className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-white/75"
+                      >
+                        {showSmtpPass ? 'Gizle' : 'Göster'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={sysSmtpFrom}
+                      onChange={(e) => { setSysSmtpFrom(e.target.value); setIsSystemDirty(true); }}
+                      placeholder="Gönderen (örn: Çakma <mail@adresiniz.com>)"
+                      className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-cyan-400"
+                    />
+                    <input
+                      type="email"
+                      value={smtpTestTo}
+                      onChange={(e) => setSmtpTestTo(e.target.value)}
+                      placeholder="Test alıcı e-posta..."
+                      className="w-48 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-emerald-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => adminTestSmtp(smtpTestTo || sysSmtpUser)}
+                      className="px-3 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition shrink-0"
+                    >
+                      Test Maili Gönder
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -1243,6 +1357,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         maxBackupsToKeep: sysMaxBackups,
                         webhookUrl: sysWebhookUrl,
                         giphyApiKey: sysGiphyApiKey,
+                        requireEmailVerification: sysRequireEmailVerif,
+                        smtpHost: sysSmtpHost,
+                        smtpPort: sysSmtpPort,
+                        smtpSecure: sysSmtpSecure,
+                        smtpUser: sysSmtpUser,
+                        smtpPass: sysSmtpPass,
+                        smtpFrom: sysSmtpFrom,
                         webhookEvents: sysWebhookEvents,
                       });
                       setIsSystemDirty(false);

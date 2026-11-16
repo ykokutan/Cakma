@@ -198,6 +198,7 @@ interface SocketContextType {
     password: string;
     avatar: string;
     inviteCode?: string;
+    emailCode?: string;
     challengeToken?: string;
     challengeAnswer?: string;
     honeypot?: string;
@@ -207,7 +208,9 @@ interface SocketContextType {
     question: string;
     inviteOnly: boolean;
     requireStrongPasswords: boolean;
+    requireEmailVerification: boolean;
   } | null>;
+  sendRegisterEmailCode: (email: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   logout: () => void;
 
   // Audio Device Handlers
@@ -246,6 +249,13 @@ interface SocketContextType {
       defaultWalletBalance?: number;
       maxAccountsPerIpPerDay?: number;
       requireUniqueEmail?: boolean;
+      requireEmailVerification?: boolean;
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpSecure?: boolean;
+      smtpUser?: string;
+      smtpPass?: string;
+      smtpFrom?: string;
       maintenanceMode: boolean;
       maintenanceMessage?: string;
       maxMessageLength: number;
@@ -308,6 +318,13 @@ interface SocketContextType {
     defaultWalletBalance?: number;
     maxAccountsPerIpPerDay?: number;
     requireUniqueEmail?: boolean;
+    requireEmailVerification?: boolean;
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpSecure?: boolean;
+    smtpUser?: string;
+    smtpPass?: string;
+    smtpFrom?: string;
     maintenanceMode?: boolean;
     maintenanceMessage?: string;
     maxMessageLength?: number;
@@ -338,6 +355,7 @@ interface SocketContextType {
   adminClearPinnedBanner: () => void;
   adminCreateRegInvite: (maxUses?: number, expiresHours?: number) => void;
   adminDeleteRegInvite: (code: string) => void;
+  adminTestSmtp: (toEmail?: string) => void;
   generateDedicatedLicense: (data: { licensee: string; maxSlots: number; expireDays: number; tier: 'Starter' | 'Pro' | 'Enterprise'; assignedUsername?: string }) => void;
   adminRevokeLicense: (licenseId: string, reason?: string) => void;
   adminActivateLicense: (licenseId: string) => void;
@@ -2846,6 +2864,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     question: string;
     inviteOnly: boolean;
     requireStrongPasswords: boolean;
+    requireEmailVerification: boolean;
   } | null> => {
     return new Promise((resolve) => {
       if (!socket) return resolve(null);
@@ -2857,11 +2876,31 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }, 4000);
       socket.emit('get_register_challenge');
-      socket.once('register_challenge', (payload: { token: string; question: string; inviteOnly: boolean; requireStrongPasswords: boolean }) => {
+      socket.once('register_challenge', (payload: { token: string; question: string; inviteOnly: boolean; requireStrongPasswords: boolean; requireEmailVerification: boolean }) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         resolve(payload);
+      });
+    });
+  }, [socket]);
+
+  const sendRegisterEmailCode = useCallback((email: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve({ success: false, error: 'Sunucu yanıt vermedi.' });
+        }
+      }, 12000);
+      socket.emit('send_register_email_code', { email });
+      socket.once('register_email_code_result', (res: { success: boolean; message?: string; error?: string }) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(res);
       });
     });
   }, [socket]);
@@ -2872,6 +2911,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     password: string;
     avatar: string;
     inviteCode?: string;
+    emailCode?: string;
     challengeToken?: string;
     challengeAnswer?: string;
     honeypot?: string;
@@ -3011,6 +3051,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_delete_reg_invite', { code });
   };
 
+  const adminTestSmtp = (toEmail?: string) => {
+    socket?.emit('admin_test_smtp', { toEmail });
+  };
+
   const generateDedicatedLicense = (data: {
     licensee: string;
     maxSlots: number;
@@ -3043,6 +3087,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     defaultWalletBalance?: number;
     maxAccountsPerIpPerDay?: number;
     requireUniqueEmail?: boolean;
+    requireEmailVerification?: boolean;
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpSecure?: boolean;
+    smtpUser?: string;
+    smtpPass?: string;
+    smtpFrom?: string;
     maintenanceMode?: boolean;
     maintenanceMessage?: string;
     maxMessageLength?: number;
@@ -4615,6 +4666,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         verify2faLogin,
         register,
         requestRegisterChallenge,
+        sendRegisterEmailCode,
         logout,
 
         // Audio Device Handlers
@@ -4639,6 +4691,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminClearPinnedBanner,
         adminCreateRegInvite,
         adminDeleteRegInvite,
+        adminTestSmtp,
         generateDedicatedLicense,
         adminRevokeLicense,
         adminActivateLicense,

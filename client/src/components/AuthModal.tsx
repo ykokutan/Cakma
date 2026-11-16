@@ -10,13 +10,18 @@ interface AuthModalProps {
 const AVATAR_OPTIONS = ['🛡️', '🚀', '🎮', '⚡', '🎧', '👾', '🐱', '🐺', '🔥', '💻'];
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false }) => {
-  const { login, verify2faLogin, register, requestRegisterChallenge, currentServerHost, isDedicatedServer, resetToMainServer } = useSocket();
+  const { login, verify2faLogin, register, requestRegisterChallenge, sendRegisterEmailCode, currentServerHost, isDedicatedServer, resetToMainServer } = useSocket();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [avatar, setAvatar] = useState('🛡️');
   const [inviteCode, setInviteCode] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [requireEmailVerif, setRequireEmailVerif] = useState(false);
+  const [emailCodeSending, setEmailCodeSending] = useState(false);
+  const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
+  const [emailCodeFeedback, setEmailCodeFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [challengeToken, setChallengeToken] = useState('');
   const [challengeQuestion, setChallengeQuestion] = useState('');
   const [challengeAnswer, setChallengeAnswer] = useState('');
@@ -36,6 +41,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
       setChallengeAnswer('');
       setInviteOnlyMode(ch.inviteOnly);
       setStrongPolicyMode(ch.requireStrongPasswords);
+      setRequireEmailVerif(Boolean(ch.requireEmailVerification));
+    }
+  };
+
+  useEffect(() => {
+    if (emailCodeCooldown <= 0) return;
+    const t = window.setTimeout(() => setEmailCodeCooldown((c) => Math.max(0, c - 1)), 1000);
+    return () => window.clearTimeout(t);
+  }, [emailCodeCooldown]);
+
+  const handleSendEmailCode = async () => {
+    if (!email.trim() || emailCodeSending || emailCodeCooldown > 0) return;
+    setEmailCodeSending(true);
+    setEmailCodeFeedback(null);
+    const res = await sendRegisterEmailCode(email.trim());
+    setEmailCodeSending(false);
+    if (res.success) {
+      setEmailCodeCooldown(60);
+      setEmailCodeFeedback({ ok: true, text: res.message || 'Doğrulama kodu gönderildi.' });
+    } else {
+      setEmailCodeFeedback({ ok: false, text: res.error || 'Kod gönderilemedi.' });
     }
   };
 
@@ -68,6 +94,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
           password,
           avatar,
           inviteCode: inviteCode.trim() || undefined,
+          emailCode: emailCode.trim() || undefined,
           challengeToken,
           challengeAnswer: challengeAnswer.trim(),
           honeypot,
@@ -256,18 +283,50 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
               </div>
 
               {isRegister && (
-                <div>
+                <div className="space-y-1.5">
                   <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
                     E-Posta Adresi
                   </label>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="ahmet@example.com"
-                    className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="ahmet@example.com"
+                      className="flex-1 bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
+                    />
+                    {requireEmailVerif && (
+                      <button
+                        type="button"
+                        onClick={handleSendEmailCode}
+                        disabled={emailCodeSending || emailCodeCooldown > 0 || !email.trim()}
+                        className="px-3 py-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/35 text-emerald-300 text-[11px] font-bold transition disabled:opacity-50 shrink-0"
+                      >
+                        {emailCodeSending
+                          ? 'Gönderiliyor...'
+                          : emailCodeCooldown > 0
+                          ? `${emailCodeCooldown} sn`
+                          : 'Kod Gönder'}
+                      </button>
+                    )}
+                  </div>
+                  {requireEmailVerif && emailCodeFeedback && (
+                    <div className={`text-[11px] ${emailCodeFeedback.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                      {emailCodeFeedback.text}
+                    </div>
+                  )}
+                  {requireEmailVerif && (
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      value={emailCode}
+                      onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="E-postaya gelen 6 haneli doğrulama kodu"
+                      className="w-full bg-white/5 border border-emerald-500/30 text-white font-mono text-xs tracking-widest rounded-xl px-3.5 py-2 outline-none focus:ring-2 focus:ring-emerald-400 placeholder:text-white/25 placeholder:tracking-normal"
+                    />
+                  )}
                 </div>
               )}
 

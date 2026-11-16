@@ -8,6 +8,7 @@ import http from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import cors from 'cors';
 import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
@@ -525,6 +526,13 @@ const defaultSystemConfig: SystemConfig = {
   defaultWalletBalance: 100,
   maxAccountsPerIpPerDay: 3,
   requireUniqueEmail: true,
+  requireEmailVerification: false,
+  smtpHost: '',
+  smtpPort: 587,
+  smtpSecure: false,
+  smtpUser: '',
+  smtpPass: '',
+  smtpFrom: '',
   maintenanceMode: false,
   maintenanceMessage: 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.',
   maxMessageLength: 2000,
@@ -1087,6 +1095,39 @@ const COMMON_WEAK_PASSWORDS = new Set([
 ]);
 
 const ipDailyRegistrations = new Map<string, { date: string; count: number }>();
+const pendingEmailOtps = new Map<string, { code: string; expiresAt: number; attempts: number; sentAt: number }>();
+
+export async function sendSmtpEmail(to: string, subject: string, text: string, html?: string): Promise<{ ok: boolean; error?: string }> {
+  const host = (systemConfig.smtpHost || process.env.SMTP_HOST || '').trim();
+  const port = Number(systemConfig.smtpPort || process.env.SMTP_PORT || 587);
+  const secure = systemConfig.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465);
+  const user = (systemConfig.smtpUser || process.env.SMTP_USER || '').trim();
+  const pass = (systemConfig.smtpPass || process.env.SMTP_PASS || '').trim();
+  const from = (systemConfig.smtpFrom || process.env.SMTP_FROM || user || 'noreply@cakma.local').trim();
+
+  if (!host || !user || !pass) {
+    return { ok: false, error: 'SMTP ayarları eksik (Host, Kullanıcı veya Şifre tanımlı değil).' };
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+    });
+    await transporter.sendMail({
+      from,
+      to,
+      subject,
+      text,
+      html: html || `<p>${text}</p>`,
+    });
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'E-posta gönderilemedi.' };
+  }
+}
 
 export function generateRegisterChallenge(): { token: string; question: string } {
   const a = Math.floor(Math.random() * 9) + 2;
@@ -1442,6 +1483,76 @@ io.on('connection', (socket: Socket) => {
       question: ch.question,
       inviteOnly: Boolean(systemConfig.inviteOnlyRegistration && registeredAccounts.size > 0),
       requireStrongPasswords: Boolean(systemConfig.requireStrongPasswords),
+      requireEmailVerification: Boolean(systemConfig.requireEmailVerification && registeredAccounts.size > 0),
+    });
+  });
+
+  // 1b. Send 6-digit Email Verification Code (OTP)
+  socket.on('send_register_email_code', async ({ email }: { email: string }) => {
+    const clientIp = getClientIp(socket);
+    const ipBan = findActiveIpBan(clientIp);
+    if (ipBan) {
+      return socket.emit('register_email_code_result', { success: false, error: `IP adresiniz engellenmiştir.` });
+    }
+    if (!systemConfig.registrationEnabled) {
+      return socket.emit('register_email_code_result', { success: false, error: 'Yeni üye kayıtları kapalıdır.' });
+    }
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 64) : '';
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+      return socket.emit('register_email_code_result', { success: false, error: 'Lütfen geçerli bir e-posta adresi girin.' });
+    }
+    const domain = cleanEmail.split('@')[1] || '';
+    if (DISPOSABLE_EMAIL_DOMAINS.has(domain)) {
+      return socket.emit('register_email_code_result', { success: false, error: 'Geçici e-posta adresleri kullanılamaz.' });
+    }
+    if (systemConfig.requireUniqueEmail !== false) {
+      for (const acc of registeredAccounts.values()) {
+        if ((acc.email || '').toLowerCase() === cleanEmail) {
+          return socket.emit('register_email_code_result', { success: false, error: 'Bu e-posta adresi zaten kayıtlı.' });
+        }
+      }
+    }
+
+    const existing = pendingEmailOtps.get(cleanEmail);
+    if (existing && Date.now() - existing.sentAt < 60_000) {
+      const waitSec = Math.ceil((60_000 - (Date.now() - existing.sentAt)) / 1000);
+      return socket.emit('register_email_code_result', {
+        success: false,
+        error: `Yeni kod istemek için ${waitSec} saniye bekleyin.`,
+      });
+    }
+
+    const code = String(crypto.randomInt(100000, 999999));
+    pendingEmailOtps.set(cleanEmail, {
+      code,
+      expiresAt: Date.now() + 10 * 60_000,
+      attempts: 0,
+      sentAt: Date.now(),
+    });
+
+    const mailRes = await sendSmtpEmail(
+      cleanEmail,
+      'Çakma - E-Posta Doğrulama Kodunuz',
+      `Kayıt doğrulama kodunuz: ${code} (10 dakika geçerlidir).`,
+      `<div style="font-family:sans-serif;padding:16px;background:#0f172a;color:#f8fafc;border-radius:12px;">
+        <h2 style="margin:0 0 8px;color:#38bdf8;">Çakma E-Posta Doğrulaması</h2>
+        <p style="margin:0 0 12px;color:#cbd5e1;">Kayıt işleminizi tamamlamak için aşağıdaki 6 haneli kodu girin:</p>
+        <div style="font-size:28px;font-weight:bold;letter-spacing:6px;padding:12px 18px;background:#1e293b;border-radius:8px;display:inline-block;color:#34d399;">${code}</div>
+        <p style="margin:12px 0 0;font-size:12px;color:#94a3b8;">Bu kod 10 dakika boyunca geçerlidir.</p>
+      </div>`
+    );
+
+    if (!mailRes.ok) {
+      pendingEmailOtps.delete(cleanEmail);
+      return socket.emit('register_email_code_result', {
+        success: false,
+        error: `Doğrulama e-postası gönderilemedi: ${mailRes.error}`,
+      });
+    }
+
+    socket.emit('register_email_code_result', {
+      success: true,
+      message: `${cleanEmail} adresine 6 haneli doğrulama kodu gönderildi.`,
     });
   });
 
@@ -1452,6 +1563,7 @@ io.on('connection', (socket: Socket) => {
     password,
     avatar,
     inviteCode,
+    emailCode,
     challengeToken,
     challengeAnswer,
     honeypot,
@@ -1541,6 +1653,27 @@ io.on('connection', (socket: Socket) => {
           });
         }
       }
+    }
+
+    if (!isFirstUser && systemConfig.requireEmailVerification) {
+      const otp = pendingEmailOtps.get(cleanEmail);
+      const cleanCode = typeof emailCode === 'string' ? emailCode.trim() : '';
+      if (!otp || Date.now() > otp.expiresAt) {
+        pendingEmailOtps.delete(cleanEmail);
+        return socket.emit('auth_response', {
+          success: false,
+          error: 'E-posta doğrulama kodu bulunamadı veya süresi doldu. Lütfen yeni kod isteyin.',
+        });
+      }
+      if (!cleanCode || cleanCode !== otp.code) {
+        otp.attempts += 1;
+        if (otp.attempts >= 5) pendingEmailOtps.delete(cleanEmail);
+        return socket.emit('auth_response', {
+          success: false,
+          error: 'E-posta doğrulama kodu hatalı.',
+        });
+      }
+      pendingEmailOtps.delete(cleanEmail);
     }
 
     if (!password || typeof password !== 'string') {
@@ -4690,6 +4823,13 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.requireUniqueEmail === 'boolean') systemConfig.requireUniqueEmail = nextCfg.requireUniqueEmail;
     if (typeof nextCfg.defaultWalletBalance === 'number') systemConfig.defaultWalletBalance = Math.min(Math.max(Math.floor(nextCfg.defaultWalletBalance), 0), 10000);
     if (typeof nextCfg.maxAccountsPerIpPerDay === 'number') systemConfig.maxAccountsPerIpPerDay = Math.min(Math.max(Math.floor(nextCfg.maxAccountsPerIpPerDay), 1), 20);
+    if (typeof nextCfg.requireEmailVerification === 'boolean') systemConfig.requireEmailVerification = nextCfg.requireEmailVerification;
+    if (typeof nextCfg.smtpHost === 'string') systemConfig.smtpHost = nextCfg.smtpHost.trim().slice(0, 120);
+    if (typeof nextCfg.smtpPort === 'number') systemConfig.smtpPort = Math.min(Math.max(Math.floor(nextCfg.smtpPort), 1), 65535);
+    if (typeof nextCfg.smtpSecure === 'boolean') systemConfig.smtpSecure = nextCfg.smtpSecure;
+    if (typeof nextCfg.smtpUser === 'string') systemConfig.smtpUser = nextCfg.smtpUser.trim().slice(0, 120);
+    if (typeof nextCfg.smtpPass === 'string') systemConfig.smtpPass = nextCfg.smtpPass.trim().slice(0, 200);
+    if (typeof nextCfg.smtpFrom === 'string') systemConfig.smtpFrom = nextCfg.smtpFrom.trim().slice(0, 120);
     if (typeof nextCfg.maintenanceMode === 'boolean') systemConfig.maintenanceMode = nextCfg.maintenanceMode;
     if (typeof nextCfg.maintenanceMessage === 'string') systemConfig.maintenanceMessage = sanitizeText(nextCfg.maintenanceMessage.trim()).slice(0, 240);
     if (typeof nextCfg.requireStrongPasswords === 'boolean') systemConfig.requireStrongPasswords = nextCfg.requireStrongPasswords;
@@ -4761,6 +4901,26 @@ io.on('connection', (socket: Socket) => {
     systemConfig.registrationInvites = (systemConfig.registrationInvites || []).filter((i) => i.code !== code);
     saveSystemConfig(systemConfig);
     socket.emit('admin_reg_invites_updated', systemConfig.registrationInvites);
+  });
+
+  // Admin: Test SMTP Email Delivery
+  socket.on('admin_test_smtp', async ({ toEmail }: { toEmail?: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    const target = (toEmail || systemConfig.smtpUser || '').trim();
+    if (!target || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(target)) {
+      return socket.emit('admin_feedback', { type: 'error', message: 'Test için geçerli bir alıcı e-posta girin.' });
+    }
+    const res = await sendSmtpEmail(
+      target,
+      'Çakma SMTP Test Mesajı',
+      'Tebrikler! SMTP ayarlarınız doğru çalışıyor ve e-posta doğrulama kodları gönderilmeye hazır.'
+    );
+    if (res.ok) {
+      socket.emit('admin_feedback', { type: 'success', message: `Test e-postası ${target} adresine gönderildi.` });
+    } else {
+      socket.emit('admin_feedback', { type: 'error', message: `SMTP Test Hatası: ${res.error}` });
+    }
   });
 
   // Admin: Clear connection logs
