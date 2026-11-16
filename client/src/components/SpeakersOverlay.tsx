@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Mic, MicOff, Hand, Radio, Headphones, X, VolumeX } from 'lucide-react';
+import { Mic, MicOff, Hand, Radio, Headphones, X, VolumeX, Lock, Unlock } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
 interface OverlaySpeaker {
@@ -28,6 +28,9 @@ export const SpeakersOverlay: React.FC = () => {
   const [ping, setPing] = useState<number>(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [isClickThrough, setIsClickThrough] = useState<boolean>(() => {
+    try { return localStorage.getItem('dc_overlay_locked') === '1'; } catch { return false; }
+  });
   const [overlayOpacity, setOverlayOpacity] = useState<number>(() => {
     const saved = Number(localStorage.getItem('dc_overlay_opacity') || '92');
     return Number.isFinite(saved) ? Math.min(100, Math.max(30, saved)) : 92;
@@ -48,6 +51,17 @@ export const SpeakersOverlay: React.FC = () => {
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let unlistenLock: (() => void) | null = null;
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => {
+        const corner = localStorage.getItem('dc_overlay_position') || 'top-left';
+        invoke('position_overlay_window', { corner }).catch(() => {});
+        if (isClickThrough) {
+          invoke('set_overlay_ignore_cursor', { ignore: true }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+
     import('@tauri-apps/api/event')
       .then(async ({ listen, emit }) => {
         unlisten = await listen<OverlayPayload>('overlay-speakers-update', (event) => {
@@ -58,14 +72,27 @@ export const SpeakersOverlay: React.FC = () => {
           setIsMuted(Boolean(event.payload.isMuted));
           setIsDeafened(Boolean(event.payload.isDeafened));
         });
+        unlistenLock = await listen<boolean>('overlay-lock-changed', (event) => {
+          setIsClickThrough(Boolean(event.payload));
+        });
         await emit('overlay-ready');
       })
       .catch(() => {});
 
     return () => {
       if (unlisten) unlisten();
+      if (unlistenLock) unlistenLock();
     };
   }, []);
+
+  const toggleClickThrough = () => {
+    const next = !isClickThrough;
+    setIsClickThrough(next);
+    try { localStorage.setItem('dc_overlay_locked', next ? '1' : '0'); } catch {}
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke('set_overlay_ignore_cursor', { ignore: next }))
+      .catch(() => {});
+  };
 
   const emitAction = (eventName: string) => {
     import('@tauri-apps/api/event')
@@ -97,6 +124,18 @@ export const SpeakersOverlay: React.FC = () => {
             </span>
           )}
           <span className="text-[10px] text-white/45 font-mono">{speakers.length}</span>
+          <button
+            type="button"
+            onClick={toggleClickThrough}
+            className={`p-0.5 rounded transition ${
+              isClickThrough
+                ? 'bg-amber-500/25 text-amber-300'
+                : 'hover:bg-white/15 text-white/50 hover:text-white'
+            }`}
+            title={isClickThrough ? 'Kilidi Aç (Ctrl+Shift+O)' : 'Tıklama Geçirgenliğini Aç / Kilitle (Ctrl+Shift+O)'}
+          >
+            {isClickThrough ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+          </button>
           <button
             type="button"
             onClick={() => emitAction('overlay-close-requested')}

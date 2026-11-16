@@ -67,6 +67,44 @@ fn detect_running_game() -> Option<String> {
       ("stardew valley.exe", "Stardew Valley"),
       ("metin2client.exe", "Metin2"),
       ("knightonline.exe", "Knight Online"),
+      ("marvel-win64-shipping.exe", "Marvel Rivals"),
+      ("pathofexilesteam.exe", "Path of Exile 2"),
+      ("pathofexile_x64steam.exe", "Path of Exile"),
+      ("pathofexile.exe", "Path of Exile"),
+      ("wow.exe", "World of Warcraft"),
+      ("wowclassic.exe", "World of Warcraft Classic"),
+      ("diablo iv.exe", "Diablo IV"),
+      ("cod.exe", "Call of Duty"),
+      ("bf2042.exe", "Battlefield 2042"),
+      ("bfv.exe", "Battlefield V"),
+      ("destiny2.exe", "Destiny 2"),
+      ("warframe.x64.exe", "Warframe"),
+      ("forzahorizon5.exe", "Forza Horizon 5"),
+      ("beamng.drive.x64.exe", "BeamNG.drive"),
+      ("gmod.exe", "Garry's Mod"),
+      ("hl2.exe", "Half-Life 2 / Source"),
+      ("left4dead2.exe", "Left 4 Dead 2"),
+      ("tf_win64.exe", "Team Fortress 2"),
+      ("valheim.exe", "Valheim"),
+      ("vrising.exe", "V Rising"),
+      ("enshrouded.exe", "Enshrouded"),
+      ("arkascended.exe", "ARK: Survival Ascended"),
+      ("shootergame.exe", "ARK: Survival Evolved"),
+      ("hades2.exe", "Hades II"),
+      ("hollow_knight.exe", "Hollow Knight"),
+      ("subnautica.exe", "Subnautica"),
+      ("client-win64-shipping.exe", "Wuthering Waves"),
+      ("starrail.exe", "Honkai: Star Rail"),
+      ("sotgame.exe", "Sea of Thieves"),
+      ("dayz_x64.exe", "DayZ"),
+      ("huntgame.exe", "Hunt: Showdown"),
+      ("squadgame.exe", "Squad"),
+      ("arma3_x64.exe", "Arma 3"),
+      ("pubg-lite-win64-shipping.exe", "PUBG Lite"),
+      ("blackops6.exe", "Call of Duty: Black Ops 6"),
+      ("deltaforceclient-win64-shipping.exe", "Delta Force"),
+      ("thefinals.exe", "THE FINALS"),
+      ("discovery.exe", "THE FINALS"),
       ("obs64.exe", "OBS Studio"),
       ("spotify.exe", "Spotify"),
       ("vlc.exe", "VLC Media Player"),
@@ -113,8 +151,9 @@ fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
     return Ok(());
   }
 
-  WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html?overlay=1".into()))
+  WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("index.html".into()))
     .title("Çakma Overlay")
+    .initialization_script("window.__CAKMA_OVERLAY__ = true;")
     .inner_size(290.0, 260.0)
     .min_inner_size(220.0, 150.0)
     .position(24.0, 24.0)
@@ -424,6 +463,14 @@ fn position_overlay_window(app: tauri::AppHandle, corner: String) -> Result<(), 
   Ok(())
 }
 
+#[tauri::command]
+fn set_overlay_ignore_cursor(app: tauri::AppHandle, ignore: bool) -> Result<(), String> {
+  if let Some(overlay) = app.get_webview_window("overlay") {
+    overlay.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default()
@@ -437,7 +484,8 @@ pub fn run() {
       request_window_attention,
       get_autostart,
       set_autostart,
-      position_overlay_window
+      position_overlay_window,
+      set_overlay_ignore_cursor
     ]);
 
   #[cfg(desktop)]

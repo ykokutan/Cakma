@@ -387,7 +387,10 @@ const MainLayout: React.FC = () => {
 };
 
 export function App() {
-  if (typeof window !== 'undefined' && window.location.search.includes('overlay=1')) {
+  if (
+    typeof window !== 'undefined' &&
+    ((window as any).__CAKMA_OVERLAY__ || window.location.search.includes('overlay=1'))
+  ) {
     return <SpeakersOverlay />;
   }
 

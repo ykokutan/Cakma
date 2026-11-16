@@ -200,7 +200,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.5');
+  const [appVersion, setAppVersion] = useState<string>('0.3.6');
   const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
 
   React.useEffect(() => {
@@ -2879,12 +2879,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.5 - Latest */}
+                  {/* v0.3.6 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.5 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.6 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Overlay Düzeltmesi &amp; Kilit Modu:</strong> Overlay penceresinin boş açılması çözüldü; açılışta kayıtlı köşeye konumlanma ve <code className="text-cyan-300">Ctrl+Shift+O</code> ile tıklama geçirgenliği (click-through) eklendi.</li>
+                      <li><strong className="text-white">Genişletilmiş Oyun Algılama:</strong> 40+ yeni popüler oyun (Marvel Rivals, PoE 2, WoW, CoD, Battlefield, Forza, Valheim, DayZ vb.) otomatik algılamaya eklendi.</li>
+                      <li><strong className="text-white">GIPHY GIF Galerisi:</strong> Yönetim panelinden GIPHY API anahtarı tanımlanarak canlı trend ve arama destekli GIF galerisi.</li>
+                      <li><strong className="text-white">Ses Odasına Çekme İzni:</strong> Ses odasında olmayan kullanıcılara bildirimli onay isteği ve ret bildirimi.</li>
+                      <li><strong className="text-white">Kayıt Güvenliği &amp; E-Posta OTP:</strong> Davet kodlu kayıt, anti-bot doğrulaması, 6 haneli e-posta OTP, E2EE DM ve yönetim paneli güvenlik denetimi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.5 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.3.5 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Gelişmiş Profil Kartı:</strong> Avatar çerçeveleri, banner odak noktası (Yukarı/Orta/Aşağı), tek tıkla ID kopyalama ve hızlı durum değiştirici.</li>
                       <li><strong className="text-white">Rozet Sabitleme &amp; Sosyal Bağlantılar:</strong> Rozet üzerine gelince açıklama, öne çıkan rozet seçimi, tıklanabilir Bio linkleri ve Steam/GitHub/Web bağlantıları.</li>

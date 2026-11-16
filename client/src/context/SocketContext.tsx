@@ -4420,6 +4420,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         await register('CommandOrControl+Shift+D', (e) => {
           if (e.state === 'Pressed') toggleDeafenRef.current();
         }).catch(() => {});
+        await register('CommandOrControl+Shift+O', async (e) => {
+          if (e.state === 'Pressed') {
+            try {
+              const nextLocked = localStorage.getItem('dc_overlay_locked') !== '1';
+              localStorage.setItem('dc_overlay_locked', nextLocked ? '1' : '0');
+              const { invoke } = await import('@tauri-apps/api/core');
+              const { emit } = await import('@tauri-apps/api/event');
+              await invoke('set_overlay_ignore_cursor', { ignore: nextLocked });
+              await emit('overlay-lock-changed', nextLocked);
+            } catch {}
+          }
+        }).catch(() => {});
       } catch {
         // ignore
       }
