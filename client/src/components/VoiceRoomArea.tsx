@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
 import { SoundboardModal } from './SoundboardModal';
 import { VoiceRadioWidget } from './VoiceRadioWidget';
 import { WhiteboardModal } from './WhiteboardModal';
@@ -187,6 +188,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     toggleOverlayWindow,
     messagesMap,
     sendMessage,
+    language,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
@@ -202,6 +204,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [isGoLiveOpen, setIsGoLiveOpen] = useState(false);
   const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
   const [isScreenFocused, setIsScreenFocused] = useState(false);
+  const [selectedScreenPresenterId, setSelectedScreenPresenterId] = useState<string | null>(null);
   const [userContextMenu, setUserContextMenu] = useState<{ user: any; x: number; y: number } | null>(null);
 
   const handleOpenUserContextMenu = (e: React.MouseEvent, user: any) => {
@@ -219,13 +222,16 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     (u) => u.currentVoiceChannelId === activeChannel.id
   );
 
-  // Determine active screen share (local or remote)
-  const activeRemoteStreamEntry = Array.from(remoteScreenStreams.entries())[0];
+  // Determine active screen share (local or remote) with multi-stream switching
+  const remoteEntries = Array.from(remoteScreenStreams.entries());
+  const activeRemoteStreamEntry =
+    (selectedScreenPresenterId && remoteEntries.find(([uid]) => uid === selectedScreenPresenterId)) ||
+    remoteEntries[0];
   const activePresenter = activeRemoteStreamEntry
     ? onlineUsers.find((u) => u.id === activeRemoteStreamEntry[0])
     : null;
 
-  const hasAnyScreenShare = isScreenSharing || !!activeRemoteStreamEntry;
+  const hasAnyScreenShare = (isScreenSharing && !!screenStream) || !!activeRemoteStreamEntry;
 
   return (
     <div className="flex-1 min-w-0 bg-transparent flex flex-col h-full overflow-hidden relative">
@@ -276,7 +282,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                       .padStart(2, '0')}:${(voiceRecordingSeconds % 60)
                       .toString()
                       .padStart(2, '0')} Kaydediliyor`
-                  : 'Kanalı Kaydet'}
+                  : t(language, 'channelRecord')}
               </span>
             </button>
           )}
@@ -291,7 +297,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             title="Kanal İçi Radyo & Müzik Botu"
           >
             <Music2 className="w-3.5 h-3.5" />
-            <span>Radyo Botu</span>
+            <span>{t(language, 'radioBot')}</span>
             {radioBotState.isPlaying && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             )}
@@ -307,7 +313,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             title="Audio Ducking: Biri konuşurken Radyo/Müzik sesini otomatik %30'a düşür"
           >
             <Volume2 className="w-3.5 h-3.5" />
-            <span>Ducking</span>
+            <span>{t(language, 'ducking')}</span>
           </button>
 
           <button
@@ -320,7 +326,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             title="Ses Odası İçi Yazılı Sohbet"
           >
             <MessageSquare className="w-3.5 h-3.5" />
-            <span>Oda Sohbeti</span>
+            <span>{t(language, 'roomChat')}</span>
             {(messagesMap[activeChannel.id]?.length || 0) > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-bold">
                 {messagesMap[activeChannel.id].length}
@@ -449,6 +455,30 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
         ) : hasAnyScreenShare ? (
           /* Screen Sharing Stage (Theater Layout: Video on top, Sleek Participant Strip Below) */
           <div className={`w-full h-full min-h-0 flex flex-col gap-3 ${isScreenFocused ? 'max-w-none' : 'max-w-6xl'}`}>
+            {remoteEntries.length > 1 && (
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
+                <span className="text-[11px] font-semibold text-white/50 shrink-0">Aktif Yayınlar:</span>
+                {remoteEntries.map(([uid]) => {
+                  const presenter = onlineUsers.find((u) => u.id === uid);
+                  const isActive = activeRemoteStreamEntry?.[0] === uid && !(isScreenSharing && screenStream);
+                  return (
+                    <button
+                      key={uid}
+                      type="button"
+                      onClick={() => setSelectedScreenPresenterId(uid)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition shrink-0 flex items-center gap-1.5 ${
+                        isActive
+                          ? 'bg-red-500/20 border-red-400/50 text-red-200'
+                          : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                      }`}
+                    >
+                      <Tv className="w-3 h-3 text-red-400" />
+                      <span>{presenter?.username || 'Yayıncı'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {/* Live Video Player */}
             <div className="flex-1 w-full min-h-[260px] rounded-2xl overflow-hidden border border-white/10 bg-black/50 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.8)]">
               {isScreenSharing && screenStream ? (
@@ -991,7 +1021,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
               type="text"
               value={voiceChatInput}
               onChange={(e) => setVoiceChatInput(e.target.value)}
-              placeholder="Odaya mesaj yaz..."
+              placeholder={t(language, 'typeMessage')}
               className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button

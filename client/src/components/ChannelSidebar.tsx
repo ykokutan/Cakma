@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
@@ -40,8 +40,11 @@ import {
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
-import { ServerEventsModal } from './ServerEventsModal';
 import { AvatarView, isImageAvatar } from './AvatarView';
+
+const ServerEventsModal = lazy(() =>
+  import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal }))
+);
 
 interface ChannelSidebarProps {
   onOpenCreateChannel: (type: 'text' | 'voice') => void;
@@ -1197,7 +1200,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           document.body
         )}
 
-      {isEventsOpen && <ServerEventsModal onClose={() => setIsEventsOpen(false)} />}
+      {isEventsOpen && (
+        <Suspense fallback={null}>
+          <ServerEventsModal onClose={() => setIsEventsOpen(false)} />
+        </Suspense>
+      )}
 
       <VoiceUserContextMenu
         menu={voiceUserMenu}

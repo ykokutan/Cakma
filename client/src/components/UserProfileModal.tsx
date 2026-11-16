@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
+import {
+  STATUS_EXPIRY_KEY,
+  STATUS_EXPIRY_OPTIONS,
+  StatusExpiryPreset,
+  computeStatusExpiryTimestamp,
+} from '../utils/statusExpiry';
 import { User } from '../types';
 import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
@@ -147,6 +154,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     setUserNote: setGlobalUserNote,
     updateUserActivity,
     transferWalletBalance,
+    language,
   } = useSocket();
 
   const isMe = currentUser?.id === propUser.id || currentUser?.username.toLowerCase() === propUser.username.toLowerCase();
@@ -193,6 +201,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [profileTab, setProfileTab] = useState<'about' | 'servers' | 'friends'>('about');
   const [selectedBadgeId, setSelectedBadgeId] = useState<string | null>(null);
+  const [statusExpiryPreset, setStatusExpiryPreset] = useState<StatusExpiryPreset>('never');
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferAmount, setTransferAmount] = useState('50');
   const [transferBusy, setTransferBusy] = useState(false);
@@ -260,6 +269,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
       avatar: finalAvatar,
       status: editStatus,
     });
+    try {
+      const expiresAt = computeStatusExpiryTimestamp(statusExpiryPreset);
+      if (expiresAt) {
+        localStorage.setItem(STATUS_EXPIRY_KEY, String(expiresAt));
+      } else {
+        localStorage.removeItem(STATUS_EXPIRY_KEY);
+      }
+    } catch {}
     setAvatarUrlInput('');
     setBannerUrlInput('');
     setIsEditing(false);
@@ -415,7 +432,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
               className="absolute top-3 left-3 z-10 px-3 py-1 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white text-xs font-semibold flex items-center gap-1.5 backdrop-blur-md transition border border-white/15"
             >
               <Edit3 className="w-3.5 h-3.5" />
-              <span>Profili Düzenle</span>
+              <span>{t(language, 'editProfile')}</span>
             </button>
           )}
 
@@ -805,6 +822,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                     </button>
                   ))}
                 </div>
+                <div className="pt-1.5 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[10px] text-white/45 font-semibold uppercase tracking-wider">
+                    {t(language, 'statusExpiry')}
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {STATUS_EXPIRY_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setStatusExpiryPreset(opt.id)}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border transition ${
+                          statusExpiryPreset === opt.id
+                            ? 'bg-blue-500/25 border-blue-400/50 text-blue-200'
+                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -823,7 +861,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                       Kazanılan Rozetler ({user.badges.length})
                     </div>
                     <span className="text-[10px] text-white/40">
-                      {isEditing ? 'Öne çıkarmak için tıkla' : 'Açıklama için tıkla'}
+                      {isEditing ? 'Öne çıkarmak için tıkla' : t(language, 'clickForDetails')}
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-2">

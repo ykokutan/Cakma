@@ -4,6 +4,7 @@ import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
+import { t } from '../utils/i18n';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -213,6 +214,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     addReminder,
     dmReadReceipts,
     markDmRead,
+    unreadCounts,
+    language,
   } = useSocket();
 
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
@@ -222,6 +225,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [decryptedDmMap, setDecryptedDmMap] = useState<Record<string, string>>({});
   const dmScreenVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeThreadMessage = activeThreadMsgId ? messages.find((m) => m.id === activeThreadMsgId) || null : null;
+
+  const [initialUnreadDividerCount, setInitialUnreadDividerCount] = useState(0);
+  const unreadCountsRef = useRef(unreadCounts);
+  unreadCountsRef.current = unreadCounts;
+
+  useEffect(() => {
+    if (!activeChannel?.id) {
+      setInitialUnreadDividerCount(0);
+      return;
+    }
+    setInitialUnreadDividerCount(unreadCountsRef.current[activeChannel.id] || 0);
+  }, [activeChannel?.id]);
 
   useEffect(() => {
     if (activeServer?.id === 'direct-messages' && activeDMUser?.username) {
@@ -1422,10 +1437,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             prevMsg.author.id === msg.author.id &&
             prevMsg.timestamp === msg.timestamp;
 
+          const isNewMessagesStart =
+            initialUnreadDividerCount > 0 &&
+            index === Math.max(0, displayedArr.length - initialUnreadDividerCount);
+
           return (
-            <div
-              key={msg.id}
-              id={`message-${msg.id}`}
+            <React.Fragment key={msg.id}>
+              {isNewMessagesStart && (
+                <div className="flex items-center gap-3 my-3 select-none">
+                  <div className="flex-1 h-px bg-rose-500/40" />
+                  <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300 uppercase tracking-wider">
+                    {t(language, 'newMessagesDivider')}
+                  </span>
+                  <div className="flex-1 h-px bg-rose-500/40" />
+                </div>
+              )}
+              <div
+                id={`message-${msg.id}`}
               className={`flex gap-3 items-end group ${
                 isMe ? 'justify-end' : 'justify-start'
               } ${isSameAuthorAsPrev ? 'mt-1' : 'mt-4'} ${
@@ -1847,6 +1875,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
               </div>
             </div>
+            </React.Fragment>
           );
         })}
         <div ref={messagesEndRef} />
@@ -2206,8 +2235,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   }}
                   placeholder={
                     isDM
-                      ? `Mesaj (${dmPartner?.username || 'Sohbet'})...`
-                      : `iMessage (#${activeChannel.name})...`
+                      ? `@${dmPartner?.username || 'Sohbet'} — ${t(language, 'messagePlaceholder')}`
+                      : `#${activeChannel.name} — ${t(language, 'messagePlaceholder')}`
                   }
                   className="flex-1 min-w-0 bg-transparent text-white placeholder-white/30 text-base sm:text-sm outline-none px-1 sm:px-2"
                 />

@@ -4,6 +4,7 @@ import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, 
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
+import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
 
 export interface RadioBotState {
   isPlaying: boolean;
@@ -658,7 +659,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
+
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!socket || !isAuthenticated || !currentUser) return;
+    const checkExpiry = () => {
+      try {
+        const raw = localStorage.getItem(STATUS_EXPIRY_KEY);
+        if (!raw) return;
+        const expiresAt = Number(raw);
+        if (isStatusExpired(expiresAt)) {
+          localStorage.removeItem(STATUS_EXPIRY_KEY);
+          socket.emit('update_profile_details', { statusMessage: 'Çevrimiçi' });
+        }
+      } catch {}
+    };
+    checkExpiry();
+    const timer = window.setInterval(checkExpiry, 30000);
+    return () => window.clearInterval(timer);
+  }, [socket, isAuthenticated, currentUser]);
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServerId, setActiveServerId] = useState<string>('');
   const [activeChannelId, setActiveChannelId] = useState<string>('');

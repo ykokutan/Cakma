@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { AvatarView } from './AvatarView';
-import { RemoteAssistModal } from './RemoteAssistModal';
 import { playCallRingtone } from '../utils/tsSoundEffects';
+
+const RemoteAssistModal = lazy(() =>
+  import('./RemoteAssistModal').then((m) => ({ default: m.RemoteAssistModal }))
+);
 import {
   Phone,
   PhoneOff,
@@ -77,10 +80,12 @@ export const DirectCallModal: React.FC = () => {
 
   if (isViewingPartnerDM && status === 'connected') {
     return (
-      <RemoteAssistModal
-        isOpen={isRemoteAssistOpen}
-        onClose={() => setIsRemoteAssistOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <RemoteAssistModal
+          isOpen={isRemoteAssistOpen}
+          onClose={() => setIsRemoteAssistOpen(false)}
+        />
+      </Suspense>
     );
   }
 
@@ -282,10 +287,12 @@ export const DirectCallModal: React.FC = () => {
         )}
       </div>
 
-      <RemoteAssistModal
-        isOpen={isRemoteAssistOpen}
-        onClose={() => setIsRemoteAssistOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <RemoteAssistModal
+          isOpen={isRemoteAssistOpen}
+          onClose={() => setIsRemoteAssistOpen(false)}
+        />
+      </Suspense>
     </>
   );
 };

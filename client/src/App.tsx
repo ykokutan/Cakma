@@ -14,6 +14,7 @@ import { AutoUpdater } from './components/AutoUpdater';
 import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { QuickSwitcherModal } from './components/QuickSwitcherModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { MiniScreenSharePiP } from './components/MiniScreenSharePiP';
 
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const AdminDashboardModal = lazy(() => import('./components/AdminDashboardModal').then((m) => ({ default: m.AdminDashboardModal })));
@@ -395,6 +396,8 @@ const MainLayout: React.FC = () => {
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
       />
+
+      <MiniScreenSharePiP />
     </div>
   );
 };
