@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Volume2, Sparkles, X, Flame, Laugh, Bell, Upload, Trash2 } from 'lucide-react';
 import { SOUNDBOARD_PRESETS, SoundboardItem, playSynthesizedSound } from '../utils/soundEffects';
+import { useSocket } from '../context/SocketContext';
 
 interface SoundboardModalProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
   onPlaySound,
   connectedVoiceChannelName,
 }) => {
+  const { customSoundboard } = useSocket();
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'meme' | 'gaming' | 'reaction' | 'alert' | 'custom'>('all');
   const [lastPlayedId, setLastPlayedId] = useState<string | null>(null);
   const [customSounds, setCustomSounds] = useState<Array<SoundboardItem & { audioUrl?: string }>>(() => {
@@ -30,15 +32,29 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
 
   if (!isOpen) return null;
 
+  const contextCustomSounds: Array<SoundboardItem & { audioUrl?: string }> = (customSoundboard || []).map((cs) => ({
+    id: cs.id,
+    name: cs.name,
+    emoji: '🎵',
+    category: 'custom' as any,
+    description: 'Ayarlardan Eklenen Özel Ses',
+    audioUrl: cs.dataUrl,
+  }));
+
+  const mergedCustomSounds = [
+    ...customSounds,
+    ...contextCustomSounds.filter((cs) => !customSounds.some((s) => s.id === cs.id)),
+  ];
+
   const allSounds: Array<SoundboardItem & { audioUrl?: string }> = [
     ...SOUNDBOARD_PRESETS,
-    ...customSounds,
+    ...mergedCustomSounds,
   ];
 
   const filtered = selectedCategory === 'all'
     ? allSounds
     : selectedCategory === 'custom'
-    ? customSounds
+    ? mergedCustomSounds
     : allSounds.filter(s => s.category === selectedCategory);
 
   const handlePlay = (sound: SoundboardItem & { audioUrl?: string }) => {

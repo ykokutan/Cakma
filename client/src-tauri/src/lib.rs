@@ -334,6 +334,96 @@ fn request_window_attention(app: tauri::AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+#[tauri::command]
+fn get_autostart() -> bool {
+  #[cfg(target_os = "windows")]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    if let Ok(out) = std::process::Command::new("reg")
+      .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Cakma"])
+      .creation_flags(CREATE_NO_WINDOW)
+      .output()
+    {
+      return out.status.success();
+    }
+  }
+  false
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<bool, String> {
+  #[cfg(target_os = "windows")]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    if enabled {
+      let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+      let exe_str = format!("\"{}\"", exe_path.display());
+      let out = std::process::Command::new("reg")
+        .args([
+          "add",
+          "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+          "/v",
+          "Cakma",
+          "/t",
+          "REG_SZ",
+          "/d",
+          &exe_str,
+          "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| e.to_string())?;
+      if !out.status.success() {
+        return Err("Otomatik başlatma kaydı oluşturulamadı.".to_string());
+      }
+      return Ok(true);
+    } else {
+      let _ = std::process::Command::new("reg")
+        .args([
+          "delete",
+          "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+          "/v",
+          "Cakma",
+          "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+      return Ok(false);
+    }
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = enabled;
+    Ok(false)
+  }
+}
+
+#[tauri::command]
+fn position_overlay_window(app: tauri::AppHandle, corner: String) -> Result<(), String> {
+  if let Some(overlay) = app.get_webview_window("overlay") {
+    let margin = 16i32;
+    let overlay_w = 270i32;
+    let overlay_h = 340i32;
+    let (sw, sh) = if let Ok(Some(mon)) = overlay.primary_monitor() {
+      let size = mon.size();
+      let scale = mon.scale_factor();
+      ((size.width as f64 / scale) as i32, (size.height as f64 / scale) as i32)
+    } else {
+      (1920, 1080)
+    };
+    let (x, y) = match corner.as_str() {
+      "top-right" => ((sw - overlay_w - margin).max(0), margin),
+      "bottom-left" => (margin, (sh - overlay_h - 48).max(0)),
+      "bottom-right" => ((sw - overlay_w - margin).max(0), (sh - overlay_h - 48).max(0)),
+      _ => (margin, margin), // top-left default
+    };
+    let _ = overlay.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x as f64, y as f64)));
+  }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default()
@@ -344,7 +434,10 @@ pub fn run() {
       set_overlay_window,
       get_overlay_window_state,
       simulate_remote_input,
-      request_window_attention
+      request_window_attention,
+      get_autostart,
+      set_autostart,
+      position_overlay_window
     ]);
 
   #[cfg(desktop)]

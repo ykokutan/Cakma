@@ -60,12 +60,16 @@ import {
   Hand,
   Video,
   VideoOff,
+  Bookmark,
+  Camera,
+  ExternalLink,
 } from 'lucide-react';
 
 const SLASH_COMMANDS = [
   { cmd: '/zar', desc: '1-6 arası rastgele zar atar' },
   { cmd: '/yazitura', desc: 'Yazı veya Tura atar' },
   { cmd: '/anket', desc: 'Hızlı anket oluşturma penceresini açar' },
+  { cmd: '/hatirlat', desc: 'Hatırlatıcı kurar (Örn: /hatirlat 10dk Mola bitti)' },
   { cmd: '/temizle', desc: 'Son N mesajı temizler (Örn: /temizle 10)' },
   { cmd: '/davet', desc: 'Sunucu davet bağlantısı oluşturup paylaşır' },
   { cmd: '/yardim', desc: 'Kullanılabilir slash komutlarını listeler' },
@@ -196,6 +200,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     chatFontSize,
     clearChannelMessages,
     createServerInvite,
+    showLinkPreviews,
+    bookmarkedMessages,
+    toggleBookmarkMessage,
+    addReminder,
   } = useSocket();
 
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
@@ -230,6 +238,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [isPollModalOpen, setIsPollModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [isBookmarksModalOpen, setIsBookmarksModalOpen] = useState(false);
+  const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isGifModalOpen, setIsGifModalOpen] = useState(false);
@@ -526,8 +536,28 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         }
         return;
       }
+      if (cmd === '/hatirlat') {
+        const timeToken = (args[0] || '').toLowerCase();
+        const text = args.slice(1).join(' ').trim();
+        const match = timeToken.match(/^(\d+)(sn|s|dk|d|m|sa|h)$/);
+        if (!match || !text) {
+          alert('Kullanım: /hatirlat <süre> <mesaj> (Örn: /hatirlat 10dk Toplantı var)');
+          return;
+        }
+        const amount = parseInt(match[1], 10);
+        const unit = match[2];
+        const multiplier =
+          unit === 'sn' || unit === 's'
+            ? 1000
+            : unit === 'sa' || unit === 'h'
+            ? 3600 * 1000
+            : 60 * 1000;
+        addReminder(text, amount * multiplier);
+        setInputText('');
+        return;
+      }
       if (cmd === '/yardim') {
-        sendMessage('⚡ **Slash Komutları:** `/zar`, `/yazitura`, `/anket`, `/temizle [sayı]`, `/davet`, `/yardim`');
+        sendMessage('⚡ **Slash Komutları:** `/zar`, `/yazitura`, `/anket`, `/hatirlat <süre> <mesaj>`, `/temizle [sayı]`, `/davet`, `/yardim`');
         setInputText('');
         return;
       }
@@ -540,6 +570,42 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setIsEmojiPickerOpen(false);
     if (activeChannel?.slowmodeSeconds && activeChannel.slowmodeSeconds > 0) {
       setSlowmodeRemaining(activeChannel.slowmodeSeconds);
+    }
+  };
+
+  const handleQuickScreenshot = async () => {
+    if (isCapturingScreenshot) return;
+    setIsCapturingScreenshot(true);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      await new Promise((r) => setTimeout(r, 150));
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/png');
+        setPendingAttachments((prev) => [
+          ...prev,
+          {
+            id: `ss-${Date.now()}`,
+            name: `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.png`,
+            type: 'image/png',
+            url: dataUrl,
+            size: Math.round((dataUrl.length * 3) / 4),
+          },
+        ]);
+      }
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      // User cancelled capture
+    } finally {
+      setIsCapturingScreenshot(false);
     }
   };
 
@@ -764,6 +830,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             {messages.filter(m => m.isPinned).length > 0 && (
               <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-amber-500 text-black text-[10px] font-bold flex items-center justify-center">
                 {messages.filter(m => m.isPinned).length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setIsBookmarksModalOpen(true)}
+            className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
+            title="Kaydedilen Mesajlar (Yer İmleri)"
+          >
+            <Bookmark className={`w-4 h-4 ${bookmarkedMessages.length > 0 ? 'text-cyan-400' : ''}`} />
+            {bookmarkedMessages.length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-cyan-500 text-black text-[10px] font-bold flex items-center justify-center">
+                {bookmarkedMessages.length}
               </span>
             )}
           </button>
@@ -1317,6 +1395,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   >
                     <Pin className="w-3 h-3" />
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleBookmarkMessage(msg)}
+                    title={bookmarkedMessages.some((b) => b.id === msg.id) ? 'Yer İminden Kaldır' : 'Yer İmlerine Kaydet'}
+                    className={`p-1 rounded-full text-xs transition-colors ${
+                      bookmarkedMessages.some((b) => b.id === msg.id)
+                        ? 'text-cyan-400 bg-cyan-400/20'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Bookmark className="w-3 h-3" />
+                  </button>
                   {isMe && msg.content && (
                     <button
                       type="button"
@@ -1432,6 +1522,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         {isSameAuthorAsPrev && msg.isEdited && (
                           <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
                         )}
+                        {showLinkPreviews && (() => {
+                          const urlMatch = msg.content.match(/https?:\/\/[^\s<>()]+/i);
+                          if (!urlMatch) return null;
+                          const rawUrl = urlMatch[0];
+                          const ytMatch = rawUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+                          let host = rawUrl;
+                          try { host = new URL(rawUrl).hostname; } catch {}
+                          return (
+                            <a
+                              href={rawUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-2 block max-w-sm rounded-xl bg-black/35 border border-white/10 hover:border-cyan-400/40 overflow-hidden transition group/link"
+                            >
+                              {ytMatch && (
+                                <img
+                                  src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`}
+                                  alt="YouTube Önizleme"
+                                  className="w-full h-36 object-cover border-b border-white/10"
+                                />
+                              )}
+                              <div className="px-3 py-2 flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-[11px] font-bold text-cyan-300 truncate">{host}</div>
+                                  <div className="text-[10px] text-white/50 truncate">{rawUrl}</div>
+                                </div>
+                                <ExternalLink className="w-3.5 h-3.5 text-white/40 group-hover/link:text-cyan-300 shrink-0" />
+                              </div>
+                            </a>
+                          );
+                        })()}
                       </div>
                     )}
                   </>
@@ -1851,6 +1972,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
               <button
                 type="button"
+                onClick={handleQuickScreenshot}
+                disabled={isCapturingScreenshot}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-cyan-500/20 text-white/70 hover:text-cyan-300 flex items-center justify-center transition shrink-0 disabled:opacity-50"
+                title="Hızlı Ekran Görüntüsü Al ve Ekle"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setIsGifModalOpen(true)}
                 className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-[10px] font-bold tracking-wider transition shrink-0 border border-white/10"
                 title="GIF Arama & Ekleme"
@@ -1990,6 +2121,65 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         pinnedMessages={messages.filter((m) => m.isPinned)}
         onUnpin={(mId) => togglePinMessage(mId)}
       />
+
+      {/* Bookmarked Messages Modal */}
+      {isBookmarksModalOpen && (
+        <div
+          onClick={() => setIsBookmarksModalOpen(false)}
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl bg-[#131620] border border-white/15 shadow-2xl overflow-hidden"
+          >
+            <div className="px-5 py-3.5 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bookmark className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-sm font-bold text-white">Kaydedilen Mesajlar ({bookmarkedMessages.length})</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBookmarksModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-4 space-y-2.5">
+              {bookmarkedMessages.length === 0 ? (
+                <div className="py-10 text-center text-xs text-white/45">
+                  Henüz yer imlerine eklenmiş mesaj yok. Mesajların üzerindeki yer imi simgesine tıklayarak kaydedebilirsiniz.
+                </div>
+              ) : (
+                bookmarkedMessages.map((bm) => (
+                  <div
+                    key={bm.id}
+                    className="p-3 rounded-xl bg-white/[0.04] border border-white/10 flex items-start justify-between gap-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="font-bold text-cyan-300">{bm.author?.username || 'Kullanıcı'}</span>
+                        <span className="text-white/35">
+                          {new Date(bm.timestamp).toLocaleString('tr-TR', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-white/85 break-words whitespace-pre-wrap">{bm.content || '[Ekli Dosya]'}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleBookmarkMessage(bm)}
+                      className="p-1.5 rounded-lg hover:bg-red-500/20 text-white/40 hover:text-red-300 transition shrink-0"
+                      title="Yer İminden Kaldır"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Lightbox Image Modal */}
       {lightboxImage && (

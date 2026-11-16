@@ -73,6 +73,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     blockUser,
     unblockUser,
     timeoutMember,
+    userNotes,
+    setUserNote: setGlobalUserNote,
   } = useSocket();
 
   const isMe = currentUser?.id === propUser.id || currentUser?.username.toLowerCase() === propUser.username.toLowerCase();
@@ -126,14 +128,16 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
 
   useEffect(() => {
     if (!isMe && user.id) {
-      const savedNote = localStorage.getItem(`dc_user_note_${user.id}`) || '';
+      const globalNote = userNotes?.[user.username.toLowerCase()];
+      const savedNote = globalNote !== undefined ? globalNote : (localStorage.getItem(`dc_user_note_${user.id}`) || '');
       setUserNote(savedNote);
     }
-  }, [user.id, isMe]);
+  }, [user.id, user.username, userNotes, isMe]);
 
   const handleSaveNote = () => {
     if (!isMe && user.id) {
       localStorage.setItem(`dc_user_note_${user.id}`, userNote);
+      setGlobalUserNote(user.username, userNote);
       setNoteSavedFeedback(true);
       setTimeout(() => setNoteSavedFeedback(false), 2000);
     }

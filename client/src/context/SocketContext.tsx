@@ -372,6 +372,24 @@ interface SocketContextType {
   setBgPattern: (v: 'grid' | 'dots' | 'clean') => void;
   reduceMotion: boolean;
   setReduceMotion: (v: boolean) => void;
+  overlayCorner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  setOverlayCorner: (v: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => void;
+  overlayOpacity: number;
+  setOverlayOpacity: (v: number) => void;
+  ringtonePack: 'modern' | 'classic' | 'minimal' | 'silent';
+  setRingtonePack: (v: 'modern' | 'classic' | 'minimal' | 'silent') => void;
+  showLinkPreviews: boolean;
+  setShowLinkPreviews: (v: boolean) => void;
+  customSoundboard: Array<{ id: string; name: string; dataUrl: string }>;
+  addCustomSound: (name: string, dataUrl: string) => void;
+  removeCustomSound: (id: string) => void;
+  userNotes: Record<string, string>;
+  setUserNote: (username: string, note: string) => void;
+  bookmarkedMessages: Message[];
+  toggleBookmarkMessage: (msg: Message) => void;
+  reminders: Array<{ id: string; text: string; triggerAt: number }>;
+  addReminder: (text: string, delayMs: number) => void;
+  removeReminder: (id: string) => void;
 
   // Diagnostics & Network Telemetry
   ping: number;
@@ -603,6 +621,129 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setCornerStyle = (v: 'rounded' | 'sharp') => setCornerStyleState(v);
   const setBgPattern = (v: 'grid' | 'dots' | 'clean') => setBgPatternState(v);
   const setReduceMotion = (v: boolean) => setReduceMotionState(v);
+
+  const [overlayCorner, setOverlayCornerState] = useState<'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'>(() => {
+    return (localStorage.getItem('dc_overlay_corner') as any) || 'top-left';
+  });
+  const [overlayOpacity, setOverlayOpacityState] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('dc_overlay_opacity'));
+    return Number.isFinite(saved) && saved >= 30 && saved <= 100 ? saved : 85;
+  });
+  const [ringtonePack, setRingtonePackState] = useState<'modern' | 'classic' | 'minimal' | 'silent'>(() => {
+    return (localStorage.getItem('dc_ringtone_pack') as any) || 'modern';
+  });
+  const [showLinkPreviews, setShowLinkPreviewsState] = useState<boolean>(() => {
+    const v = localStorage.getItem('dc_show_link_previews');
+    return v === null ? true : v === 'true';
+  });
+  const [customSoundboard, setCustomSoundboard] = useState<Array<{ id: string; name: string; dataUrl: string }>>(() => {
+    try {
+      const raw = localStorage.getItem('dc_custom_soundboard');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [userNotes, setUserNotes] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('dc_user_notes');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [bookmarkedMessages, setBookmarkedMessages] = useState<Message[]>(() => {
+    try {
+      const raw = localStorage.getItem('dc_bookmarked_messages');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [reminders, setReminders] = useState<Array<{ id: string; text: string; triggerAt: number }>>([]);
+
+  const setOverlayCorner = (v: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => {
+    setOverlayCornerState(v);
+    try { localStorage.setItem('dc_overlay_corner', v); } catch {}
+    const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || window.location.hostname === 'tauri.localhost' || window.location.protocol === 'tauri:');
+    if (isTauri) {
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('position_overlay_window', { corner: v }))
+        .catch(() => {});
+    }
+  };
+
+  const setOverlayOpacity = (v: number) => {
+    const clamped = Math.min(100, Math.max(30, Math.round(v)));
+    setOverlayOpacityState(clamped);
+    try { localStorage.setItem('dc_overlay_opacity', String(clamped)); } catch {}
+  };
+
+  const setRingtonePack = (v: 'modern' | 'classic' | 'minimal' | 'silent') => {
+    setRingtonePackState(v);
+    try { localStorage.setItem('dc_ringtone_pack', v); } catch {}
+  };
+
+  const setShowLinkPreviews = (v: boolean) => {
+    setShowLinkPreviewsState(v);
+    try { localStorage.setItem('dc_show_link_previews', v ? 'true' : 'false'); } catch {}
+  };
+
+  const addCustomSound = (name: string, dataUrl: string) => {
+    setCustomSoundboard(prev => {
+      const next = [...prev, { id: `cs-${Date.now()}`, name: name.slice(0, 30), dataUrl }];
+      try { localStorage.setItem('dc_custom_soundboard', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const removeCustomSound = (id: string) => {
+    setCustomSoundboard(prev => {
+      const next = prev.filter(s => s.id !== id);
+      try { localStorage.setItem('dc_custom_soundboard', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const setUserNote = (username: string, note: string) => {
+    const key = username.toLowerCase();
+    setUserNotes(prev => {
+      const next = { ...prev };
+      if (!note.trim()) {
+        delete next[key];
+      } else {
+        next[key] = note.slice(0, 400);
+      }
+      try { localStorage.setItem('dc_user_notes', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const toggleBookmarkMessage = (msg: Message) => {
+    setBookmarkedMessages(prev => {
+      const exists = prev.some(m => m.id === msg.id);
+      const next = exists ? prev.filter(m => m.id !== msg.id) : [msg, ...prev].slice(0, 50);
+      try { localStorage.setItem('dc_bookmarked_messages', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const removeReminder = (id: string) => {
+    setReminders(prev => prev.filter(r => r.id !== id));
+  };
+
+  const addReminder = (text: string, delayMs: number) => {
+    const id = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const triggerAt = Date.now() + delayMs;
+    setReminders(prev => [...prev, { id, text, triggerAt }]);
+    window.setTimeout(() => {
+      setReminders(prev => prev.filter(r => r.id !== id));
+      sendDesktopNotification('Hatırlatıcı ⏰', text);
+      if (tsSoundEffectsRef.current) {
+        playTeamSpeakChime('levelup');
+      }
+    }, delayMs);
+  };
 
   const setChatFontSize = (size: 'sm' | 'base' | 'lg') => {
     setChatFontSizeState(size);
@@ -4350,6 +4491,24 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setBgPattern,
         reduceMotion,
         setReduceMotion,
+        overlayCorner,
+        setOverlayCorner,
+        overlayOpacity,
+        setOverlayOpacity,
+        ringtonePack,
+        setRingtonePack,
+        showLinkPreviews,
+        setShowLinkPreviews,
+        customSoundboard,
+        addCustomSound,
+        removeCustomSound,
+        userNotes,
+        setUserNote,
+        bookmarkedMessages,
+        toggleBookmarkMessage,
+        reminders,
+        addReminder,
+        removeReminder,
       }}
     >
       {children}

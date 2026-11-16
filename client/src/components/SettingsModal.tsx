@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { playTeamSpeakChime, SoundPackType } from '../utils/tsSoundEffects';
+import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } from '../utils/tsSoundEffects';
 import { AvatarView } from './AvatarView';
 import {
   X,
@@ -26,6 +26,9 @@ import {
   Cpu,
   Camera,
   Download,
+  Trash2,
+  Upload,
+  Volume2,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -95,6 +98,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     currentServerHost,
     overlayEnabled,
     setOverlayEnabled,
+    overlayCorner,
+    setOverlayCorner,
+    overlayOpacity,
+    setOverlayOpacity,
+    ringtonePack,
+    setRingtonePack,
+    showLinkPreviews,
+    setShowLinkPreviews,
+    customSoundboard,
+    addCustomSound,
+    removeCustomSound,
+    userNotes,
+    setUserNote,
+    reminders,
+    removeReminder,
     detectedGame,
     refreshDetectedGame,
   } = useSocket();
@@ -165,7 +183,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.1');
+  const [appVersion, setAppVersion] = useState<string>('0.3.2');
+  const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (!isTauriEnv) return;
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke<boolean>('get_autostart'))
+      .then((enabled) => setAutostartEnabled(Boolean(enabled)))
+      .catch(() => {});
+  }, []);
+
+  const handleToggleAutostart = async () => {
+    const next = !autostartEnabled;
+    setAutostartEnabled(next);
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (!isTauriEnv) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_autostart', { enabled: next });
+    } catch {
+      setAutostartEnabled(!next);
+    }
+  };
+
+  const handleOverlayCornerChange = async (corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right') => {
+    setOverlayCorner(corner);
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (!isTauriEnv) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('position_overlay_window', { corner });
+    } catch {}
+  };
   const [updateStatusMsg, setUpdateStatusMsg] = useState<string | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
@@ -749,6 +800,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <span>%100</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Custom Soundboard Sounds */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Özel Soundboard Sesleri</div>
+                    <div className="text-xs text-white/40">
+                      Ses odalarında çalmak için kendi kısa ses efektlerinizi yükleyin (Maks. 500 KB)
+                    </div>
+                  </div>
+                  <label className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer flex items-center gap-1.5 shrink-0 transition">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Ses Ekle</span>
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 500 * 1024) {
+                          alert('Özel ses dosyası 500 KB boyutunu geçmemelidir.');
+                          e.target.value = '';
+                          return;
+                        }
+                        const soundName = file.name.replace(/\.[^/.]+$/, '').slice(0, 24) || 'Özel Ses';
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === 'string') {
+                            addCustomSound(soundName, reader.result);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {customSoundboard.length === 0 ? (
+                  <div className="text-xs text-white/40 py-2">Henüz özel ses yüklenmedi.</div>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {customSoundboard.map((cs) => (
+                      <div
+                        key={cs.id}
+                        className="flex items-center justify-between px-3 py-2 rounded-xl bg-black/30 border border-white/10"
+                      >
+                        <span className="text-xs font-medium text-white truncate">🎵 {cs.name}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const audio = new Audio(cs.dataUrl);
+                              audio.volume = 0.8;
+                              audio.play().catch(() => {});
+                            }}
+                            className="p-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 transition"
+                            title="Dinle"
+                          >
+                            <Volume2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeCustomSound(cs.id)}
+                            className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 transition"
+                            title="Sil"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1583,6 +1710,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </div>
 
               {/* Push Notifications Card */}
+              {/* Masaüstü Overlay & Windows Başlangıç Ayarları */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Windows Başlangıçta Otomatik Başlat</div>
+                    <div className="text-xs text-white/40">
+                      Bilgisayar açıldığında Çakma masaüstü uygulamasını otomatik başlatır
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleAutostart}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      autostartEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        autostartEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="pt-3 border-t border-white/10 space-y-2.5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Overlay Konumu</div>
+                    <div className="text-xs text-white/40">Oyun içi konuşanlar penceresinin ekran köşesi</div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: 'top-left', label: 'Sol Üst' },
+                      { id: 'top-right', label: 'Sağ Üst' },
+                      { id: 'bottom-left', label: 'Sol Alt' },
+                      { id: 'bottom-right', label: 'Sağ Alt' },
+                    ].map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => handleOverlayCornerChange(c.id as any)}
+                        className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
+                          overlayCorner === c.id
+                            ? 'bg-blue-500 text-white border-blue-400 shadow'
+                            : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <div className="flex justify-between text-xs text-white/70 mb-1.5">
+                    <span>Overlay Saydamlığı</span>
+                    <span className="font-mono">%{overlayOpacity}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={30}
+                    max={100}
+                    value={overlayOpacity}
+                    onChange={(e) => setOverlayOpacity(Number(e.target.value))}
+                    className="w-full accent-blue-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
+                  />
+                </div>
+              </div>
+
               <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -1933,6 +2128,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </button>
                 </div>
 
+                <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Zengin Bağlantı Önizlemeleri (YouTube & URL)</div>
+                    <div className="text-xs text-white/40">Mesajlardaki web ve YouTube bağlantıları için önizleme kartı gösterir.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowLinkPreviews(!showLinkPreviews)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      showLinkPreviews ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${showLinkPreviews ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
                 <div className="pt-3 border-t border-white/10 space-y-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">
                     <Radio className="w-4 h-4 text-teal-400" />
@@ -1974,6 +2185,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Kaydedilen Kullanıcı Notları */}
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
+                <div>
+                  <div className="text-sm font-semibold text-white">Kaydedilen Kullanıcı Notları ({Object.keys(userNotes).length})</div>
+                  <div className="text-xs text-white/40">Kullanıcı profillerine eklediğiniz yalnızca size özel notlar</div>
+                </div>
+                {Object.keys(userNotes).length === 0 ? (
+                  <div className="text-xs text-white/40">Henüz kimse için özel not kaydetmediniz.</div>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {Object.entries(userNotes).map(([uname, note]) => (
+                      <div
+                        key={uname}
+                        className="flex items-center justify-between px-3 py-2 rounded-xl bg-black/30 border border-white/10 gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-amber-300">@{uname}</div>
+                          <div className="text-xs text-white/75 truncate">{note}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setUserNote(uname, '')}
+                          className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 transition shrink-0"
+                          title="Notu Sil"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2115,6 +2359,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     </button>
                   </div>
                 ))}
+              </div>
+
+              {/* Arama Zil Sesi Paketi */}
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Arama Zil Sesi Paketi</div>
+                    <div className="text-xs text-white/50">1-e-1 gelen ve giden aramalarda çalacak zil sesi stili</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => playCallRingtone('incoming', ringtonePack)}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span>Test Et</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'modern', label: 'Modern' },
+                    { id: 'classic', label: 'Klasik' },
+                    { id: 'minimal', label: 'Minimal' },
+                    { id: 'silent', label: 'Sessiz' },
+                  ].map((pack) => (
+                    <button
+                      key={pack.id}
+                      type="button"
+                      onClick={() => setRingtonePack(pack.id as RingtonePack)}
+                      className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
+                        ringtonePack === pack.id
+                          ? 'bg-blue-500 text-white border-blue-400 shadow'
+                          : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                      }`}
+                    >
+                      {pack.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Aktif Hatırlatıcılar */}
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Aktif Hatırlatıcılar ({reminders.length})</div>
+                    <div className="text-xs text-white/50">Sohbette /hatirlat komutuyla kurulan zamanlayıcılar</div>
+                  </div>
+                </div>
+                {reminders.length === 0 ? (
+                  <div className="text-xs text-white/40">Aktif hatırlatıcı bulunmuyor. Sohbette /hatirlat 10dk Mola yazabilirsiniz.</div>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {reminders.map((rem) => (
+                      <div
+                        key={rem.id}
+                        className="flex items-center justify-between px-3 py-2 rounded-xl bg-black/30 border border-white/10 gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-white truncate">{rem.text}</div>
+                          <div className="text-[10px] text-cyan-300">
+                            {new Date(rem.triggerAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeReminder(rem.id)}
+                          className="p-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 transition shrink-0"
+                          title="Hatırlatıcıyı İptal Et"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">

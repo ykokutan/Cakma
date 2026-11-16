@@ -28,6 +28,23 @@ export const SpeakersOverlay: React.FC = () => {
   const [ping, setPing] = useState<number>(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [overlayOpacity, setOverlayOpacity] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('dc_overlay_opacity') || '92');
+    return Number.isFinite(saved) ? Math.min(100, Math.max(30, saved)) : 92;
+  });
+
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'dc_overlay_opacity') {
+        const next = Number(e.newValue || '92');
+        if (Number.isFinite(next)) {
+          setOverlayOpacity(Math.min(100, Math.max(30, next)));
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -57,7 +74,10 @@ export const SpeakersOverlay: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-screen bg-[#0b0d14] text-white flex flex-col select-none overflow-hidden border border-white/15">
+    <div
+      style={{ opacity: overlayOpacity / 100 }}
+      className="h-screen w-screen bg-[#0b0d14] text-white flex flex-col select-none overflow-hidden border border-white/15 transition-opacity duration-200"
+    >
       {/* Draggable Header */}
       <div
         data-tauri-drag-region

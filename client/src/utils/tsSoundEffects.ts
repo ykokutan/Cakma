@@ -121,25 +121,30 @@ export function playTeamSpeakChime(
   }
 }
 
-// 1b. 1-on-1 Call Ringtone & Ringback Tone
-export function playCallRingtone(mode: 'incoming' | 'outgoing') {
+// 1b. 1-on-1 Call Ringtone & Ringback Tone (supports ringtonePack: modern | classic | minimal | silent)
+export type RingtonePack = 'modern' | 'classic' | 'minimal' | 'silent';
+
+export function playCallRingtone(mode: 'incoming' | 'outgoing', explicitPack?: RingtonePack) {
   try {
+    const pack: RingtonePack =
+      explicitPack || ((localStorage.getItem('dc_ringtone_pack') as RingtonePack) || 'modern');
+    if (pack === 'silent') return;
+
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
     const now = ctx.currentTime;
 
     if (mode === 'outgoing') {
-      // Classic gentle ringback tone (440Hz + 480Hz dual-tone pulse)
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
       osc1.type = 'sine';
       osc2.type = 'sine';
-      osc1.frequency.setValueAtTime(440, now);
-      osc2.frequency.setValueAtTime(480, now);
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
+      osc1.frequency.setValueAtTime(pack === 'minimal' ? 520 : 440, now);
+      osc2.frequency.setValueAtTime(pack === 'minimal' ? 520 : 480, now);
+      gain.gain.setValueAtTime(pack === 'minimal' ? 0.05 : 0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + (pack === 'minimal' ? 0.45 : 0.85));
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(ctx.destination);
@@ -147,8 +152,34 @@ export function playCallRingtone(mode: 'incoming' | 'outgoing') {
       osc2.start(now);
       osc1.stop(now + 0.85);
       osc2.stop(now + 0.85);
+    } else if (pack === 'classic') {
+      // Classic telephone double-ring trill
+      [0, 0.25].forEach((offset) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(660, now + offset);
+        gain.gain.setValueAtTime(0.14, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.18);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.18);
+      });
+    } else if (pack === 'minimal') {
+      // Soft single chime
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, now);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.3);
     } else {
-      // Incoming call melodic double-chime (C5 -> E5 -> G5)
+      // Modern melodic chime (C5 -> E5 -> G5)
       const notes = [523.25, 659.25, 783.99];
       notes.forEach((freq, idx) => {
         const osc = ctx.createOscillator();
