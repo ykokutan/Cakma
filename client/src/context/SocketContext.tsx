@@ -192,7 +192,22 @@ interface SocketContextType {
   // Auth Handlers
   login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }>;
   verify2faLogin: (pending2faToken: string, code: string) => Promise<{ success: boolean; error?: string }>;
-  register: (data: { username: string; email: string; password: string; avatar: string }) => Promise<{ success: boolean; error?: string }>;
+  register: (data: {
+    username: string;
+    email: string;
+    password: string;
+    avatar: string;
+    inviteCode?: string;
+    challengeToken?: string;
+    challengeAnswer?: string;
+    honeypot?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
+  requestRegisterChallenge: () => Promise<{
+    token: string;
+    question: string;
+    inviteOnly: boolean;
+    requireStrongPasswords: boolean;
+  } | null>;
   logout: () => void;
 
   // Audio Device Handlers
@@ -219,6 +234,18 @@ interface SocketContextType {
     connectionLogs?: UserConnectionRecord[];
     systemConfig?: {
       registrationEnabled: boolean;
+      inviteOnlyRegistration?: boolean;
+      registrationInvites?: {
+        code: string;
+        createdBy: string;
+        createdAt: string;
+        maxUses: number;
+        uses: number;
+        expiresAt?: number | null;
+      }[];
+      defaultWalletBalance?: number;
+      maxAccountsPerIpPerDay?: number;
+      requireUniqueEmail?: boolean;
       maintenanceMode: boolean;
       maintenanceMessage?: string;
       maxMessageLength: number;
@@ -277,6 +304,10 @@ interface SocketContextType {
   fetchAdminData: () => void;
   adminUpdateSystemConfig: (cfg: {
     registrationEnabled?: boolean;
+    inviteOnlyRegistration?: boolean;
+    defaultWalletBalance?: number;
+    maxAccountsPerIpPerDay?: number;
+    requireUniqueEmail?: boolean;
     maintenanceMode?: boolean;
     maintenanceMessage?: string;
     maxMessageLength?: number;
@@ -305,6 +336,8 @@ interface SocketContextType {
   adminDeleteChannel: (serverId: string, channelId: string) => void;
   adminBroadcastAnnouncement: (message: string, options?: { target?: 'all' | 'admins' | 'server'; serverId?: string; pinBanner?: boolean }) => void;
   adminClearPinnedBanner: () => void;
+  adminCreateRegInvite: (maxUses?: number, expiresHours?: number) => void;
+  adminDeleteRegInvite: (code: string) => void;
   generateDedicatedLicense: (data: { licensee: string; maxSlots: number; expireDays: number; tier: 'Starter' | 'Pro' | 'Enterprise'; assignedUsername?: string }) => void;
   adminRevokeLicense: (licenseId: string, reason?: string) => void;
   adminActivateLicense: (licenseId: string) => void;
@@ -2808,7 +2841,41 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
-  const register = (data: { username: string; email: string; password: string; avatar: string }): Promise<{ success: boolean; error?: string }> => {
+  const requestRegisterChallenge = useCallback((): Promise<{
+    token: string;
+    question: string;
+    inviteOnly: boolean;
+    requireStrongPasswords: boolean;
+  } | null> => {
+    return new Promise((resolve) => {
+      if (!socket) return resolve(null);
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve(null);
+        }
+      }, 4000);
+      socket.emit('get_register_challenge');
+      socket.once('register_challenge', (payload: { token: string; question: string; inviteOnly: boolean; requireStrongPasswords: boolean }) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(payload);
+      });
+    });
+  }, [socket]);
+
+  const register = (data: {
+    username: string;
+    email: string;
+    password: string;
+    avatar: string;
+    inviteCode?: string;
+    challengeToken?: string;
+    challengeAnswer?: string;
+    honeypot?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
     return new Promise((resolve) => {
       if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
 
@@ -2936,6 +3003,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_clear_pinned_banner');
   };
 
+  const adminCreateRegInvite = (maxUses = 1, expiresHours = 24) => {
+    socket?.emit('admin_create_reg_invite', { maxUses, expiresHours });
+  };
+
+  const adminDeleteRegInvite = (code: string) => {
+    socket?.emit('admin_delete_reg_invite', { code });
+  };
+
   const generateDedicatedLicense = (data: {
     licensee: string;
     maxSlots: number;
@@ -2964,6 +3039,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const adminUpdateSystemConfig = (cfg: {
     registrationEnabled?: boolean;
+    inviteOnlyRegistration?: boolean;
+    defaultWalletBalance?: number;
+    maxAccountsPerIpPerDay?: number;
+    requireUniqueEmail?: boolean;
     maintenanceMode?: boolean;
     maintenanceMessage?: string;
     maxMessageLength?: number;
@@ -4535,6 +4614,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         login,
         verify2faLogin,
         register,
+        requestRegisterChallenge,
         logout,
 
         // Audio Device Handlers
@@ -4557,6 +4637,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         adminDeleteChannel,
         adminBroadcastAnnouncement,
         adminClearPinnedBanner,
+        adminCreateRegInvite,
+        adminDeleteRegInvite,
         generateDedicatedLicense,
         adminRevokeLicense,
         adminActivateLicense,

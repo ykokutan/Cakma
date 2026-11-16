@@ -74,6 +74,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     adminRestoreScheduledBackup,
     adminDeleteScheduledBackup,
     adminTestWebhook,
+    adminCreateRegInvite,
+    adminDeleteRegInvite,
     adminPurgeMessages,
     adminResetUserPassword,
     adminCreateChannel,
@@ -110,6 +112,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     }
   });
   const [sysRegEnabled, setSysRegEnabled] = useState<boolean>(true);
+  const [sysInviteOnly, setSysInviteOnly] = useState<boolean>(false);
+  const [sysRequireUniqueEmail, setSysRequireUniqueEmail] = useState<boolean>(true);
+  const [sysDefaultWallet, setSysDefaultWallet] = useState<number>(100);
+  const [sysMaxAccountsPerIp, setSysMaxAccountsPerIp] = useState<number>(3);
+  const [newInviteMaxUses, setNewInviteMaxUses] = useState<number>(5);
+  const [newInviteHours, setNewInviteHours] = useState<number>(24);
   const [sysMaintenance, setSysMaintenance] = useState<boolean>(false);
   const [sysMaintMsg, setSysMaintMsg] = useState<string>('Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.');
   const [sysStrongPass, setSysStrongPass] = useState<boolean>(false);
@@ -153,6 +161,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   useEffect(() => {
     if (adminData?.systemConfig && !isSystemDirty) {
       setSysRegEnabled(adminData.systemConfig.registrationEnabled);
+      setSysInviteOnly(Boolean(adminData.systemConfig.inviteOnlyRegistration));
+      setSysRequireUniqueEmail(adminData.systemConfig.requireUniqueEmail !== false);
+      setSysDefaultWallet(adminData.systemConfig.defaultWalletBalance ?? 100);
+      setSysMaxAccountsPerIp(adminData.systemConfig.maxAccountsPerIpPerDay ?? 3);
       setSysMaintenance(adminData.systemConfig.maintenanceMode);
       setSysMaintMsg(adminData.systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.');
       setSysStrongPass(adminData.systemConfig.requireStrongPasswords);
@@ -638,6 +650,131 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
 
                   <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
                     <div>
+                      <div className="text-sm font-semibold text-white">Yalnızca Davet Kodu ile Kayıt</div>
+                      <div className="text-xs text-white/45">Açıkken yeni kayıtlar için geçerli bir kayıt davet kodu zorunlu olur.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setSysInviteOnly(!sysInviteOnly); setIsSystemDirty(true); }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysInviteOnly ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysInviteOnly ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Tekil E-Posta Zorunluluğu</div>
+                      <div className="text-xs text-white/45">Aynı e-posta adresi ile birden fazla hesap açılmasını engeller.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setSysRequireUniqueEmail(!sysRequireUniqueEmail); setIsSystemDirty(true); }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysRequireUniqueEmail ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysRequireUniqueEmail ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-white/5">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 uppercase mb-1">
+                        Günlük IP Başına Max Kayıt
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={sysMaxAccountsPerIp}
+                        onChange={(e) => { setSysMaxAccountsPerIp(Number(e.target.value)); setIsSystemDirty(true); }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-white/50 uppercase mb-1">
+                        Yeni Üye Başlangıç Bakiyesi (₺)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={10000}
+                        value={sysDefaultWallet}
+                        onChange={(e) => { setSysDefaultWallet(Number(e.target.value)); setIsSystemDirty(true); }}
+                        className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Registration Invite Codes */}
+                  <div className="pt-3 border-t border-white/5 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-bold text-white">Kayıt Davet Kodları</div>
+                        <div className="text-[11px] text-white/45">Davetli kayıt modu açıkken kullanılacak kodları oluşturun.</div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={newInviteMaxUses}
+                          onChange={(e) => setNewInviteMaxUses(Number(e.target.value))}
+                          className="w-16 px-2 py-1 rounded-lg bg-black/30 border border-white/10 text-xs text-white text-center"
+                          title="Max Kullanım"
+                        />
+                        <select
+                          value={newInviteHours}
+                          onChange={(e) => setNewInviteHours(Number(e.target.value))}
+                          className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-xs text-white"
+                        >
+                          <option value={1}>1 Saat</option>
+                          <option value={24}>24 Saat</option>
+                          <option value={168}>7 Gün</option>
+                          <option value={0}>Süresiz</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            adminCreateRegInvite(newInviteMaxUses, newInviteHours);
+                            setTimeout(() => fetchAdminData(), 300);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-300 text-xs font-bold transition"
+                        >
+                          + Kod Üret
+                        </button>
+                      </div>
+                    </div>
+                    {(adminData?.systemConfig?.registrationInvites || []).length > 0 && (
+                      <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                        {(adminData?.systemConfig?.registrationInvites || []).map((inv) => (
+                          <div
+                            key={inv.code}
+                            className="px-3 py-1.5 rounded-xl bg-black/25 border border-white/5 flex items-center justify-between text-xs"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className="font-mono font-bold text-amber-300">{inv.code}</span>
+                              <span className="text-[11px] text-white/50">
+                                Kullanım: {inv.uses}/{inv.maxUses}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                adminDeleteRegInvite(inv.code);
+                                setTimeout(() => fetchAdminData(), 300);
+                              }}
+                              className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold"
+                            >
+                              Sil
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
+                    <div>
                       <div className="text-sm font-semibold text-white">Bakım Modu (Aktif Erişim Duvarı)</div>
                       <div className="text-xs text-white/45">Açıkken admin olmayanların giriş ve kayıt işlemleri engellenir.</div>
                     </div>
@@ -1086,6 +1223,10 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         .filter(Boolean);
                       adminUpdateSystemConfig({
                         registrationEnabled: sysRegEnabled,
+                        inviteOnlyRegistration: sysInviteOnly,
+                        requireUniqueEmail: sysRequireUniqueEmail,
+                        defaultWalletBalance: sysDefaultWallet,
+                        maxAccountsPerIpPerDay: sysMaxAccountsPerIp,
                         maintenanceMode: sysMaintenance,
                         maintenanceMessage: sysMaintMsg,
                         requireStrongPasswords: sysStrongPass,

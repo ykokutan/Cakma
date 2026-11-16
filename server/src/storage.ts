@@ -172,8 +172,22 @@ export interface PinnedBanner {
   updatedAt: string;
 }
 
+export interface RegistrationInvite {
+  code: string;
+  createdBy: string;
+  createdAt: string;
+  maxUses: number;
+  uses: number;
+  expiresAt?: number | null;
+}
+
 export interface SystemConfig {
   registrationEnabled: boolean;
+  inviteOnlyRegistration?: boolean;
+  registrationInvites?: RegistrationInvite[];
+  defaultWalletBalance?: number;
+  maxAccountsPerIpPerDay?: number;
+  requireUniqueEmail?: boolean;
   maintenanceMode: boolean;
   maintenanceMessage?: string;
   maxMessageLength: number;

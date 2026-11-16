@@ -520,6 +520,11 @@ if (issuedLicenses.size === 0) {
 // Runtime System Configuration (Admin configurable)
 const defaultSystemConfig: SystemConfig = {
   registrationEnabled: true,
+  inviteOnlyRegistration: false,
+  registrationInvites: [],
+  defaultWalletBalance: 100,
+  maxAccountsPerIpPerDay: 3,
+  requireUniqueEmail: true,
   maintenanceMode: false,
   maintenanceMessage: 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.',
   maxMessageLength: 2000,
@@ -1051,6 +1056,70 @@ export function verifySessionToken(token: string): string | null {
   return verifySessionTokenWithMeta(token)?.username ?? null;
 }
 
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com',
+  'tempmail.com',
+  '10minutemail.com',
+  'guerrillamail.com',
+  'yopmail.com',
+  'trashmail.com',
+  'sharklasers.com',
+  'getnada.com',
+  'dispostable.com',
+]);
+
+const COMMON_WEAK_PASSWORDS = new Set([
+  '1234',
+  '12345',
+  '123456',
+  '1234567',
+  '12345678',
+  '123456789',
+  '1234567890',
+  'password',
+  'qwerty',
+  'qwerty123',
+  'admin123',
+  '11111111',
+  '00000000',
+  'letmein',
+  'abc12345',
+]);
+
+const ipDailyRegistrations = new Map<string, { date: string; count: number }>();
+
+export function generateRegisterChallenge(): { token: string; question: string } {
+  const a = Math.floor(Math.random() * 9) + 2;
+  const b = Math.floor(Math.random() * 9) + 2;
+  const ans = a + b;
+  const payload = Buffer.from(
+    JSON.stringify({
+      ans,
+      exp: Date.now() + 5 * 60_000,
+      nonce: crypto.randomBytes(6).toString('hex'),
+    })
+  ).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return { token: `${payload}.${sig}`, question: `${a} + ${b} = ?` };
+}
+
+export function verifyRegisterChallenge(token: string, answer: string | number): boolean {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return false;
+  const [payload, sig] = token.split('.');
+  if (!payload || !sig) return false;
+  const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  try {
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return false;
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    if (!parsed.exp || parsed.exp < Date.now()) return false;
+    return Number(answer) === Number(parsed.ans);
+  } catch {
+    return false;
+  }
+}
+
 const activeSessions = new Map<string, { socketId: string; username: string; ip: string; userAgent: string; connectedAt: string }>();
 const userVoiceActivity = new Map<string, number>();
 
@@ -1365,8 +1434,28 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
+  // 1a. Registration Challenge (Bot & Spam protection)
+  socket.on('get_register_challenge', () => {
+    const ch = generateRegisterChallenge();
+    socket.emit('register_challenge', {
+      token: ch.token,
+      question: ch.question,
+      inviteOnly: Boolean(systemConfig.inviteOnlyRegistration && registeredAccounts.size > 0),
+      requireStrongPasswords: Boolean(systemConfig.requireStrongPasswords),
+    });
+  });
+
   // 1. REGISTER (Kayıt Olma)
-  socket.on('auth_register', ({ username, email, password, avatar }: any) => {
+  socket.on('auth_register', ({
+    username,
+    email,
+    password,
+    avatar,
+    inviteCode,
+    challengeToken,
+    challengeAnswer,
+    honeypot,
+  }: any) => {
     const clientIp = getClientIp(socket);
     const ipBan = findActiveIpBan(clientIp);
     if (ipBan) {
@@ -1374,6 +1463,10 @@ io.on('connection', (socket: Socket) => {
         success: false,
         error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
       });
+    }
+    if (honeypot && String(honeypot).trim().length > 0) {
+      addAuditLog('BOT_KAYIT_ENGEL', `Honeypot tetiklendi (IP: ${clientIp})`, 'auth');
+      return socket.emit('auth_response', { success: false, error: 'Kayıt doğrulaması başarısız oldu.' });
     }
     if (systemConfig.maintenanceMode) {
       return socket.emit('auth_response', {
@@ -1395,15 +1488,85 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    const cleanUsername = sanitizeText(username?.trim()).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, 32);
-    const cleanEmail = email?.trim()?.toLowerCase().slice(0, 64);
-
-    if (!cleanUsername || cleanUsername.length < 3 || !password || password.length < (systemConfig.requireStrongPasswords ? 8 : 4)) {
+    if (!challengeToken || !verifyRegisterChallenge(challengeToken, challengeAnswer)) {
+      recordRegisterAttempt(clientIp);
       return socket.emit('auth_response', {
         success: false,
-        error: systemConfig.requireStrongPasswords
-          ? 'Kullanıcı adı en az 3, güçlü şifre politikası gereği şifre en az 8 karakter olmalıdır.'
-          : 'Kullanıcı adı en az 3, şifre en az 4 karakter olmalıdır.'
+        error: 'Güvenlik sorusu (doğrulama) hatalı veya süresi doldu. Lütfen yenileyip tekrar deneyin.',
+      });
+    }
+
+    const isFirstUser = registeredAccounts.size === 0;
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const dailyRec = ipDailyRegistrations.get(clientIp);
+    const maxPerIp = systemConfig.maxAccountsPerIpPerDay ?? 3;
+    if (!isFirstUser && dailyRec && dailyRec.date === todayKey && dailyRec.count >= maxPerIp) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: `Bu IP adresinden bugün en fazla ${maxPerIp} hesap oluşturulabilir.`,
+      });
+    }
+
+    const cleanUsername = sanitizeText(username?.trim()).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, 24);
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 64) : '';
+
+    if (!cleanUsername || !/^[a-zA-Z0-9_.-]{3,24}$/.test(cleanUsername)) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: 'Kullanıcı adı 3-24 karakter arasında olmalı ve yalnızca harf, rakam, _, ., - içermelidir.',
+      });
+    }
+
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: 'Lütfen geçerli bir e-posta adresi girin.',
+      });
+    }
+
+    const emailDomain = cleanEmail.split('@')[1] || '';
+    if (DISPOSABLE_EMAIL_DOMAINS.has(emailDomain)) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: 'Geçici (tek kullanımlık) e-posta adresleri ile kayıt olunamaz.',
+      });
+    }
+
+    if (systemConfig.requireUniqueEmail !== false) {
+      for (const acc of registeredAccounts.values()) {
+        if ((acc.email || '').toLowerCase() === cleanEmail) {
+          return socket.emit('auth_response', {
+            success: false,
+            error: 'Bu e-posta adresi ile zaten kayıtlı bir hesap var.',
+          });
+        }
+      }
+    }
+
+    if (!password || typeof password !== 'string') {
+      return socket.emit('auth_response', { success: false, error: 'Lütfen geçerli bir şifre girin.' });
+    }
+    if (password.toLowerCase() === cleanUsername.toLowerCase()) {
+      return socket.emit('auth_response', { success: false, error: 'Şifre kullanıcı adınızla aynı olamaz.' });
+    }
+    if (COMMON_WEAK_PASSWORDS.has(password.toLowerCase())) {
+      return socket.emit('auth_response', { success: false, error: 'Bu şifre çok yaygın ve güvensiz. Lütfen daha güçlü bir şifre seçin.' });
+    }
+
+    if (systemConfig.requireStrongPasswords) {
+      const hasUpper = /[A-Z]/.test(password);
+      const hasLower = /[a-z]/.test(password);
+      const hasDigit = /\d/.test(password);
+      if (password.length < 8 || !hasUpper || !hasLower || !hasDigit) {
+        return socket.emit('auth_response', {
+          success: false,
+          error: 'Güçlü şifre politikası: en az 8 karakter, 1 büyük harf, 1 küçük harf ve 1 rakam içermelidir.',
+        });
+      }
+    } else if (password.length < 4) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: 'Şifre en az 4 karakter olmalıdır.',
       });
     }
 
@@ -1412,26 +1575,48 @@ io.on('connection', (socket: Socket) => {
     }
 
     // Role assignment: only the very first account on a fresh DB becomes admin; prevent admin hijacking
-    const isFirstUser = registeredAccounts.size === 0;
-    const reservedAdminNames = ['admin', 'administrator', 'system', 'root', 'sistem'];
+    const reservedAdminNames = ['admin', 'administrator', 'system', 'root', 'sistem', 'moderator', 'mod', 'destek', 'support', 'yetkili', 'owner', 'kurucu'];
     if (!isFirstUser && reservedAdminNames.includes(cleanUsername.toLowerCase())) {
       return socket.emit('auth_response', { success: false, error: 'Bu kullanıcı adı sistem tarafından ayrılmıştır.' });
     }
+
+    if (!isFirstUser && systemConfig.inviteOnlyRegistration) {
+      const cleanInv = typeof inviteCode === 'string' ? inviteCode.trim().toUpperCase() : '';
+      const invList = systemConfig.registrationInvites || [];
+      const matched = invList.find((inv) => inv.code.toUpperCase() === cleanInv);
+      if (!matched) {
+        recordRegisterAttempt(clientIp);
+        return socket.emit('auth_response', { success: false, error: 'Geçersiz kayıt davet kodu.' });
+      }
+      if (matched.expiresAt && Date.now() > matched.expiresAt) {
+        return socket.emit('auth_response', { success: false, error: 'Bu kayıt davet kodunun süresi dolmuş.' });
+      }
+      if (matched.maxUses > 0 && matched.uses >= matched.maxUses) {
+        return socket.emit('auth_response', { success: false, error: 'Bu kayıt davet kodunun kullanım limiti dolmuş.' });
+      }
+      matched.uses += 1;
+      saveSystemConfig(systemConfig);
+    }
+
     const role = isFirstUser ? 'admin' : 'user';
 
     // Hash password with cryptographically secure scrypt
     const hashedPassword = hashPassword(password);
     recordRegisterAttempt(clientIp);
+    ipDailyRegistrations.set(clientIp, {
+      date: todayKey,
+      count: dailyRec && dailyRec.date === todayKey ? dailyRec.count + 1 : 1,
+    });
 
     const newAccount: RegisteredAccount = {
       id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       username: cleanUsername,
-      email: cleanEmail || `${cleanUsername.toLowerCase()}@local.com`,
+      email: cleanEmail,
       password: hashedPassword,
       avatar: avatar || '🎮',
       role,
       createdAt: new Date().toLocaleDateString('tr-TR'),
-      walletBalance: 1000,
+      walletBalance: systemConfig.defaultWalletBalance ?? 100,
       statusMessage: '✨ Yeni Katıldı',
       bannerColor: 'from-blue-600 via-indigo-600 to-purple-600',
       bio: 'Sohbet ve sesli odalara yeni katıldı.',
@@ -4501,6 +4686,10 @@ io.on('connection', (socket: Socket) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
     if (typeof nextCfg.registrationEnabled === 'boolean') systemConfig.registrationEnabled = nextCfg.registrationEnabled;
+    if (typeof nextCfg.inviteOnlyRegistration === 'boolean') systemConfig.inviteOnlyRegistration = nextCfg.inviteOnlyRegistration;
+    if (typeof nextCfg.requireUniqueEmail === 'boolean') systemConfig.requireUniqueEmail = nextCfg.requireUniqueEmail;
+    if (typeof nextCfg.defaultWalletBalance === 'number') systemConfig.defaultWalletBalance = Math.min(Math.max(Math.floor(nextCfg.defaultWalletBalance), 0), 10000);
+    if (typeof nextCfg.maxAccountsPerIpPerDay === 'number') systemConfig.maxAccountsPerIpPerDay = Math.min(Math.max(Math.floor(nextCfg.maxAccountsPerIpPerDay), 1), 20);
     if (typeof nextCfg.maintenanceMode === 'boolean') systemConfig.maintenanceMode = nextCfg.maintenanceMode;
     if (typeof nextCfg.maintenanceMessage === 'string') systemConfig.maintenanceMessage = sanitizeText(nextCfg.maintenanceMessage.trim()).slice(0, 240);
     if (typeof nextCfg.requireStrongPasswords === 'boolean') systemConfig.requireStrongPasswords = nextCfg.requireStrongPasswords;
@@ -4543,6 +4732,35 @@ io.on('connection', (socket: Socket) => {
     socket.emit('admin_feedback', { type: 'success', message: 'Sistem yapılandırması başarıyla kaydedildi.' });
     socket.emit('admin_action_success', 'Sistem yapılandırması başarıyla kaydedildi.');
     io.emit('audit_log_added', auditLogs[0]);
+  });
+
+  // Admin: Create / Delete Registration Invite Codes
+  socket.on('admin_create_reg_invite', ({ maxUses, expiresHours }: { maxUses?: number; expiresHours?: number }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const list = systemConfig.registrationInvites || [];
+    list.unshift({
+      code,
+      createdBy: requester.username,
+      createdAt: new Date().toLocaleString('tr-TR'),
+      maxUses: Math.min(Math.max(Number(maxUses) || 1, 1), 100),
+      uses: 0,
+      expiresAt: expiresHours && Number(expiresHours) > 0 ? Date.now() + Number(expiresHours) * 3600_000 : null,
+    });
+    systemConfig.registrationInvites = list.slice(0, 50);
+    saveSystemConfig(systemConfig);
+    addAuditLog('KAYIT_DAVETI_OLUSTURULDU', `${requester.username} kayıt davet kodu oluşturdu: ${code}`, 'auth');
+    socket.emit('admin_action_success', `Kayıt davet kodu oluşturuldu: ${code}`);
+    socket.emit('admin_reg_invites_updated', systemConfig.registrationInvites);
+  });
+
+  socket.on('admin_delete_reg_invite', ({ code }: { code: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || requester.role !== 'admin') return;
+    systemConfig.registrationInvites = (systemConfig.registrationInvites || []).filter((i) => i.code !== code);
+    saveSystemConfig(systemConfig);
+    socket.emit('admin_reg_invites_updated', systemConfig.registrationInvites);
   });
 
   // Admin: Clear connection logs
