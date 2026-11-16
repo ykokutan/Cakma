@@ -83,7 +83,22 @@ interface SocketContextType {
   lastClipboardNotice: string | null;
   remoteLaser: { x: number; y: number; active: boolean } | null;
   sendRemoteLaser: (x: number, y: number, active: boolean) => void;
-  updateProfileDetails: (details: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => void;
+  updateProfileDetails: (details: {
+    statusMessage?: string;
+    bio?: string;
+    bannerColor?: string;
+    bannerImage?: string;
+    bannerPosition?: 'top' | 'center' | 'bottom';
+    avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+    pinnedBadgeId?: string;
+    socialLinks?: { steam?: string; github?: string; website?: string };
+    avatar?: string;
+    status?: 'online' | 'idle' | 'dnd' | 'offline';
+  }) => void;
+  transferWalletBalance: (
+    targetUsername: string,
+    amount: number
+  ) => Promise<{ success: boolean; message?: string; error?: string; newBalance?: number }>;
 
   // System Announcement
   systemAnnouncement: { sender: string; message: string; timestamp: string } | null;
@@ -3344,9 +3359,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [socket, isDirectCameraOn]);
 
-  const updateProfileDetails = useCallback(({ statusMessage, bio, bannerColor, bannerImage, avatar, status }: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => {
+  const updateProfileDetails = useCallback((details: {
+    statusMessage?: string;
+    bio?: string;
+    bannerColor?: string;
+    bannerImage?: string;
+    bannerPosition?: 'top' | 'center' | 'bottom';
+    avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+    pinnedBadgeId?: string;
+    socialLinks?: { steam?: string; github?: string; website?: string };
+    avatar?: string;
+    status?: 'online' | 'idle' | 'dnd' | 'offline';
+  }) => {
     if (!socket) return;
-    socket.emit('update_profile', { statusMessage, bio, bannerColor, bannerImage, avatar, status });
+    socket.emit('update_profile', details);
+  }, [socket]);
+
+  const transferWalletBalance = useCallback((targetUsername: string, amount: number): Promise<{ success: boolean; message?: string; error?: string; newBalance?: number }> => {
+    return new Promise((resolve) => {
+      if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
+      let answered = false;
+      const timer = setTimeout(() => {
+        if (!answered) {
+          answered = true;
+          resolve({ success: false, error: 'İşlem zaman aşımına uğradı.' });
+        }
+      }, 5000);
+      socket.emit('transfer_wallet_balance', { targetUsername, amount });
+      socket.once('wallet_transfer_result', (res: { success: boolean; message?: string; error?: string; newBalance?: number }) => {
+        if (answered) return;
+        answered = true;
+        clearTimeout(timer);
+        resolve(res);
+      });
+    });
   }, [socket]);
 
   // Friends System Handlers
@@ -4333,6 +4379,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         remoteLaser,
         sendRemoteLaser,
         updateProfileDetails,
+        transferWalletBalance,
 
         // System Announcement
         systemAnnouncement,

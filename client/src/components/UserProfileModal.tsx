@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { User } from '../types';
 import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
+import { ActivitySelectorModal } from './ActivitySelectorModal';
 import {
   X,
   MessageCircle,
@@ -29,6 +30,12 @@ import {
   Image as ImageIcon,
   Link2,
   Trash2,
+  Copy,
+  Star,
+  Globe,
+  Send,
+  Users,
+  Layers,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -57,6 +64,66 @@ const STATUS_PRESETS = [
 
 const AVATAR_PRESETS = ['🛡️', '👑', '🚀', '💎', '⚡', '🎮', '🎧', '🤖', '🦊', '🐱', '🔥', '🌟'];
 
+const AVATAR_FRAMES: {
+  id: NonNullable<User['avatarFrame']>;
+  label: string;
+  ringClass: string;
+  swatch: string;
+}[] = [
+  { id: 'none', label: 'Yok', ringClass: 'border-neutral-900', swatch: 'bg-white/10' },
+  {
+    id: 'gold',
+    label: 'Altın',
+    ringClass: 'border-amber-400 ring-2 ring-amber-400/40 shadow-[0_0_20px_rgba(251,191,36,0.35)]',
+    swatch: 'bg-gradient-to-tr from-amber-500 to-yellow-300',
+  },
+  {
+    id: 'neon',
+    label: 'Neon Mor',
+    ringClass: 'border-fuchsia-400 ring-2 ring-purple-500/50 shadow-[0_0_20px_rgba(192,132,252,0.45)]',
+    swatch: 'bg-gradient-to-tr from-purple-600 to-fuchsia-400',
+  },
+  {
+    id: 'emerald',
+    label: 'Zümrüt',
+    ringClass: 'border-emerald-400 ring-2 ring-emerald-500/45 shadow-[0_0_20px_rgba(52,211,153,0.4)]',
+    swatch: 'bg-gradient-to-tr from-emerald-500 to-teal-300',
+  },
+  {
+    id: 'crimson',
+    label: 'Kızıl',
+    ringClass: 'border-rose-500 ring-2 ring-rose-500/45 shadow-[0_0_20px_rgba(244,63,94,0.4)]',
+    swatch: 'bg-gradient-to-tr from-rose-600 to-orange-400',
+  },
+  {
+    id: 'rainbow',
+    label: 'Prizma',
+    ringClass: 'border-cyan-300 ring-2 ring-pink-500/50 shadow-[0_0_22px_rgba(56,189,248,0.45)]',
+    swatch: 'bg-gradient-to-tr from-cyan-400 via-purple-500 to-pink-500',
+  },
+];
+
+function renderRichBio(text: string): React.ReactNode {
+  const urlRegex = /(https?:\/\/[^\s<]+)/g;
+  const parts = text.split(urlRegex);
+  return parts.map((part, idx) => {
+    if (part.startsWith('http://') || part.startsWith('https://')) {
+      return (
+        <a
+          key={idx}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sky-400 hover:text-sky-300 underline underline-offset-2 break-all"
+        >
+          {part}
+        </a>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+}
+
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUser, onClose }) => {
   const {
     currentUser,
@@ -72,11 +139,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     removeFriend,
     logout,
     activeServer,
+    servers,
     blockUser,
     unblockUser,
     timeoutMember,
     userNotes,
     setUserNote: setGlobalUserNote,
+    updateUserActivity,
+    transferWalletBalance,
   } = useSocket();
 
   const isMe = currentUser?.id === propUser.id || currentUser?.username.toLowerCase() === propUser.username.toLowerCase();
@@ -100,15 +170,33 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   const [editBio, setEditBio] = useState(user.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.');
   const [editBannerColor, setEditBannerColor] = useState(user.bannerColor || BANNER_PRESETS[0].class);
   const [editBannerImage, setEditBannerImage] = useState(user.bannerImage || '');
+  const [editBannerPosition, setEditBannerPosition] = useState<'top' | 'center' | 'bottom'>(
+    user.bannerPosition || 'center'
+  );
   const [editAvatar, setEditAvatar] = useState(user.avatar || '🎮');
-  const [editStatus, setEditStatus] = useState<'online' | 'idle' | 'dnd'>(
-    user.status === 'idle' || user.status === 'dnd' ? user.status : 'online'
+  const [editAvatarFrame, setEditAvatarFrame] = useState<NonNullable<User['avatarFrame']>>(
+    user.avatarFrame || 'none'
+  );
+  const [editPinnedBadgeId, setEditPinnedBadgeId] = useState(user.pinnedBadgeId || '');
+  const [editSocialLinks, setEditSocialLinks] = useState<{ steam?: string; github?: string; website?: string }>(
+    user.socialLinks || {}
+  );
+  const [editStatus, setEditStatus] = useState<'online' | 'idle' | 'dnd' | 'offline'>(
+    user.status === 'idle' || user.status === 'dnd' || user.status === 'offline' ? user.status : 'online'
   );
   const [avatarUrlInput, setAvatarUrlInput] = useState('');
   const [bannerUrlInput, setBannerUrlInput] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [profileSavedFeedback, setProfileSavedFeedback] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
+  const [profileTab, setProfileTab] = useState<'about' | 'servers' | 'friends'>('about');
+  const [hoveredBadgeId, setHoveredBadgeId] = useState<string | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferAmount, setTransferAmount] = useState('50');
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferFeedback, setTransferFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
   const avatarFileRef = useRef<HTMLInputElement>(null);
   const bannerFileRef = useRef<HTMLInputElement>(null);
@@ -118,8 +206,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     setEditBio(user.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.');
     setEditBannerColor(user.bannerColor || BANNER_PRESETS[0].class);
     setEditBannerImage(user.bannerImage || '');
+    setEditBannerPosition(user.bannerPosition || 'center');
     setEditAvatar(user.avatar || '🎮');
-    if (user.status === 'online' || user.status === 'idle' || user.status === 'dnd') {
+    setEditAvatarFrame(user.avatarFrame || 'none');
+    setEditPinnedBadgeId(user.pinnedBadgeId || '');
+    setEditSocialLinks(user.socialLinks || {});
+    if (user.status === 'online' || user.status === 'idle' || user.status === 'dnd' || user.status === 'offline') {
       setEditStatus(user.status);
     }
   }, [user]);
@@ -161,6 +253,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
       bio: editBio,
       bannerColor: editBannerColor,
       bannerImage: finalBannerImage,
+      bannerPosition: editBannerPosition,
+      avatarFrame: editAvatarFrame,
+      pinnedBadgeId: editPinnedBadgeId,
+      socialLinks: editSocialLinks,
       avatar: finalAvatar,
       status: editStatus,
     });
@@ -236,8 +332,30 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
 
   const activeBanner = isEditing ? editBannerColor : (user.bannerColor || BANNER_PRESETS[0].class);
   const activeBannerImage = isEditing ? editBannerImage : (user.bannerImage || '');
+  const activeBannerPosition = isEditing ? editBannerPosition : (user.bannerPosition || 'center');
   const activeAvatar = isEditing ? editAvatar : (user.avatar || '🎮');
+  const activeAvatarFrame = isEditing ? editAvatarFrame : (user.avatarFrame || 'none');
+  const activeFrameObj = AVATAR_FRAMES.find((f) => f.id === activeAvatarFrame) || AVATAR_FRAMES[0];
   const activeStatus = isEditing ? editStatus : user.status;
+  const bannerPosClass =
+    activeBannerPosition === 'top'
+      ? 'object-top'
+      : activeBannerPosition === 'bottom'
+      ? 'object-bottom'
+      : 'object-center';
+
+  const mutualServers = servers.filter((s) => s.id !== 'direct-messages');
+  const mutualFriends = isMe
+    ? friends
+    : friends.filter((f) =>
+        (user.friends || []).some((uf) => uf.toLowerCase() === f.username.toLowerCase())
+      );
+
+  const handleQuickStatusChange = (nextStatus: 'online' | 'idle' | 'dnd' | 'offline') => {
+    setEditStatus(nextStatus);
+    updateProfileDetails({ status: nextStatus });
+    setShowStatusMenu(false);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
@@ -267,7 +385,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
             <img
               src={activeBannerImage}
               alt="Profil Banner"
-              className="absolute inset-0 w-full h-full object-cover"
+              className={`absolute inset-0 w-full h-full object-cover ${bannerPosClass} transition-all duration-300`}
               draggable={false}
             />
           )}
@@ -352,11 +470,13 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
         {/* Avatar & Badges Header */}
         <div className="relative px-6 pb-6 pt-0 bg-neutral-900/80 backdrop-blur-xl">
           <div className="flex justify-between items-end -mt-12 mb-4">
-            {/* Avatar with Halo Indicator */}
+            {/* Avatar with Halo Indicator & Frame */}
             <div className="relative group/avatar">
               <div
                 onClick={() => isEditing && avatarFileRef.current?.click()}
-                className={`w-24 h-24 rounded-3xl bg-neutral-800 border-4 border-neutral-900 flex items-center justify-center text-4xl shadow-xl transition-all overflow-hidden relative ${
+                className={`w-24 h-24 rounded-3xl bg-neutral-800 border-4 flex items-center justify-center text-4xl shadow-xl transition-all overflow-hidden relative ${
+                  activeFrameObj.ringClass
+                } ${
                   user.isSpeaking ? 'ios-halo' : ''
                 } ${isEditing ? 'cursor-pointer ring-2 ring-blue-400/50 hover:ring-blue-400' : ''}`}
               >
@@ -372,11 +492,38 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                   </div>
                 )}
               </div>
-              <div
-                className={`absolute bottom-1 right-1 w-5 h-5 rounded-full border-2 border-neutral-900 shadow-md ${getStatusColor(
+              <button
+                type="button"
+                onClick={() => isMe && !isEditing && setShowStatusMenu((v) => !v)}
+                className={`absolute bottom-1 right-1 w-5 h-5 rounded-full border-2 border-neutral-900 shadow-md transition-transform ${getStatusColor(
                   activeStatus
-                )}`}
+                )} ${isMe && !isEditing ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
+                title={isMe && !isEditing ? 'Çevrimiçi durumunu hızlı değiştir' : undefined}
               />
+              {isMe && !isEditing && showStatusMenu && (
+                <div className="absolute left-0 top-full mt-2 z-30 w-44 rounded-2xl bg-slate-900/95 border border-white/15 shadow-2xl p-1.5 backdrop-blur-xl animate-fade-in">
+                  {[
+                    { id: 'online', label: 'Çevrimiçi', dot: 'bg-emerald-400' },
+                    { id: 'idle', label: 'Boşta', dot: 'bg-amber-400' },
+                    { id: 'dnd', label: 'Rahatsız Etmeyin', dot: 'bg-red-400' },
+                    { id: 'offline', label: 'Görünmez', dot: 'bg-slate-500' },
+                  ].map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => handleQuickStatusChange(st.id as 'online' | 'idle' | 'dnd' | 'offline')}
+                      className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs transition ${
+                        activeStatus === st.id
+                          ? 'bg-white/15 text-white font-semibold'
+                          : 'text-white/75 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <span className={`w-2.5 h-2.5 rounded-full ${st.dot}`} />
+                      <span>{st.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Action Buttons: If me show Logout, if other user show DM / Call / Friend */}
@@ -480,13 +627,39 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                 )}
               </div>
 
-              <div
+              <button
+                type="button"
                 onClick={handleCopyId}
-                className="text-xs text-white/40 font-mono hover:text-white/70 cursor-pointer inline-flex items-center gap-1 transition"
+                className="text-xs text-white/45 font-mono hover:text-white/80 cursor-pointer inline-flex items-center gap-1.5 transition mt-0.5"
                 title="Kullanıcı ID'sini Kopyala"
               >
                 <span>#{user.id.slice(0, 8)}</span>
-                {copiedId && <span className="text-[10px] text-emerald-400 font-sans">Kopyalandı!</span>}
+                <Copy className="w-3 h-3 opacity-70" />
+                {copiedId && <span className="text-[10px] text-emerald-400 font-sans font-semibold">Kopyalandı ✓</span>}
+              </button>
+            </div>
+
+            {/* Mini Stats Strip */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 flex items-center justify-between">
+                <span className="text-[10px] text-white/45 flex items-center gap-1">
+                  <Layers className="w-3 h-3 text-indigo-400" /> Sunucu
+                </span>
+                <span className="text-xs font-bold text-white/90">{mutualServers.length}</span>
+              </div>
+              <div className="px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 flex items-center justify-between">
+                <span className="text-[10px] text-white/45 flex items-center gap-1">
+                  <Users className="w-3 h-3 text-emerald-400" /> Arkadaş
+                </span>
+                <span className="text-xs font-bold text-white/90">
+                  {isMe ? friends.length : (user.friends?.length ?? mutualFriends.length)}
+                </span>
+              </div>
+              <div className="px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 flex items-center justify-between">
+                <span className="text-[10px] text-white/45 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-400" /> Rozet
+                </span>
+                <span className="text-xs font-bold text-white/90">{user.badges?.length || 0}</span>
               </div>
             </div>
 
@@ -588,11 +761,24 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
 
             {/* Custom Status Message */}
             {!isEditing ? (
-              <div className="px-3 py-2 rounded-xl bg-white/[0.04] border border-white/5 flex items-center gap-2">
-                <span className="text-sm">💬</span>
-                <span className="text-xs text-white/80 font-medium">
-                  {user.statusMessage || 'Çevrimiçi'}
-                </span>
+              <div className="px-3 py-2 rounded-xl bg-white/[0.04] border border-white/5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm shrink-0">💬</span>
+                  <span className="text-xs text-white/80 font-medium truncate">
+                    {user.statusMessage || 'Çevrimiçi'}
+                  </span>
+                </div>
+                {isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setIsActivityModalOpen(true)}
+                    className="shrink-0 px-2 py-0.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-[10px] font-semibold text-purple-300 transition flex items-center gap-1"
+                    title="Özel Durum / Aktivite Ayarla"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>{user.activity ? 'Aktivite' : '+ Aktivite'}</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -623,50 +809,192 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
             )}
 
             {/* Profile Badges */}
-            {user.badges && user.badges.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="text-[11px] font-semibold text-white/40 uppercase tracking-wider flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                  Kazanılan Rozetler ({user.badges.length})
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {user.badges.map((b) => (
-                    <div
-                      key={b.id}
-                      className={`px-2.5 py-1 rounded-xl bg-gradient-to-r ${b.color} text-white text-xs font-bold flex items-center gap-1.5 shadow-md border border-white/10`}
-                      title={b.description}
-                    >
-                      <span>{b.icon}</span>
-                      <span>{b.name}</span>
+            {user.badges && user.badges.length > 0 && (() => {
+              const pinnedId = isEditing ? editPinnedBadgeId : (user.pinnedBadgeId || '');
+              const sortedBadges = [...user.badges].sort((a, b) =>
+                a.id === pinnedId ? -1 : b.id === pinnedId ? 1 : 0
+              );
+              const hoveredBadge = sortedBadges.find((b) => b.id === hoveredBadgeId);
+              return (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[11px] font-semibold text-white/40 uppercase tracking-wider flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      Kazanılan Rozetler ({user.badges.length})
                     </div>
+                    {isEditing && (
+                      <span className="text-[10px] text-white/40">Öne çıkarmak için tıkla</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {sortedBadges.map((b) => {
+                      const isPinned = b.id === pinnedId;
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onMouseEnter={() => setHoveredBadgeId(b.id)}
+                          onMouseLeave={() => setHoveredBadgeId((prev) => (prev === b.id ? null : prev))}
+                          onClick={() => {
+                            if (isEditing) {
+                              setEditPinnedBadgeId(isPinned ? '' : b.id);
+                            }
+                          }}
+                          className={`px-2.5 py-1 rounded-xl bg-gradient-to-r ${b.color} text-white text-xs font-bold flex items-center gap-1.5 shadow-md border transition ${
+                            isPinned ? 'border-amber-300 ring-1 ring-amber-300/60' : 'border-white/10'
+                          } ${isEditing ? 'cursor-pointer hover:scale-105' : 'cursor-default'}`}
+                        >
+                          <span>{b.icon}</span>
+                          <span>{b.name}</span>
+                          {isPinned && <Star className="w-3 h-3 text-amber-200 fill-amber-200" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {hoveredBadge && hoveredBadge.description && (
+                    <div className="px-2.5 py-1.5 rounded-xl bg-black/50 border border-white/10 text-[11px] text-white/80 flex items-center gap-1.5 animate-fade-in">
+                      <span>{hoveredBadge.icon}</span>
+                      <span className="font-semibold text-white">{hoveredBadge.name}:</span>
+                      <span className="text-white/65">{hoveredBadge.description}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Bio / Hakkında & Social / Mutual Tabs */}
+            {!isEditing ? (
+              <div className="space-y-2.5 pt-1">
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/10">
+                  {[
+                    { id: 'about', label: 'Hakkında' },
+                    { id: 'servers', label: `${isMe ? 'Sunucular' : 'Ortak Sunucular'} (${mutualServers.length})` },
+                    { id: 'friends', label: `${isMe ? 'Arkadaşlar' : 'Ortak Arkadaşlar'} (${mutualFriends.length})` },
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setProfileTab(tab.id as 'about' | 'servers' | 'friends')}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-semibold transition ${
+                        profileTab === tab.id
+                          ? 'bg-white/15 text-white shadow-sm'
+                          : 'text-white/50 hover:text-white/80'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
                   ))}
                 </div>
-              </div>
-            )}
 
-            {/* Bio / Hakkında */}
-            <div className="space-y-1.5 pt-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-                <span>Hakkında</span>
-                {isEditing && (
-                  <span className="font-mono text-[10px] text-white/40">{editBio.length} / 500</span>
+                {profileTab === 'about' && (
+                  <div className="space-y-2">
+                    <div className="text-xs text-white/75 leading-relaxed bg-white/[0.03] p-3 rounded-xl border border-white/5 whitespace-pre-wrap">
+                      {renderRichBio(user.bio || 'Bu kullanıcı henüz hakkında yazısı eklememiş.')}
+                    </div>
+                    {(user.socialLinks?.steam || user.socialLinks?.github || user.socialLinks?.website) && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {user.socialLinks.steam && (
+                          <a
+                            href={user.socialLinks.steam.startsWith('http') ? user.socialLinks.steam : `https://steamcommunity.com/id/${user.socialLinks.steam}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 text-[11px] text-sky-300 flex items-center gap-1.5 transition"
+                          >
+                            <Gamepad2 className="w-3 h-3" /> Steam
+                          </a>
+                        )}
+                        {user.socialLinks.github && (
+                          <a
+                            href={user.socialLinks.github.startsWith('http') ? user.socialLinks.github : `https://github.com/${user.socialLinks.github}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 text-[11px] text-white/85 flex items-center gap-1.5 transition"
+                          >
+                            <Link2 className="w-3 h-3" /> GitHub
+                          </a>
+                        )}
+                        {user.socialLinks.website && (
+                          <a
+                            href={user.socialLinks.website.startsWith('http') ? user.socialLinks.website : `https://${user.socialLinks.website}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 text-[11px] text-emerald-300 flex items-center gap-1.5 transition"
+                          >
+                            <Globe className="w-3 h-3" /> Web
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {profileTab === 'servers' && (
+                  <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                    {mutualServers.length === 0 ? (
+                      <div className="text-xs text-white/40 text-center py-3">Sunucu bulunamadı.</div>
+                    ) : (
+                      mutualServers.map((srv) => (
+                        <div
+                          key={srv.id}
+                          className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-2.5"
+                        >
+                          <span className="text-base">{srv.icon || '🌐'}</span>
+                          <span className="text-xs font-medium text-white/85 truncate">{srv.name}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {profileTab === 'friends' && (
+                  <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                    {mutualFriends.length === 0 ? (
+                      <div className="text-xs text-white/40 text-center py-3">
+                        {isMe ? 'Henüz arkadaş eklenmemiş.' : 'Ortak arkadaş bulunamadı.'}
+                      </div>
+                    ) : (
+                      mutualFriends.map((fr) => (
+                        <div
+                          key={fr.id}
+                          className="px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/5 flex items-center gap-2.5"
+                        >
+                          <div className="w-6 h-6 rounded-lg overflow-hidden bg-white/10 flex items-center justify-center text-xs shrink-0">
+                            <AvatarView avatar={fr.avatar} alt={fr.username} imgClassName="w-full h-full object-cover" />
+                          </div>
+                          <span className="text-xs font-medium text-white/85 truncate flex-1">{fr.username}</span>
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              fr.status === 'online'
+                                ? 'bg-emerald-400'
+                                : fr.status === 'idle'
+                                ? 'bg-amber-400'
+                                : fr.status === 'dnd'
+                                ? 'bg-red-400'
+                                : 'bg-white/25'
+                            }`}
+                          />
+                        </div>
+                      ))
+                    )}
+                  </div>
                 )}
               </div>
-              {!isEditing ? (
-                <p className="text-xs text-white/70 leading-relaxed bg-white/[0.03] p-3 rounded-xl border border-white/5">
-                  {user.bio || 'Bu kullanıcı henüz hakkında yazısı eklememiş.'}
-                </p>
-              ) : (
+            ) : (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+                  <span>Hakkında</span>
+                  <span className="font-mono text-[10px] text-white/40">{editBio.length} / 500</span>
+                </div>
                 <textarea
                   value={editBio}
                   maxLength={500}
                   onChange={(e) => setEditBio(e.target.value)}
                   rows={2}
                   className="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white outline-none focus:border-blue-500 resize-none"
-                  placeholder="Kendinizden bahsedin..."
+                  placeholder="Kendinizden bahsedin (https://... linkler otomatik tıklanabilir)..."
                 />
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Private User Note (Only visible to current user) */}
             {!isMe && (
@@ -880,6 +1208,87 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                       />
                     ))}
                   </div>
+
+                  {/* Banner Focal Position */}
+                  {editBannerImage && (
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <span className="text-[11px] text-white/50 font-medium">Banner Odak Noktası:</span>
+                      <div className="flex items-center gap-1">
+                        {[
+                          { id: 'top', label: 'Yukarı' },
+                          { id: 'center', label: 'Orta' },
+                          { id: 'bottom', label: 'Aşağı' },
+                        ].map((pos) => (
+                          <button
+                            key={pos.id}
+                            type="button"
+                            onClick={() => setEditBannerPosition(pos.id as 'top' | 'center' | 'bottom')}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-semibold border transition ${
+                              editBannerPosition === pos.id
+                                ? 'bg-purple-500/25 border-purple-400 text-white'
+                                : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                            }`}
+                          >
+                            {pos.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Avatar Frame Picker */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider block">
+                    Avatar Çerçevesi
+                  </label>
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {AVATAR_FRAMES.map((fr) => (
+                      <button
+                        key={fr.id}
+                        type="button"
+                        onClick={() => setEditAvatarFrame(fr.id)}
+                        className={`py-1.5 px-1 rounded-xl border text-[10px] font-semibold flex flex-col items-center gap-1 transition ${
+                          editAvatarFrame === fr.id
+                            ? 'bg-white/15 border-white text-white'
+                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                        }`}
+                      >
+                        <span className={`w-4 h-4 rounded-full border border-white/30 ${fr.swatch}`} />
+                        <span>{fr.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Social Links */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider block">
+                    Sosyal &amp; Oyun Bağlantıları (İsteğe Bağlı)
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <input
+                      type="text"
+                      value={editSocialLinks.steam || ''}
+                      onChange={(e) => setEditSocialLinks((s) => ({ ...s, steam: e.target.value }))}
+                      placeholder="Steam ID / URL"
+                      className="px-2.5 py-1.5 rounded-xl bg-black/40 border border-white/10 text-[11px] text-white outline-none focus:border-sky-500"
+                    />
+                    <input
+                      type="text"
+                      value={editSocialLinks.github || ''}
+                      onChange={(e) => setEditSocialLinks((s) => ({ ...s, github: e.target.value }))}
+                      placeholder="GitHub / URL"
+                      className="px-2.5 py-1.5 rounded-xl bg-black/40 border border-white/10 text-[11px] text-white outline-none focus:border-sky-500"
+                    />
+                    <input
+                      type="text"
+                      value={editSocialLinks.website || ''}
+                      onChange={(e) => setEditSocialLinks((s) => ({ ...s, website: e.target.value }))}
+                      placeholder="Web Sitesi"
+                      className="px-2.5 py-1.5 rounded-xl bg-black/40 border border-white/10 text-[11px] text-white outline-none focus:border-sky-500"
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -934,22 +1343,106 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
               </div>
             )}
 
-            {/* Account Info Footer */}
-            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-white/40">
-              <div className="flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5" />
-                <span>Kayıt: {user.createdAt || '2026'}</span>
+            {/* Account Info Footer + Quick Balance Transfer */}
+            <div className="pt-2 border-t border-white/10 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-white/40">
+                <div className="flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Kayıt: {user.createdAt || '2026'}</span>
+                </div>
+                {isMe && user.walletBalance !== undefined ? (
+                  <div className="flex items-center gap-1 text-emerald-400 font-medium">
+                    <Wallet className="w-3.5 h-3.5" />
+                    <span>Bakiye: {user.walletBalance} ₺</span>
+                  </div>
+                ) : !isMe ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTransferOpen((v) => !v);
+                      setTransferFeedback(null);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold flex items-center gap-1 transition"
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>₺ Bakiye Gönder</span>
+                  </button>
+                ) : null}
               </div>
-              {isMe && user.walletBalance !== undefined && (
-                <div className="flex items-center gap-1 text-emerald-400 font-medium">
-                  <Wallet className="w-3.5 h-3.5" />
-                  <span>Bakiye: {user.walletBalance} ₺</span>
+
+              {!isMe && transferOpen && (
+                <div className="p-2.5 rounded-xl bg-emerald-500/[0.08] border border-emerald-500/25 space-y-2 animate-fade-in">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-emerald-300 font-semibold">
+                      {user.username} kullanıcısına bakiye gönder
+                    </span>
+                    <span className="text-white/50">Bakiyeniz: {currentUser?.walletBalance ?? 0} ₺</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={1}
+                      max={100000}
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      className="w-24 px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/10 text-xs text-white outline-none focus:border-emerald-400"
+                    />
+                    {[25, 50, 100].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setTransferAmount(String(preset))}
+                        className="px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] text-white/75 font-semibold"
+                      >
+                        {preset} ₺
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      disabled={transferBusy}
+                      onClick={async () => {
+                        const amt = Math.floor(Number(transferAmount));
+                        if (!amt || amt < 1) {
+                          setTransferFeedback({ ok: false, text: 'Geçerli bir tutar girin.' });
+                          return;
+                        }
+                        setTransferBusy(true);
+                        const res = await transferWalletBalance(user.username, amt);
+                        setTransferBusy(false);
+                        setTransferFeedback({
+                          ok: res.success,
+                          text: res.message || res.error || (res.success ? 'Gönderildi!' : 'Hata oluştu.'),
+                        });
+                      }}
+                      className="ml-auto px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-[11px] font-bold transition"
+                    >
+                      {transferBusy ? '...' : 'Gönder'}
+                    </button>
+                  </div>
+                  {transferFeedback && (
+                    <div
+                      className={`text-[11px] font-medium ${
+                        transferFeedback.ok ? 'text-emerald-300' : 'text-rose-300'
+                      }`}
+                    >
+                      {transferFeedback.text}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </div>
       </div>
+
+      {isMe && (
+        <ActivitySelectorModal
+          isOpen={isActivityModalOpen}
+          onClose={() => setIsActivityModalOpen(false)}
+          currentActivity={user.activity}
+          onSaveActivity={(act) => updateUserActivity(act)}
+        />
+      )}
     </div>
   );
 };

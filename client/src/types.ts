@@ -58,6 +58,10 @@ export interface User {
   statusMessage?: string;
   bannerColor?: string;
   bannerImage?: string;
+  bannerPosition?: 'top' | 'center' | 'bottom';
+  avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+  pinnedBadgeId?: string;
+  socialLinks?: { steam?: string; github?: string; website?: string };
   bio?: string;
   badges?: UserBadge[];
   friends?: string[];

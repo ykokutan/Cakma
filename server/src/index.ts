@@ -1480,6 +1480,10 @@ io.on('connection', (socket: Socket) => {
       statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
       bannerImage: foundAccount.bannerImage || '',
+      bannerPosition: foundAccount.bannerPosition || 'center',
+      avatarFrame: foundAccount.avatarFrame || 'none',
+      pinnedBadgeId: foundAccount.pinnedBadgeId || '',
+      socialLinks: foundAccount.socialLinks || {},
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
@@ -1578,6 +1582,10 @@ io.on('connection', (socket: Socket) => {
       statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
       bannerImage: foundAccount.bannerImage || '',
+      bannerPosition: foundAccount.bannerPosition || 'center',
+      avatarFrame: foundAccount.avatarFrame || 'none',
+      pinnedBadgeId: foundAccount.pinnedBadgeId || '',
+      socialLinks: foundAccount.socialLinks || {},
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
@@ -1673,6 +1681,10 @@ io.on('connection', (socket: Socket) => {
       statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
       bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
       bannerImage: foundAccount.bannerImage || '',
+      bannerPosition: foundAccount.bannerPosition || 'center',
+      avatarFrame: foundAccount.avatarFrame || 'none',
+      pinnedBadgeId: foundAccount.pinnedBadgeId || '',
+      socialLinks: foundAccount.socialLinks || {},
       bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
       badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
       friends: foundAccount.friends || [],
@@ -2392,8 +2404,30 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_updated', user);
   });
 
-  // Profile Update (Status message, bio, bannerColor, bannerImage, avatar, status - with XSS sanitization & size limits)
-  socket.on('update_profile', ({ statusMessage, bio, bannerColor, bannerImage, avatar, status }: { statusMessage?: string; bio?: string; bannerColor?: string; bannerImage?: string; avatar?: string; status?: 'online' | 'idle' | 'dnd' | 'offline' }) => {
+  // Profile Update (Status message, bio, bannerColor, bannerImage, bannerPosition, avatarFrame, pinnedBadgeId, socialLinks, avatar, status - with XSS sanitization & size limits)
+  socket.on('update_profile', ({
+    statusMessage,
+    bio,
+    bannerColor,
+    bannerImage,
+    bannerPosition,
+    avatarFrame,
+    pinnedBadgeId,
+    socialLinks,
+    avatar,
+    status,
+  }: {
+    statusMessage?: string;
+    bio?: string;
+    bannerColor?: string;
+    bannerImage?: string;
+    bannerPosition?: 'top' | 'center' | 'bottom';
+    avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+    pinnedBadgeId?: string;
+    socialLinks?: { steam?: string; github?: string; website?: string };
+    avatar?: string;
+    status?: 'online' | 'idle' | 'dnd' | 'offline';
+  }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
@@ -2419,6 +2453,35 @@ io.on('connection', (socket: Socket) => {
         if (acc) acc.bannerImage = bannerImage;
       }
     }
+    if (bannerPosition !== undefined && ['top', 'center', 'bottom'].includes(bannerPosition)) {
+      user.bannerPosition = bannerPosition;
+      if (acc) acc.bannerPosition = bannerPosition;
+    }
+    if (avatarFrame !== undefined && ['none', 'gold', 'neon', 'emerald', 'crimson', 'rainbow'].includes(avatarFrame)) {
+      user.avatarFrame = avatarFrame;
+      if (acc) acc.avatarFrame = avatarFrame;
+    }
+    if (pinnedBadgeId !== undefined && typeof pinnedBadgeId === 'string') {
+      const cleanPinned = sanitizeText(pinnedBadgeId).trim().slice(0, 64);
+      user.pinnedBadgeId = cleanPinned;
+      if (acc) acc.pinnedBadgeId = cleanPinned;
+    }
+    if (socialLinks !== undefined && socialLinks && typeof socialLinks === 'object') {
+      const cleanLink = (val?: string) => {
+        if (typeof val !== 'string') return undefined;
+        const trimmed = val.trim().slice(0, 200);
+        if (!trimmed) return undefined;
+        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+        return sanitizeText(trimmed).slice(0, 80);
+      };
+      const sanitizedLinks = {
+        steam: cleanLink(socialLinks.steam),
+        github: cleanLink(socialLinks.github),
+        website: cleanLink(socialLinks.website),
+      };
+      user.socialLinks = sanitizedLinks;
+      if (acc) acc.socialLinks = sanitizedLinks;
+    }
     if (avatar !== undefined && typeof avatar === 'string') {
       const trimmedAvatar = avatar.trim();
       if (isSafeImageMedia(trimmedAvatar) || isSafeEmojiOrShortIcon(trimmedAvatar)) {
@@ -2437,6 +2500,55 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_updated', user);
     socket.emit('profile_updated', user);
     addAuditLog('PROFIL_GUNCELLE', `${user.username} profil bilgilerini güncelledi.`, 'info');
+  });
+
+  // Wallet Balance Transfer between registered users
+  socket.on('transfer_wallet_balance', ({ targetUsername, amount }: { targetUsername: string; amount: number }) => {
+    const sender = activeUsers.get(socket.id);
+    if (!sender) return;
+    const senderAcc = registeredAccounts.get(sender.username.toLowerCase());
+    const cleanTarget = typeof targetUsername === 'string' ? targetUsername.trim().toLowerCase() : '';
+    const receiverAcc = cleanTarget ? registeredAccounts.get(cleanTarget) : undefined;
+    const transferAmount = Math.floor(Number(amount));
+
+    if (!senderAcc || !receiverAcc) {
+      socket.emit('wallet_transfer_result', { success: false, error: 'Kullanıcı hesabı bulunamadı.' });
+      return;
+    }
+    if (senderAcc.username.toLowerCase() === receiverAcc.username.toLowerCase()) {
+      socket.emit('wallet_transfer_result', { success: false, error: 'Kendinize bakiye gönderemezsiniz.' });
+      return;
+    }
+    if (!Number.isFinite(transferAmount) || transferAmount < 1 || transferAmount > 100000) {
+      socket.emit('wallet_transfer_result', { success: false, error: 'Geçerli bir tutar girin (1 - 100.000 ₺).' });
+      return;
+    }
+    if ((senderAcc.walletBalance ?? 0) < transferAmount) {
+      socket.emit('wallet_transfer_result', { success: false, error: 'Yetersiz cüzdan bakiyesi.' });
+      return;
+    }
+
+    senderAcc.walletBalance = (senderAcc.walletBalance ?? 0) - transferAmount;
+    receiverAcc.walletBalance = (receiverAcc.walletBalance ?? 0) + transferAmount;
+    saveAccounts(registeredAccounts);
+
+    for (const u of activeUsers.values()) {
+      if (u.username.toLowerCase() === senderAcc.username.toLowerCase()) {
+        u.walletBalance = senderAcc.walletBalance;
+        io.emit('user_updated', u);
+      } else if (u.username.toLowerCase() === receiverAcc.username.toLowerCase()) {
+        u.walletBalance = receiverAcc.walletBalance;
+        io.emit('user_updated', u);
+      }
+    }
+
+    socket.emit('profile_updated', { ...sender, walletBalance: senderAcc.walletBalance });
+    socket.emit('wallet_transfer_result', {
+      success: true,
+      message: `${receiverAcc.username} kullanıcısına ${transferAmount} ₺ gönderildi.`,
+      newBalance: senderAcc.walletBalance,
+    });
+    addAuditLog('BAKIYE_TRANSFER', `${senderAcc.username} -> ${receiverAcc.username}: ${transferAmount} ₺`, 'info');
   });
 
   // Direct 1-on-1 Voice Calling Relay (multi-session & username-aware)
