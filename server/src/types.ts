@@ -70,6 +70,7 @@ export interface User {
   bannedReason?: string;
   bannedUntil?: number | null;
   twoFactorEnabled?: boolean;
+  e2eePublicKey?: string;
 }
 
 export interface RegisteredAccount {
@@ -103,6 +104,9 @@ export interface RegisteredAccount {
   pendingTwoFactorSecret?: string;
   twoFactorBackupCodes?: string[];
   minTokenIssuedAt?: number;
+  failedLoginCount?: number;
+  lockedUntil?: number;
+  e2eePublicKey?: string;
 }
 
 export interface MessageAttachment {

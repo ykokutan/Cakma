@@ -180,6 +180,7 @@ export interface SystemConfig {
   defaultSlowmodeSeconds: number;
   maxUploadSizeMb: number;
   requireStrongPasswords: boolean;
+  requireAdmin2FA?: boolean;
   maxLoginAttempts?: number;
   loginLockoutMinutes?: number;
   globalBlockLinks?: boolean;

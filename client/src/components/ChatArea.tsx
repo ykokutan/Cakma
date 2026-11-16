@@ -3,6 +3,7 @@ import { useSocket } from '../context/SocketContext';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
+import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -68,6 +69,7 @@ import {
   ExternalLink,
   Inbox,
   Calendar,
+  Lock,
 } from 'lucide-react';
 
 const SLASH_COMMANDS = [
@@ -214,8 +216,39 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
   const [isCallStageCollapsed, setIsCallStageCollapsed] = useState(false);
   const [isDMRemoteAssistOpen, setIsDMRemoteAssistOpen] = useState(false);
+  const [dmE2eeEnabled, setDmE2eeEnabled] = useState(false);
+  const [decryptedDmMap, setDecryptedDmMap] = useState<Record<string, string>>({});
   const dmScreenVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeThreadMessage = activeThreadMsgId ? messages.find((m) => m.id === activeThreadMsgId) || null : null;
+
+  useEffect(() => {
+    if (activeServer?.id !== 'direct-messages' || !currentUser?.username) return;
+    const peerPub =
+      activeDMUser?.e2eePublicKey ||
+      onlineUsers.find((u) => u.id === activeDMUser?.id || u.username === activeDMUser?.username)?.e2eePublicKey;
+    if (!peerPub) return;
+    const encryptedMsgs = messages.filter((m) => isE2eeCiphertext(m.content) && !decryptedDmMap[m.id]);
+    if (encryptedMsgs.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      encryptedMsgs.map(async (m) => {
+        const plain = await decryptDmMessage(m.content, currentUser.username, peerPub);
+        return plain !== null ? ([m.id, plain] as const) : null;
+      })
+    ).then((results) => {
+      if (cancelled) return;
+      const updates: Record<string, string> = {};
+      for (const item of results) {
+        if (item) updates[item[0]] = item[1];
+      }
+      if (Object.keys(updates).length > 0) {
+        setDecryptedDmMap((prev) => ({ ...prev, ...updates }));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeServer?.id, activeDMUser, onlineUsers, currentUser?.username, messages, decryptedDmMap]);
 
   const dmCallPartnerStream = directCall?.partner?.id
     ? remoteScreenStreams.get(directCall.partner.id)
@@ -583,7 +616,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       }
     }
 
-    sendMessage(finalMessage, pendingAttachments, replyingTo || undefined);
+    let outgoingText = finalMessage;
+    if (isDM && dmE2eeEnabled && outgoingText && currentUser?.username) {
+      const peerPub =
+        dmPartner?.e2eePublicKey ||
+        onlineUsers.find((u) => u.id === dmPartner?.id || u.username === dmPartner?.username)?.e2eePublicKey;
+      if (peerPub) {
+        const cipher = await encryptDmMessage(outgoingText, currentUser.username, peerPub);
+        if (cipher) outgoingText = cipher;
+      }
+    }
+
+    sendMessage(outgoingText, pendingAttachments, replyingTo || undefined);
     setInputText('');
     setPendingAttachments([]);
     setReplyingTo(null);
@@ -1567,7 +1611,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       )}
                       {msg.content && (
                         <div>
-                        {renderMessageContent(msg.content)}
+                        {isE2eeCiphertext(msg.content) ? (
+                          <div className="inline-flex items-start gap-1.5">
+                            <span
+                              className="mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-bold text-emerald-300 shrink-0"
+                              title="Uçtan Uca Şifreli Mesaj (E2EE)"
+                            >
+                              <Lock className="w-2.5 h-2.5" /> E2EE
+                            </span>
+                            <span>
+                              {decryptedDmMap[msg.id]
+                                ? renderMessageContent(decryptedDmMap[msg.id])
+                                : '🔒 Şifreli mesaj (anahtar bekleniyor...)'}
+                            </span>
+                          </div>
+                        ) : (
+                          renderMessageContent(msg.content)
+                        )}
                         {isSameAuthorAsPrev && msg.isEdited && (
                           <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
                         )}
@@ -2037,6 +2097,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               >
                 GIF
               </button>
+
+              {isDM && (dmPartner?.e2eePublicKey || onlineUsers.find((u) => u.id === dmPartner?.id)?.e2eePublicKey) && (
+                <button
+                  type="button"
+                  onClick={() => setDmE2eeEnabled((v) => !v)}
+                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider transition shrink-0 border flex items-center gap-1 ${
+                    dmE2eeEnabled
+                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-sm shadow-emerald-500/20'
+                      : 'bg-white/10 hover:bg-white/20 border-white/10 text-white/70 hover:text-white'
+                  }`}
+                  title={dmE2eeEnabled ? 'Uçtan Uca Şifreleme (E2EE) Aktif' : 'Uçtan Uca Şifreli Sohbeti Aç (E2EE)'}
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>E2EE</span>
+                </button>
+              )}
 
               {!isDM && (
                 <button

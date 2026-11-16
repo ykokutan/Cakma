@@ -70,7 +70,32 @@ export function sanitizeText(input: string): string {
 
 export function isSafeImageMedia(val: string): boolean {
   if (val.startsWith('data:image/')) {
-    return /^data:image\/(png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=\r\n]+$/.test(val) && val.length <= 3_500_000;
+    const match = val.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=\r\n]+)$/);
+    if (!match || val.length > 3_500_000) return false;
+    const fmt = match[1];
+    try {
+      const head = Buffer.from(match[2].slice(0, 32), 'base64');
+      if (head.length < 4) return false;
+      if (fmt === 'png') {
+        return head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+      }
+      if (fmt === 'jpeg' || fmt === 'jpg') {
+        return head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+      }
+      if (fmt === 'gif') {
+        return head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x38;
+      }
+      if (fmt === 'webp') {
+        return (
+          head.length >= 12 &&
+          head.subarray(0, 4).toString('ascii') === 'RIFF' &&
+          head.subarray(8, 12).toString('ascii') === 'WEBP'
+        );
+      }
+    } catch {
+      return false;
+    }
+    return false;
   }
   if (val.startsWith('https://') || val.startsWith('http://')) {
     return val.length <= 600 && !/[<>"']/.test(val);
@@ -172,6 +197,29 @@ app.use((_req, res, next) => {
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; connect-src 'self' https: http: wss: ws:; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'"
+  );
+  res.setHeader('Permissions-Policy', 'geolocation=(), payment=(), usb=(), camera=(self), microphone=(self)');
+  next();
+});
+
+// 1b. General REST API IP Rate Limiter (120 req/min per IP)
+const apiRateLimits = new Map<string, { count: number; resetAt: number }>();
+app.use('/api', (req, res, next) => {
+  const fwd = req.headers['x-forwarded-for'];
+  const ip = typeof fwd === 'string' ? fwd.split(',')[0].trim() : (req.ip || 'unknown');
+  const now = Date.now();
+  const entry = apiRateLimits.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    apiRateLimits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  entry.count += 1;
+  if (entry.count > 120) {
+    return res.status(429).json({ success: false, error: 'Çok fazla istek gönderildi. Lütfen kısa süre sonra tekrar deneyin.' });
+  }
   next();
 });
 
@@ -478,6 +526,7 @@ const defaultSystemConfig: SystemConfig = {
   defaultSlowmodeSeconds: 0,
   maxUploadSizeMb: 5,
   requireStrongPasswords: false,
+  requireAdmin2FA: false,
   maxLoginAttempts: 5,
   loginLockoutMinutes: 15,
   globalBlockLinks: false,
@@ -1503,6 +1552,14 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
+    if (foundAccount.lockedUntil && Date.now() < foundAccount.lockedUntil) {
+      const remMins = Math.max(1, Math.ceil((foundAccount.lockedUntil - Date.now()) / 60000));
+      return socket.emit('auth_response', {
+        success: false,
+        error: `Çok fazla başarısız deneme nedeniyle bu hesap geçici olarak kilitlendi. (~${remMins} dk sonra tekrar deneyin.)`,
+      });
+    }
+
     // Verify password with secure scrypt (supports legacy plain text with auto-upgrade)
     const isPasswordValid = verifyPassword(password, foundAccount.password);
     if (isPasswordValid && !foundAccount.password.startsWith('scrypt$')) {
@@ -1514,10 +1571,27 @@ io.on('connection', (socket: Socket) => {
 
     if (!isPasswordValid) {
       recordFailedLogin(clientIp);
+      foundAccount.failedLoginCount = (foundAccount.failedLoginCount || 0) + 1;
+      const maxAttempts = systemConfig.maxLoginAttempts || 5;
+      if (foundAccount.failedLoginCount >= maxAttempts) {
+        const lockMins = systemConfig.loginLockoutMinutes || 15;
+        foundAccount.lockedUntil = Date.now() + lockMins * 60_000;
+        addAuditLog(
+          'HESAP_KILITLENDI',
+          `${foundAccount.username} hesabı ${maxAttempts} başarısız deneme sonrası ${lockMins} dk kilitlendi (Son IP: ${clientIp}).`,
+          'auth'
+        );
+      }
+      saveAccounts(registeredAccounts);
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
     }
 
-    // Successful password check -> check 2FA if enabled
+    // Successful password check -> reset account lockout & check 2FA if enabled
+    if (foundAccount.failedLoginCount || foundAccount.lockedUntil) {
+      foundAccount.failedLoginCount = 0;
+      foundAccount.lockedUntil = undefined;
+      saveAccounts(registeredAccounts);
+    }
     clearLoginRateLimit(clientIp);
 
     if (foundAccount.twoFactorEnabled && foundAccount.twoFactorSecret) {
@@ -1555,6 +1629,7 @@ io.on('connection', (socket: Socket) => {
       friends: foundAccount.friends || [],
       blockedUsers: foundAccount.blockedUsers || [],
       twoFactorEnabled: Boolean(foundAccount.twoFactorEnabled),
+      e2eePublicKey: foundAccount.e2eePublicKey,
     };
 
     activeUsers.set(socket.id, user);
@@ -1756,6 +1831,7 @@ io.on('connection', (socket: Socket) => {
       friends: foundAccount.friends || [],
       blockedUsers: foundAccount.blockedUsers || [],
       twoFactorEnabled: Boolean(foundAccount.twoFactorEnabled),
+      e2eePublicKey: foundAccount.e2eePublicKey,
     };
 
     activeUsers.set(socket.id, user);
@@ -2198,9 +2274,10 @@ io.on('connection', (socket: Socket) => {
     }
 
     acc.password = hashPassword(newPassword);
+    acc.minTokenIssuedAt = Date.now();
     saveAccounts(registeredAccounts);
-    addAuditLog('SIFRE_DEGISTIRILDI', `${user.username} kendi şifresini güncelledi.`, 'auth');
-    socket.emit('change_password_response', { success: true, message: 'Şifreniz başarıyla güncellendi.' });
+    addAuditLog('SIFRE_DEGISTIRILDI', `${user.username} kendi şifresini güncelledi (eski oturumlar geçersiz kılındı).`, 'auth');
+    socket.emit('change_password_response', { success: true, message: 'Şifreniz başarıyla güncelledi ve diğer oturumlar sonlandırıldı.' });
   });
 
   // 2FA Setup Init
@@ -2271,6 +2348,7 @@ io.on('connection', (socket: Socket) => {
     delete acc.twoFactorSecret;
     delete acc.pendingTwoFactorSecret;
     delete acc.twoFactorBackupCodes;
+    acc.minTokenIssuedAt = Date.now();
     saveAccounts(registeredAccounts);
 
     user.twoFactorEnabled = false;
@@ -2281,6 +2359,19 @@ io.on('connection', (socket: Socket) => {
       enabled: false,
       message: 'İki faktörlü doğrulama devre dışı bırakıldı.'
     });
+  });
+
+  // E2EE Public Key Publish (ECDH P-256 JWK string)
+  socket.on('e2ee_publish_key', ({ publicKey }: { publicKey: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || typeof publicKey !== 'string' || publicKey.length > 600) return;
+    user.e2eePublicKey = publicKey;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (acc) {
+      acc.e2eePublicKey = publicKey;
+      saveAccounts(registeredAccounts);
+    }
+    io.emit('user_updated', user);
   });
 
   // Active Sessions List & Revoke Other Sessions
@@ -4254,6 +4345,63 @@ io.on('connection', (socket: Socket) => {
       pinnedBanner: systemConfig.pinnedBanner || null,
       activeSessions: Array.from(activeSessions.values()),
       scheduledBackups: listScheduledBackups(),
+      securityAudit: (() => {
+        const admins = Array.from(registeredAccounts.values()).filter((a) => a.role === 'admin');
+        const adminsWithout2fa = admins.filter((a) => !a.twoFactorEnabled).map((a) => a.username);
+        const usingDefaultMasterKey = !process.env.MASTER_API_KEY || MASTER_API_KEY === 'cakma_master_sec_2026';
+        const usingDefaultSessionSecret = !process.env.SESSION_SECRET;
+        const checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }> = [
+          {
+            id: 'master_key',
+            label: 'Master API Anahtarı',
+            status: usingDefaultMasterKey ? 'fail' : 'pass',
+            detail: usingDefaultMasterKey
+              ? 'Varsayılan MASTER_API_KEY kullanılıyor! .env içinde değiştirin.'
+              : 'Özel MASTER_API_KEY tanımlı.',
+          },
+          {
+            id: 'session_secret',
+            label: 'Oturum İmza Anahtarı (SESSION_SECRET)',
+            status: usingDefaultSessionSecret ? 'warn' : 'pass',
+            detail: usingDefaultSessionSecret
+              ? 'Özel SESSION_SECRET ortam değişkeni tanımlı değil.'
+              : 'Özel SESSION_SECRET aktif.',
+          },
+          {
+            id: 'admin_2fa',
+            label: 'Yönetici 2FA Koruması',
+            status: adminsWithout2fa.length === 0 ? 'pass' : systemConfig.requireAdmin2FA ? 'fail' : 'warn',
+            detail:
+              adminsWithout2fa.length === 0
+                ? 'Tüm yöneticilerde 2FA aktif.'
+                : `2FA kapalı yöneticiler: ${adminsWithout2fa.join(', ')}`,
+          },
+          {
+            id: 'strong_pass',
+            label: 'Güçlü Şifre Politikası',
+            status: systemConfig.requireStrongPasswords ? 'pass' : 'warn',
+            detail: systemConfig.requireStrongPasswords
+              ? 'Yeni kayıtlarda güçlü şifre zorunlu.'
+              : 'Güçlü şifre zorunluluğu kapalı.',
+          },
+          {
+            id: 'brute_force',
+            label: 'Giriş Deneme Sınırı',
+            status: (systemConfig.maxLoginAttempts || 5) <= 7 ? 'pass' : 'warn',
+            detail: `Maksimum ${systemConfig.maxLoginAttempts || 5} hatalı deneme, ${systemConfig.loginLockoutMinutes || 15} dk kilit.`,
+          },
+          {
+            id: 'cors_origins',
+            label: 'CORS İzin Listesi',
+            status: ALLOWED_ORIGINS.includes('*') ? 'fail' : 'pass',
+            detail: `${ALLOWED_ORIGINS.length} izinli kaynak yapılandırıldı.`,
+          },
+        ];
+        const passed = checks.filter((c) => c.status === 'pass').length;
+        const warned = checks.filter((c) => c.status === 'warn').length;
+        const score = Math.round(((passed + warned * 0.5) / checks.length) * 100);
+        return { score, checkedAt: new Date().toISOString(), checks };
+      })(),
     });
   });
 
@@ -4265,6 +4413,7 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.maintenanceMode === 'boolean') systemConfig.maintenanceMode = nextCfg.maintenanceMode;
     if (typeof nextCfg.maintenanceMessage === 'string') systemConfig.maintenanceMessage = sanitizeText(nextCfg.maintenanceMessage.trim()).slice(0, 240);
     if (typeof nextCfg.requireStrongPasswords === 'boolean') systemConfig.requireStrongPasswords = nextCfg.requireStrongPasswords;
+    if (typeof nextCfg.requireAdmin2FA === 'boolean') systemConfig.requireAdmin2FA = nextCfg.requireAdmin2FA;
     if (typeof nextCfg.maxMessageLength === 'number') systemConfig.maxMessageLength = Math.min(Math.max(nextCfg.maxMessageLength, 200), 8000);
     if (typeof nextCfg.defaultSlowmodeSeconds === 'number') systemConfig.defaultSlowmodeSeconds = Math.min(Math.max(nextCfg.defaultSlowmodeSeconds, 0), 120);
     if (typeof nextCfg.maxUploadSizeMb === 'number') systemConfig.maxUploadSizeMb = Math.min(Math.max(nextCfg.maxUploadSizeMb, 1), 25);

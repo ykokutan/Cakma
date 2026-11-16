@@ -70,6 +70,7 @@ export interface User {
   level?: number;
   xp?: number;
   twoFactorEnabled?: boolean;
+  e2eePublicKey?: string;
 }
 
 export interface MessageAttachment {

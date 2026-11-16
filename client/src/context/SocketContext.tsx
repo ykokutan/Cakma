@@ -3,6 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
+import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 
 export interface RadioBotState {
   isPlaying: boolean;
@@ -212,6 +213,7 @@ interface SocketContextType {
       defaultSlowmodeSeconds: number;
       maxUploadSizeMb: number;
       requireStrongPasswords: boolean;
+      requireAdmin2FA?: boolean;
       maxLoginAttempts?: number;
       loginLockoutMinutes?: number;
       globalBlockLinks?: boolean;
@@ -254,6 +256,11 @@ interface SocketContextType {
       bytes: number;
       createdAt: string;
     }[];
+    securityAudit?: {
+      score: number;
+      checkedAt: string;
+      checks: { id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }[];
+    };
   } | null;
   fetchAdminData: () => void;
   adminUpdateSystemConfig: (cfg: {
@@ -264,6 +271,7 @@ interface SocketContextType {
     defaultSlowmodeSeconds?: number;
     maxUploadSizeMb?: number;
     requireStrongPasswords?: boolean;
+    requireAdmin2FA?: boolean;
     maxLoginAttempts?: number;
     loginLockoutMinutes?: number;
     globalBlockLinks?: boolean;
@@ -2910,6 +2918,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     defaultSlowmodeSeconds?: number;
     maxUploadSizeMb?: number;
     requireStrongPasswords?: boolean;
+    requireAdmin2FA?: boolean;
     maxLoginAttempts?: number;
     loginLockoutMinutes?: number;
     globalBlockLinks?: boolean;
@@ -3584,6 +3593,22 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setCurrentUser(prev => prev ? { ...prev, activity: activity || undefined } : null);
     }
   }, [socket, currentUser]);
+
+  // Auto-publish E2EE ECDH public key after authentication
+  useEffect(() => {
+    if (!socket || !isAuthenticated || !currentUser?.username) return;
+    let cancelled = false;
+    getOrCreateE2eeKeyPair(currentUser.username).then((pair) => {
+      if (cancelled || !pair) return;
+      const pubJson = JSON.stringify(pair.publicKeyJwk);
+      if (currentUser.e2eePublicKey !== pubJson) {
+        socket.emit('e2ee_publish_key', { publicKey: pubJson });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [socket, isAuthenticated, currentUser?.username, currentUser?.e2eePublicKey]);
 
   // Auto-clear timed custom activity when expiresAt is reached
   useEffect(() => {

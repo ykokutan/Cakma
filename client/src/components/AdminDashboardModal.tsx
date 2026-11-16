@@ -113,6 +113,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysMaintenance, setSysMaintenance] = useState<boolean>(false);
   const [sysMaintMsg, setSysMaintMsg] = useState<string>('Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.');
   const [sysStrongPass, setSysStrongPass] = useState<boolean>(false);
+  const [sysRequireAdmin2FA, setSysRequireAdmin2FA] = useState<boolean>(false);
   const [sysMaxMsgLen, setSysMaxMsgLen] = useState<number>(2000);
   const [sysSlowmode, setSysSlowmode] = useState<number>(0);
   const [sysMaxUploadMb, setSysMaxUploadMb] = useState<number>(5);
@@ -155,6 +156,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysMaintenance(adminData.systemConfig.maintenanceMode);
       setSysMaintMsg(adminData.systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.');
       setSysStrongPass(adminData.systemConfig.requireStrongPasswords);
+      setSysRequireAdmin2FA(Boolean(adminData.systemConfig.requireAdmin2FA));
       setSysMaxMsgLen(adminData.systemConfig.maxMessageLength);
       setSysSlowmode(adminData.systemConfig.defaultSlowmodeSeconds);
       setSysMaxUploadMb(adminData.systemConfig.maxUploadSizeMb);
@@ -530,6 +532,64 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </p>
                 </div>
 
+                {/* Security Audit Card */}
+                {adminData?.securityAudit && (
+                  <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                          Güvenlik Denetimi &amp; Skoru
+                        </div>
+                        <div className="text-[11px] text-white/45 mt-0.5">
+                          Sunucu yapılandırması ve yönetici hesapları canlı olarak taranır.
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-extrabold border ${
+                            adminData.securityAudit.score >= 80
+                              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                              : adminData.securityAudit.score >= 55
+                              ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                              : 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+                          }`}
+                        >
+                          Skor: {adminData.securityAudit.score} / 100
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => fetchAdminData()}
+                          className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white/80 transition"
+                        >
+                          Yeniden Tara
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {adminData.securityAudit.checks.map((chk) => (
+                        <div
+                          key={chk.id}
+                          className="p-2.5 rounded-xl bg-black/25 border border-white/5 flex items-start gap-2.5"
+                        >
+                          <span
+                            className={`mt-0.5 w-2.5 h-2.5 rounded-full shrink-0 ${
+                              chk.status === 'pass'
+                                ? 'bg-emerald-400'
+                                : chk.status === 'warn'
+                                ? 'bg-amber-400'
+                                : 'bg-rose-500'
+                            }`}
+                          />
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-white truncate">{chk.label}</div>
+                            <div className="text-[11px] text-white/50 leading-snug">{chk.detail}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Access & Security Card */}
                 <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
                   <div className="text-xs font-bold uppercase tracking-wider text-amber-300">Erişim & Güvenlik Politikası</div>
@@ -559,6 +619,20 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysStrongPass ? 'bg-emerald-500' : 'bg-white/15'}`}
                     >
                       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysStrongPass ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 pt-3 border-t border-white/5">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Yönetici 2FA Politikası</div>
+                      <div className="text-xs text-white/45">Güvenlik denetiminde 2FA kapalı admin hesaplarını kritik uyarı olarak işaretler.</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setSysRequireAdmin2FA(!sysRequireAdmin2FA); setIsSystemDirty(true); }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sysRequireAdmin2FA ? 'bg-emerald-500' : 'bg-white/15'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${sysRequireAdmin2FA ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
                   </div>
 
@@ -1015,6 +1089,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         maintenanceMode: sysMaintenance,
                         maintenanceMessage: sysMaintMsg,
                         requireStrongPasswords: sysStrongPass,
+                        requireAdmin2FA: sysRequireAdmin2FA,
                         maxMessageLength: sysMaxMsgLen,
                         defaultSlowmodeSeconds: sysSlowmode,
                         maxUploadSizeMb: sysMaxUploadMb,
