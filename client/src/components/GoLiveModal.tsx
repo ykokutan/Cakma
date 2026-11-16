@@ -200,31 +200,32 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
   };
 
   const presets: { id: ScreenSharePreset; label: string }[] = [
-    { id: '360', label: '360' },
-    { id: '480', label: '480' },
-    { id: '720', label: '720' },
-    { id: '1080', label: '1080' },
-    { id: '1440', label: '1440' },
-    { id: 'source', label: 'Source' },
-    { id: 'presentation', label: 'Presentation' },
+    { id: '360', label: '360p' },
+    { id: '480', label: '480p' },
+    { id: '720', label: '720p' },
+    { id: '1080', label: '1080p' },
+    { id: '1440', label: '1440p' },
+    { id: 'source', label: 'Kaynak' },
+    { id: 'presentation', label: 'Sunum' },
   ];
 
   const resolutions: { id: ScreenShareSettings['resolution']; label: string }[] = [
-    { id: '360', label: '360' },
-    { id: '480', label: '480' },
-    { id: '720', label: '720' },
-    { id: '1080', label: '1080' },
-    { id: '1440', label: '1440' },
-    { id: 'source', label: 'Source' },
+    { id: '360', label: '360p' },
+    { id: '480', label: '480p' },
+    { id: '720', label: '720p' },
+    { id: '1080', label: '1080p' },
+    { id: '1440', label: '1440p' },
+    { id: 'source', label: 'Kaynak' },
   ];
 
   const audioBitrates: (64 | 96 | 128 | 192 | 256 | 320)[] = [64, 96, 128, 192, 256, 320];
+  const estimatedMbps = ((settings.bitrateKbps + (settings.audioEnabled ? settings.audioBitrateKbps : 0)) / 1000).toFixed(1);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-      <div className="w-full max-w-[540px] max-h-[92vh] flex flex-col rounded-2xl border border-white/10 bg-[#0d1424] text-slate-100 shadow-2xl overflow-hidden">
+      <div className="w-full max-w-[560px] max-h-[92vh] flex flex-col rounded-2xl border border-white/10 bg-[#0d1424] text-slate-100 shadow-2xl overflow-hidden">
         {/* Top Preview Area */}
-        <div className="p-4 pb-2">
+        <div className="p-4 pb-2 space-y-2">
           <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-white/10 bg-[#070b14] flex items-center justify-center group">
             {previewStream ? (
               <>
@@ -235,6 +236,9 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   playsInline
                   className="w-full h-full object-contain"
                 />
+                <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold backdrop-blur-md">
+                  ● Canlı Önizleme
+                </div>
                 <button
                   type="button"
                   onClick={handlePickSource}
@@ -250,9 +254,9 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   <Monitor className="w-6 h-6" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-200">Yayın Önizlemesi</p>
+                  <p className="text-sm font-semibold text-slate-200">Yayın Önizlemesi</p>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Önizleme için kaynak seçebilir veya ayarları yapıp doğrudan &quot;Go Live&quot; diyebilirsiniz.
+                    Önizleme için kaynak seçebilir veya ayarları yapıp doğrudan &quot;Yayını Başlat&quot; diyebilirsiniz.
                   </p>
                 </div>
                 <button
@@ -265,6 +269,16 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
               </div>
             )}
           </div>
+
+          {/* Live Stream Quality Summary Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-[11px] text-slate-300">
+            <span className="font-medium">
+              🎬 {settings.resolution === 'source' ? 'Kaynak Çözünürlük' : `${settings.resolution}p`} · {settings.fps} FPS · {settings.bitrateKbps.toLocaleString('tr-TR')} Kbps
+            </span>
+            <span className="text-cyan-300 font-mono">
+              ~{estimatedMbps} Mbps yükleme • {settings.audioEnabled ? `Ses %${settings.masterVolume}` : 'Ses Kapalı'}
+            </span>
+          </div>
         </div>
 
         {/* Scrollable Settings Body */}
@@ -275,17 +289,20 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
             </div>
           )}
 
-          {/* Basic Settings */}
+          {/* Temel Ayarlar */}
           <div className="space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Basic Settings
+              Temel Ayarlar
             </h3>
 
-            {/* Preset */}
+            {/* Hazır Profil */}
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300 shrink-0">
-                <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                <span>Preset</span>
+              <div
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-300 shrink-0"
+                title="Çözünürlük, FPS ve bit hızını tek tıkla kullanım senaryonuza göre ayarlar."
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                <span>Hazır Profil</span>
               </div>
               <div className="flex flex-wrap items-center rounded-lg bg-[#161f33] p-0.5 border border-white/5">
                 {presets.map((p) => (
@@ -305,12 +322,15 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
               </div>
             </div>
 
-            {/* Application Audio */}
+            {/* Uygulama / Sistem Sesi */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
-                  <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Application Audio</span>
+                <div
+                  className="flex items-center gap-1.5 text-xs font-medium text-slate-300"
+                  title="Paylaşılan pencere veya sistem sesinin izleyicilere iletilmesini sağlar."
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                  <span>Uygulama / Sistem Sesi</span>
                 </div>
                 <button
                   type="button"
@@ -340,7 +360,7 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                     ) : (
                       <VolumeX className="w-4 h-4 text-slate-400" />
                     )}
-                    <span>Master volume</span>
+                    <span>Ana Ses Seviyesi</span>
                   </div>
                   <div className="flex items-center gap-2.5 flex-1 max-w-[230px]">
                     <span className="text-[11px] font-mono text-slate-300 w-9 text-right">
@@ -357,23 +377,26 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   </div>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Tarayıcı/WebView2 güvenlik politikası gereği sistem veya sekme sesi tek akış olarak yakalanır ve Master Volume ile seviyelendirilir.
+                  Tarayıcı/WebView2 güvenlik politikası gereği sistem veya sekme sesi tek akış olarak yakalanır ve Ana Ses Seviyesi ile dengelenir.
                 </p>
               </div>
             </div>
 
-            {/* Privacy */}
+            {/* Gizlilik */}
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-300">
-                <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                <span>Privacy</span>
+              <div
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-300"
+                title="Yayını kimlerin izleyebileceğini belirler."
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                <span>Gizlilik</span>
               </div>
               <div className="flex items-center rounded-lg bg-[#161f33] p-0.5 border border-white/5">
                 {(
                   [
-                    { id: 'public', label: 'Public', icon: Globe },
-                    { id: 'contacts', label: 'Contacts', icon: Users },
-                    { id: 'private', label: 'Private', icon: Lock },
+                    { id: 'public', label: 'Herkese Açık', icon: Globe },
+                    { id: 'contacts', label: 'Arkadaşlar', icon: Users },
+                    { id: 'private', label: 'Özel', icon: Lock },
                   ] as { id: ScreenSharePrivacy; label: string; icon: any }[]
                 ).map(({ id, label, icon: Icon }) => (
                   <button
@@ -394,24 +417,27 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
             </div>
           </div>
 
-          {/* Advanced Settings */}
+          {/* Gelişmiş Ayarlar */}
           <div className="pt-1 border-t border-white/10">
             <button
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
               className="w-full flex items-center justify-between py-1.5 text-xs font-semibold text-blue-400 hover:text-blue-300 transition"
             >
-              <span>Advanced Settings</span>
+              <span>Gelişmiş Ayarlar</span>
               {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
 
             {showAdvanced && (
               <div className="mt-2 space-y-2.5">
-                {/* Resolution */}
+                {/* Çözünürlük */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Resolution</span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-slate-300"
+                    title="Yayının video çözünürlüğünü belirler. Kaynak seçeneği monitörünüzün doğal çözünürlüğünü kullanır."
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                    <span>Çözünürlük</span>
                   </div>
                   <div className="flex items-center rounded-lg bg-[#161f33] p-0.5 border border-white/5">
                     {resolutions.map((r) => (
@@ -431,11 +457,14 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   </div>
                 </div>
 
-                {/* FPS */}
+                {/* Kare Hızı (FPS) */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                    <span>FPS</span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-slate-300"
+                    title="Oyunlar için 60 FPS, masaüstü ve sunumlar için 30 FPS veya 5 FPS önerilir."
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                    <span>Kare Hızı (FPS)</span>
                   </div>
                   <div className="flex items-center rounded-lg bg-[#161f33] p-0.5 border border-white/5">
                     {([5, 30, 60] as const).map((fps) => (
@@ -455,11 +484,14 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   </div>
                 </div>
 
-                {/* Bitrate */}
+                {/* Video Bit Hızı */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Bitrate</span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-slate-300"
+                    title="Yüksek bit hızı görüntüyü netleştirir ancak daha fazla yükleme (upload) hızı gerektirir."
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                    <span>Video Bit Hızı</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -497,11 +529,14 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   </div>
                 </div>
 
-                {/* Audio Bitrate */}
+                {/* Ses Bit Hızı */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Audio Bitrate [Kbps]</span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-slate-300"
+                    title="Yayın sesinin kalitesini belirler. Müzik ve oyunlar için 192-320 Kbps önerilir."
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                    <span>Ses Bit Hızı (Kbps)</span>
                   </div>
                   <div className="flex items-center rounded-lg bg-[#161f33] p-0.5 border border-white/5">
                     {audioBitrates.map((ab) => (
@@ -521,11 +556,14 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   </div>
                 </div>
 
-                {/* Viewer Limit */}
+                {/* İzleyici Sınırı */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Viewer Limit</span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-slate-300"
+                    title="Aynı anda yayını izleyebilecek maksimum kişi sayısı (0 = Sınırsız)."
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                    <span>İzleyici Sınırı <span className="text-[10px] text-slate-500">(0 = Sınırsız)</span></span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -561,17 +599,20 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   </div>
                 </div>
 
-                {/* Connection Mode */}
+                {/* Bağlantı Modu */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                    <HelpCircle className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Connection Mode</span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-slate-300"
+                    title="Doğrudan (P2P) en düşük gecikmeyi sunar; Sunucu modu kalabalık odalarda daha kararlıdır."
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-500 cursor-help" />
+                    <span>Bağlantı Modu</span>
                   </div>
                   <div className="flex items-center rounded-lg bg-[#161f33] p-0.5 border border-white/5">
                     {(
                       [
-                        { id: 'p2p', label: 'P2P', icon: Share2 },
-                        { id: 'server', label: 'Server', icon: Server },
+                        { id: 'p2p', label: 'Doğrudan (P2P)', icon: Share2 },
+                        { id: 'server', label: 'Sunucu', icon: Server },
                       ] as { id: ScreenShareConnectionMode; label: string; icon: any }[]
                     ).map(({ id, label, icon: Icon }) => (
                       <button
@@ -602,7 +643,7 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
             onClick={handleCancel}
             className="text-xs font-medium text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded-lg hover:bg-white/5 transition"
           >
-            Back
+            Geri
           </button>
           <button
             type="button"
@@ -610,7 +651,7 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
             disabled={isStarting}
             className="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-5 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-600/25 transition"
           >
-            {isStarting ? 'Başlatılıyor...' : 'Go Live'}
+            {isStarting ? 'Başlatılıyor...' : 'Yayını Başlat'}
           </button>
         </div>
       </div>
