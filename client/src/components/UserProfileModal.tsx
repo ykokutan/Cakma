@@ -192,7 +192,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [profileTab, setProfileTab] = useState<'about' | 'servers' | 'friends'>('about');
-  const [hoveredBadgeId, setHoveredBadgeId] = useState<string | null>(null);
+  const [selectedBadgeId, setSelectedBadgeId] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferAmount, setTransferAmount] = useState('50');
   const [transferBusy, setTransferBusy] = useState(false);
@@ -814,7 +814,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
               const sortedBadges = [...user.badges].sort((a, b) =>
                 a.id === pinnedId ? -1 : b.id === pinnedId ? 1 : 0
               );
-              const hoveredBadge = sortedBadges.find((b) => b.id === hoveredBadgeId);
+              const selectedBadge = sortedBadges.find((b) => b.id === selectedBadgeId);
               return (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
@@ -822,27 +822,31 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                       <Sparkles className="w-3 h-3 text-amber-400" />
                       Kazanılan Rozetler ({user.badges.length})
                     </div>
-                    {isEditing && (
-                      <span className="text-[10px] text-white/40">Öne çıkarmak için tıkla</span>
-                    )}
+                    <span className="text-[10px] text-white/40">
+                      {isEditing ? 'Öne çıkarmak için tıkla' : 'Açıklama için tıkla'}
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {sortedBadges.map((b) => {
                       const isPinned = b.id === pinnedId;
+                      const isSelected = b.id === selectedBadgeId;
                       return (
                         <button
                           key={b.id}
                           type="button"
-                          onMouseEnter={() => setHoveredBadgeId(b.id)}
-                          onMouseLeave={() => setHoveredBadgeId((prev) => (prev === b.id ? null : prev))}
                           onClick={() => {
                             if (isEditing) {
                               setEditPinnedBadgeId(isPinned ? '' : b.id);
                             }
+                            setSelectedBadgeId((prev) => (prev === b.id ? null : b.id));
                           }}
-                          className={`px-2.5 py-1 rounded-xl bg-gradient-to-r ${b.color} text-white text-xs font-bold flex items-center gap-1.5 shadow-md border transition ${
-                            isPinned ? 'border-amber-300 ring-1 ring-amber-300/60' : 'border-white/10'
-                          } ${isEditing ? 'cursor-pointer hover:scale-105' : 'cursor-default'}`}
+                          className={`px-2.5 py-1 rounded-xl bg-gradient-to-r ${b.color} text-white text-xs font-bold flex items-center gap-1.5 shadow-md border transition cursor-pointer hover:scale-105 ${
+                            isPinned
+                              ? 'border-amber-300 ring-1 ring-amber-300/60'
+                              : isSelected
+                              ? 'border-white/70 ring-1 ring-white/50'
+                              : 'border-white/10'
+                          }`}
                         >
                           <span>{b.icon}</span>
                           <span>{b.name}</span>
@@ -851,11 +855,23 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                       );
                     })}
                   </div>
-                  {hoveredBadge && hoveredBadge.description && (
-                    <div className="px-2.5 py-1.5 rounded-xl bg-black/50 border border-white/10 text-[11px] text-white/80 flex items-center gap-1.5 animate-fade-in">
-                      <span>{hoveredBadge.icon}</span>
-                      <span className="font-semibold text-white">{hoveredBadge.name}:</span>
-                      <span className="text-white/65">{hoveredBadge.description}</span>
+                  {selectedBadge && (
+                    <div className="px-2.5 py-1.5 rounded-xl bg-black/50 border border-white/10 text-[11px] text-white/80 flex items-center justify-between gap-2 animate-fade-in">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="shrink-0">{selectedBadge.icon}</span>
+                        <span className="font-semibold text-white shrink-0">{selectedBadge.name}:</span>
+                        <span className="text-white/65">
+                          {selectedBadge.description || 'Özel başarı rozeti.'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBadgeId(null)}
+                        className="text-white/40 hover:text-white text-xs px-1 shrink-0"
+                        title="Kapat"
+                      >
+                        ✕
+                      </button>
                     </div>
                   )}
                 </div>
