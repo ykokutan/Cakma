@@ -390,6 +390,8 @@ interface SocketContextType {
   reminders: Array<{ id: string; text: string; triggerAt: number }>;
   addReminder: (text: string, delayMs: number) => void;
   removeReminder: (id: string) => void;
+  messagesMap: Record<string, Message[]>;
+  socketId: string | null;
 
   // Diagnostics & Network Telemetry
   ping: number;
@@ -750,6 +752,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try { localStorage.setItem('dc_chat_font_size', size); } catch {}
   };
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
+  const cloudSyncLoadedUserRef = useRef<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
   const [systemAnnouncement, setSystemAnnouncement] = useState<{ sender: string; message: string; timestamp: string } | null>(null);
@@ -1659,6 +1662,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       } else if (res.error && (res.error.includes('LİSANS') || res.error.includes('LISANS'))) {
         alert(`⛔ Giriş Engellendi:\n\n${res.error}\n\nAna sunucuya yönlendiriliyorsunuz.`);
         resetToMainServer();
+      }
+    });
+
+    newSocket.on('force_logout', (payload: { reason?: string }) => {
+      try { localStorage.removeItem('dc_clone_auth'); } catch {}
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+      if (payload?.reason) {
+        alert(payload.reason);
       }
     });
 
@@ -4180,6 +4192,59 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [setOverlayEnabled]);
 
+  useEffect(() => {
+    const uname = currentUser?.username?.trim();
+    if (!uname || !isAuthenticated) return;
+    if (cloudSyncLoadedUserRef.current === uname) return;
+    cloudSyncLoadedUserRef.current = uname;
+    fetch(`${currentServerHost}/api/user-prefs/${encodeURIComponent(uname)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        const prefs = res?.prefs;
+        if (!prefs) return;
+        if (prefs.uiTheme) setUiTheme(prefs.uiTheme);
+        if (prefs.ringtonePack) setRingtonePack(prefs.ringtonePack);
+        if (typeof prefs.showLinkPreviews === 'boolean') setShowLinkPreviews(prefs.showLinkPreviews);
+        if (prefs.userNotes && typeof prefs.userNotes === 'object') {
+          setUserNotes(prefs.userNotes);
+          try { localStorage.setItem('dc_user_notes', JSON.stringify(prefs.userNotes)); } catch {}
+        }
+        if (Array.isArray(prefs.bookmarkedMessages)) {
+          setBookmarkedMessages(prefs.bookmarkedMessages);
+          try { localStorage.setItem('dc_bookmarked_messages', JSON.stringify(prefs.bookmarkedMessages)); } catch {}
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.username, isAuthenticated, currentServerHost]);
+
+  useEffect(() => {
+    const uname = currentUser?.username?.trim();
+    if (!uname || !isAuthenticated || cloudSyncLoadedUserRef.current !== uname) return;
+    const timer = window.setTimeout(() => {
+      fetch(`${currentServerHost}/api/user-prefs/${encodeURIComponent(uname)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uiTheme,
+          ringtonePack,
+          showLinkPreviews,
+          userNotes,
+          bookmarkedMessages,
+        }),
+      }).catch(() => {});
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [
+    currentUser?.username,
+    isAuthenticated,
+    currentServerHost,
+    uiTheme,
+    ringtonePack,
+    showLinkPreviews,
+    userNotes,
+    bookmarkedMessages,
+  ]);
+
   return (
     <SocketContext.Provider
       value={{
@@ -4377,6 +4442,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         // Diagnostics & Network Telemetry
         ping,
+        messagesMap,
+        socketId: socket?.id || null,
         jitter,
         packetLoss,
         pingHistory,

@@ -13,6 +13,7 @@ import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
 import { User, Message, Server, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
+import { registerCloudSyncAndEvents } from './features/cloudSyncAndEvents.js';
 import {
   generateBase32Secret,
   generateOtpAuthUri,
@@ -5150,6 +5151,9 @@ setInterval(() => {
     }
   }
 }, 30_000);
+
+// Register modular Cloud Sync, Events, Sound Upload, and Session Management routes
+registerCloudSyncAndEvents(app, io, activeUsers);
 
 // Production Static Client Serving (Single-Port Pelican / Docker Deployment)
 const clientDistCandidates = [

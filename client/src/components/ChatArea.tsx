@@ -1,19 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { VoiceRoomArea } from './VoiceRoomArea';
-import { FriendsDashboard } from './FriendsDashboard';
-import { PollModal } from './PollModal';
-import { PinnedMessagesModal } from './PinnedMessagesModal';
-import { GifPickerModal } from './GifPickerModal';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
-import { ChannelMediaModal } from './ChannelMediaModal';
-import { LeaderboardModal } from './LeaderboardModal';
-import { MiniGamesModal } from './MiniGamesModal';
-import { AdvancedSearchModal } from './AdvancedSearchModal';
 import { AvatarView } from './AvatarView';
-import { ThreadPanel } from './ThreadPanel';
-import { RemoteAssistModal } from './RemoteAssistModal';
+
+const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
+const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
+const PollModal = lazy(() => import('./PollModal').then((m) => ({ default: m.PollModal })));
+const PinnedMessagesModal = lazy(() => import('./PinnedMessagesModal').then((m) => ({ default: m.PinnedMessagesModal })));
+const GifPickerModal = lazy(() => import('./GifPickerModal').then((m) => ({ default: m.GifPickerModal })));
+const ChannelMediaModal = lazy(() => import('./ChannelMediaModal').then((m) => ({ default: m.ChannelMediaModal })));
+const LeaderboardModal = lazy(() => import('./LeaderboardModal').then((m) => ({ default: m.LeaderboardModal })));
+const MiniGamesModal = lazy(() => import('./MiniGamesModal').then((m) => ({ default: m.MiniGamesModal })));
+const AdvancedSearchModal = lazy(() => import('./AdvancedSearchModal').then((m) => ({ default: m.AdvancedSearchModal })));
+const ThreadPanel = lazy(() => import('./ThreadPanel').then((m) => ({ default: m.ThreadPanel })));
+const RemoteAssistModal = lazy(() => import('./RemoteAssistModal').then((m) => ({ default: m.RemoteAssistModal })));
+const GlobalInboxModal = lazy(() => import('./GlobalInboxModal').then((m) => ({ default: m.GlobalInboxModal })));
+const ServerEventsModal = lazy(() => import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal })));
 import { MessageAttachment, User } from '../types';
 import {
   Hash,
@@ -63,6 +66,8 @@ import {
   Bookmark,
   Camera,
   ExternalLink,
+  Inbox,
+  Calendar,
 } from 'lucide-react';
 
 const SLASH_COMMANDS = [
@@ -240,6 +245,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isBookmarksModalOpen, setIsBookmarksModalOpen] = useState(false);
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
+  const [isGlobalInboxOpen, setIsGlobalInboxOpen] = useState(false);
+  const [isEventsModalOpen, setIsEventsModalOpen] = useState(false);
+  const [visibleMsgCount, setVisibleMsgCount] = useState(80);
+
+  useEffect(() => {
+    setVisibleMsgCount(80);
+  }, [activeChannel?.id]);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isGifModalOpen, setIsGifModalOpen] = useState(false);
@@ -461,7 +473,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   }, [messages]);
 
   if (activeServer?.id === 'direct-messages' && !activeDMUser) {
-    return <FriendsDashboard onOpenProfile={onOpenProfile} />;
+    return (
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/40 text-xs">Yükleniyor...</div>}>
+        <FriendsDashboard onOpenProfile={onOpenProfile} />
+      </Suspense>
+    );
   }
 
   if (!activeServer || !activeChannel) {
@@ -474,7 +490,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   // If this channel is a voice channel, render the iOS voice room area
   if (activeChannel.type === 'voice') {
-    return <VoiceRoomArea onOpenMobileNav={onOpenMobileNav} />;
+    return (
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/40 text-xs">Ses odası yükleniyor...</div>}>
+        <VoiceRoomArea onOpenMobileNav={onOpenMobileNav} />
+      </Suspense>
+    );
   }
 
   const isDM = activeServer.id === 'direct-messages';
@@ -856,6 +876,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </button>
 
           <button
+            onClick={() => setIsGlobalInboxOpen(true)}
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-cyan-400"
+            title="Gelen Kutusu & Global Arama"
+          >
+            <Inbox className="w-4 h-4" />
+          </button>
+          {activeServer && !isDM && (
+            <button
+              onClick={() => setIsEventsModalOpen(true)}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-emerald-400"
+              title="Sunucu Etkinlikleri (Events)"
+            >
+              <Calendar className="w-4 h-4" />
+            </button>
+          )}
+          <button
             onClick={() => setIsSearchModalOpen(true)}
             className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-blue-400"
             title="Gelişmiş Sohbet Araması & Işınlanma"
@@ -1215,10 +1251,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         )}
 
-      <RemoteAssistModal
-        isOpen={isDMRemoteAssistOpen}
-        onClose={() => setIsDMRemoteAssistOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <RemoteAssistModal
+          isOpen={isDMRemoteAssistOpen}
+          onClose={() => setIsDMRemoteAssistOpen(false)}
+        />
+      </Suspense>
 
       {/* Channel Sticky Notice & Topic Bar */}
       {activeServer.id !== 'direct-messages' && activeChannel.type === 'text' && (
@@ -1304,9 +1342,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         {/* Message Items - iOS Messages Bubble Design */}
-        {filteredMessages.map((msg, index) => {
+        {filteredMessages.length > visibleMsgCount && (
+          <div className="flex justify-center py-2">
+            <button
+              type="button"
+              onClick={() => setVisibleMsgCount((prev) => prev + 50)}
+              className="px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-xs font-semibold text-white/80 transition border border-white/10"
+            >
+              Daha Eski Mesajları Göster (+50) • {filteredMessages.length - visibleMsgCount} gizli
+            </button>
+          </div>
+        )}
+        {filteredMessages.slice(-visibleMsgCount).map((msg, index, displayedArr) => {
           const isMe = msg.author.id === currentUser?.id;
-          const prevMsg = filteredMessages[index - 1];
+          const prevMsg = displayedArr[index - 1];
           const isSameAuthorAsPrev =
             prevMsg &&
             prevMsg.author.id === msg.author.id &&
@@ -2100,27 +2149,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       </div>
 
       {/* GIF Picker Modal */}
-      <GifPickerModal
-        isOpen={isGifModalOpen}
-        onClose={() => setIsGifModalOpen(false)}
-        onSelectGif={handleSelectGif}
-      />
+      <Suspense fallback={null}>
+        <GifPickerModal
+          isOpen={isGifModalOpen}
+          onClose={() => setIsGifModalOpen(false)}
+          onSelectGif={handleSelectGif}
+        />
 
-      {/* Poll Creation Modal */}
-      <PollModal
-        isOpen={isPollModalOpen}
-        onClose={() => setIsPollModalOpen(false)}
-        onCreatePoll={(question, options) => createPoll(question, options)}
-      />
+        {/* Poll Creation Modal */}
+        <PollModal
+          isOpen={isPollModalOpen}
+          onClose={() => setIsPollModalOpen(false)}
+          onCreatePoll={(question, options) => createPoll(question, options)}
+        />
 
-      {/* Pinned Messages Modal */}
-      <PinnedMessagesModal
-        isOpen={isPinModalOpen}
-        onClose={() => setIsPinModalOpen(false)}
-        channelName={activeChannel.name}
-        pinnedMessages={messages.filter((m) => m.isPinned)}
-        onUnpin={(mId) => togglePinMessage(mId)}
-      />
+        {/* Pinned Messages Modal */}
+        <PinnedMessagesModal
+          isOpen={isPinModalOpen}
+          onClose={() => setIsPinModalOpen(false)}
+          channelName={activeChannel.name}
+          pinnedMessages={messages.filter((m) => m.isPinned)}
+          onUnpin={(mId) => togglePinMessage(mId)}
+        />
+      </Suspense>
 
       {/* Bookmarked Messages Modal */}
       {isBookmarksModalOpen && (
@@ -2205,41 +2256,43 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* Channel Media Gallery Modal */}
-      {isMediaModalOpen && activeChannel && (
-        <ChannelMediaModal
-          channelName={activeChannel.name}
-          messages={messages}
-          onClose={() => setIsMediaModalOpen(false)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {/* Channel Media Gallery Modal */}
+        {isMediaModalOpen && activeChannel && (
+          <ChannelMediaModal
+            channelName={activeChannel.name}
+            messages={messages}
+            onClose={() => setIsMediaModalOpen(false)}
+          />
+        )}
 
-      {/* Server Leaderboard Modal */}
-      {isLeaderboardOpen && activeServer && (
-        <LeaderboardModal
-          serverId={activeServer.id}
-          serverName={activeServer.name}
-          onClose={() => setIsLeaderboardOpen(false)}
-        />
-      )}
+        {/* Server Leaderboard Modal */}
+        {isLeaderboardOpen && activeServer && (
+          <LeaderboardModal
+            serverId={activeServer.id}
+            serverName={activeServer.name}
+            onClose={() => setIsLeaderboardOpen(false)}
+          />
+        )}
 
-      {/* Mini Games & Activities Modal */}
-      {isChatMiniGamesOpen && activeChannel && (
-        <MiniGamesModal
-          channelId={activeChannel.id}
-          onClose={() => setIsChatMiniGamesOpen(false)}
-        />
-      )}
+        {/* Mini Games & Activities Modal */}
+        {isChatMiniGamesOpen && activeChannel && (
+          <MiniGamesModal
+            channelId={activeChannel.id}
+            onClose={() => setIsChatMiniGamesOpen(false)}
+          />
+        )}
 
-      {/* Advanced Search & Jump Modal */}
-      {isSearchModalOpen && activeChannel && (
-        <AdvancedSearchModal
-          channelName={activeChannel.name}
-          messages={messages}
-          onClose={() => setIsSearchModalOpen(false)}
-          onJumpToMessage={handleJumpToMessage}
-        />
-      )}
+        {/* Advanced Search & Jump Modal */}
+        {isSearchModalOpen && activeChannel && (
+          <AdvancedSearchModal
+            channelName={activeChannel.name}
+            messages={messages}
+            onClose={() => setIsSearchModalOpen(false)}
+            onJumpToMessage={handleJumpToMessage}
+          />
+        )}
+      </Suspense>
 
       {/* Channel Notice & Topic Edit Modal */}
       {isEditingNotice && activeServer && activeChannel && (
@@ -2309,11 +2362,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {activeThreadMessage && (
-        <ThreadPanel
-          message={activeThreadMessage}
-          onClose={() => setActiveThreadMsgId(null)}
-        />
+        <Suspense fallback={null}>
+          <ThreadPanel
+            message={activeThreadMessage}
+            onClose={() => setActiveThreadMsgId(null)}
+          />
+        </Suspense>
       )}
+
+      <Suspense fallback={null}>
+        <GlobalInboxModal
+          isOpen={isGlobalInboxOpen}
+          onClose={() => setIsGlobalInboxOpen(false)}
+        />
+        <ServerEventsModal
+          isOpen={isEventsModalOpen}
+          onClose={() => setIsEventsModalOpen(false)}
+        />
+      </Suspense>
     </main>
   );
 };

@@ -183,7 +183,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.2');
+  const [appVersion, setAppVersion] = useState<string>('0.3.3');
   const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
 
   React.useEffect(() => {
@@ -828,8 +828,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         }
                         const soundName = file.name.replace(/\.[^/.]+$/, '').slice(0, 24) || 'Özel Ses';
                         const reader = new FileReader();
-                        reader.onload = () => {
+                        reader.onload = async () => {
                           if (typeof reader.result === 'string') {
+                            try {
+                              const res = await fetch(`${currentServerHost}/api/sounds/upload`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name: soundName, dataUrl: reader.result }),
+                              });
+                              const data = await res.json();
+                              if (data?.ok && data?.url) {
+                                addCustomSound(soundName, `${currentServerHost}${data.url}`);
+                                return;
+                              }
+                            } catch {}
                             addCustomSound(soundName, reader.result);
                           }
                         };
@@ -888,6 +900,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <p className="text-xs text-white/50 mt-0.5">
                   Arka plan gürültülerini filtreleyin ve ses kalitesini stüdyo seviyesine çıkarın.
                 </p>
+              </div>
+
+              {/* Ready Audio & Codec Profiles */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2.5">
+                <div className="text-xs font-semibold text-white">Hazır Ses & Kodek Profilleri</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoiseSuppression(true);
+                      setEchoCancellation(true);
+                      setAutoGainControl(true);
+                    }}
+                    className="p-2.5 rounded-xl bg-black/30 hover:bg-blue-500/20 border border-white/10 hover:border-blue-400/40 text-left transition"
+                  >
+                    <div className="text-xs font-bold text-white">🎮 Oyun Modu</div>
+                    <div className="text-[10px] text-white/50 mt-0.5">Net ses, klavye filtresi açık</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoiseSuppression(true);
+                      setEchoCancellation(true);
+                      setAutoGainControl(true);
+                    }}
+                    className="p-2.5 rounded-xl bg-black/30 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-400/40 text-left transition"
+                  >
+                    <div className="text-xs font-bold text-white">🎙️ Toplantı / Sohbet</div>
+                    <div className="text-[10px] text-white/50 mt-0.5">Dengeli yankı & AGC kontrolü</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoiseSuppression(false);
+                      setEchoCancellation(false);
+                      setAutoGainControl(false);
+                    }}
+                    className="p-2.5 rounded-xl bg-black/30 hover:bg-purple-500/20 border border-white/10 hover:border-purple-400/40 text-left transition"
+                  >
+                    <div className="text-xs font-bold text-white">🎵 Müzik / Stüdyo</div>
+                    <div className="text-[10px] text-white/50 mt-0.5">Ham ses (DSP filtreleri kapalı)</div>
+                  </button>
+                </div>
               </div>
 
               {/* Toggles List */}

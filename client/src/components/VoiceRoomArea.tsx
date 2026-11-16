@@ -68,6 +68,18 @@ const VideoStreamPlayer: React.FC<{
     }
   };
 
+  const handlePip = async () => {
+    try {
+      if (videoRef.current && 'requestPictureInPicture' in videoRef.current) {
+        if (document.pictureInPictureElement) {
+          await document.exitPictureInPicture();
+        } else {
+          await (videoRef.current as any).requestPictureInPicture();
+        }
+      }
+    } catch {}
+  };
+
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden bg-black/80 border border-white/10 shadow-2xl flex items-center justify-center group">
       <video
@@ -84,8 +96,16 @@ const VideoStreamPlayer: React.FC<{
         <span>CANLI · {title}</span>
       </div>
 
-      {/* Action Buttons: Focus Mode + Fullscreen */}
+      {/* Action Buttons: PiP + Focus Mode + Fullscreen */}
       <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
+        <button
+          type="button"
+          onClick={handlePip}
+          className="px-3 py-1.5 bg-black/60 hover:bg-black/90 backdrop-blur-md rounded-full text-xs font-semibold text-white/80 hover:text-white transition border border-white/10 shadow-lg"
+          title="Resim İçinde Resim (PiP)"
+        >
+          PiP
+        </button>
         {onToggleFocus && (
           <button
             onClick={onToggleFocus}
