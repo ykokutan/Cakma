@@ -3536,6 +3536,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [socket, currentUser]);
 
+  // Auto-clear timed custom activity when expiresAt is reached
+  useEffect(() => {
+    const expiresAt = currentUser?.activity?.expiresAt;
+    if (!expiresAt) return;
+    const remainingMs = expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      updateUserActivity(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      updateUserActivity(null);
+    }, remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [currentUser?.activity?.expiresAt, updateUserActivity]);
+
   const addReaction = useCallback((messageId: string, emoji: string) => {
     if (!socket || !activeChannel) return;
     socket.emit('add_reaction', { channelId: activeChannel.id, messageId, emoji });

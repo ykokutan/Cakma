@@ -6,6 +6,9 @@ export interface UserActivity {
   type: 'playing' | 'listening' | 'streaming' | 'custom';
   name: string;
   details?: string;
+  emoji?: string;
+  startedAt?: number;
+  expiresAt?: number;
 }
 
 export interface UserBadge {

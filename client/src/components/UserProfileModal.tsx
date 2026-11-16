@@ -18,6 +18,8 @@ import {
   UserCheck,
   Clock,
   Gamepad2,
+  Headphones,
+  Radio,
   LogOut,
   StickyNote,
   Ban,
@@ -512,26 +514,77 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
             </div>
 
             {/* Rich Presence / Activity Card */}
-            {user.activity && (
-              <div className="p-3 rounded-2xl bg-gradient-to-r from-purple-900/40 via-indigo-900/30 to-slate-900/40 border border-purple-500/30 flex items-center gap-3 shadow-lg">
-                <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-xl shrink-0 text-purple-300">
-                  <Gamepad2 className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
-                    {user.activity.type === 'playing' ? 'Oyun Oynuyor' : user.activity.type === 'listening' ? 'Müzik Dinliyor' : user.activity.type === 'streaming' ? 'Canlı Yayında' : 'Özel Aktivite'}
+            {user.activity && (() => {
+              const act = user.activity;
+              const styleMap = {
+                playing: {
+                  card: 'from-purple-900/40 via-indigo-900/30 to-slate-900/40 border-purple-500/30',
+                  icon: 'bg-purple-500/20 border-purple-500/40 text-purple-300',
+                  label: 'text-purple-400',
+                  sub: 'text-purple-200/70',
+                  title: 'Oyun Oynuyor',
+                },
+                listening: {
+                  card: 'from-emerald-900/40 via-teal-900/30 to-slate-900/40 border-emerald-500/30',
+                  icon: 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300',
+                  label: 'text-emerald-400',
+                  sub: 'text-emerald-200/70',
+                  title: 'Müzik Dinliyor',
+                },
+                streaming: {
+                  card: 'from-rose-900/40 via-red-900/30 to-slate-900/40 border-rose-500/30',
+                  icon: 'bg-rose-500/20 border-rose-500/40 text-rose-300',
+                  label: 'text-rose-400',
+                  sub: 'text-rose-200/70',
+                  title: 'Canlı Yayında',
+                },
+                custom: {
+                  card: 'from-sky-900/40 via-blue-900/30 to-slate-900/40 border-sky-500/30',
+                  icon: 'bg-sky-500/20 border-sky-500/40 text-sky-300',
+                  label: 'text-sky-400',
+                  sub: 'text-sky-200/70',
+                  title: 'Özel Durum',
+                },
+              }[act.type];
+              const elapsedMins = act.startedAt ? Math.max(1, Math.floor((Date.now() - act.startedAt) / 60000)) : null;
+              return (
+                <div className={`p-3 rounded-2xl bg-gradient-to-r ${styleMap.card} border flex items-center gap-3 shadow-lg`}>
+                  <div className={`w-10 h-10 rounded-xl border flex items-center justify-center text-xl shrink-0 ${styleMap.icon}`}>
+                    {act.emoji ? (
+                      <span>{act.emoji}</span>
+                    ) : act.type === 'listening' ? (
+                      <Headphones className="w-5 h-5" />
+                    ) : act.type === 'streaming' ? (
+                      <Radio className="w-5 h-5" />
+                    ) : act.type === 'custom' ? (
+                      <Sparkles className="w-5 h-5" />
+                    ) : (
+                      <Gamepad2 className="w-5 h-5" />
+                    )}
                   </div>
-                  <div className="text-sm font-bold text-white truncate">
-                    {user.activity.name}
-                  </div>
-                  {user.activity.details && (
-                    <div className="text-xs text-purple-200/70 truncate">
-                      {user.activity.details}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`text-[10px] font-bold uppercase tracking-wider ${styleMap.label}`}>
+                        {styleMap.title}
+                      </div>
+                      {elapsedMins !== null && (
+                        <div className="text-[10px] text-white/50 flex items-center gap-1 font-mono">
+                          <Clock className="w-3 h-3" /> {elapsedMins >= 60 ? `${Math.floor(elapsedMins / 60)} sa ${elapsedMins % 60} dk` : `${elapsedMins} dk`}
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <div className="text-sm font-bold text-white truncate">
+                      {act.name}
+                    </div>
+                    {act.details && (
+                      <div className={`text-xs truncate ${styleMap.sub}`}>
+                        {act.details}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Custom Status Message */}
             {!isEditing ? (

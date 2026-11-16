@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { User, ServerRole } from '../types';
-import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX } from 'lucide-react';
+import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
 interface MemberListProps {
@@ -276,8 +276,28 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                         <span>Ekran Paylaşıyor</span>
                       </div>
                     ) : user.activity ? (
-                      <div className="text-[10px] text-purple-300 flex items-center gap-1 truncate font-medium">
-                        <Gamepad2 className="w-3 h-3 shrink-0 text-purple-400" />
+                      <div
+                        className={`text-[10px] flex items-center gap-1 truncate font-medium ${
+                          user.activity.type === 'listening'
+                            ? 'text-emerald-300'
+                            : user.activity.type === 'streaming'
+                            ? 'text-rose-300'
+                            : user.activity.type === 'custom'
+                            ? 'text-sky-300'
+                            : 'text-purple-300'
+                        }`}
+                      >
+                        {user.activity.emoji ? (
+                          <span className="shrink-0 text-[11px] leading-none">{user.activity.emoji}</span>
+                        ) : user.activity.type === 'listening' ? (
+                          <Headphones className="w-3 h-3 shrink-0 text-emerald-400" />
+                        ) : user.activity.type === 'streaming' ? (
+                          <Radio className="w-3 h-3 shrink-0 text-rose-400" />
+                        ) : user.activity.type === 'custom' ? (
+                          <Sparkles className="w-3 h-3 shrink-0 text-sky-400" />
+                        ) : (
+                          <Gamepad2 className="w-3 h-3 shrink-0 text-purple-400" />
+                        )}
                         <span className="truncate">{user.activity.name}</span>
                       </div>
                     ) : currentVoice ? (
