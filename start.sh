@@ -8,17 +8,20 @@ echo "🚀 DISCORD & TEAMSPEAK PLATFORMU BAŞLATILIYOR..."
 echo "🌐 Port: $PORT | IP: 0.0.0.0"
 echo "=========================================================="
 
-# Otomatik Git Güncellemesi (Her zaman origin/main ile zorunlu senkronize eder)
+# Otomatik Git Güncellemesi (Her zaman origin/main ile zorunlu senkronize eder ve disk şişmesini önler)
 if [ "$AUTO_UPDATE" = "1" ] && [ -d ".git" ]; then
-  echo "🔄 Otomatik Git güncellemesi devrede..."
-  git fetch origin main
+  echo "🔄 Otomatik Git güncellemesi devrede (sığ çekme + temizlik)..."
+  git fetch --depth 1 origin main
   git reset --hard origin/main
+  git reflog expire --expire=now --all 2>/dev/null || true
+  git gc --prune=now 2>/dev/null || true
   if [ -d "$ROOT_DIR/server" ]; then
     cd "$ROOT_DIR/server" && npm install --no-audit --no-fund && npm run build
   fi
   if [ -d "$ROOT_DIR/client" ]; then
     cd "$ROOT_DIR/client" && npm install --no-audit --no-fund && npm run build
   fi
+  npm cache clean --force 2>/dev/null || true
   cd "$ROOT_DIR"
 fi
 
