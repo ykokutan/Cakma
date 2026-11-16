@@ -145,6 +145,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysSmtpFrom, setSysSmtpFrom] = useState<string>('');
   const [showSmtpPass, setShowSmtpPass] = useState<boolean>(false);
   const [smtpTestTo, setSmtpTestTo] = useState<string>('');
+  const [smtpTestBusy, setSmtpTestBusy] = useState<boolean>(false);
+  const [smtpTestResult, setSmtpTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [sysWebhookEvents, setSysWebhookEvents] = useState<{ security: boolean; bans: boolean; dedicated: boolean; backups: boolean }>({
     security: true,
     bans: true,
@@ -1261,12 +1263,37 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     />
                     <button
                       type="button"
-                      onClick={() => adminTestSmtp(smtpTestTo || sysSmtpUser)}
-                      className="px-3 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition shrink-0"
+                      disabled={smtpTestBusy}
+                      onClick={async () => {
+                        setSmtpTestBusy(true);
+                        setSmtpTestResult(null);
+                        const res = await adminTestSmtp(smtpTestTo || sysSmtpUser, {
+                          smtpHost: sysSmtpHost,
+                          smtpPort: sysSmtpPort,
+                          smtpSecure: sysSmtpSecure,
+                          smtpUser: sysSmtpUser,
+                          smtpPass: sysSmtpPass,
+                          smtpFrom: sysSmtpFrom,
+                        });
+                        setSmtpTestBusy(false);
+                        setSmtpTestResult(res);
+                      }}
+                      className="px-3 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition shrink-0 disabled:opacity-50"
                     >
-                      Test Maili Gönder
+                      {smtpTestBusy ? 'Gönderiliyor...' : 'Test Maili Gönder'}
                     </button>
                   </div>
+                  {smtpTestResult && (
+                    <div
+                      className={`px-3 py-2 rounded-xl text-xs border ${
+                        smtpTestResult.ok
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                          : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                      }`}
+                    >
+                      {smtpTestResult.message}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-3">

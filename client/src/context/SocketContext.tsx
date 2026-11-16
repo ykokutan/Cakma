@@ -355,7 +355,17 @@ interface SocketContextType {
   adminClearPinnedBanner: () => void;
   adminCreateRegInvite: (maxUses?: number, expiresHours?: number) => void;
   adminDeleteRegInvite: (code: string) => void;
-  adminTestSmtp: (toEmail?: string) => void;
+  adminTestSmtp: (
+    toEmail?: string,
+    smtpConfig?: {
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpSecure?: boolean;
+      smtpUser?: string;
+      smtpPass?: string;
+      smtpFrom?: string;
+    }
+  ) => Promise<{ ok: boolean; message: string }>;
   generateDedicatedLicense: (data: { licensee: string; maxSlots: number; expireDays: number; tier: 'Starter' | 'Pro' | 'Enterprise'; assignedUsername?: string }) => void;
   adminRevokeLicense: (licenseId: string, reason?: string) => void;
   adminActivateLicense: (licenseId: string) => void;
@@ -3051,8 +3061,34 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('admin_delete_reg_invite', { code });
   };
 
-  const adminTestSmtp = (toEmail?: string) => {
-    socket?.emit('admin_test_smtp', { toEmail });
+  const adminTestSmtp = (
+    toEmail?: string,
+    smtpConfig?: {
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpSecure?: boolean;
+      smtpUser?: string;
+      smtpPass?: string;
+      smtpFrom?: string;
+    }
+  ): Promise<{ ok: boolean; message: string }> => {
+    return new Promise((resolve) => {
+      if (!socket) return resolve({ ok: false, message: 'Sunucuya bağlı değil.' });
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve({ ok: false, message: 'SMTP sunucusu yanıt vermedi (zaman aşımı). Port/SSL ayarını kontrol edin.' });
+        }
+      }, 13000);
+      socket.emit('admin_test_smtp', { toEmail, smtpConfig });
+      socket.once('admin_smtp_test_result', (res: { ok: boolean; message: string }) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(res);
+      });
+    });
   };
 
   const generateDedicatedLicense = (data: {

@@ -1097,13 +1097,27 @@ const COMMON_WEAK_PASSWORDS = new Set([
 const ipDailyRegistrations = new Map<string, { date: string; count: number }>();
 const pendingEmailOtps = new Map<string, { code: string; expiresAt: number; attempts: number; sentAt: number }>();
 
-export async function sendSmtpEmail(to: string, subject: string, text: string, html?: string): Promise<{ ok: boolean; error?: string }> {
-  const host = (systemConfig.smtpHost || process.env.SMTP_HOST || '').trim();
-  const port = Number(systemConfig.smtpPort || process.env.SMTP_PORT || 587);
-  const secure = systemConfig.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465);
-  const user = (systemConfig.smtpUser || process.env.SMTP_USER || '').trim();
-  const pass = (systemConfig.smtpPass || process.env.SMTP_PASS || '').trim();
-  const from = (systemConfig.smtpFrom || process.env.SMTP_FROM || user || 'noreply@cakma.local').trim();
+export async function sendSmtpEmail(
+  to: string,
+  subject: string,
+  text: string,
+  html?: string,
+  overrideCfg?: {
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpSecure?: boolean;
+    smtpUser?: string;
+    smtpPass?: string;
+    smtpFrom?: string;
+  }
+): Promise<{ ok: boolean; error?: string }> {
+  const host = (overrideCfg?.smtpHost ?? systemConfig.smtpHost ?? process.env.SMTP_HOST ?? '').trim();
+  const port = Number(overrideCfg?.smtpPort ?? systemConfig.smtpPort ?? process.env.SMTP_PORT ?? 587);
+  const secure = overrideCfg?.smtpSecure ?? systemConfig.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465);
+  const user = (overrideCfg?.smtpUser ?? systemConfig.smtpUser ?? process.env.SMTP_USER ?? '').trim();
+  const pass = (overrideCfg?.smtpPass ?? systemConfig.smtpPass ?? process.env.SMTP_PASS ?? '').trim();
+  const rawFrom = (overrideCfg?.smtpFrom ?? systemConfig.smtpFrom ?? process.env.SMTP_FROM ?? '').trim();
+  const from = rawFrom.includes('@') ? rawFrom : (user || 'noreply@cakma.local');
 
   if (!host || !user || !pass) {
     return { ok: false, error: 'SMTP ayarları eksik (Host, Kullanıcı veya Şifre tanımlı değil).' };
@@ -1115,6 +1129,9 @@ export async function sendSmtpEmail(to: string, subject: string, text: string, h
       port,
       secure,
       auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      tls: { rejectUnauthorized: false },
     });
     await transporter.sendMail({
       from,
@@ -4904,22 +4921,44 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Admin: Test SMTP Email Delivery
-  socket.on('admin_test_smtp', async ({ toEmail }: { toEmail?: string }) => {
+  socket.on('admin_test_smtp', async ({
+    toEmail,
+    smtpConfig,
+  }: {
+    toEmail?: string;
+    smtpConfig?: {
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpSecure?: boolean;
+      smtpUser?: string;
+      smtpPass?: string;
+      smtpFrom?: string;
+    };
+  }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
-    const target = (toEmail || systemConfig.smtpUser || '').trim();
+    const target = (toEmail || smtpConfig?.smtpUser || systemConfig.smtpUser || '').trim();
     if (!target || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(target)) {
-      return socket.emit('admin_feedback', { type: 'error', message: 'Test için geçerli bir alıcı e-posta girin.' });
+      const msg = 'Test için geçerli bir alıcı e-posta girin.';
+      socket.emit('admin_feedback', { type: 'error', message: msg });
+      socket.emit('admin_smtp_test_result', { ok: false, message: msg });
+      return;
     }
     const res = await sendSmtpEmail(
       target,
       'Çakma SMTP Test Mesajı',
-      'Tebrikler! SMTP ayarlarınız doğru çalışıyor ve e-posta doğrulama kodları gönderilmeye hazır.'
+      'Tebrikler! SMTP ayarlarınız doğru çalışıyor ve e-posta doğrulama kodları gönderilmeye hazır.',
+      undefined,
+      smtpConfig
     );
     if (res.ok) {
-      socket.emit('admin_feedback', { type: 'success', message: `Test e-postası ${target} adresine gönderildi.` });
+      const msg = `Test e-postası ${target} adresine gönderildi (Spam klasörünü de kontrol edin).`;
+      socket.emit('admin_feedback', { type: 'success', message: msg });
+      socket.emit('admin_smtp_test_result', { ok: true, message: msg });
     } else {
-      socket.emit('admin_feedback', { type: 'error', message: `SMTP Test Hatası: ${res.error}` });
+      const msg = `SMTP Test Hatası: ${res.error}`;
+      socket.emit('admin_feedback', { type: 'error', message: msg });
+      socket.emit('admin_smtp_test_result', { ok: false, message: msg });
     }
   });
 
