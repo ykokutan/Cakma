@@ -22,7 +22,7 @@ const ServerSettingsModal = lazy(() => import('./components/ServerSettingsModal'
 const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDiagnosticsModal').then((m) => ({ default: m.ConnectionDiagnosticsModal })));
 const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
 import { User } from './types';
-import { Megaphone, X } from 'lucide-react';
+import { Megaphone, X, Volume2, Check } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const {
@@ -31,6 +31,10 @@ const MainLayout: React.FC = () => {
     maintenanceStatus,
     storeSettings,
     dismissAnnouncement,
+    voicePullInvite,
+    voicePullNotice,
+    respondVoicePullInvite,
+    dismissVoicePullNotice,
     currentUser,
     activeServer,
     isAuthenticated,
@@ -169,6 +173,69 @@ const MainLayout: React.FC = () => {
               title="Kapat"
             >
               <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Voice Pull Permission Invite Notification (for users not currently in voice) */}
+      {voicePullInvite && (
+        <div className="fixed top-5 right-5 z-[110] max-w-sm w-full animate-fade-in">
+          <div className="ios-glass p-4 rounded-2xl border border-indigo-400/40 bg-slate-900/90 text-white shadow-2xl backdrop-blur-xl space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/25 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shrink-0">
+                <Volume2 className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">
+                  Ses Odasına Çekilme İsteği
+                </div>
+                <div className="text-xs text-white/90 mt-0.5 leading-relaxed">
+                  <strong className="text-white">{voicePullInvite.fromUsername}</strong> sizi{' '}
+                  <strong className="text-indigo-300">#{voicePullInvite.channelName}</strong> ses odasına çekmek istiyor.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => respondVoicePullInvite(voicePullInvite.requestId, false)}
+                className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-semibold transition flex items-center gap-1"
+              >
+                <X className="w-3.5 h-3.5" /> Reddet
+              </button>
+              <button
+                type="button"
+                onClick={() => respondVoicePullInvite(voicePullInvite.requestId, true)}
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold shadow-lg shadow-emerald-500/25 transition flex items-center gap-1"
+              >
+                <Check className="w-3.5 h-3.5" /> Katıl
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Voice Pull Status Notification (for requester: sent / accepted / rejected) */}
+      {voicePullNotice && (
+        <div className="fixed bottom-5 right-5 z-[110] max-w-sm w-full animate-fade-in">
+          <div
+            className={`ios-glass px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-xl flex items-center justify-between gap-3 text-xs font-medium ${
+              voicePullNotice.status === 'rejected'
+                ? 'bg-rose-950/90 border-rose-500/40 text-rose-200'
+                : voicePullNotice.status === 'accepted'
+                ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200'
+                : 'bg-slate-900/90 border-indigo-400/40 text-indigo-100'
+            }`}
+          >
+            <span>{voicePullNotice.message}</span>
+            <button
+              type="button"
+              onClick={dismissVoicePullNotice}
+              className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition shrink-0"
+              title="Kapat"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

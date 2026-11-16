@@ -134,6 +134,18 @@ interface SocketContextType {
   refreshDetectedGame: () => Promise<string | null>;
   joinVoiceChannel: (channelId: string, password?: string) => void;
   moveVoiceUser: (targetUserId: string, targetChannelId: string) => void;
+  voicePullInvite: {
+    requestId: string;
+    fromUserId: string;
+    fromUsername: string;
+    fromAvatar?: string;
+    targetChannelId: string;
+    channelName: string;
+    serverName: string;
+  } | null;
+  voicePullNotice: { status: 'sent' | 'accepted' | 'rejected'; message: string } | null;
+  respondVoicePullInvite: (requestId: string, accepted: boolean) => void;
+  dismissVoicePullNotice: () => void;
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
@@ -790,6 +802,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const cloudSyncLoadedUserRef = useRef<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
+  const [voicePullInvite, setVoicePullInvite] = useState<{
+    requestId: string;
+    fromUserId: string;
+    fromUsername: string;
+    fromAvatar?: string;
+    targetChannelId: string;
+    channelName: string;
+    serverName: string;
+  } | null>(null);
+  const [voicePullNotice, setVoicePullNotice] = useState<{
+    status: 'sent' | 'accepted' | 'rejected';
+    message: string;
+  } | null>(null);
   const [systemAnnouncement, setSystemAnnouncement] = useState<{ sender: string; message: string; timestamp: string } | null>(null);
   const [pinnedBanner, setPinnedBanner] = useState<{ message: string; sender: string; updatedAt: string } | null>(null);
   const [maintenanceStatus, setMaintenanceStatus] = useState<{ active: boolean; message: string }>({ active: false, message: '' });
@@ -2136,6 +2161,33 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (tsSoundEffectsRef.current) {
         playTeamSpeakChime('join');
       }
+    });
+
+    newSocket.on('voice_pull_invite', (invite: {
+      requestId: string;
+      fromUserId: string;
+      fromUsername: string;
+      fromAvatar?: string;
+      targetChannelId: string;
+      channelName: string;
+      serverName: string;
+    }) => {
+      setVoicePullInvite(invite);
+      playSynthesizedSound('notification');
+      sendDesktopNotification(
+        'Ses Odasına Davet',
+        `${invite.fromUsername} sizi #${invite.channelName} ses odasına çekmek istiyor.`
+      );
+    });
+
+    newSocket.on('voice_pull_status', (statusPayload: { status: 'sent' | 'accepted' | 'rejected'; message: string }) => {
+      setVoicePullNotice(statusPayload);
+      if (statusPayload.status === 'rejected') {
+        playSynthesizedSound('notification');
+      }
+      window.setTimeout(() => {
+        setVoicePullNotice((prev) => (prev?.message === statusPayload.message ? null : prev));
+      }, 5000);
     });
 
     // WebRTC Signaling Events
@@ -3680,6 +3732,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('move_voice_user', { targetUserId, targetChannelId });
   };
 
+  const respondVoicePullInvite = (requestId: string, accepted: boolean) => {
+    if (!socket) return;
+    socket.emit('respond_voice_pull_invite', { requestId, accepted });
+    setVoicePullInvite(null);
+  };
+
+  const dismissVoicePullNotice = () => {
+    setVoicePullNotice(null);
+  };
+
   const leaveVoiceChannel = () => {
     if (!socket || !connectedVoiceChannelId) return;
     cleanupWebRTC();
@@ -4442,6 +4504,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         refreshDetectedGame,
         joinVoiceChannel,
         moveVoiceUser,
+        voicePullInvite,
+        voicePullNotice,
+        respondVoicePullInvite,
+        dismissVoicePullNotice,
         leaveVoiceChannel,
         toggleMute,
         toggleDeafen,

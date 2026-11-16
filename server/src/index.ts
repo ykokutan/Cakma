@@ -3923,6 +3923,79 @@ io.on('connection', (socket: Socket) => {
     updateUserConnectionLocation(socket.id, sName, `Ses: ${channelName}`);
   });
 
+  const pendingVoicePullInvites = new Map<
+    string,
+    {
+      fromUserId: string;
+      fromUsername: string;
+      targetUserId: string;
+      targetChannelId: string;
+      channelName: string;
+      expiresAt: number;
+    }
+  >();
+
+  const performVoiceMove = (
+    targetUserId: string,
+    targetChannelId: string,
+    movedByUsername: string,
+    isSelf: boolean
+  ) => {
+    const targetUser = activeUsers.get(targetUserId);
+    const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === targetChannelId);
+    const parentServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
+    const targetSock = io.sockets.sockets.get(targetUserId);
+    if (!targetUser || !targetChannel || !targetSock) return;
+    if (targetUser.currentVoiceChannelId === targetChannelId) return;
+
+    const oldChannelId = targetUser.currentVoiceChannelId;
+    if (oldChannelId) {
+      targetSock.leave(oldChannelId);
+      io.to(oldChannelId).emit('user_left_voice', { userId: targetUserId, channelId: oldChannelId });
+      cleanupTemporaryChannels();
+    }
+
+    targetUser.currentVoiceChannelId = targetChannelId;
+    userVoiceActivity.set(targetUserId, Date.now());
+    targetSock.join(targetChannelId);
+
+    const peersInRoom: User[] = [];
+    for (const [sId, u] of activeUsers.entries()) {
+      if (u.currentVoiceChannelId === targetChannelId && sId !== targetUserId) {
+        peersInRoom.push(u);
+      }
+    }
+
+    targetSock.emit('moved_to_voice_channel', {
+      channelId: targetChannelId,
+      channelName: targetChannel.name,
+      movedBy: movedByUsername,
+      isSelf
+    });
+
+    targetSock.emit('voice_room_users', {
+      channelId: targetChannelId,
+      peers: peersInRoom
+    });
+
+    targetSock.to(targetChannelId).emit('user_joined_voice', {
+      user: targetUser,
+      channelId: targetChannelId
+    });
+
+    io.emit('voice_state_update', {
+      userId: targetUserId,
+      channelId: targetChannelId,
+      isMuted: targetUser.isMuted,
+      isDeafened: targetUser.isDeafened
+    });
+
+    if (!isSelf) {
+      addAuditLog('KULLANICI_TASINDI', `${movedByUsername}, ${targetUser.username} kullanıcısını #${targetChannel.name} odasına taşıdı.`, 'voice');
+    }
+    updateUserConnectionLocation(targetUserId, parentServer?.name || 'Ana Topluluk', `Ses: ${targetChannel.name}`);
+  };
+
   // Move user between voice channels (Self or Admin / Server Owner)
   socket.on('move_voice_user', ({ targetUserId, targetChannelId }: { targetUserId: string; targetChannelId: string }) => {
     const requester = activeUsers.get(socket.id);
@@ -3947,52 +4020,70 @@ io.on('connection', (socket: Socket) => {
     const targetSock = io.sockets.sockets.get(targetUserId);
     if (!targetSock) return;
 
-    const oldChannelId = targetUser.currentVoiceChannelId;
-    if (oldChannelId) {
-      targetSock.leave(oldChannelId);
-      io.to(oldChannelId).emit('user_left_voice', { userId: targetUserId, channelId: oldChannelId });
-      cleanupTemporaryChannels();
+    // If self or user is already in ANY voice channel -> move immediately without asking
+    if (isSelf || Boolean(targetUser.currentVoiceChannelId)) {
+      performVoiceMove(targetUserId, targetChannelId, requester.username, isSelf);
+      return;
     }
 
-    targetUser.currentVoiceChannelId = targetChannelId;
-    userVoiceActivity.set(targetUserId, Date.now());
-    targetSock.join(targetChannelId);
-
-    const peersInRoom: User[] = [];
-    for (const [sId, u] of activeUsers.entries()) {
-      if (u.currentVoiceChannelId === targetChannelId && sId !== targetUserId) {
-        peersInRoom.push(u);
-      }
-    }
-
-    targetSock.emit('moved_to_voice_channel', {
-      channelId: targetChannelId,
+    // Target user is NOT in any voice channel -> ask for permission with a notification
+    const requestId = crypto.randomUUID();
+    pendingVoicePullInvites.set(requestId, {
+      fromUserId: requester.id,
+      fromUsername: requester.username,
+      targetUserId,
+      targetChannelId,
       channelName: targetChannel.name,
-      movedBy: requester.username,
-      isSelf
+      expiresAt: Date.now() + 2 * 60 * 1000,
     });
 
-    targetSock.emit('voice_room_users', {
-      channelId: targetChannelId,
-      peers: peersInRoom
+    targetSock.emit('voice_pull_invite', {
+      requestId,
+      fromUserId: requester.id,
+      fromUsername: requester.username,
+      fromAvatar: requester.avatar,
+      targetChannelId,
+      channelName: targetChannel.name,
+      serverName: parentServer?.name || 'Ana Topluluk',
     });
 
-    targetSock.to(targetChannelId).emit('user_joined_voice', {
-      user: targetUser,
-      channelId: targetChannelId
+    socket.emit('voice_pull_status', {
+      status: 'sent',
+      targetUsername: targetUser.username,
+      message: `${targetUser.username} ses odasında olmadığı için odaya katılım izni istendi.`,
     });
+  });
 
-    io.emit('voice_state_update', {
-      userId: targetUserId,
-      channelId: targetChannelId,
-      isMuted: targetUser.isMuted,
-      isDeafened: targetUser.isDeafened
-    });
+  // Respond to voice pull permission invite
+  socket.on('respond_voice_pull_invite', ({ requestId, accepted }: { requestId: string; accepted: boolean }) => {
+    const inv = pendingVoicePullInvites.get(requestId);
+    if (!inv || inv.targetUserId !== socket.id) return;
+    pendingVoicePullInvites.delete(requestId);
+    if (Date.now() > inv.expiresAt) return;
 
-    if (!isSelf) {
-      addAuditLog('KULLANICI_TASINDI', `${requester.username}, ${targetUser.username} kullanıcısını #${targetChannel.name} odasına taşıdı.`, 'voice');
+    const targetUser = activeUsers.get(socket.id);
+    const fromSock = io.sockets.sockets.get(inv.fromUserId);
+
+    if (!accepted) {
+      if (fromSock) {
+        fromSock.emit('voice_pull_status', {
+          status: 'rejected',
+          targetUsername: targetUser?.username || 'Kullanıcı',
+          message: `${targetUser?.username || 'Kullanıcı'} #${inv.channelName} odasına çekilme isteğinizi reddetti.`,
+        });
+      }
+      addAuditLog('ODA_CEKME_REDDEDILDI', `${targetUser?.username || socket.id}, ${inv.fromUsername} tarafından #${inv.channelName} odasına çekilme isteğini reddetti.`, 'voice');
+      return;
     }
-    updateUserConnectionLocation(targetUserId, parentServer?.name || 'Ana Topluluk', `Ses: ${targetChannel.name}`);
+
+    performVoiceMove(socket.id, inv.targetChannelId, inv.fromUsername, false);
+    if (fromSock) {
+      fromSock.emit('voice_pull_status', {
+        status: 'accepted',
+        targetUsername: targetUser?.username || 'Kullanıcı',
+        message: `${targetUser?.username || 'Kullanıcı'} #${inv.channelName} odasına katılım isteğini kabul etti.`,
+      });
+    }
   });
 
   // Voice Channel Leave
