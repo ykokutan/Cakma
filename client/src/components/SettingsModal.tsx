@@ -2561,14 +2561,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
-                <div className="text-sm font-bold text-white">Son Sürüm Yenilikleri (v0.2.x)</div>
-                <ul className="space-y-1.5 text-xs text-white/70 list-disc pl-4">
-                  <li><strong className="text-white">1-e-1 DM Görüşme Sahnesi:</strong> Direkt mesaj sayfasında canlı çift taraflı konuşma kartları, ekran önizleme ve zil/çaldırma sesi.</li>
-                  <li><strong className="text-white">TeamViewer Tarzı Uzaktan Yardım:</strong> İzin onaylı fare/klavye kontrolü, Türkçe Q ekran klavyesi, hızlı Windows kısayolları ve UAC yönetici ipucu.</li>
-                  <li><strong className="text-white">Sürükle-Bırak Oda Taşıma:</strong> Ses odalarındaki kullanıcıları sürükleyip başka odaya taşıma.</li>
-                  <li><strong className="text-white">Oyun Algılama &amp; Overlay:</strong> Ayarlardan açılıp kapatılabilen oyun içi konuşanlar penceresi ve gelişmiş oyun tespiti.</li>
-                </ul>
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-bold text-white">Sürüm Geçmişi &amp; Yenilikler</div>
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold">
+                    Güncel: v{appVersion}
+                  </span>
+                </div>
+
+                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                  {/* v0.3.3 - Latest */}
+                  <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-300">v0.3.3 — Son Sürüm</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+                    </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Gelen Kutusu &amp; Global Arama:</strong> Tüm kanallardaki `@bahsetme` bildirimleri ve mesaj aramaları tek pencerede.</li>
+                      <li><strong className="text-white">Sunucu Etkinlikleri (Events):</strong> Etkinlik oluşturma, katılacağım (RSVP) takibi ve silme desteği.</li>
+                      <li><strong className="text-white">Hazır Ses &amp; Kodek Profilleri:</strong> Ses İşleme (DSP) sekmesinde tek tıkla Oyun, Toplantı ve Müzik profilleri.</li>
+                      <li><strong className="text-white">Bulut Tercih Senkronizasyonu:</strong> Tema, zil sesi paketi, bağlantı önizlemesi, kullanıcı notları ve yer imlerinin hesapla eşitlenmesi.</li>
+                      <li><strong className="text-white">Ekran Paylaşımında PiP &amp; Performans:</strong> Resim İçinde Resim (PiP) modu, mesaj listesi sayfalama ve kod bölme ile daha hızlı açılış.</li>
+                      <li><strong className="text-white">Sunucu Tarafı Soundboard &amp; Uzaktan Oturum Çıkışı:</strong> Özel seslerin sunucuda saklanması ve diğer cihazlardaki oturumları kapatma.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.2 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.3.2 — Önceki Sürüm</div>
+                    <ul className="space-y-1 text-xs text-white/70 list-disc pl-4">
+                      <li><strong className="text-white">Windows Otomatik Başlatma &amp; Overlay Ayarları:</strong> Başlangıçta açılma, overlay köşe seçimi ve saydamlık kaydırıcısı.</li>
+                      <li><strong className="text-white">Arama Zil Sesi Paketleri:</strong> Modern, Klasik, Minimal ve Sessiz zil seçenekleri + Test Et butonu.</li>
+                      <li><strong className="text-white">Özel Soundboard &amp; Kullanıcı Notları:</strong> Özel kısa ses yükleme, yalnızca size özel kullanıcı notları ve yönetimi.</li>
+                      <li><strong className="text-white">Yer İmleri, /hatirlat &amp; Hızlı Ekran Görüntüsü:</strong> Mesaj kaydetme, zamanlayıcı komutu, zengin bağlantı önizlemeleri ve tek tıkla ekran görüntüsü ekleme.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.1 & v0.2.x */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-white/80">v0.3.1 &amp; v0.2.x — Önceki Güncellemeler</div>
+                    <ul className="space-y-1 text-xs text-white/65 list-disc pl-4">
+                      <li><strong className="text-white">Tema &amp; Görünüm Özelleştirme:</strong> Ekstra temalar, cam yoğunluğu, mesaj aralığı, köşe stili ve hareket azaltma.</li>
+                      <li><strong className="text-white">1-e-1 DM Görüşme Sahnesi &amp; Uzaktan Yardım:</strong> Canlı çift taraflı konuşma kartları, Türkçe Q ekran klavyesi, Windows kısayolları ve UAC yönetici ipucu.</li>
+                      <li><strong className="text-white">Sürükle-Bırak Oda Taşıma &amp; Oyun Overlay:</strong> Ses odalarında sürükle-bırak taşıma ve otomatik oyun algılama.</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
             </div>
           )}
