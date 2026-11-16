@@ -198,7 +198,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.3');
+  const [appVersion, setAppVersion] = useState<string>('0.3.4');
   const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
 
   React.useEffect(() => {
@@ -2805,12 +2805,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.3 - Latest */}
+                  {/* v0.3.4 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.3 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.4 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Çoklu Dil Desteği (TR / EN / DE / RU):</strong> Görünüm ayarlarından uygulama dilini değiştirme ve bulut senkronizasyonu.</li>
+                      <li><strong className="text-white">Yenilenen Hesap &amp; Profil:</strong> Canlı afiş/avatar/durum önizleme kartı, özel görsel/GIF yükleme, afiş gradyanları, durum ve hakkımda düzenleme.</li>
+                      <li><strong className="text-white">Özel Durum (Rich Presence) Yenilemesi:</strong> Sayfa merkezinde açılan yeni pencere, özel durum şablonları, emoji seçici, geçen süre ve otomatik silme zamanlayıcısı.</li>
+                      <li><strong className="text-white">Türkçe Yayın Başlatma Ekranı:</strong> Yayın ayarları tamamen Türkçeleştirildi, canlı kalite özeti ve açıklayıcı ipuçları eklendi.</li>
+                      <li><strong className="text-white">Yönetim Paneli Raporlar &amp; Disk Sekmesi:</strong> Disk kullanımı, ses ve etkinlik yönetimi, CSV/JSON dışa aktarma ve toplu işlemler.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.3 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.3.3 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Gelen Kutusu &amp; Global Arama:</strong> Tüm kanallardaki `@bahsetme` bildirimleri ve mesaj aramaları tek pencerede.</li>
                       <li><strong className="text-white">Sunucu Etkinlikleri (Events):</strong> Etkinlik oluşturma, katılacağım (RSVP) takibi ve silme desteği.</li>
