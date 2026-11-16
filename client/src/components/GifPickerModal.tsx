@@ -57,7 +57,19 @@ export const GifPickerModal: React.FC<GifPickerModalProps> = ({
           category: selectedCategory,
           limit: '24',
         });
-        const res = await fetch(`${currentServerHost}/api/gifs?${params.toString()}`);
+        const cleanHost = (currentServerHost || '').trim().replace(/\/+$/, '');
+        const apiBase = !cleanHost
+          ? ''
+          : cleanHost.startsWith('http://') || cleanHost.startsWith('https://')
+          ? cleanHost
+          : `${
+              cleanHost.startsWith('localhost') ||
+              cleanHost.startsWith('127.0.0.1') ||
+              /^\d{1,3}(\.\d{1,3}){3}/.test(cleanHost)
+                ? 'http'
+                : 'https'
+            }://${cleanHost}`;
+        const res = await fetch(`${apiBase}/api/gifs?${params.toString()}`);
         if (!res.ok) throw new Error('HTTP error');
         const data = await res.json();
         if (cancelled) return;
