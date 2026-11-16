@@ -793,6 +793,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const clamped = Math.min(100, Math.max(30, Math.round(v)));
     setOverlayOpacityState(clamped);
     try { localStorage.setItem('dc_overlay_opacity', String(clamped)); } catch {}
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (isTauri) {
+      import('@tauri-apps/api/event')
+        .then(({ emit }) => emit('overlay-opacity-changed', clamped))
+        .catch(() => {});
+    }
   };
 
   const setRingtonePack = (v: 'modern' | 'classic' | 'minimal' | 'silent') => {
@@ -3755,6 +3765,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke<boolean>('set_overlay_window', { enabled });
+      if (enabled) {
+        const corner = localStorage.getItem('dc_overlay_corner') || 'top-left';
+        await invoke('position_overlay_window', { corner }).catch(() => {});
+      }
     } catch (err) {
       console.warn('Overlay set failed:', err);
     }

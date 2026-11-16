@@ -52,9 +52,10 @@ export const SpeakersOverlay: React.FC = () => {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let unlistenLock: (() => void) | null = null;
+    let unlistenOpacity: (() => void) | null = null;
     import('@tauri-apps/api/core')
       .then(({ invoke }) => {
-        const corner = localStorage.getItem('dc_overlay_position') || 'top-left';
+        const corner = localStorage.getItem('dc_overlay_corner') || 'top-left';
         invoke('position_overlay_window', { corner }).catch(() => {});
         if (isClickThrough) {
           invoke('set_overlay_ignore_cursor', { ignore: true }).catch(() => {});
@@ -75,6 +76,12 @@ export const SpeakersOverlay: React.FC = () => {
         unlistenLock = await listen<boolean>('overlay-lock-changed', (event) => {
           setIsClickThrough(Boolean(event.payload));
         });
+        unlistenOpacity = await listen<number>('overlay-opacity-changed', (event) => {
+          const val = Number(event.payload);
+          if (Number.isFinite(val)) {
+            setOverlayOpacity(Math.min(100, Math.max(30, val)));
+          }
+        });
         await emit('overlay-ready');
       })
       .catch(() => {});
@@ -82,6 +89,7 @@ export const SpeakersOverlay: React.FC = () => {
     return () => {
       if (unlisten) unlisten();
       if (unlistenLock) unlistenLock();
+      if (unlistenOpacity) unlistenOpacity();
     };
   }, []);
 
