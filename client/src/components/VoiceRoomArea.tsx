@@ -36,6 +36,9 @@ import {
   Hand,
   Layers,
   Menu,
+  MessageSquare,
+  Send,
+  X,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -182,11 +185,16 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     sendWhisper,
     toggleRaiseHand,
     toggleOverlayWindow,
+    messagesMap,
+    sendMessage,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
   const [isWhisperListsOpen, setIsWhisperListsOpen] = useState(false);
   const [showRadioBot, setShowRadioBot] = useState(false);
+  const [showVoiceChat, setShowVoiceChat] = useState(false);
+  const [voiceChatInput, setVoiceChatInput] = useState('');
+  const [audioDuckingEnabled, setAudioDuckingEnabled] = useState(true);
   const [volumePopoverUserId, setVolumePopoverUserId] = useState<string | null>(null);
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
   const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
@@ -289,6 +297,37 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             )}
           </button>
 
+          <button
+            onClick={() => setAudioDuckingEnabled((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
+              audioDuckingEnabled
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/60'
+            }`}
+            title="Audio Ducking: Biri konuşurken Radyo/Müzik sesini otomatik %30'a düşür"
+          >
+            <Volume2 className="w-3.5 h-3.5" />
+            <span>Ducking</span>
+          </button>
+
+          <button
+            onClick={() => setShowVoiceChat((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
+              showVoiceChat
+                ? 'bg-blue-500/20 border-blue-400/50 text-blue-300'
+                : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+            }`}
+            title="Ses Odası İçi Yazılı Sohbet"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Oda Sohbeti</span>
+            {(messagesMap[activeChannel.id]?.length || 0) > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-bold">
+                {messagesMap[activeChannel.id].length}
+              </span>
+            )}
+          </button>
+
           {/* Whiteboard / Live Canvas */}
           <button
             onClick={() => setIsWhiteboardOpen(true)}
@@ -378,6 +417,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             channelName={activeChannel.name}
             initialState={radioBotState}
             onSyncState={(state) => syncRadioState(state)}
+            ducked={audioDuckingEnabled && usersInRoom.some((u) => u.isSpeaking)}
           />
         </div>
       )}
@@ -904,6 +944,66 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
         onClose={() => setUserContextMenu(null)}
         onOpenSpatialAudio={() => setIsSpatialAudioOpen(true)}
       />
+
+      {/* Voice Channel Side Chat Drawer */}
+      {showVoiceChat && (
+        <aside className="fixed top-14 right-0 bottom-0 w-80 max-w-[90vw] z-40 bg-[#14151c]/95 backdrop-blur-2xl border-l border-white/10 flex flex-col shadow-2xl animate-fade-in">
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <MessageSquare className="w-4 h-4 text-blue-400 shrink-0" />
+              <span className="text-xs font-bold text-white truncate">#{activeChannel.name} Sohbeti</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowVoiceChat(false)}
+              className="w-6 h-6 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+            {(messagesMap[activeChannel.id] || []).length === 0 ? (
+              <div className="text-center text-[11px] text-white/40 py-8">
+                Bu ses odasında henüz yazılı mesaj yok.
+              </div>
+            ) : (
+              (messagesMap[activeChannel.id] || []).map((msg) => (
+                <div key={msg.id} className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                    <span className="text-[11px] font-bold text-white truncate">{msg.author.username}</span>
+                    <span className="text-[9px] text-white/35 shrink-0">{msg.timestamp}</span>
+                  </div>
+                  <p className="text-xs text-white/85 break-words">{msg.content}</p>
+                </div>
+              ))
+            )}
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!voiceChatInput.trim()) return;
+              sendMessage(voiceChatInput.trim());
+              setVoiceChatInput('');
+            }}
+            className="p-3 border-t border-white/10 flex items-center gap-2"
+          >
+            <input
+              type="text"
+              value={voiceChatInput}
+              onChange={(e) => setVoiceChatInput(e.target.value)}
+              placeholder="Odaya mesaj yaz..."
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              type="submit"
+              disabled={!voiceChatInput.trim()}
+              className="p-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-40 transition"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        </aside>
+      )}
     </div>
   );
 };

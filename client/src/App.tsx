@@ -45,6 +45,7 @@ const MainLayout: React.FC = () => {
     setIsDiagnosticsOpen,
     toggleMute,
     toggleDeafen,
+    connectionState,
   } = useSocket();
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -147,6 +148,18 @@ const MainLayout: React.FC = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Connection Lost / Reconnecting Banner */}
+      {isAuthenticated && connectionState !== 'connected' && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[120] px-4 py-1.5 rounded-full bg-amber-500/20 border border-amber-400/40 backdrop-blur-xl text-amber-200 text-xs font-semibold flex items-center gap-2 shadow-xl">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+          <span>
+            {connectionState === 'reconnecting'
+              ? 'Bağlantı koptu, yeniden bağlanılıyor... (Mesajlarınız sıraya alınıyor)'
+              : 'Sunucu bağlantısı kesildi.'}
+          </span>
         </div>
       )}
 

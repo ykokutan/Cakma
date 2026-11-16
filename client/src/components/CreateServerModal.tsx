@@ -29,6 +29,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
   const [tab, setTab] = useState<'create' | 'invite' | 'direct'>('create');
   const [serverName, setServerName] = useState('');
   const [serverIcon, setServerIcon] = useState('🎮');
+  const [serverTemplate, setServerTemplate] = useState<'empty' | 'gaming' | 'friends' | 'work'>('gaming');
   const [directHost, setDirectHost] = useState('');
   const [inviteInput, setInviteInput] = useState('');
   const [inviteError, setInviteError] = useState<string | null>(null);
@@ -83,7 +84,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!serverName.trim()) return;
-    createServer(serverName.trim(), serverIcon);
+    createServer(serverName.trim(), serverIcon, serverTemplate);
     onClose();
   };
 
@@ -186,6 +187,34 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
                 placeholder="Örn: Valorant Tayfası"
                 className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1.5">
+                Şablon Seçimi (Hazır Kanallar)
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'gaming', label: '🎮 Oyun Topluluğu', desc: 'lobi, oyun-içi-ses, duyurular' },
+                  { id: 'friends', label: '☕ Arkadaş Grubu', desc: 'sohbet, müzik-paylaşım, muhabbet' },
+                  { id: 'work', label: '💼 Çalışma / Ekip', desc: 'duyurular, toplantı-odası, genel' },
+                  { id: 'empty', label: '📄 Boş Sunucu', desc: 'Sadece #genel ve Genel Ses' },
+                ].map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => setServerTemplate(tpl.id as 'empty' | 'gaming' | 'friends' | 'work')}
+                    className={`p-2 rounded-xl border text-left transition ${
+                      serverTemplate === tpl.id
+                        ? 'bg-blue-500/20 border-blue-400 text-white'
+                        : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                    }`}
+                  >
+                    <div className="text-[11px] font-bold">{tpl.label}</div>
+                    <div className="text-[10px] text-white/45 truncate mt-0.5">{tpl.desc}</div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="flex justify-between items-center pt-2">

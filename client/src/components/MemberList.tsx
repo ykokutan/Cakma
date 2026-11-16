@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
 import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX } from 'lucide-react';
 import { AvatarView } from './AvatarView';
@@ -19,6 +20,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
     startDirectCall,
     moveVoiceUser,
     adminKickUser,
+    language,
   } = useSocket();
   const [contextMenu, setContextMenu] = useState<{ user: User; x: number; y: number } | null>(null);
 
@@ -172,7 +174,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   const standardUsers = activeOnlineUsers.filter((u) => !processedUserIds.has(u.id));
   if (standardUsers.length > 0) {
     roleGroups.push({
-      roleName: 'Çevrimiçi',
+      roleName: t(language, 'onlineMembers'),
       roleColor: '#94a3b8',
       users: standardUsers
     });
@@ -181,7 +183,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   // Offline server members
   if (offlineMembers.length > 0) {
     roleGroups.push({
-      roleName: 'Çevrimdışı',
+      roleName: t(language, 'offlineMembers'),
       roleColor: '#64748b',
       users: offlineMembers
     });

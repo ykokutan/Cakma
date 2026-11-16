@@ -105,12 +105,14 @@ interface VoiceRadioWidgetProps {
   channelName: string;
   onSyncState?: (state: Partial<RadioBotState>) => void;
   initialState?: RadioBotState;
+  ducked?: boolean;
 }
 
 export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   channelName,
   onSyncState,
   initialState,
+  ducked = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'youtube' | 'radio'>(initialState?.mode || 'youtube');
   const [isPlaying, setIsPlaying] = useState(initialState?.isPlaying ?? false);
@@ -129,8 +131,8 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
   const ytFallbackIframeRef = useRef<HTMLIFrameElement | null>(null);
   const ytReadyRef = useRef(false);
-  const latestStateRef = useRef({ volume, isMuted, isPlaying, youtubeId });
-  latestStateRef.current = { volume, isMuted, isPlaying, youtubeId };
+  const latestStateRef = useRef({ volume, isMuted, isPlaying, youtubeId, ducked });
+  latestStateRef.current = { volume, isMuted, isPlaying, youtubeId, ducked };
 
   const currentStation = RADIO_STATIONS.find(s => s.id === selectedStationId) || RADIO_STATIONS[0];
 
@@ -141,8 +143,9 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
   }, []);
 
   const applyYouTubeAudioState = useCallback(() => {
-    const { volume: vol, isMuted: muted, isPlaying: playing } = latestStateRef.current;
-    const volPercent = Math.round((muted ? 0 : vol) * 100);
+    const { volume: vol, isMuted: muted, isPlaying: playing, ducked: isDucked } = latestStateRef.current;
+    const effectiveVol = muted ? 0 : vol * (isDucked ? 0.3 : 1);
+    const volPercent = Math.round(effectiveVol * 100);
 
     if (ytPlayerRef.current && ytReadyRef.current) {
       try {
@@ -273,13 +276,14 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
     };
   }, []);
 
-  // Apply volume & mute changes smoothly to both Radio & YouTube without restarting stream
+  // Apply volume & mute changes smoothly to both Radio & YouTube without restarting stream (with Audio Ducking)
   useEffect(() => {
+    const effectiveVolume = isMuted ? 0 : volume * (ducked ? 0.3 : 1);
     if (audioRef.current) {
-      audioRef.current.volume = isMuted ? 0 : volume;
+      audioRef.current.volume = effectiveVolume;
     }
     if (activeTab === 'youtube' && youtubeId) {
-      const volPercent = Math.round((isMuted ? 0 : volume) * 100);
+      const volPercent = Math.round(effectiveVolume * 100);
       if (ytPlayerRef.current && ytReadyRef.current) {
         try {
           ytPlayerRef.current.setVolume(volPercent);
@@ -296,7 +300,7 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
         sendFallbackCommand(isMuted || volume === 0 ? 'mute' : 'unMute');
       }
     }
-  }, [volume, isMuted, activeTab, youtubeId, sendFallbackCommand]);
+  }, [volume, isMuted, ducked, activeTab, youtubeId, sendFallbackCommand]);
 
   // Apply play/pause changes to YouTube player
   useEffect(() => {

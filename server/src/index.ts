@@ -3085,6 +3085,21 @@ io.on('connection', (socket: Socket) => {
     addAuditLog('BAKIYE_TRANSFER', `${senderAcc.username} -> ${receiverAcc.username}: ${transferAmount} ₺`, 'info');
   });
 
+  // DM Read Receipt
+  socket.on('mark_dm_read', ({ partnerUsername }: { partnerUsername: string }) => {
+    const reader = activeUsers.get(socket.id);
+    if (!reader || typeof partnerUsername !== 'string') return;
+    const targetLower = partnerUsername.trim().toLowerCase();
+    for (const [sId, u] of activeUsers.entries()) {
+      if (u.username.toLowerCase() === targetLower) {
+        io.to(sId).emit('dm_read_receipt', {
+          readerUsername: reader.username,
+          readAt: new Date().toISOString(),
+        });
+      }
+    }
+  });
+
   // Direct 1-on-1 Voice Calling Relay (multi-session & username-aware)
   socket.on('direct_call_start', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
     const caller = activeUsers.get(socket.id);
@@ -3589,7 +3604,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Server Creation
-  socket.on('create_server', ({ name, icon }: { name: string; icon?: string }) => {
+  socket.on('create_server', ({ name, icon, template }: { name: string; icon?: string; template?: 'empty' | 'gaming' | 'friends' | 'work' }) => {
     const user = activeUsers.get(socket.id);
     const ownerId = user ? user.id : `usr-${Date.now()}`;
     const newServerId = `server-${Date.now()}`;
@@ -3605,6 +3620,36 @@ io.on('connection', (socket: Socket) => {
       }
     ] : [];
 
+    const now = Date.now();
+    const channels: Channel[] =
+      template === 'gaming'
+        ? [
+            { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId },
+            { id: `ch-text-${now}-2`, name: 'takim-arama', type: 'text', serverId: newServerId },
+            { id: `ch-text-${now}-3`, name: 'klipler-medya', type: 'text', serverId: newServerId },
+            { id: `ch-voice-${now}-4`, name: 'Lobi', type: 'voice', serverId: newServerId },
+            { id: `ch-voice-${now}-5`, name: 'Rekabetçi 1', type: 'voice', serverId: newServerId },
+            { id: `ch-voice-${now}-6`, name: 'Rekabetçi 2', type: 'voice', serverId: newServerId },
+          ]
+        : template === 'friends'
+        ? [
+            { id: `ch-text-${now}-1`, name: 'sohbet', type: 'text', serverId: newServerId },
+            { id: `ch-text-${now}-2`, name: 'muzik-linkler', type: 'text', serverId: newServerId },
+            { id: `ch-voice-${now}-3`, name: 'Kahve Odası', type: 'voice', serverId: newServerId },
+            { id: `ch-voice-${now}-4`, name: 'Oyun & Film', type: 'voice', serverId: newServerId },
+          ]
+        : template === 'work'
+        ? [
+            { id: `ch-text-${now}-1`, name: 'duyurular', type: 'text', serverId: newServerId },
+            { id: `ch-text-${now}-2`, name: 'proje-notlari', type: 'text', serverId: newServerId },
+            { id: `ch-voice-${now}-3`, name: 'Toplantı Odası', type: 'voice', serverId: newServerId },
+            { id: `ch-voice-${now}-4`, name: 'Odaklanma', type: 'voice', serverId: newServerId },
+          ]
+        : [
+            { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId },
+            { id: `ch-voice-${now}-2`, name: 'Genel Ses', type: 'voice', serverId: newServerId },
+          ];
+
     const newServer: Server = {
       id: newServerId,
       name,
@@ -3614,10 +3659,7 @@ io.on('connection', (socket: Socket) => {
       bitrateKbps: 128,
       roles,
       members,
-      channels: [
-        { id: `ch-text-${Date.now()}-1`, name: 'genel', type: 'text', serverId: newServerId },
-        { id: `ch-voice-${Date.now()}-2`, name: 'Genel Ses', type: 'voice', serverId: newServerId },
-      ]
+      channels
     };
 
     servers.push(newServer);

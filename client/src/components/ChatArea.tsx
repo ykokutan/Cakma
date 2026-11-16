@@ -211,6 +211,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     bookmarkedMessages,
     toggleBookmarkMessage,
     addReminder,
+    dmReadReceipts,
+    markDmRead,
   } = useSocket();
 
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
@@ -220,6 +222,21 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [decryptedDmMap, setDecryptedDmMap] = useState<Record<string, string>>({});
   const dmScreenVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeThreadMessage = activeThreadMsgId ? messages.find((m) => m.id === activeThreadMsgId) || null : null;
+
+  useEffect(() => {
+    if (activeServer?.id === 'direct-messages' && activeDMUser?.username) {
+      markDmRead(activeDMUser.username);
+    }
+  }, [activeServer?.id, activeDMUser?.username, messages.length, markDmRead]);
+
+  const lastMyMessageId = React.useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].author?.username === currentUser?.username) {
+        return messages[i].id;
+      }
+    }
+    return null;
+  }, [messages, currentUser?.username]);
 
   useEffect(() => {
     if (activeServer?.id !== 'direct-messages' || !currentUser?.username) return;
@@ -1543,6 +1560,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     <span className="text-[10px] text-white/30 select-none">
                       {msg.timestamp}
                       {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
+                      {activeServer?.id === 'direct-messages' &&
+                        isMe &&
+                        msg.id === lastMyMessageId &&
+                        activeDMUser?.username &&
+                        dmReadReceipts[activeDMUser.username] && (
+                          <span className="ml-1.5 text-emerald-400 font-semibold" title="Okundu">
+                            ✓✓ Görüldü
+                          </span>
+                        )}
                     </span>
                     {msg.isPinned && (
                       <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">

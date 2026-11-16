@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
 import { User, Channel } from '../types';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
 import {
@@ -119,6 +120,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     reorderChannel,
     adminDeleteChannel,
     updateProfileDetails,
+    language,
   } = useSocket();
 
   const canManageChannels = Boolean(
@@ -353,7 +355,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </button>
 
           <div className="flex items-center justify-between px-2 pt-1 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-            <span>Direkt Mesajlar</span>
+            <span>{t(language, 'directMessages')}</span>
           </div>
 
           <div className="space-y-1">
@@ -516,7 +518,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               ) : (
                 <ChevronDown className="w-3.5 h-3.5" />
               )}
-              <span>Metin Kanalları</span>
+              <span>{t(language, 'textChannels')}</span>
             </button>
             <button
               onClick={() => onOpenCreateChannel('text')}
@@ -623,7 +625,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               ) : (
                 <ChevronDown className="w-3.5 h-3.5" />
               )}
-              <span>Ses Odaları</span>
+              <span>{t(language, 'voiceChannels')}</span>
             </button>
             <button
               onClick={() => onOpenCreateChannel('voice')}

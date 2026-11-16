@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
 import { LogIn, UserPlus, Shield, X, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface AuthModalProps {
@@ -10,7 +11,7 @@ interface AuthModalProps {
 const AVATAR_OPTIONS = ['🛡️', '🚀', '🎮', '⚡', '🎧', '👾', '🐱', '🐺', '🔥', '💻'];
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false }) => {
-  const { login, verify2faLogin, register, requestRegisterChallenge, sendRegisterEmailCode, currentServerHost, isDedicatedServer, resetToMainServer } = useSocket();
+  const { login, verify2faLogin, register, requestRegisterChallenge, sendRegisterEmailCode, currentServerHost, isDedicatedServer, resetToMainServer, language } = useSocket();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -142,7 +143,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
             {isRegister ? <UserPlus className="w-6 h-6 text-white" /> : <Shield className="w-6 h-6 text-white" />}
           </div>
           <h2 className="text-xl font-bold text-white tracking-tight">
-            {isRegister ? 'Yeni Hesap Oluştur' : 'Sisteme Giriş Yap'}
+            {isRegister ? t(language, 'registerTitle') : t(language, 'loginTitle')}
           </h2>
           <p className="text-xs text-white/50 mt-1">
             {isRegister
@@ -180,7 +181,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                 !isRegister ? 'bg-blue-500 text-white shadow-md shadow-blue-500/30' : 'text-white/60 hover:text-white'
               }`}
             >
-              Giriş Yap
+              {t(language, 'loginBtn')}
             </button>
             <button
               type="button"
@@ -189,7 +190,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                 isRegister ? 'bg-blue-500 text-white shadow-md shadow-blue-500/30' : 'text-white/60 hover:text-white'
               }`}
             >
-              Kayıt Ol
+              {t(language, 'registerBtn')}
             </button>
           </div>
         </div>

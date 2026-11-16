@@ -153,8 +153,11 @@ interface SocketContextType {
   stopScreenShare: () => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
-  createServer: (name: string, icon?: string) => void;
+  createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => void;
   createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string }) => void;
+  connectionState: 'connected' | 'reconnecting' | 'disconnected';
+  dmReadReceipts: Record<string, number>;
+  markDmRead: (partnerUsername: string) => void;
   updateProfile: (username: string, avatar: string) => void;
 
   // Server Roles & Detailed Settings
@@ -667,6 +670,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [typingUsers, setTypingUsers] = useState<Record<string, string[]>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
+  const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
+  const [dmReadReceipts, setDmReadReceipts] = useState<Record<string, number>>({});
+  const pendingMessageQueueRef = useRef<Array<{
+    serverId: string;
+    channelId: string;
+    content: string;
+    attachments?: MessageAttachment[];
+    replyTo?: { id: string; username: string; content: string };
+  }>>([]);
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black'>(() => {
     return (localStorage.getItem('dc_ui_theme') as any) || 'vision-dark';
@@ -864,9 +876,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setReminders(prev => [...prev, { id, text, triggerAt }]);
     window.setTimeout(() => {
       setReminders(prev => prev.filter(r => r.id !== id));
-      sendDesktopNotification('Hatırlatıcı ⏰', text);
-      if (tsSoundEffectsRef.current) {
-        playTeamSpeakChime('levelup');
+      if (currentUserRef.current?.status !== 'dnd') {
+        sendDesktopNotification('Hatırlatıcı ⏰', text);
+        if (tsSoundEffectsRef.current) {
+          playTeamSpeakChime('levelup');
+        }
       }
     }, delayMs);
   };
@@ -1755,6 +1769,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setSocket(newSocket);
 
     newSocket.on('connect_error', (err: any) => {
+      setConnectionState('reconnecting');
       console.warn('Socket bağlantı hatası:', err?.message);
       const errMsg = err?.message || '';
       if (errMsg.includes('LİSANS_İPTAL') || errMsg.includes('LISANS_IPTAL') || errMsg.includes('YETKISIZ') || errMsg.includes('YETKİSİZ')) {
@@ -1763,7 +1778,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
+    newSocket.on('disconnect', () => {
+      setConnectionState('reconnecting');
+    });
+
+    newSocket.io.on('reconnect_attempt', () => {
+      setConnectionState('reconnecting');
+    });
+
+    newSocket.io.on('reconnect_failed', () => {
+      setConnectionState('disconnected');
+    });
+
     newSocket.on('connect', () => {
+      setConnectionState('connected');
       console.log('Connected to backend:', newSocket.id);
       newSocket.emit('get_store_settings');
       newSocket.emit('get_my_licenses');
@@ -1797,6 +1825,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         setCurrentUser(res.user);
         setIsAuthenticated(true);
+        if (pendingMessageQueueRef.current.length > 0) {
+          const queued = [...pendingMessageQueueRef.current];
+          pendingMessageQueueRef.current = [];
+          queued.forEach((payload) => {
+            newSocket.emit('send_message', payload);
+          });
+        }
       } else if (res.tokenExpired) {
         localStorage.removeItem('dc_clone_auth');
         setIsAuthenticated(false);
@@ -1866,8 +1901,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // Desktop Push Notification
-      if (desktopNotificationsRef.current && currentUserRef.current && msg.author?.id !== currentUserRef.current.id) {
+      // Desktop Push Notification (suppressed in Do Not Disturb mode)
+      if (desktopNotificationsRef.current && currentUserRef.current && currentUserRef.current.status !== 'dnd' && msg.author?.id !== currentUserRef.current.id) {
         const isMention = msg.content && msg.content.includes('@' + currentUserRef.current.username);
         const isDM = msg.channelId.startsWith('dm-');
         if (isMention || isDM) {
@@ -1877,6 +1912,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           );
         }
       }
+    });
+
+    newSocket.on('dm_read_receipt', ({ readerUsername, readAt }: { readerUsername: string; readAt: number }) => {
+      if (!readerUsername) return;
+      setDmReadReceipts(prev => ({
+        ...prev,
+        [readerUsername]: Math.max(prev[readerUsername] || 0, readAt)
+      }));
     });
 
     newSocket.on('message_edited', ({ channelId, messageId, content, isEdited }: { channelId: string; messageId: string; content: string; isEdited: boolean }) => {
@@ -2099,7 +2142,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('afk_moved', ({ channelId, channelName }: { channelId: string; channelName: string }) => {
       setConnectedVoiceChannelId(channelId);
       setIsMuted(true);
-      sendDesktopNotification('AFK Taşıma', `Hareketsiz kaldığınız için "${channelName}" odasına taşındınız.`);
+      if (currentUserRef.current?.status !== 'dnd') {
+        sendDesktopNotification('AFK Taşıma', `Hareketsiz kaldığınız için "${channelName}" odasına taşındınız.`);
+      }
     });
 
     newSocket.on('screen_share_change', ({ userId, isSharing }: { userId: string; isSharing: boolean }) => {
@@ -2255,16 +2300,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       serverName: string;
     }) => {
       setVoicePullInvite(invite);
-      playSynthesizedSound('notification');
-      sendDesktopNotification(
-        'Ses Odasına Davet',
-        `${invite.fromUsername} sizi #${invite.channelName} ses odasına çekmek istiyor.`
-      );
+      if (currentUserRef.current?.status !== 'dnd') {
+        playSynthesizedSound('notification');
+        sendDesktopNotification(
+          'Ses Odasına Davet',
+          `${invite.fromUsername} sizi #${invite.channelName} ses odasına çekmek istiyor.`
+        );
+      }
     });
 
     newSocket.on('voice_pull_status', (statusPayload: { status: 'sent' | 'accepted' | 'rejected'; message: string }) => {
       setVoicePullNotice(statusPayload);
-      if (statusPayload.status === 'rejected') {
+      if (statusPayload.status === 'rejected' && currentUserRef.current?.status !== 'dnd') {
         playSynthesizedSound('notification');
       }
       window.setTimeout(() => {
@@ -2402,7 +2449,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isDeafened: false,
         durationSeconds: 0
       });
-      sendDesktopNotification('Gelen 1-e-1 Arama', `${callerUser.username} seni arıyor...`);
+      if (currentUserRef.current?.status !== 'dnd') {
+        sendDesktopNotification('Gelen 1-e-1 Arama', `${callerUser.username} seni arıyor...`);
+      }
       const isTauri = typeof window !== 'undefined' && (
         '__TAURI_INTERNALS__' in window ||
         window.location.hostname === 'tauri.localhost' ||
@@ -2713,10 +2762,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // 5. Member Level Up
     newSocket.on('member_level_up', ({ username, level }: { username: string; level: number }) => {
       if (currentUserRef.current?.username === username) {
-        if (tsSoundEffectsRef.current) {
-          playTeamSpeakChime('levelup');
+        if (currentUserRef.current?.status !== 'dnd') {
+          if (tsSoundEffectsRef.current) {
+            playTeamSpeakChime('levelup');
+          }
+          sendDesktopNotification('Tebrikler! 🎉', `Seviye ${level}'e yükseldiniz!`);
         }
-        sendDesktopNotification('Tebrikler! 🎉', `Seviye ${level}'e yükseldiniz!`);
       }
     });
 
@@ -3722,15 +3773,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const sendMessage = (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }) => {
-    if (!socket || !activeServer || !activeChannel) return;
-    socket.emit('send_message', {
+    if (!activeServer || !activeChannel) return;
+    const payload = {
       serverId: activeServer.id,
       channelId: activeChannel.id,
       content,
       attachments,
       replyTo
-    });
+    };
+    if (!socket || !socket.connected) {
+      pendingMessageQueueRef.current.push(payload);
+      return;
+    }
+    socket.emit('send_message', payload);
   };
+
+  const markDmRead = useCallback((partnerUsername: string) => {
+    if (!socket || !socket.connected || !partnerUsername) return;
+    socket.emit('mark_dm_read', { partnerUsername });
+  }, [socket]);
 
   const toggleRaiseHand = useCallback(() => {
     if (!socket) return;
@@ -4099,9 +4160,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('screen_share_status', { isSharing: false });
   };
 
-  const createServer = (name: string, icon?: string) => {
+  const createServer = (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => {
     if (!socket || !name.trim()) return;
-    socket.emit('create_server', { name: name.trim(), icon });
+    socket.emit('create_server', { name: name.trim(), icon, template });
   };
 
   const createChannel = (
@@ -4959,6 +5020,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         reminders,
         addReminder,
         removeReminder,
+        connectionState,
+        dmReadReceipts,
+        markDmRead,
       }}
     >
       {children}
