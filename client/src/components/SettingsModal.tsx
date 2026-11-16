@@ -200,7 +200,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.9');
+  const [appVersion, setAppVersion] = useState<string>('0.3.10');
   const [overlayConfig, setOverlayConfig] = useState<{
     onlySpeaking: boolean;
     showControls: boolean;
@@ -3007,10 +3007,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.9 - Latest */}
+                  {/* v0.3.10 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.9 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.10 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">

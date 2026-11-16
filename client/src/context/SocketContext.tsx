@@ -1095,14 +1095,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [socket, recordPacketResult]);
 
   useEffect(() => {
-    if (!socket || !socket.connected) return;
-    measurePing();
+    if (!socket) return;
+    if (socket.connected) measurePing();
+    const onConn = () => measurePing();
+    socket.on('connect', onConn);
     const intervalMs = isDiagnosticsOpen ? 1000 : 4000;
     const interval = setInterval(() => {
-      measurePing();
+      if (socket.connected) measurePing();
     }, intervalMs);
-    return () => clearInterval(interval);
-  }, [socket, isDiagnosticsOpen, measurePing]);
+    return () => {
+      socket.off('connect', onConn);
+      clearInterval(interval);
+    };
+  }, [socket, isAuthenticated, isDiagnosticsOpen, measurePing]);
 
   // Per-User Volumes & Local Mutes
   const [userVolumes, setUserVolumes] = useState<Record<string, number>>(() => {

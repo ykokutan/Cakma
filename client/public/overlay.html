@@ -21,8 +21,6 @@
         display: flex;
         flex-direction: column;
         background: rgba(11, 13, 20, 0.72);
-        backdrop-filter: blur(18px) saturate(140%);
-        -webkit-backdrop-filter: blur(18px) saturate(140%);
         border: 1px solid rgba(255, 255, 255, 0.16);
         border-radius: 14px;
         overflow: hidden;
@@ -270,7 +268,7 @@
         function applyOpacity(val) {
           const num = Number(val);
           const clamped = Number.isFinite(num) ? Math.min(100, Math.max(15, num)) : 75;
-          const bgAlpha = (clamped / 100) * 0.94;
+          const bgAlpha = (clamped / 100) * 0.92;
           const borderAlpha = Math.max(0.08, (clamped / 100) * 0.22);
           shell.style.background = `rgba(11, 13, 20, ${bgAlpha.toFixed(2)})`;
           shell.style.borderColor = `rgba(255, 255, 255, ${borderAlpha.toFixed(2)})`;
@@ -307,9 +305,9 @@
           dot.classList.toggle('idle', !inVoice);
           speakerCount.textContent = String(allSpeakers.length);
 
-          if (overlayCfg.showPing && inVoice && ping > 0) {
+          if (overlayCfg.showPing && inVoice) {
             pingBadge.style.display = 'inline-block';
-            pingBadge.textContent = ping + 'ms';
+            pingBadge.textContent = ping > 0 ? ping + 'ms' : '...ms';
           } else {
             pingBadge.style.display = 'none';
           }
