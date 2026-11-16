@@ -143,6 +143,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysSmtpUser, setSysSmtpUser] = useState<string>('');
   const [sysSmtpPass, setSysSmtpPass] = useState<string>('');
   const [sysSmtpFrom, setSysSmtpFrom] = useState<string>('');
+  const [sysMailRelayUrl, setSysMailRelayUrl] = useState<string>('');
+  const [sysMailRelaySecret, setSysMailRelaySecret] = useState<string>('');
   const [showSmtpPass, setShowSmtpPass] = useState<boolean>(false);
   const [smtpTestTo, setSmtpTestTo] = useState<string>('');
   const [smtpTestBusy, setSmtpTestBusy] = useState<boolean>(false);
@@ -200,6 +202,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysSmtpUser(adminData.systemConfig.smtpUser || '');
       setSysSmtpPass(adminData.systemConfig.smtpPass || '');
       setSysSmtpFrom(adminData.systemConfig.smtpFrom || '');
+      setSysMailRelayUrl(adminData.systemConfig.mailRelayUrl || '');
+      setSysMailRelaySecret(adminData.systemConfig.mailRelaySecret || '');
       setSysWebhookEvents({
         security: adminData.systemConfig.webhookEvents?.security ?? true,
         bans: adminData.systemConfig.webhookEvents?.bans ?? true,
@@ -1246,6 +1250,28 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     </div>
                   </div>
 
+                  <div className="pt-2 border-t border-white/10 space-y-2">
+                    <div className="text-[11px] font-semibold text-cyan-300 uppercase tracking-wider">
+                      HTTPS Mail Relay (Opsiyonel — SMTP Port Engeli Varsa)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        type="url"
+                        value={sysMailRelayUrl}
+                        onChange={(e) => { setSysMailRelayUrl(e.target.value); setIsSystemDirty(true); }}
+                        placeholder="https://yahyakemalokutan.com/mail-relay.php"
+                        className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-cyan-400"
+                      />
+                      <input
+                        type="password"
+                        value={sysMailRelaySecret}
+                        onChange={(e) => { setSysMailRelaySecret(e.target.value); setIsSystemDirty(true); }}
+                        placeholder="Relay Gizli Anahtarı (X-Relay-Secret)"
+                        className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                  </div>
+
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="text"
@@ -1274,6 +1300,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                           smtpUser: sysSmtpUser,
                           smtpPass: sysSmtpPass,
                           smtpFrom: sysSmtpFrom,
+                          mailRelayUrl: sysMailRelayUrl,
+                          mailRelaySecret: sysMailRelaySecret,
                         });
                         setSmtpTestBusy(false);
                         setSmtpTestResult(res);
@@ -1391,6 +1419,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         smtpUser: sysSmtpUser,
                         smtpPass: sysSmtpPass,
                         smtpFrom: sysSmtpFrom,
+                        mailRelayUrl: sysMailRelayUrl,
+                        mailRelaySecret: sysMailRelaySecret,
                         webhookEvents: sysWebhookEvents,
                       });
                       setIsSystemDirty(false);

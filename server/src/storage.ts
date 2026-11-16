@@ -195,6 +195,8 @@ export interface SystemConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpFrom?: string;
+  mailRelayUrl?: string;
+  mailRelaySecret?: string;
   maintenanceMode: boolean;
   maintenanceMessage?: string;
   maxMessageLength: number;

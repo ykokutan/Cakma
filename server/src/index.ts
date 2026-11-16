@@ -533,6 +533,8 @@ const defaultSystemConfig: SystemConfig = {
   smtpUser: '',
   smtpPass: '',
   smtpFrom: '',
+  mailRelayUrl: '',
+  mailRelaySecret: '',
   maintenanceMode: false,
   maintenanceMessage: 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.',
   maxMessageLength: 2000,
@@ -1109,18 +1111,58 @@ export async function sendSmtpEmail(
     smtpUser?: string;
     smtpPass?: string;
     smtpFrom?: string;
+    mailRelayUrl?: string;
+    mailRelaySecret?: string;
   }
 ): Promise<{ ok: boolean; error?: string }> {
-  const host = (overrideCfg?.smtpHost ?? systemConfig.smtpHost ?? process.env.SMTP_HOST ?? '').trim();
-  const port = Number(overrideCfg?.smtpPort ?? systemConfig.smtpPort ?? process.env.SMTP_PORT ?? 587);
-  const secure = overrideCfg?.smtpSecure ?? systemConfig.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465);
+  const relayUrl = (overrideCfg?.mailRelayUrl ?? systemConfig.mailRelayUrl ?? process.env.MAIL_RELAY_URL ?? '').trim();
+  const relaySecret = (overrideCfg?.mailRelaySecret ?? systemConfig.mailRelaySecret ?? process.env.MAIL_RELAY_SECRET ?? '').trim();
   const user = (overrideCfg?.smtpUser ?? systemConfig.smtpUser ?? process.env.SMTP_USER ?? '').trim();
-  const pass = (overrideCfg?.smtpPass ?? systemConfig.smtpPass ?? process.env.SMTP_PASS ?? '').trim();
   const rawFrom = (overrideCfg?.smtpFrom ?? systemConfig.smtpFrom ?? process.env.SMTP_FROM ?? '').trim();
   const from = rawFrom.includes('@') ? rawFrom : (user || 'noreply@cakma.local');
 
+  if (relayUrl) {
+    if (!relayUrl.startsWith('https://') && !relayUrl.startsWith('http://')) {
+      return { ok: false, error: 'Mail Relay URL geçerli bir http/https adresi olmalıdır.' };
+    }
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      const res = await fetch(relayUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(relaySecret ? { 'X-Relay-Secret': relaySecret } : {}),
+        },
+        body: JSON.stringify({
+          to,
+          subject,
+          text,
+          html: html || `<p>${text}</p>`,
+          from,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const rawText = await res.text();
+      let parsed: any = null;
+      try { parsed = JSON.parse(rawText); } catch {}
+      if (!res.ok || (parsed && parsed.ok === false)) {
+        return { ok: false, error: parsed?.error || `Relay HTTP ${res.status}: ${rawText.slice(0, 140)}` };
+      }
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Mail Relay bağlantısı başarısız.' };
+    }
+  }
+
+  const host = (overrideCfg?.smtpHost ?? systemConfig.smtpHost ?? process.env.SMTP_HOST ?? '').trim();
+  const port = Number(overrideCfg?.smtpPort ?? systemConfig.smtpPort ?? process.env.SMTP_PORT ?? 587);
+  const secure = overrideCfg?.smtpSecure ?? systemConfig.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465);
+  const pass = (overrideCfg?.smtpPass ?? systemConfig.smtpPass ?? process.env.SMTP_PASS ?? '').trim();
+
   if (!host || !user || !pass) {
-    return { ok: false, error: 'SMTP ayarları eksik (Host, Kullanıcı veya Şifre tanımlı değil).' };
+    return { ok: false, error: 'SMTP veya Mail Relay ayarları eksik.' };
   }
 
   try {
@@ -4847,6 +4889,8 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.smtpUser === 'string') systemConfig.smtpUser = nextCfg.smtpUser.trim().slice(0, 120);
     if (typeof nextCfg.smtpPass === 'string') systemConfig.smtpPass = nextCfg.smtpPass.trim().slice(0, 200);
     if (typeof nextCfg.smtpFrom === 'string') systemConfig.smtpFrom = nextCfg.smtpFrom.trim().slice(0, 120);
+    if (typeof nextCfg.mailRelayUrl === 'string') systemConfig.mailRelayUrl = nextCfg.mailRelayUrl.trim().slice(0, 300);
+    if (typeof nextCfg.mailRelaySecret === 'string') systemConfig.mailRelaySecret = nextCfg.mailRelaySecret.trim().slice(0, 160);
     if (typeof nextCfg.maintenanceMode === 'boolean') systemConfig.maintenanceMode = nextCfg.maintenanceMode;
     if (typeof nextCfg.maintenanceMessage === 'string') systemConfig.maintenanceMessage = sanitizeText(nextCfg.maintenanceMessage.trim()).slice(0, 240);
     if (typeof nextCfg.requireStrongPasswords === 'boolean') systemConfig.requireStrongPasswords = nextCfg.requireStrongPasswords;
@@ -4933,6 +4977,8 @@ io.on('connection', (socket: Socket) => {
       smtpUser?: string;
       smtpPass?: string;
       smtpFrom?: string;
+      mailRelayUrl?: string;
+      mailRelaySecret?: string;
     };
   }) => {
     const requester = activeUsers.get(socket.id);

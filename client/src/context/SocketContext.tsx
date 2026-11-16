@@ -256,6 +256,8 @@ interface SocketContextType {
       smtpUser?: string;
       smtpPass?: string;
       smtpFrom?: string;
+      mailRelayUrl?: string;
+      mailRelaySecret?: string;
       maintenanceMode: boolean;
       maintenanceMessage?: string;
       maxMessageLength: number;
@@ -325,6 +327,8 @@ interface SocketContextType {
     smtpUser?: string;
     smtpPass?: string;
     smtpFrom?: string;
+    mailRelayUrl?: string;
+    mailRelaySecret?: string;
     maintenanceMode?: boolean;
     maintenanceMessage?: string;
     maxMessageLength?: number;
@@ -364,6 +368,8 @@ interface SocketContextType {
       smtpUser?: string;
       smtpPass?: string;
       smtpFrom?: string;
+      mailRelayUrl?: string;
+      mailRelaySecret?: string;
     }
   ) => Promise<{ ok: boolean; message: string }>;
   generateDedicatedLicense: (data: { licensee: string; maxSlots: number; expireDays: number; tier: 'Starter' | 'Pro' | 'Enterprise'; assignedUsername?: string }) => void;
@@ -3070,6 +3076,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       smtpUser?: string;
       smtpPass?: string;
       smtpFrom?: string;
+      mailRelayUrl?: string;
+      mailRelaySecret?: string;
     }
   ): Promise<{ ok: boolean; message: string }> => {
     return new Promise((resolve) => {
@@ -3130,6 +3138,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     smtpUser?: string;
     smtpPass?: string;
     smtpFrom?: string;
+    mailRelayUrl?: string;
+    mailRelaySecret?: string;
     maintenanceMode?: boolean;
     maintenanceMessage?: string;
     maxMessageLength?: number;
