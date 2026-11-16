@@ -1,124 +1,139 @@
-# Çakma — Discord & TeamSpeak Hibrit Platformu (Tauri v2 + Web + Dedicated Server)
+# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.3.11`)
 
-**Çakma**; Discord'un modern kanal/sohbet mimarisini, iOS/visionOS cam (glassmorphism) arayüzünü ve TeamSpeak'in düşük gecikmeli ses, yayın, fısıltı (Whisper) ve özelleştirilebilir donanım ayarlarını tek platformda birleştiren tam kapsamlı bir **masaüstü (Rust/Tauri v2)** ve **web** iletişim uygulamasıdır.
+![Version](https://img.shields.io/badge/version-0.3.11-blue?style=flat-square)
+![Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20TypeScript%20%7C%20Tauri%20v2%20%7C%20Node.js%20%7C%20WebRTC-indigo?style=flat-square)
+![Languages](https://img.shields.io/badge/i18n-TR%20%7C%20EN%20%7C%20DE%20%7C%20RU-emerald?style=flat-square)
+
+**Çakma**; Discord'un modern sunucu/kanal ve sohbet deneyimini, iOS/visionOS cam (**glassmorphism**) arayüzünü ve TeamSpeak'in düşük gecikmeli ses, yayın, fısıltı (**Whisper Lists**) ve donanım kontrolü özelliklerini tek platformda birleştiren tam kapsamlı bir **masaüstü (Rust / Tauri v2)** ve **web** iletişim uygulamasıdır.
+
+---
+
+## 📑 İçindekiler
+- [✨ Güncel Özellikler](#-güncel-özellikler)
+  - [🖥️ Masaüstü Uygulaması & Oyun İçi Overlay](#️-masaüstü-uygulaması--oyun-içi-overlay)
+  - [🎙️ Ses Odaları, Yayın, PiP & TeamSpeak Özellikleri](#️-ses-odaları-yayın-pip--teamspeak-özellikleri)
+  - [🎵 Müzik Botu, Audio Ducking & Ortak Etkinlikler](#-müzik-botu-audio-ducking--ortak-etkinlikler)
+  - [💬 Sohbet, DM Okundu Bilgisi & Topluluk](#-sohbet-dm-okundu-bilgisi--topluluk)
+  - [📞 1-e-1 Direkt Görüşme & Uzaktan Yardım](#-1-e-1-direkt-görüşme--uzaktan-yardım)
+  - [🎨 Arayüz, Profil, Rozetler & Çoklu Dil (i18n)](#-arayüz-profil-rozetler--çoklu-dil-i18n)
+  - [🔒 Güvenlik, Moderasyon & Ağ Teşhisi](#-güvenlik-moderasyon--ağ-teşhisi)
+- [📖 Hızlı Kullanım Rehberi](#-hızlı-kullanım-rehberi)
+- [🛠️ Kurulum, Test & Geliştirme](#️-kurulum-test--geliştirme)
+- [📦 Masaüstü Sürümü Derleme (Release)](#-masaüstü-sürümü-derleme-release)
+- [📂 Proje Dizin Yapısı](#-proje-dizin-yapısı)
 
 ---
 
 ## ✨ Güncel Özellikler
 
-### 🖥️ Masaüstü Uygulaması (Windows & macOS — Rust / Tauri v2)
-- **Windows & macOS Universal Desteği:** Windows (`x64-setup.exe`) ve macOS (`Universal .dmg` — Apple Silicon & Intel) için yerel derleme ve GitHub Actions otomatik build desteği.
-- **Sistem Tepsisi & Arka Plan Modu:** Pencere kapatıldığında uygulama tepsiye küçülür; tepsi menüsünden **Çakma'yı Göster**, **Mikrofonu Kapat / Aç** ve **Tamamen Kapat** seçenekleri kullanılabilir.
-- **Global Kısayollar:** Oyun içinde veya uygulama arka plandayken bile çalışan sistem geneli kısayollar:
-  - `Ctrl + Shift + M` → Mikrofonu Sustur / Aç
-  - `Ctrl + Shift + D` → Kulaklığı Sustur / Aç
-- **Otomatik Oyun Algılama (Rich Presence):** Windows ve macOS üzerinde çalışan oyun/uygulamalar (VALORANT, CS2, LoL, GTA V, FiveM, Minecraft, Fortnite, OBS, Spotify vb.) otomatik algılanıp üye listesinde aktivite olarak gösterilir.
-- **Oyun İçi Konuşanlar Overlay:** Üstte sabit, çerçevesiz mini overlay penceresi ile ses odasında kimlerin konuştuğu anlık olarak takip edilebilir; **Ayarlar → Görünüm & Tema** sekmesinden açılıp kapatılabilir.
-- **İmzalı Otomatik Güncelleme:** Masaüstü istemcisi açılışta yeni sürümü otomatik denetler ve imzalı güncellemeyi indirip kurar.
+### 🖥️ Masaüstü Uygulaması & Oyun İçi Overlay
+- **Windows & macOS Desteği (Rust / Tauri v2):** Windows (`x64-setup.exe` / `.msi`) ve macOS (`Universal .dmg` — Apple Silicon & Intel) için yerel masaüstü derlemesi.
+- **Gelişmiş Oyun İçi Konuşanlar Overlay'i:**
+  - Çerçevesiz, şeffaf ve anti-cheat güvenli (DLL enjeksiyonu olmadan ayrı pencere tabanlı) konuşanlar penceresi.
+  - **Cam Saydamlığı (%20–%100)**, **Köşe Konumu** (Sol Üst / Sağ Üst / Sol Alt / Sağ Alt), **Boyut** (Kompakt / Standart / Geniş), **Yalnızca Konuşanları Göster**, **Hızlı Kontrol Çubuğu** ve **Canlı Ping (ms) Göstergesi**.
+  - `Ctrl + Shift + O` (veya ayar anahtarı) ile **Tıklama Geçirgenliği (Click-Through / Kilit)** açılıp kapatılabilir.
+- **Otomatik Oyun Algılama (Rich Presence):** Çalışan süreçler ve aktif pencere başlıkları taranarak oyunlar (VALORANT, CS2, LoL, GTA V, FiveM, Minecraft, Fortnite, Steam/Xbox/Epic oyunları vb.) otomatik algılanır ve profil aktivitesinde gösterilir.
+- **Sistem Tepsisi & Global Kısayollar:** Pencere kapatıldığında arka planda tepsiye küçülür; oyun içindeyken bile `Ctrl + Shift + M` (Mikrofon) ve `Ctrl + Shift + D` (Kulaklık) kısayolları çalışır.
+- **İmzalı Otomatik Güncelleme:** Açılışta yeni sürüm kontrolü ve tek tıkla güncelleme desteği.
 
-### 📞 1-e-1 Direkt Görüşme & TeamViewer Tarzı Uzaktan Yardım
-- **Discord Tarzı 1-e-1 Görüşme Sahnesi:** Direkt Mesaj sayfasının üst kısmında genişletilip küçültülebilen canlı görüşme sahnesi; çift taraflı konuşma halosu, süre sayacı, mikrofon/kulaklık, ekran paylaşımı ve inline önizleme.
-- **Çoklu Oturum & Zil Sesi Desteği:** Gelen/giden arama zil sesleri, aynı hesabın açık tüm masaüstü/web oturumlarına çağrı düşürme ve yanıtlandığında diğer pencereleri otomatik kapatma.
-- **Uzaktan Masaüstü Kontrolü (TeamViewer Tarzı):** 1-e-1 görüşmede ekran paylaşan arkadaşınızdan izin isteyerek faresini ve klavyesini uzaktan kontrol edebilirsiniz:
-  - **Hızlı Kısayollar Çubuğu:** `Ctrl+C`, `Ctrl+V`, `Ctrl+X`, `Ctrl+Z`, `Ctrl+A`, `Alt+Tab`, `Alt+F4`, `Win+D`, `Win+R`, `Win+E`, `Görev Yöneticisi (Ctrl+Shift+Esc)`, `Esc`, `Del`.
-  - **Türkçe Q Ekran Klavyesi & Metin Gönderici:** Fare üzerinden tam klavye kullanımı, yapışkan `Shift / Ctrl / Win / Alt` tuşları ve tek seferde metin/komut yazdırma.
-  - **Windows UAC / UIPI İpucu:** Görev Yöneticisi veya Yönetici CMD gibi yükseltilmiş pencereler için uygulamayı **"Yönetici olarak çalıştır"** uyarısı.
+### 🎙️ Ses Odaları, Yayın, PiP & TeamSpeak Özellikleri
+- **Düşük Gecikmeli WebRTC Ses Odaları:** Kişi bazlı ses seviyesi ayarı (`%0–%200`), yerel susturma, konuşma halosu, şifreli odalar ve sürükle-bırak oda taşıma.
+- **TeamSpeak Tarzı Go Live Ekran Yayını:** Yayın öncesi çözünürlük (`360p – Source`), FPS (`5 / 30 / 60`), video/ses bitrate, gizlilik ve izleyici limiti seçimi.
+- **Çoklu Ekran Paylaşımı Geçişi & Mini PiP:**
+  - Aynı ses odasında birden fazla kişi yayın açtığında üstteki yayıncı butonlarıyla yayınlar arasında anında geçiş yapılabilir.
+  - Ses odasında yayın izlerken başka bir metin/DM kanalına geçtiğinizde sağ altta **Mini PiP (Picture-in-Picture)** yayın penceresi açılır (*Odaya Dön*, *Küçült*, *Kapat*).
+- **Ses Odası İçi Yazılı Sohbet ("Oda Sohbeti"):** Ses odasından çıkmadan sağdan açılan yan çekmece üzerinden odaya özel yazılı mesajlar okunup gönderilebilir.
+- **Whisper Lists (Fısıltı Listeleri) & El Kaldırma:** Seçili kullanıcılara özel ses fısıltısı gönderme ve kalabalık odalarda söz isteme rozeti.
+- **Otomatik AFK Taşıyıcı & Gelişmiş DSP:** Belirlenen süre sonunda AFK kanalına otomatik taşıma; RNNoise/Echo Cancellation/AGC, PTT/VAD eşiği, 3D Uzamsal Ses, Soundboard ve Oda Ses Kaydedici.
 
-### 🎨 Arayüz, Mobil Uyumluluk & Özelleştirme
-- **Spatial Floating Glass Tasarımı:** Nokta dokulu derin obsidian arka plan üzerinde yüzen cam paneller, ışık hatlı aktif kanal/sunucu göstergeleri ve seçilebilir UI temaları.
-- **Sürükle-Bırak Oda Taşıma:** Yetkili kullanıcılar ses odalarındaki üyeleri fareyle sürükleyip başka bir ses odasına taşıyabilir.
-- **Mobil & iPhone 12 Safari Uyumluluğu:** `100dvh` tam ekran yüksekliği, safe-area boşlukları, kaydırılabilir yan çekmece (drawer) menüleri ve taşmayan sohbet giriş alanı.
-- **Hızlı Durum & Özel Durum Değiştirici:** Sol alt kullanıcı kartına tıklayarak **Çevrimiçi / Boşta / Rahatsız Etmeyin / Görünmez** durumları ve özel durum mesajı anında güncellenebilir.
-- **Özel Sunucu Simgesi (`512×512`) & Banner (`960×540`):** Sunucu Ayarları üzerinden özel sunucu simgesi ve 16:9 banner görseli (PNG, JPG, WEBP, GIF) yüklenebilir; davet linki önizlemesinde de gösterilir.
+### 🎵 Müzik Botu, Audio Ducking & Ortak Etkinlikler
+- **Radyo & YouTube Botu:** Resmi YouTube IFrame API ve canlı SomaFM radyo istasyonlarıyla senkronize müzik dinleme.
+- **Audio Ducking:** Odadaki katılımcılardan biri konuştuğunda Radyo/YouTube ses seviyesi otomatik olarak **%30** seviyesine kısılır; konuşma bitince eski haline döner (üst bardan açılıp kapatılabilir).
+- **Birlikte İzle (Watch Together), Ortak Çizim (Whiteboard) & Mini Oyunlar:** Ses odası içinde senkronize video, canlı ortak tuval ve mini oyunlar.
 
-### 🎙️ Ses Odaları, Yayın & TeamSpeak Özellikleri
-- **Düşük Gecikmeli WebRTC Ses Odaları:** Kişi bazlı ses seviyesi ayarı, yerel susturma, konuşma halosu ve şifreli odalar.
-- **TeamSpeak Tarzı Go Live Ekran Yayını:** Yayın açmadan önce çözünürlük (360p – Source), FPS (5/30/60), video/ses bitrate, gizlilik (Herkese Açık / Kişiler / Özel) ve izleyici limiti ayarlanabilir.
-- **Whisper Lists (Fısıltı Listeleri):** Seçili kullanıcılara özel fısıltı listeleri oluşturarak canlı ses fısıltısı gönderilebilir.
-- **El Kaldırma (Raise Hand / Sahne Modu):** Kalabalık odalarda söz istemek için el kaldırma rozeti.
-- **Otomatik AFK Taşıyıcı:** Sunucu ayarlarından belirlenen süre (`afkTimeoutMinutes`) boyunca ses aktivitesi olmayan kullanıcılar otomatik olarak AFK kanalına taşınır ve susturulur.
-- **Gelişmiş Ayarlar (TeamSpeak Tarzı):** Ses giriş/çıkış aygıt seçimi, RNNoise/Echo Cancellation/AGC, Bas-Konuş (PTT) & VAD eşiği, Mikrofon Testi (Loopback), Video/Codec ayarları, Bildirimler ve Kısayollar.
-- **3D Uzamsal Ses, Ses Tahtası (Soundboard) & Oda Kaydı:** Oda içinde eğlence ve kayıt araçları.
+### 💬 Sohbet, DM Okundu Bilgisi & Topluluk
+- **DM Okundu Bilgisi (`✓✓ Görüldü`):** Direkt mesajlarda karşı taraf mesajınızı okuduğunda son gönderdiğiniz mesajın yanında canlı `✓✓ Görüldü` göstergesi görünür.
+- **"Yeni Mesajlar" Ayırıcı Çizgisi:** Okunmamış mesajı olan bir kanala girildiğinde son okunan mesajın hemen altında *"Yeni Mesajlar"* ayırıcı çizgisi gösterilir.
+- **Bağlantı Durumu & Çevrimdışı Mesaj Kuyruğu:** Bağlantı koptuğunda üstte *"Yeniden bağlanılıyor..."* uyarı bandı çıkar; bu sırada yazılan mesajlar kuyruğa alınıp bağlantı sağlandığında otomatik gönderilir.
+- **Zengin Mesajlaşma:** Yanıtlama (`replyTo`), alt konular (Threads), **Sesli Notlar** (`1x / 1.5x / 2x` hız + dalga formu), kod blokları, görsel lightbox, anketler, yer imleri, hatırlatıcılar, GIF seçici ve sabitlenmiş mesajlar.
+- **Sunucu Oluşturma Şablonları:** Yeni sunucu oluştururken **🎮 Oyun Topluluğu**, **☕ Arkadaş Grubu**, **💼 Çalışma / Ekip** veya **📄 Boş Sunucu** şablonlarından biri seçilerek hazır kanallarla başlanabilir.
+- **Okunmamış Mesaj & `@Bahsetme` Rozetleri, Özel Sunucu Emojileri, Tam Üye Listesi.**
 
-### 🎵 Müzik Botu & Ortak Etkinlikler
-- **Müzik & YouTube Botu:** Resmi YouTube IFrame API ve canlı SomaFM radyo istasyonları ile odadaki herkes için senkronize müzik (kişiye özel ses/susturma ve klip göster/gizle desteğiyle).
-- **Birlikte İzle (Watch Together):** Odadaki katılımcılarla senkronize YouTube videosu izleme, oynat/duraklat ve başa sarma.
-- **Ortak Çizim Tahtası (Whiteboard) & Mini Oyunlar:** Ses odası içinde eşzamanlı çizim ve mini oyunlar.
+### 📞 1-e-1 Direkt Görüşme & Uzaktan Yardım
+- **1-e-1 Görüşme Sahnesi:** Direkt Mesaj ekranında daraltılıp genişletilebilen çağrı sahnesi, çoklu oturum zil sesi ve ekran paylaşımı.
+- **Uzaktan Masaüstü Kontrolü (TeamViewer Tarzı):** İzinli fare/klavye kontrolü, hızlı Windows/sistem kısayol çubuğu ve Türkçe Q ekran klavyesi.
 
-### 💬 Sohbet, Topluluk & Üye Listesi
-- **Zengin Mesajlaşma:** Yapısal mesaj yanıtlama (`replyTo`), **Sesli Notlar** (gerçek süreli dalga formu, tıklayarak sarma, `1x/1.5x/2x` hız kontrolü), kod blokları, dosya yükleme, anketler ve sabitlenmiş mesajlar.
-- **Okunmamış Mesaj & `@Bahsetme` Rozetleri:** Kanal listesinde ve sunucu simgelerinde okunmamış mesaj sayısı ile `@bahsetme` uyarı rozetleri.
-- **Kanal Sıralama:** Yetkili kullanıcılar metin ve ses kanallarını tek tıkla yukarı/aşağı taşıyarak sıralayabilir.
-- **Özel Sunucu Emojileri:** Sunucu ayarlarından özel emoji yükleme/silme ve sohbet emoji seçicisinde kullanma.
-- **Gelişmiş Mesaj Arama & GIF Seçici:** Kanal geçmişinde hızlı arama ve GIF paylaşımı.
-- **Tam Üye Listesi:** Sağ panelde sunucudaki tüm üyeler (hem **Çevrimiçi** rollere göre, hem **Çevrimdışı** en altta, çoklu cihaz oturumları tekilleştirilmiş şekilde) listelenir.
+### 🎨 Arayüz, Profil, Rozetler & Çoklu Dil (i18n)
+- **Rahatsız Etmeyin (DND) Bildirim Susturma:** Kullanıcı durumu `dnd` iken masaüstü bildirimleri ve bildirim sesleri otomatik olarak susturulur.
+- **Özel Durum Süresi (Custom Status Expiry):** Durum mesajı düzenlenirken *Süresiz / 30 Dakika / 1 Saat / 4 Saat / Bugün Sonu* seçilebilir; süresi dolduğunda otomatik temizlenir.
+- **Tıklanabilir Rozet Açıklamaları:** Profil kartında kazanılan rozetlerin üzerine tıklandığında rozet açıklaması açılır/kapanır.
+- **Çoklu Dil (i18n):** Ayarlar üzerinden anlık olarak **Türkçe (TR)**, **English (EN)**, **Deutsch (DE)** ve **Русский (RU)** dilleri arasında geçiş yapılabilir.
+- **Performans & Code Splitting:** Modallar ve büyük alt görünümler `React.lazy` + `Suspense` ile ayrı chunk'lar halinde yüklenir.
 
 ### 🔒 Güvenlik, Moderasyon & Ağ Teşhisi
-- **İsteğe Bağlı 2FA (TOTP):** Ayarlar → **Gizlilik & Güvenlik** sekmesinden Authenticator uygulamasıyla iki adımlı doğrulama etkinleştirilebilir.
-- **Aktif Oturum Yönetimi:** Hesaba bağlı aktif cihazlar listelenir; tek tıkla **"Diğer Tüm Oturumları Kapat"** ile diğer oturumların token'ları geçersiz kılınır.
-- **Gelişmiş AutoMod & Rol Yetkileri:** Link engelleme, yasaklı kelime filtresi, sunucu/kanal izin matrisi ve denetim kayıtları (Audit Logs).
-- **Anlık Bağlantı ve Ağ Teşhisi:** Pencere açıkken **her 1 saniyede bir** canlı RTT (Ping), Jitter, gerçek Paket Kaybı (%) ve son 30 örneğin dalga grafiği gösterilir.
+- **İsteğe Bağlı 2FA (TOTP) & Aktif Oturum Yönetimi:** Authenticator uygulaması ile 2FA ve tüm cihaz oturumlarını tek tıkla sonlandırma.
+- **Gelişmiş AutoMod, Rol İzin Matrisi & Audit Logs:** Link/kelime filtresi, zaman aşımı (timeout), ban ve denetim kayıtları.
+- **Anlık Ağ Teşhisi:** 1 saniyelik canlı RTT (Ping), Jitter, Paket Kaybı (%) ve son 30 örneğin grafiği.
 - **Dedicated Server Desteği:** Lisans korumalı bağımsız sunucu paketi (`dedicated-server/`).
 
 ---
 
-## 📖 Kullanım Rehberi
+## 📖 Hızlı Kullanım Rehberi
 
-### 1. Hesap Oluşturma, Giriş & 2FA
-1. Uygulamayı web tarayıcısından veya masaüstü istemcisinden açın.
-2. **Kayıt Ol** sekmesinden yeni bir kullanıcı adı ve güçlü bir parola oluşturun ya da mevcut hesabınızla giriş yapın.
-3. İki adımlı doğrulama açmak için sol alttaki **⚙️ Ayarlar → Gizlilik & Güvenlik** sekmesinden **2FA Etkinleştir** adımlarını izleyin ve QR kodu Authenticator uygulamanıza okutun.
-4. Aynı sekmeden hesabınıza bağlı aktif oturumları görebilir, gerekirse **Diğer Tüm Oturumları Kapat** diyebilirsiniz.
-
-### 2. Sunucu & Kanal Yönetimi
-- Sol kenar çubuğundaki **`+`** simgesinden yeni sunucu oluşturabilir, davet koduyla katılabilir veya özel bir Dedicated Sunucu IP'sine bağlanabilirsiniz.
-- Sunucu ayarlarından (**Sunucu Ayarları**) roller, izinler, **Özel Emojiler**, **AFK Kanalı/Süresi** ve **AutoMod** (link/yasaklı kelime engelleme) kurallarını yapılandırabilirsiniz.
-
-### 3. Ses Odaları, Yayın & Fısıltı
-- Sol menüdeki bir **Ses Odası**na tıklayarak bağlanın.
-- Alt kontrol çubuğundan:
-  - **Mikrofon / Kulaklık** durumunu yönetin (`Ctrl+Shift+M` / `Ctrl+Shift+D`).
-  - **Ekran Paylaş** ile Go Live ayar penceresinden çözünürlük, FPS ve bitrate seçerek yayını başlatın.
-  - **El Kaldır** ile odada söz isteyin.
-  - **Whisper Lists** ile seçili kişilere özel fısıltı açın.
-  - **Overlay** (Masaüstü) butonuyla oyun içi konuşanlar penceresini açıp kapatın.
-- Üst bardaki **Radyo / Müzik Botu** butonundan YouTube linki/listesi veya canlı radyo açabilir, alt kısımdaki ses çubuğundan kendi ses seviyenizi ayarlayabilirsiniz.
-
-### 4. Ağ Teşhisi
-- Sol alt ses bağlantı çubuğundaki ping göstergesine veya ses odası üst barındaki **ms / Ağ Teşhisi** butonuna tıklayarak **1 saniyelik canlı** Ping, Jitter, Paket Kaybı ve mikrofon giriş seviyesini izleyebilirsiniz.
+1. **Hesap & Güvenlik:** Kaydolun veya giriş yapın; sol alttaki **⚙️ Ayarlar → Gizlilik & Güvenlik** sekmesinden 2FA'yı etkinleştirip aktif oturumlarınızı yönetebilirsiniz.
+2. **Sunucu & Şablonlar:** Sol menüdeki **`+`** butonuyla şablon seçerek yeni sunucu kurabilir, davet bağlantısıyla katılabilir veya özel bir Dedicated sunucuya bağlanabilirsiniz.
+3. **Ses Odası & Overlay:** Bir ses odasına bağlandıktan sonra alt bardan mikrofon/kulaklık, **Ekran Paylaş**, **Oda Sohbeti**, **Ducking** ve **Overlay** ayarlarını yönetebilirsiniz. Oyun içindeyken overlay kilidini `Ctrl + Shift + O` ile açıp kapatabilirsiniz.
+4. **Ağ Teşhisi:** Sol alttaki veya ses odası üst barındaki **ms** göstergesine tıklayarak canlı bağlantı kalitenizi izleyebilirsiniz.
 
 ---
 
-## 🛠️ Kurulum & Geliştirme
+## 🛠️ Kurulum, Test & Geliştirme
 
 ### Gereksinimler
 - **Node.js 20+**
-- Masaüstü derlemesi için: **Rust (rustup + cargo)** ve Windows WebView2
+- Masaüstü derlemesi için: **Rust (`rustup` + `cargo`)** ve Windows WebView2
 
-### Geliştirme / Çalıştırma
-- **Backend + Web (Tek Port / Üretim Modu):**
+### Komutlar
+- **Sunucu Derleme (`tsc`):**
   ```bash
-  cd server && npm install && npm run build
-  cd ../client && npm install && npm run build
-  cd .. && bash start.sh
+  npm --prefix server run build
+  ```
+- **İstemci Testleri (Vitest):**
+  ```bash
+  npm --prefix client test
+  ```
+- **İstemci Derleme (`tsc && vite build`):**
+  ```bash
+  npm --prefix client run build
   ```
 - **Geliştirme Modu (Windows):**
   - Web: `start-web.bat` (`http://localhost:5173` & `http://localhost:4000`)
   - Masaüstü (Tauri Dev): `start-desktop.bat`
   - Dedicated Sunucu: `dedicated-server\start-dedicated-server.bat`
+- **Üretim Modu (Tek Port):**
+  ```bash
+  bash start.sh
+  ```
 
-### İmzalı Masaüstü Sürümü Derleme (Release)
+---
+
+## 📦 Masaüstü Sürümü Derleme (Release)
+
 `client/src-tauri/tauri.conf.json` içindeki `version` numarasını yükselttikten sonra:
-- **Windows (NSIS + Updater):**
-```powershell
-powershell -ExecutionPolicy Bypass -File "scripts/release-desktop.ps1"
-```
-Bu script `Çakma_<version>_x64-setup.exe` kurulum dosyasını derler, Tauri updater anahtarıyla imzalar ve `client/public/downloads/` altına (`Cakma-Setup.exe` + `latest.json`) yerleştirir.
+
+- **Yerel Windows Installer (`.exe` & `.msi`):**
+  ```bash
+  npm --prefix client run tauri build
+  ```
+- **İmzalı Release + Updater Artefaktı (Windows):**
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File "scripts/release-desktop.ps1"
+  ```
+  *(Not: OTA güncelleme imzası için `TAURI_SIGNING_PRIVATE_KEY` ortam değişkeninin tanımlı olması gerekir.)*
 - **macOS (Universal `.dmg`):**
-```bash
-bash scripts/release-macos.sh
-```
-Apple Silicon (`aarch64`) ve Intel (`x86_64`) hedefleri için Universal DMG üretir (veya GitHub Actions üzerinden otomatik derlenir).
+  ```bash
+  bash scripts/release-macos.sh
+  ```
 
 ---
 
@@ -126,32 +141,37 @@ Apple Silicon (`aarch64`) ve Intel (`x86_64`) hedefleri için Universal DMG üre
 
 ```text
 discord-cakma/
-├── server/                         # Node.js + Express + Socket.io Backend
+├── server/                                # Node.js + Express + Socket.io Backend
 │   └── src/
-│       ├── index.ts                # Auth, 2FA, Session, AutoMod, AFK Mover, WebRTC Sinyal
-│       ├── licenseGenerator.ts     # HMAC-SHA256 Lisans Üretici
-│       └── types.ts                # Sunucu veri modelleri
-├── client/                         # React 19 + TypeScript + Tailwind + Tauri v2
+│       ├── index.ts                       # Auth, 2FA, Session, AutoMod, AFK Mover, DM Read Receipts, WebRTC
+│       ├── licenseGenerator.ts            # HMAC-SHA256 Lisans Üretici
+│       └── types.ts                       # Sunucu veri modelleri
+├── client/                                # React 19 + TypeScript + Tailwind + Tauri v2
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── AuthModal.tsx               # Giriş, Kayıt & 2FA doğrulama
-│   │   │   ├── ChannelSidebar.tsx          # Kanallar, DM listesi & sürükle-bırak oda taşıma
-│   │   │   ├── ChatArea.tsx                # Sohbet, DM 1-e-1 görüşme sahnesi, sesli not
-│   │   │   ├── DirectCallModal.tsx         # 1-e-1 arama kartı & zil sesi
-│   │   │   ├── RemoteAssistModal.tsx       # Uzaktan yardım, kısayollar & ekran klavyesi
-│   │   │   ├── VoiceRoomArea.tsx           # Ses odası, Go Live, El Kaldır, Overlay
-│   │   │   ├── VoiceRadioWidget.tsx        # YouTube IFrame API & SomaFM Radyo Botu
-│   │   │   ├── VoiceNotePlayer.tsx         # Sesli not oynatıcı & dalga formu
-│   │   │   ├── WhisperListsModal.tsx       # TeamSpeak Whisper Lists
-│   │   │   ├── SpeakersOverlay.tsx         # Oyun içi konuşanlar overlay penceresi
-│   │   │   ├── MemberList.tsx              # Çevrimiçi/Çevrimdışı üye listesi
+│   │   │   ├── AuthModal.tsx              # Giriş, Kayıt & 2FA doğrulama
+│   │   │   ├── ChannelSidebar.tsx         # Kanallar, DM listesi & sürükle-bırak oda taşıma
+│   │   │   ├── ChatArea.tsx               # Sohbet, DM okundu bilgisi, Yeni Mesajlar çizgisi, sesli not
+│   │   │   ├── CreateServerModal.tsx      # Şablonlu sunucu oluşturma, davet önizleme & Dedicated IP
+│   │   │   ├── DirectCallModal.tsx        # 1-e-1 arama kartı & zil sesi
+│   │   │   ├── MiniScreenSharePiP.tsx     # Ses odası dışı yüzen mini ekran paylaşımı (PiP)
+│   │   │   ├── RemoteAssistModal.tsx      # Uzaktan yardım, kısayollar & ekran klavyesi
+│   │   │   ├── VoiceRoomArea.tsx          # Ses odası, çoklu yayın geçişi, Oda Sohbeti, Ducking
+│   │   │   ├── VoiceRadioWidget.tsx       # YouTube IFrame API, SomaFM Radyo Botu & Audio Ducking
+│   │   │   ├── SpeakersOverlay.tsx        # Oyun içi cam saydam konuşanlar overlay penceresi
+│   │   │   ├── UserProfileModal.tsx       # Profil, tıklanabilir rozetler, durum süresi & bakiye
+│   │   │   ├── MemberList.tsx             # Çevrimiçi/Çevrimdışı üye listesi
 │   │   │   ├── ConnectionDiagnosticsModal.tsx # Canlı 1s RTT/Jitter/Paket Kaybı teşhisi
-│   │   │   ├── SettingsModal.tsx           # TeamSpeak tarzı ayarlar, 2FA, Aktif Oturumlar
-│   │   │   ├── ServerSettingsModal.tsx     # Roller, AutoMod, AFK, Özel Emojiler
-│   │   │   └── AdminDashboardModal.tsx     # Sistem Yönetimi & Lisanslar
-│   │   └── context/SocketContext.tsx       # WebRTC Mesh, DSP, Telemetry & Tauri Bridge
-│   └── src-tauri/                          # Rust Tauri v2 (Tray, Global Shortcut, Overlay, Game Detect)
-├── dedicated-server/               # Lisanslı bağımsız ses & sohbet sunucusu
-├── scripts/release-desktop.ps1     # İmzalı masaüstü kurulum & updater paketi üretici
-└── start.sh                        # Üretim başlatıcısı (git pull + build + server)
+│   │   │   ├── SettingsModal.tsx          # TeamSpeak tarzı ayarlar, Overlay, 2FA, Dil seçimi
+│   │   │   ├── ServerSettingsModal.tsx    # Roller, AutoMod, AFK, Özel Emojiler
+│   │   │   └── AdminDashboardModal.tsx    # Sistem Yönetimi & Lisanslar
+│   │   ├── utils/
+│   │   │   ├── i18n.ts                    # Çoklu dil sözlüğü (TR / EN / DE / RU)
+│   │   │   ├── statusExpiry.ts            # Özel durum süresi hesaplama yardımcıları
+│   │   │   └── __tests__/                 # Vitest birim testleri
+│   │   └── context/SocketContext.tsx      # WebRTC Mesh, DSP, DND, Reconnect Queue & Tauri Bridge
+│   └── src-tauri/                         # Rust Tauri v2 (Tray, Global Shortcut, Overlay, Game Detect)
+├── dedicated-server/                      # Lisanslı bağımsız ses & sohbet sunucusu
+├── scripts/release-desktop.ps1            # İmzalı masaüstü kurulum & updater paketi üretici
+└── start.sh                               # Üretim başlatıcısı (git pull + build + server)
 ```
