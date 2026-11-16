@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } from '../utils/tsSoundEffects';
-import { AvatarView } from './AvatarView';
+import { AvatarView, processUploadedImage } from './AvatarView';
+import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import {
   X,
   Mic,
@@ -29,6 +30,8 @@ import {
   Trash2,
   Upload,
   Volume2,
+  Globe,
+  Copy,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -115,10 +118,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     removeReminder,
     detectedGame,
     refreshDetectedGame,
+    language,
+    setLanguage,
+    updateProfileDetails,
   } = useSocket();
 
   const [username, setUsername] = useState(currentUser?.username || '');
   const [avatar, setAvatar] = useState(currentUser?.avatar || '🎮');
+  const [profileStatus, setProfileStatus] = useState<'online' | 'idle' | 'dnd' | 'offline'>(currentUser?.status || 'online');
+  const [profileStatusMessage, setProfileStatusMessage] = useState(currentUser?.statusMessage || 'Çevrimiçi');
+  const [profileBio, setProfileBio] = useState(currentUser?.bio || '');
+  const [profileBannerColor, setProfileBannerColor] = useState(
+    currentUser?.bannerColor || 'from-indigo-600 via-purple-600 to-pink-600'
+  );
+  const [avatarUrlInput, setAvatarUrlInput] = useState('');
+  const [idCopied, setIdCopied] = useState(false);
+  const [profileUploadErr, setProfileUploadErr] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
     | 'audio'
     | 'voice_processing'
@@ -414,7 +429,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim()) return;
-    updateProfile(username.trim(), avatar);
+    const trimmedUrl = avatarUrlInput.trim();
+    const finalAvatar =
+      trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')
+        ? trimmedUrl
+        : avatar;
+    updateProfile(username.trim(), finalAvatar);
+    updateProfileDetails({
+      avatar: finalAvatar,
+      status: profileStatus,
+      statusMessage: profileStatusMessage.trim(),
+      bio: profileBio.trim(),
+      bannerColor: profileBannerColor,
+    });
+    setAvatar(finalAvatar);
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
   };
@@ -426,13 +454,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         <div className="w-full md:w-60 max-h-44 md:max-h-none bg-white/[0.02] p-3 md:p-4 flex flex-col justify-between shrink-0 border-b md:border-b-0 md:border-r border-white/[0.06] overflow-y-auto">
           <div className="space-y-4">
             <div className="text-[11px] font-bold text-white/40 uppercase px-2 tracking-wider">
-              Ayarlar
+              {t(language, 'settings')}
             </div>
 
             {/* USER SECTION */}
             <div className="space-y-1">
               <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
-                Kullanıcı
+                {t(language, 'userGroup')}
               </div>
               <button
                 onClick={() => setActiveTab('profile')}
@@ -443,7 +471,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <User className="w-4 h-4" />
-                Hesap & Profil
+                {t(language, 'tabProfile')}
               </button>
               <button
                 onClick={() => setActiveTab('security')}
@@ -454,14 +482,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Lock className="w-4 h-4 text-amber-400" />
-                Gizlilik & Güvenlik
+                {t(language, 'tabSecurity')}
               </button>
             </div>
 
             {/* APPLICATION SECTION */}
             <div className="space-y-1">
               <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
-                Uygulama
+                {t(language, 'appGroup')}
               </div>
               <button
                 onClick={() => setActiveTab('appearance')}
@@ -472,7 +500,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Palette className="w-4 h-4 text-purple-400" />
-                Görünüm
+                {t(language, 'tabAppearance')}
               </button>
               <button
                 onClick={() => setActiveTab('audio')}
@@ -483,7 +511,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Mic className="w-4 h-4" />
-                Ses Aygıtları & Giriş
+                {t(language, 'tabAudio')}
               </button>
               <button
                 onClick={() => setActiveTab('voice_processing')}
@@ -494,7 +522,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Sparkles className="w-4 h-4 text-emerald-400" />
-                Gürültü & Filtreler
+                {t(language, 'tabVoiceProcessing')}
               </button>
               <button
                 onClick={() => setActiveTab('video')}
@@ -505,7 +533,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Video className="w-4 h-4 text-sky-400" />
-                Video & Codec
+                {t(language, 'tabVideo')}
               </button>
               <button
                 onClick={() => setActiveTab('keybindings')}
@@ -516,7 +544,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Keyboard className="w-4 h-4 text-indigo-400" />
-                Kısayol Tuşları
+                {t(language, 'tabKeybindings')}
               </button>
               <button
                 onClick={() => setActiveTab('chats')}
@@ -527,7 +555,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <MessageSquare className="w-4 h-4 text-teal-400" />
-                Sohbet & Fısıltı
+                {t(language, 'tabChats')}
               </button>
               <button
                 onClick={() => setActiveTab('notifications')}
@@ -538,14 +566,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Bell className="w-4 h-4 text-pink-400" />
-                Bildirimler
+                {t(language, 'tabNotifications')}
               </button>
             </div>
 
             {/* INFORMATION SECTION */}
             <div className="space-y-1">
               <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
-                Bilgi
+                {t(language, 'infoGroup')}
               </div>
               <button
                 onClick={() => setActiveTab('about')}
@@ -556,7 +584,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 }`}
               >
                 <Info className="w-4 h-4 text-slate-300" />
-                Hakkında & Sürüm
+                {t(language, 'tabAbout')}
               </button>
             </div>
           </div>
@@ -1088,40 +1116,121 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </div>
           )}
 
-          {/* TAB 3: Profilim */}
+          {/* TAB 3: Hesap & Profil */}
           {activeTab === 'profile' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-xl font-bold text-white tracking-tight">Profilim</h3>
-                <p className="text-xs text-white/50 mt-0.5">
-                  Avatarınızı ve kullanıcı adınızı özelleştirin.
-                </p>
+                <h3 className="text-xl font-bold text-white tracking-tight">{t(language, 'profileTitle')}</h3>
+                <p className="text-xs text-white/50 mt-0.5">{t(language, 'profileDesc')}</p>
               </div>
 
-              {/* Profile Card Preview */}
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center gap-4 shadow-sm">
-                <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-3xl shadow overflow-hidden shrink-0">
-                  <AvatarView avatar={avatar} alt={username} fallback="🎮" className="w-full h-full object-cover" />
+              {/* Live Profile Banner & Card Preview */}
+              <div className="rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] shadow-lg">
+                <div className={`h-20 bg-gradient-to-r ${profileBannerColor} relative`}>
+                  {currentUser?.role && (
+                    <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full bg-black/50 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-white/15 uppercase">
+                      {currentUser.role}
+                    </span>
+                  )}
                 </div>
-                <div>
-                  <div className="text-base font-bold text-white">{username || 'Kullanıcı'}</div>
-                  <div className="text-xs text-white/40">
-                    Kullanıcı ID: {currentUser?.id?.slice(0, 8)}
+                <div className="px-5 pb-4 -mt-8 flex flex-wrap items-end justify-between gap-4">
+                  <div className="flex items-end gap-3.5">
+                    <div className="relative w-16 h-16 rounded-2xl bg-[#131620] ring-4 ring-[#131620] flex items-center justify-center text-3xl shadow-xl overflow-hidden shrink-0">
+                      <AvatarView avatar={avatar} alt={username} fallback="🎮" className="w-full h-full object-cover" />
+                      <span
+                        className={`absolute bottom-1 right-1 w-3.5 h-3.5 rounded-full ring-2 ring-[#131620] ${
+                          profileStatus === 'online'
+                            ? 'bg-emerald-400'
+                            : profileStatus === 'idle'
+                            ? 'bg-amber-400'
+                            : profileStatus === 'dnd'
+                            ? 'bg-red-500'
+                            : 'bg-slate-500'
+                        }`}
+                      />
+                    </div>
+                    <div className="pb-0.5">
+                      <div className="text-base font-bold text-white">{username || 'Kullanıcı'}</div>
+                      <div className="text-xs text-white/60 truncate max-w-[260px]">{profileStatusMessage || 'Çevrimiçi'}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (currentUser?.id) {
+                          navigator.clipboard?.writeText(currentUser.id).catch(() => {});
+                          setIdCopied(true);
+                          setTimeout(() => setIdCopied(false), 1800);
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/75 flex items-center gap-1.5 transition"
+                      title="Kullanıcı ID Kopyala"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span className="font-mono">{idCopied ? 'Kopyalandı' : `ID: ${currentUser?.id?.slice(0, 8)}`}</span>
+                    </button>
+                    {typeof currentUser?.walletBalance === 'number' && (
+                      <div className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold">
+                        {currentUser.walletBalance.toLocaleString('tr-TR')} ₺
+                      </div>
+                    )}
                   </div>
                 </div>
+                {profileBio && (
+                  <div className="px-5 pb-3.5 text-xs text-white/70 border-t border-white/5 pt-2.5">
+                    {profileBio}
+                  </div>
+                )}
               </div>
 
-              {/* Avatar Selector */}
-              <div>
-                <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
-                  Avatar Seç
-                </label>
+              {/* Custom Avatar Upload & Emoji Selector */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
+                    Avatar Seç veya Resim Yükle
+                  </label>
+                  <label className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Resim / GIF Yükle</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setProfileUploadErr(null);
+                        try {
+                          const res = await processUploadedImage(file, {
+                            maxWidth: 256,
+                            maxHeight: 256,
+                            maxGifBytes: 1_500_000,
+                          });
+                          if (!res.ok) {
+                            setProfileUploadErr(res.error);
+                          } else {
+                            setAvatar(res.dataUrl);
+                            setAvatarUrlInput('');
+                          }
+                        } catch (err: any) {
+                          setProfileUploadErr(err?.message || 'Görsel işlenemedi.');
+                        }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                {profileUploadErr && <div className="text-xs text-red-400">{profileUploadErr}</div>}
                 <div className="flex flex-wrap gap-2">
                   {AVATAR_OPTIONS.map((opt) => (
                     <button
                       key={opt}
                       type="button"
-                      onClick={() => setAvatar(opt)}
+                      onClick={() => {
+                        setAvatar(opt);
+                        setAvatarUrlInput('');
+                      }}
                       className={`w-10 h-10 rounded-2xl bg-white/5 hover:scale-105 transition flex items-center justify-center text-xl border ${
                         avatar === opt ? 'border-blue-400 bg-blue-500/20' : 'border-white/5'
                       }`}
@@ -1130,29 +1239,125 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     </button>
                   ))}
                 </div>
+                <input
+                  type="url"
+                  value={avatarUrlInput}
+                  onChange={(e) => setAvatarUrlInput(e.target.value)}
+                  placeholder="Veya doğrudan Avatar URL yapıştırın (https://...)"
+                  className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
 
-              {/* Username Input */}
-              <form onSubmit={handleSaveProfile} className="space-y-3">
+              {/* Profile Form */}
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                      Kullanıcı Adı
+                    </label>
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                      Özel Durum Mesajı
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={60}
+                      value={profileStatusMessage}
+                      onChange={(e) => setProfileStatusMessage(e.target.value)}
+                      placeholder="Örn: CS2 oynuyor..."
+                      className="w-full bg-white/5 border border-white/10 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Online Status */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1.5">
+                    Çevrimiçi Durum
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: 'online', label: 'Çevrimiçi', dot: 'bg-emerald-400' },
+                      { id: 'idle', label: 'Boşta', dot: 'bg-amber-400' },
+                      { id: 'dnd', label: 'Rahatsız Etmeyin', dot: 'bg-red-500' },
+                      { id: 'offline', label: 'Görünmez', dot: 'bg-slate-500' },
+                    ].map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setProfileStatus(st.id as any)}
+                        className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 transition ${
+                          profileStatus === st.id
+                            ? 'bg-blue-500/20 border-blue-400 text-white'
+                            : 'bg-white/5 border-white/10 text-white/65 hover:text-white'
+                        }`}
+                      >
+                        <span className={`w-2.5 h-2.5 rounded-full ${st.dot}`} />
+                        <span>{st.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Bio */}
                 <div>
                   <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
-                    Kullanıcı Adı
+                    Hakkımda (Bio)
                   </label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 text-white text-sm rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+                  <textarea
+                    rows={3}
+                    maxLength={220}
+                    value={profileBio}
+                    onChange={(e) => setProfileBio(e.target.value)}
+                    placeholder="Kendinizden kısaca bahsedin..."
+                    className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                   />
                 </div>
 
-                <div className="pt-2">
+                {/* Banner Color */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1.5">
+                    Profil Afiş Rengi
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      'from-indigo-600 via-purple-600 to-pink-600',
+                      'from-emerald-600 via-teal-600 to-cyan-600',
+                      'from-amber-500 via-orange-600 to-red-600',
+                      'from-blue-600 via-cyan-500 to-teal-400',
+                      'from-fuchsia-600 via-purple-600 to-pink-500',
+                      'from-yellow-500 via-amber-600 to-yellow-700',
+                      'from-neutral-800 via-neutral-900 to-black',
+                    ].map((cls) => (
+                      <button
+                        key={cls}
+                        type="button"
+                        onClick={() => setProfileBannerColor(cls)}
+                        className={`w-12 h-7 rounded-lg bg-gradient-to-r ${cls} border-2 transition ${
+                          profileBannerColor === cls ? 'border-white scale-105 shadow-lg' : 'border-white/15 opacity-75 hover:opacity-100'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-between">
+                  <div className="text-[11px] text-white/40">
+                    {currentUser?.email ? `E-posta: ${currentUser.email}` : 'Yerel / Hızlı Hesap'}
+                  </div>
                   <button
                     type="submit"
                     className="px-5 py-2 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-full text-xs transition shadow-md shadow-blue-500/25 flex items-center gap-1.5"
                   >
                     {savedSuccess ? <Check className="w-4 h-4" /> : null}
-                    {savedSuccess ? 'Kaydedildi' : 'Kaydet'}
+                    {savedSuccess ? t(language, 'saved') : t(language, 'save')}
                   </button>
                 </div>
               </form>
@@ -1497,11 +1702,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             <div className="space-y-6">
               <div>
                 <h3 className="text-xl font-bold text-white tracking-tight">
-                  Görünüm, Tema &amp; Masaüstü Overlay
+                  {t(language, 'appearanceTitle')}
                 </h3>
                 <p className="text-xs text-white/50 mt-0.5">
-                  Renk temalarını, cam saydamlığını, yazı boyutunu, animasyonları ve oyun içi overlay&apos;i özelleştirin.
+                  Renk temalarını, uygulama dilini, cam saydamlığını, yazı boyutunu ve oyun içi overlay&apos;i özelleştirin.
                 </p>
+              </div>
+
+              {/* Language Selector */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <Globe className="w-4 h-4 text-cyan-400" />
+                    <div>
+                      <div className="text-sm font-semibold text-white">{t(language, 'languageTitle')}</div>
+                      <div className="text-xs text-white/45">{t(language, 'languageDesc')}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {LANGUAGE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setLanguage(opt.id)}
+                      className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition ${
+                        language === opt.id
+                          ? 'bg-blue-500 text-white border-blue-400 shadow'
+                          : 'bg-black/30 border-white/10 text-white/70 hover:text-white'
+                      }`}
+                    >
+                      <span>{opt.flag}</span>
+                      <span>{opt.native}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Theme Presets & Live Preview */}

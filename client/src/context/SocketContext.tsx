@@ -392,6 +392,8 @@ interface SocketContextType {
   removeReminder: (id: string) => void;
   messagesMap: Record<string, Message[]>;
   socketId: string | null;
+  language: 'tr' | 'en' | 'de' | 'ru';
+  setLanguage: (lang: 'tr' | 'en' | 'de' | 'ru') => void;
 
   // Diagnostics & Network Telemetry
   ping: number;
@@ -583,6 +585,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [reduceMotion, setReduceMotionState] = useState<boolean>(() => {
     return localStorage.getItem('dc_reduce_motion') === 'true';
   });
+  const [language, setLanguageState] = useState<'tr' | 'en' | 'de' | 'ru'>(() => {
+    return (localStorage.getItem('dc_app_language') as any) || 'tr';
+  });
+  const setLanguage = (lang: 'tr' | 'en' | 'de' | 'ru') => {
+    setLanguageState(lang);
+    try { localStorage.setItem('dc_app_language', lang); } catch {}
+    document.documentElement.lang = lang;
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', uiTheme);
@@ -4203,6 +4213,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const prefs = res?.prefs;
         if (!prefs) return;
         if (prefs.uiTheme) setUiTheme(prefs.uiTheme);
+        if (prefs.language) setLanguage(prefs.language);
         if (prefs.ringtonePack) setRingtonePack(prefs.ringtonePack);
         if (typeof prefs.showLinkPreviews === 'boolean') setShowLinkPreviews(prefs.showLinkPreviews);
         if (prefs.userNotes && typeof prefs.userNotes === 'object') {
@@ -4226,6 +4237,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           uiTheme,
+          language,
           ringtonePack,
           showLinkPreviews,
           userNotes,
@@ -4239,6 +4251,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isAuthenticated,
     currentServerHost,
     uiTheme,
+    language,
     ringtonePack,
     showLinkPreviews,
     userNotes,
@@ -4444,6 +4457,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         ping,
         messagesMap,
         socketId: socket?.id || null,
+        language,
+        setLanguage,
         jitter,
         packetLoss,
         pingHistory,
