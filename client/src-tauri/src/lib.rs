@@ -155,9 +155,11 @@ fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
   WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
     .title("Çakma Overlay")
     .inner_size(290.0, 260.0)
-    .min_inner_size(220.0, 150.0)
+    .min_inner_size(220.0, 140.0)
     .position(24.0, 24.0)
-    .background_color(tauri::window::Color(11, 13, 20, 255))
+    .transparent(true)
+    .background_color(tauri::window::Color(0, 0, 0, 0))
+    .shadow(false)
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
@@ -471,6 +473,18 @@ async fn set_overlay_ignore_cursor(app: tauri::AppHandle, ignore: bool) -> Resul
   Ok(())
 }
 
+#[tauri::command]
+async fn resize_overlay_window(app: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+  if let Some(overlay) = app.get_webview_window("overlay") {
+    let w = width.clamp(220.0, 460.0);
+    let h = height.clamp(140.0, 480.0);
+    overlay
+      .set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)))
+      .map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default()
@@ -485,7 +499,8 @@ pub fn run() {
       get_autostart,
       set_autostart,
       position_overlay_window,
-      set_overlay_ignore_cursor
+      set_overlay_ignore_cursor,
+      resize_overlay_window
     ]);
 
   #[cfg(desktop)]

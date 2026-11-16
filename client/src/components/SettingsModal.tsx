@@ -200,7 +200,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.8');
+  const [appVersion, setAppVersion] = useState<string>('0.3.9');
+  const [overlayConfig, setOverlayConfig] = useState<{
+    onlySpeaking: boolean;
+    showControls: boolean;
+    showPing: boolean;
+    size: 'compact' | 'standard' | 'wide';
+  }>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('dc_overlay_config') || 'null');
+      return {
+        onlySpeaking: Boolean(saved?.onlySpeaking),
+        showControls: saved?.showControls !== false,
+        showPing: saved?.showPing !== false,
+        size: saved?.size === 'compact' || saved?.size === 'wide' ? saved.size : 'standard',
+      };
+    } catch {
+      return { onlySpeaking: false, showControls: true, showPing: true, size: 'standard' };
+    }
+  });
+  const [overlayLocked, setOverlayLocked] = useState<boolean>(() => {
+    try { return localStorage.getItem('dc_overlay_locked') === '1'; } catch { return false; }
+  });
+
+  const updateOverlayConfig = async (patch: Partial<typeof overlayConfig>) => {
+    const next = { ...overlayConfig, ...patch };
+    setOverlayConfig(next);
+    try { localStorage.setItem('dc_overlay_config', JSON.stringify(next)); } catch {}
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (isTauriEnv) {
+      try {
+        const { emit } = await import('@tauri-apps/api/event');
+        await emit('overlay-config-changed', next);
+      } catch {}
+    }
+  };
+
+  const toggleOverlayLockSetting = async () => {
+    const next = !overlayLocked;
+    setOverlayLocked(next);
+    try { localStorage.setItem('dc_overlay_locked', next ? '1' : '0'); } catch {}
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (isTauriEnv) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const { emit } = await import('@tauri-apps/api/event');
+        await invoke('set_overlay_ignore_cursor', { ignore: next });
+        await emit('overlay-lock-changed', next);
+      } catch {}
+    }
+  };
   const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
 
   React.useEffect(() => {
@@ -2128,17 +2177,96 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
                 <div className="pt-2">
                   <div className="flex justify-between text-xs text-white/70 mb-1.5">
-                    <span>Overlay Saydamlığı</span>
+                    <span>Overlay Cam Saydamlığı</span>
                     <span className="font-mono">%{overlayOpacity}</span>
                   </div>
                   <input
                     type="range"
-                    min={30}
+                    min={15}
                     max={100}
                     value={overlayOpacity}
                     onChange={(e) => setOverlayOpacity(Number(e.target.value))}
                     className="w-full accent-blue-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
                   />
+                </div>
+
+                {/* Detailed Overlay Controls */}
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div>
+                    <div className="text-xs font-semibold text-white mb-1.5">Overlay Pencere Boyutu</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'compact', label: 'Kompakt' },
+                        { id: 'standard', label: 'Standart' },
+                        { id: 'wide', label: 'Geniş' },
+                      ].map((sz) => (
+                        <button
+                          key={sz.id}
+                          type="button"
+                          onClick={() => updateOverlayConfig({ size: sz.id as any })}
+                          className={`py-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
+                            overlayConfig.size === sz.id
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/30 border-white/10 text-white/60 hover:text-white'
+                          }`}
+                        >
+                          {sz.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {[
+                      {
+                        label: 'Yalnızca Konuşanları Göster',
+                        desc: 'Sessizdeki kişileri gizler',
+                        checked: overlayConfig.onlySpeaking,
+                        onToggle: () => updateOverlayConfig({ onlySpeaking: !overlayConfig.onlySpeaking }),
+                      },
+                      {
+                        label: 'Hızlı Kontrol Çubuğu',
+                        desc: 'Alt Mikrofon/Kulaklık butonları',
+                        checked: overlayConfig.showControls,
+                        onToggle: () => updateOverlayConfig({ showControls: !overlayConfig.showControls }),
+                      },
+                      {
+                        label: 'Ping Göstergesi',
+                        desc: 'Başlıkta ms gecikmesini gösterir',
+                        checked: overlayConfig.showPing,
+                        onToggle: () => updateOverlayConfig({ showPing: !overlayConfig.showPing }),
+                      },
+                      {
+                        label: 'Tıklama Geçirgenliği (Ctrl+Shift+O)',
+                        desc: 'Oyun içinde fare tıklamalarını geçirir',
+                        checked: overlayLocked,
+                        onToggle: toggleOverlayLockSetting,
+                      },
+                    ].map((opt) => (
+                      <div
+                        key={opt.label}
+                        className="p-2.5 rounded-xl bg-black/25 border border-white/10 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-white truncate">{opt.label}</div>
+                          <div className="text-[10px] text-white/45 truncate">{opt.desc}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={opt.onToggle}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                            opt.checked ? 'bg-emerald-500' : 'bg-white/15'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                              opt.checked ? 'translate-x-4' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -2879,10 +3007,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.8 - Latest */}
+                  {/* v0.3.9 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.8 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.9 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">

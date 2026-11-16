@@ -743,7 +743,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const [overlayOpacity, setOverlayOpacityState] = useState<number>(() => {
     const saved = Number(localStorage.getItem('dc_overlay_opacity'));
-    return Number.isFinite(saved) && saved >= 30 && saved <= 100 ? saved : 85;
+    return Number.isFinite(saved) && saved >= 15 && saved <= 100 ? saved : 75;
   });
   const [ringtonePack, setRingtonePackState] = useState<'modern' | 'classic' | 'minimal' | 'silent'>(() => {
     return (localStorage.getItem('dc_ringtone_pack') as any) || 'modern';
@@ -790,7 +790,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const setOverlayOpacity = (v: number) => {
-    const clamped = Math.min(100, Math.max(30, Math.round(v)));
+    const clamped = Math.min(100, Math.max(15, Math.round(v)));
     setOverlayOpacityState(clamped);
     try { localStorage.setItem('dc_overlay_opacity', String(clamped)); } catch {}
     const isTauri =
