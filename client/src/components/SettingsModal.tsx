@@ -200,7 +200,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.4');
+  const [appVersion, setAppVersion] = useState<string>('0.3.5');
   const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
 
   React.useEffect(() => {
@@ -2879,12 +2879,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.4 - Latest */}
+                  {/* v0.3.5 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.4 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.5 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Gelişmiş Profil Kartı:</strong> Avatar çerçeveleri, banner odak noktası (Yukarı/Orta/Aşağı), tek tıkla ID kopyalama ve hızlı durum değiştirici.</li>
+                      <li><strong className="text-white">Rozet Sabitleme &amp; Sosyal Bağlantılar:</strong> Rozet üzerine gelince açıklama, öne çıkan rozet seçimi, tıklanabilir Bio linkleri ve Steam/GitHub/Web bağlantıları.</li>
+                      <li><strong className="text-white">Sekmeli Profil &amp; Bakiye Transferi:</strong> Ortak Sunucular / Ortak Arkadaşlar sekmeleri, mini istatistikler ve profil üzerinden doğrudan ₺ bakiye gönderme.</li>
+                      <li><strong className="text-white">Hesap &amp; Profil Banner Düzeltmesi:</strong> Ayarlar önizleme kartında özel yüklenen GIF/resim bannerların görünmesi ve düzenlenmesi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.4 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.3.4 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Çoklu Dil Desteği (TR / EN / DE / RU):</strong> Görünüm ayarlarından uygulama dilini değiştirme ve bulut senkronizasyonu.</li>
                       <li><strong className="text-white">Yenilenen Hesap &amp; Profil:</strong> Canlı afiş/avatar/durum önizleme kartı, özel görsel/GIF yükleme, afiş gradyanları, durum ve hakkımda düzenleme.</li>
