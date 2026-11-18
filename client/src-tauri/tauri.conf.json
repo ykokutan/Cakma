@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Çakma",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "identifier": "com.discordcakma.app",
   "build": {
     "frontendDist": "../dist",
@@ -19,7 +19,8 @@
         "minWidth": 940,
         "minHeight": 500,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false
       }
     ],
     "security": {

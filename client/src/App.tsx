@@ -15,6 +15,7 @@ import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { QuickSwitcherModal } from './components/QuickSwitcherModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { MiniScreenSharePiP } from './components/MiniScreenSharePiP';
+import { WindowTitleBar } from './components/WindowTitleBar';
 
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const AdminDashboardModal = lazy(() => import('./components/AdminDashboardModal').then((m) => ({ default: m.AdminDashboardModal })));
@@ -110,14 +111,19 @@ const MainLayout: React.FC = () => {
   // Mandatory Authentication Wall: Kayıt / Giriş yapılmadan platform açılamaz
   if (!isAuthenticated) {
     return (
-      <div className="flex h-[100dvh] w-full overflow-hidden items-center justify-center bg-transparent">
-        <AuthModal forced={true} onClose={() => {}} />
+      <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-transparent">
+        <WindowTitleBar />
+        <div className="flex-1 flex items-center justify-center overflow-hidden">
+          <AuthModal forced={true} onClose={() => {}} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white md:p-2.5 md:gap-2.5">
+    <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
+      <WindowTitleBar onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)} />
+      <div className="relative flex flex-1 min-h-0 w-full overflow-hidden md:p-2.5 md:gap-2.5">
       {/* Dedicated Server Banner Indicator */}
       {isDedicatedServer && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 animate-fade-in pointer-events-auto">
@@ -422,6 +428,7 @@ const MainLayout: React.FC = () => {
       />
 
       <MiniScreenSharePiP />
+      </div>
     </div>
   );
 };

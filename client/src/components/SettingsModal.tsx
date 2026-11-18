@@ -230,7 +230,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.12');
+  const [appVersion, setAppVersion] = useState<string>('0.3.13');
   const [overlayConfig, setOverlayConfig] = useState<{
     onlySpeaking: boolean;
     showControls: boolean;
@@ -3293,10 +3293,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   {/* v0.3.12 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.12 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.13 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Özel Cam Pencere Başlık Çubuğu:</strong> Masaüstü uygulamasının üst çubuğu temaya uygun glassmorphism tasarımı, aktif sunucu/kanal göstergesi, <code className="text-cyan-300">Ctrl+K</code> Hızlı Geçiş ve canlı ping rozetiyle yenilendi.</li>
                       <li><strong className="text-white">Gelişmiş Yayın &amp; HDR:</strong> 10-bit AV1/VP9 HDR yayın modu, izleyiciye özel kalite seçimi (<code className="text-cyan-300">Oto/Kaynak/1080p/720p/480p/360p</code>), canlı FPS/bitrate ayarı, ses kontrolü, canlı istatistik kartı, lazer işaretçi ve mini PiP penceresi.</li>
                       <li><strong className="text-white">Stüdyo Ses &amp; Kişiye Özel EQ:</strong> 48 kHz + 80 Hz uğultu filtresi + Compressor DSP zinciri, 20 ms düşük gecikmeli tampon, sağ tık menüsünde kişi bazlı Bas/Tiz EQ + Normalize, kanal bazlı bitrate/kişi limiti ve sunucu susturma / toplantı modu.</li>
                       <li><strong className="text-white">Sohbet, Oda &amp; Varlık:</strong> Ses odası içi yazılı sohbet (Oda Sohbeti), Audio Ducking (%10–%70), DM <code className="text-emerald-300">✓✓ Görüldü</code>, Yeni Mesajlar çizgisi, sunucu şablonları, tıklanabilir rozet açıklamaları, özel durum süresi ve 10 dk otomatik Boşta (Idle) modu.</li>
