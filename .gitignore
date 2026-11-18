@@ -29,3 +29,6 @@ server/data/
 */data/
 *.tmp-*
 
+# Avoid duplicate installer copy in client/dist (keep only client/public/downloads/Cakma-Setup.exe)
+client/dist/downloads/*.exe
+
