@@ -161,6 +161,7 @@ interface SocketContextType {
   setPttKey: (key: string) => void;
   createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => void;
   createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
+  updateChannelSettings: (serverId: string, channelId: string, patch: { bitrateKbps?: number; userLimit?: number; topic?: string }) => void;
   serverMuteUser: (targetUserId: string, muted?: boolean, deafened?: boolean) => void;
   muteAllVoiceChannel: (channelId: string, muted: boolean) => void;
   connectionState: 'connected' | 'reconnecting' | 'disconnected';
@@ -4559,6 +4560,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('admin_mute_all_voice', { channelId, muted });
   }, [socket]);
 
+  const updateChannelSettings = useCallback((serverId: string, channelId: string, patch: { bitrateKbps?: number; userLimit?: number; topic?: string }) => {
+    if (!socket || !serverId || !channelId) return;
+    socket.emit('update_channel_settings', { serverId, channelId, ...patch });
+  }, [socket]);
+
   const clearVoicePasswordError = useCallback(() => {
     setVoicePasswordError(null);
   }, []);
@@ -5202,6 +5208,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setLowLatencyAudio,
         serverMuteUser,
         muteAllVoiceChannel,
+        updateChannelSettings,
         setInputSensitivity,
         setInputVolume,
         setOutputVolume,

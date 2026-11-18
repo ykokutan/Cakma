@@ -67,13 +67,14 @@ const RESOLUTION_DIMS: Record<Exclude<ScreenShareSettings['resolution'], 'source
 
 export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoLive }) => {
   const [settings, setSettings] = useState<ScreenShareSettings>(() => {
+    const defaultHdr = typeof window !== 'undefined' && localStorage.getItem('cakma_default_stream_hdr') === 'true';
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      if (saved) return { ...DEFAULT_SETTINGS, hdrEnabled: defaultHdr, ...JSON.parse(saved) };
     } catch {
       // ignore
     }
-    return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS, hdrEnabled: defaultHdr };
   });
 
   const [showAdvanced, setShowAdvanced] = useState(true);

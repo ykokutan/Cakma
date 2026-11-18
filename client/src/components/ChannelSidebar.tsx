@@ -70,6 +70,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   const [draggingUserId, setDraggingUserId] = useState<string | null>(null);
   const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; x: number; y: number } | null>(null);
+  const [editingChannel, setEditingChannel] = useState<{ channel: Channel; bitrateKbps: number; userLimit: number } | null>(null);
 
   useEffect(() => {
     if (!channelMenu) return;
@@ -123,6 +124,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     reorderChannel,
     adminDeleteChannel,
     updateProfileDetails,
+    updateChannelSettings,
     language,
   } = useSocket();
 
@@ -750,9 +752,18 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                       {usersInChannel.some((u) => u.isScreenSharing) && (
                         <Tv className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
                       )}
-                      {usersInChannel.length > 0 && (
-                        <span className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded-full text-white/80">
-                          {usersInChannel.length}
+                      {(usersInChannel.length > 0 || (channel.userLimit && channel.userLimit > 0)) && (
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            channel.userLimit && channel.userLimit > 0 && usersInChannel.length >= channel.userLimit
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold'
+                              : 'bg-white/10 text-white/80'
+                          }`}
+                          title={channel.userLimit && channel.userLimit > 0 ? `Oda Limiti: ${usersInChannel.length}/${channel.userLimit}` : undefined}
+                        >
+                          {channel.userLimit && channel.userLimit > 0
+                            ? `${usersInChannel.length}/${channel.userLimit}`
+                            : usersInChannel.length}
                         </span>
                       )}
                     </div>
@@ -817,7 +828,9 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                                 </span>
                               )}
                               {user.isMuted && (
-                                <MicOff className="w-3 h-3 text-red-400" />
+                                <span title={user.isServerMuted ? 'Sunucudan Susturuldu' : 'Mikrofon Kapalı'}>
+                                  <MicOff className={`w-3 h-3 ${user.isServerMuted ? 'text-rose-500 animate-pulse' : 'text-red-400'}`} />
+                                </span>
                               )}
                               {user.isDeafened && (
                                 <VolumeX className="w-3 h-3 text-red-400" />
@@ -1281,6 +1294,23 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
             {canManageChannels && activeServer && (
               <>
+                {channelMenu.channel.type === 'voice' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingChannel({
+                        channel: channelMenu.channel,
+                        bitrateKbps: channelMenu.channel.bitrateKbps || activeServer.bitrateKbps || 128,
+                        userLimit: channelMenu.channel.userLimit || 0,
+                      });
+                      setChannelMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-blue-500/15 text-blue-300 transition text-left"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Oda Ayarlarını Düzenle</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -1322,6 +1352,89 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 )}
               </>
             )}
+          </div>,
+          document.body
+        )}
+
+      {editingChannel && activeServer &&
+        createPortal(
+          <div
+            onClick={() => setEditingChannel(null)}
+            className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm ios-glass rounded-2xl border border-white/15 p-5 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-white truncate">#{editingChannel.channel.name} — Oda Ayarları</h4>
+                <button
+                  type="button"
+                  onClick={() => setEditingChannel(null)}
+                  className="text-white/50 hover:text-white text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                    Ses Kalitesi (Bitrate)
+                  </label>
+                  <select
+                    value={editingChannel.bitrateKbps}
+                    onChange={(e) => setEditingChannel((prev) => prev ? { ...prev, bitrateKbps: Number(e.target.value) } : null)}
+                    className="w-full bg-black/40 border border-white/15 text-white text-xs rounded-xl px-3 py-2 outline-none"
+                  >
+                    <option value={64}>64 kbps (Ekonomi)</option>
+                    <option value={96}>96 kbps (Konuşma)</option>
+                    <option value={128}>128 kbps (Standart HD)</option>
+                    <option value={192}>192 kbps (Yüksek)</option>
+                    <option value={256}>256 kbps (Stüdyo)</option>
+                    <option value={320}>320 kbps (Ultra HD)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                    Kişi Limiti (0 = Sınırsız)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={editingChannel.userLimit}
+                    onChange={(e) =>
+                      setEditingChannel((prev) =>
+                        prev ? { ...prev, userLimit: Math.min(99, Math.max(0, Number(e.target.value) || 0)) } : null
+                      )
+                    }
+                    className="w-full bg-black/40 border border-white/15 text-white text-xs rounded-xl px-3 py-2 outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setEditingChannel(null)}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs text-white/80"
+                >
+                  İptal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateChannelSettings(activeServer.id, editingChannel.channel.id, {
+                      bitrateKbps: editingChannel.bitrateKbps,
+                      userLimit: editingChannel.userLimit,
+                    });
+                    setEditingChannel(null);
+                  }}
+                  className="px-4 py-1.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-xs font-semibold text-white"
+                >
+                  Kaydet
+                </button>
+              </div>
+            </div>
           </div>,
           document.body
         )}

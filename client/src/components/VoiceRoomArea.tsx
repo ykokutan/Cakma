@@ -78,7 +78,16 @@ const VideoStreamPlayer: React.FC<{
   const lastLaserSentRef = useRef(0);
   const [hdrBoost, setHdrBoost] = useState(false);
   const [isStreamMuted, setIsStreamMuted] = useState<boolean>(isLocalStream);
-  const [streamVolume, setStreamVolume] = useState<number>(0.8);
+  const [streamVolume, setStreamVolume] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem('cakma_default_stream_volume');
+      if (raw !== null) {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) return Math.min(1, Math.max(0, parsed / 100));
+      }
+    } catch {}
+    return 0.8;
+  });
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<ScreenShareStats | null>(null);
   const [laserMode, setLaserMode] = useState(false);
@@ -412,7 +421,22 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [showRadioBot, setShowRadioBot] = useState(false);
   const [showVoiceChat, setShowVoiceChat] = useState(false);
   const [voiceChatInput, setVoiceChatInput] = useState('');
-  const [audioDuckingEnabled, setAudioDuckingEnabled] = useState(true);
+  const [audioDuckingEnabled, setAudioDuckingEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('cakma_ducking_enabled');
+      return raw !== null ? raw === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const duckingLevelPercent = (() => {
+    try {
+      const raw = Number(localStorage.getItem('cakma_ducking_level'));
+      return Number.isFinite(raw) && raw >= 10 && raw <= 70 ? raw : 30;
+    } catch {
+      return 30;
+    }
+  })();
   const [volumePopoverUserId, setVolumePopoverUserId] = useState<string | null>(null);
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
   const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
@@ -629,7 +653,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
           >
             <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             <span className="font-mono">{ping} ms</span>
-            <span>· {activeServer?.bitrateKbps || 128} kbps Opus HD</span>
+            <span>· {activeChannel.bitrateKbps || activeServer?.bitrateKbps || 128} kbps Opus HD</span>
           </button>
         </div>
       </header>
@@ -665,6 +689,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             initialState={radioBotState}
             onSyncState={(state) => syncRadioState(state)}
             ducked={audioDuckingEnabled && usersInRoom.some((u) => u.isSpeaking)}
+            duckFactor={duckingLevelPercent / 100}
           />
         </div>
       )}
@@ -792,7 +817,10 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                   isFocused={isScreenFocused}
                   onToggleFocus={() => setIsScreenFocused((p) => !p)}
                   canSelectQuality
-                  selectedQuality={viewerQualityByPresenter[activeRemoteStreamEntry[0]] || 'auto'}
+                  selectedQuality={
+                    viewerQualityByPresenter[activeRemoteStreamEntry[0]] ||
+                    ((typeof window !== 'undefined' && (localStorage.getItem('cakma_default_viewer_quality') as ViewerStreamQuality)) || 'auto')
+                  }
                   onSelectQuality={(q) => {
                     const pid = activeRemoteStreamEntry[0];
                     setViewerQualityByPresenter((prev) => ({ ...prev, [pid]: q }));

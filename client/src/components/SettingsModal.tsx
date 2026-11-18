@@ -150,8 +150,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     | 'profile'
     | 'security'
     | 'appearance'
+    | 'overlay'
     | 'about'
   >('audio');
+  const [settingsSearch, setSettingsSearch] = useState('');
+  const [defaultStreamHdr, setDefaultStreamHdr] = useState<boolean>(() => {
+    try { return localStorage.getItem('cakma_default_stream_hdr') === 'true'; } catch { return false; }
+  });
+  const [defaultViewerQuality, setDefaultViewerQuality] = useState<string>(() => {
+    try { return localStorage.getItem('cakma_default_viewer_quality') || 'auto'; } catch { return 'auto'; }
+  });
+  const [defaultStreamVolume, setDefaultStreamVolume] = useState<number>(() => {
+    try {
+      const raw = Number(localStorage.getItem('cakma_default_stream_volume'));
+      return Number.isFinite(raw) ? raw : 80;
+    } catch { return 80; }
+  });
+  const [duckingEnabled, setDuckingEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('cakma_ducking_enabled');
+      return raw !== null ? raw === 'true' : true;
+    } catch { return true; }
+  });
+  const [duckingLevel, setDuckingLevel] = useState<number>(() => {
+    try {
+      const raw = Number(localStorage.getItem('cakma_ducking_level'));
+      return Number.isFinite(raw) && raw >= 10 && raw <= 70 ? raw : 30;
+    } catch { return 30; }
+  });
 
   const [advSettings, setAdvSettings] = useState(() => {
     const defaults = {
@@ -520,6 +546,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               {t(language, 'settings')}
             </div>
 
+            <div className="px-1">
+              <input
+                type="text"
+                value={settingsSearch}
+                onChange={(e) => setSettingsSearch(e.target.value)}
+                placeholder="Ayar ara (HDR, DSP, Overlay...)"
+                className="w-full px-2.5 py-1.5 rounded-xl bg-black/35 border border-white/10 text-xs text-white placeholder-white/35 outline-none focus:border-blue-400"
+              />
+              {settingsSearch.trim() && (
+                <div className="mt-1.5 max-h-40 overflow-y-auto rounded-xl bg-black/60 border border-white/10 p-1 space-y-0.5">
+                  {[
+                    { label: 'Profil & Durum', tab: 'profile' as const, kw: 'profil avatar durum bio rozet' },
+                    { label: '2FA & Aktif Oturumlar', tab: 'security' as const, kw: '2fa güvenlik şifre oturum gizlilik' },
+                    { label: 'Tema, Dil & Cam Efekti', tab: 'appearance' as const, kw: 'tema görünüm dil cam font' },
+                    { label: 'Oyun İçi Overlay & Saydamlık', tab: 'overlay' as const, kw: 'overlay oyun saydamlık ping kilit köşe boyut' },
+                    { label: 'Mikrofon & Hoparlör', tab: 'audio' as const, kw: 'ses mikrofon hoparlör cihaz test ses düzeyi' },
+                    { label: 'Stüdyo DSP, Ducking & Tampon', tab: 'voice_processing' as const, kw: 'dsp gürültü yankı agc ducking tampon 20ms hassasiyet' },
+                    { label: 'HDR Yayın, Kalite & Codec', tab: 'video' as const, kw: 'video hdr av1 vp9 h264 codec kalite gpu' },
+                    { label: 'Kısayol Tuşları', tab: 'keybindings' as const, kw: 'kısayol ptt tuş bas konuş' },
+                    { label: 'Sohbet & Fısıltı', tab: 'chats' as const, kw: 'sohbet fısıltı link gif' },
+                    { label: 'Bildirimler & Ses Paketi', tab: 'notifications' as const, kw: 'bildirim zil ses paketi' },
+                    { label: 'Hakkında & Güncelleme', tab: 'about' as const, kw: 'hakkında sürüm güncelleme' },
+                  ]
+                    .filter((item) => {
+                      const q = settingsSearch.trim().toLowerCase();
+                      return item.label.toLowerCase().includes(q) || item.kw.includes(q);
+                    })
+                    .map((item) => (
+                      <button
+                        key={item.tab}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab(item.tab);
+                          setSettingsSearch('');
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-blue-500/25 text-[11px] text-white/85 hover:text-white transition"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+
             {/* USER SECTION */}
             <div className="space-y-1">
               <div className="text-[10px] font-semibold text-white/30 uppercase px-2 pb-1 tracking-wider">
@@ -564,6 +634,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               >
                 <Palette className="w-4 h-4 text-purple-400" />
                 {t(language, 'tabAppearance')}
+              </button>
+              <button
+                onClick={() => setActiveTab('overlay')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+                  activeTab === 'overlay'
+                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                }`}
+              >
+                <Radio className="w-4 h-4 text-emerald-400" />
+                <span>Oyun İçi Overlay</span>
               </button>
               <button
                 onClick={() => setActiveTab('audio')}
@@ -1146,6 +1227,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       style={{ transform: lowLatencyAudio ? 'translateX(20px)' : 'translateX(0)' }}
                     />
                   </div>
+                </div>
+
+                {/* Audio Ducking Default & Level */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-semibold text-white">
+                        Audio Ducking (Konuşma Anında Radyo/Müzik Kısma)
+                      </div>
+                      <div className="text-[11px] text-white/40">
+                        Ses odasında biri konuşurken Radyo Botu / YouTube sesini otomatik düşürür.
+                      </div>
+                    </div>
+                    <div
+                      onClick={() => {
+                        const next = !duckingEnabled;
+                        setDuckingEnabled(next);
+                        try { localStorage.setItem('cakma_ducking_enabled', String(next)); } catch {}
+                      }}
+                      className={`ios-toggle ${duckingEnabled ? 'bg-emerald-500' : 'bg-white/20'}`}
+                    >
+                      <div
+                        className="ios-toggle-dot"
+                        style={{ transform: duckingEnabled ? 'translateX(20px)' : 'translateX(0)' }}
+                      />
+                    </div>
+                  </div>
+                  {duckingEnabled && (
+                    <div className="space-y-1 pt-1 border-t border-white/5">
+                      <div className="flex justify-between text-[11px] text-white/70">
+                        <span>Kısma Seviyesi</span>
+                        <span className="font-mono font-semibold text-emerald-300">%{duckingLevel}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={10}
+                        max={70}
+                        step={5}
+                        value={duckingLevel}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setDuckingLevel(v);
+                          try { localStorage.setItem('cakma_ducking_level', String(v)); } catch {}
+                        }}
+                        className="w-full accent-emerald-400 cursor-pointer"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2117,6 +2246,87 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </div>
 
               {/* In-Game Overlay & Game Detection Card */}
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Windows Başlangıçta Otomatik Başlat</div>
+                    <div className="text-xs text-white/40">
+                      Bilgisayar açıldığında Çakma masaüstü uygulamasını otomatik başlatır
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleAutostart}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      autostartEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        autostartEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                      <Bell className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-white">Masaüstü Bildirimleri</div>
+                      <div className="text-xs text-white/40">
+                        Bahsedildiğinizde veya özel mesaj aldığınızda anlık bildirim alın
+                      </div>
+                    </div>
+                  </div>
+
+                  {notifPermission === 'granted' ? (
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" /> İzin Verildi
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={requestNotificationPermission}
+                      className="px-4 py-1.5 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold shadow transition"
+                    >
+                      İzin Ver
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* PWA Standalone Install Card */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900/30 to-indigo-900/30 border border-purple-500/30 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-white">PWA / Bağımsız Uygulama Olarak Yükle</div>
+                    <div className="text-xs text-purple-200/70">
+                      Chrome, Edge veya Safari&apos;de adres çubuğundaki &ldquo;Uygulamayı Yükle&rdquo; ikonuna tıklayarak doğrudan masaüstü uygulaması yapabilirsiniz.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: In-Game Overlay */}
+          {activeTab === 'overlay' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight">Oyun İçi Overlay &amp; Oyun Algılama</h3>
+                <p className="text-xs text-white/50 mt-0.5">
+                  Saydamlık, köşe konumu, boyut, ping göstergesi ve tıklama geçirgenliği ayarlarını özelleştirin.
+                </p>
+              </div>
+
               <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
@@ -2170,32 +2380,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              {/* Push Notifications Card */}
-              {/* Masaüstü Overlay & Windows Başlangıç Ayarları */}
-              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-white">Windows Başlangıçta Otomatik Başlat</div>
-                    <div className="text-xs text-white/40">
-                      Bilgisayar açıldığında Çakma masaüstü uygulamasını otomatik başlatır
-                    </div>
+              {/* Live Mini Overlay Preview */}
+              <div className="relative h-28 rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900 via-indigo-950/50 to-slate-950 overflow-hidden p-3">
+                <div className="text-[10px] text-white/35 uppercase font-semibold tracking-wider">Canlı Önizleme</div>
+                <div
+                  style={{ opacity: Math.max(0.2, overlayOpacity / 100) }}
+                  className={`absolute ${
+                    overlayCorner === 'top-left'
+                      ? 'top-2 left-2'
+                      : overlayCorner === 'top-right'
+                      ? 'top-2 right-2'
+                      : overlayCorner === 'bottom-left'
+                      ? 'bottom-2 left-2'
+                      : 'bottom-2 right-2'
+                  } ${
+                    overlayConfig.size === 'compact' ? 'w-36' : overlayConfig.size === 'wide' ? 'w-56' : 'w-44'
+                  } rounded-xl bg-slate-950/65 backdrop-blur-md border border-white/15 p-2 shadow-xl space-y-1`}
+                >
+                  <div className="flex items-center justify-between text-[9px] text-white/75">
+                    <span className="font-bold truncate">🔊 Ses Odası</span>
+                    {overlayConfig.showPing && <span className="font-mono text-emerald-300">24ms</span>}
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleToggleAutostart}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      autostartEnabled ? 'bg-emerald-500' : 'bg-white/15'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        autostartEnabled ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
+                  <div className="flex items-center gap-1.5 text-[10px] text-emerald-300 bg-emerald-500/15 px-1.5 py-0.5 rounded-md">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span className="truncate">{currentUser?.username || 'Kullanıcı'}</span>
+                  </div>
                 </div>
+              </div>
 
-                <div className="pt-3 border-t border-white/10 space-y-2.5">
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+                <div className="space-y-2.5">
                   <div>
                     <div className="text-sm font-semibold text-white">Overlay Konumu</div>
                     <div className="text-xs text-white/40">Oyun içi konuşanlar penceresinin ekran köşesi</div>
@@ -2238,7 +2452,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   />
                 </div>
 
-                {/* Detailed Overlay Controls */}
                 <div className="pt-3 border-t border-white/10 space-y-3">
                   <div>
                     <div className="text-xs font-semibold text-white mb-1.5">Overlay Pencere Boyutu</div>
@@ -2314,51 +2527,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         </button>
                       </div>
                     ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                      <Bell className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-white">Masaüstü Bildirimleri</div>
-                      <div className="text-xs text-white/40">
-                        Bahsedildiğinizde veya özel mesaj aldığınızda anlık bildirim alın
-                      </div>
-                    </div>
-                  </div>
-
-                  {notifPermission === 'granted' ? (
-                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1">
-                      <Check className="w-3.5 h-3.5" /> İzin Verildi
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={requestNotificationPermission}
-                      className="px-4 py-1.5 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold shadow transition"
-                    >
-                      İzin Ver
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* PWA Standalone Install Card */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900/30 to-indigo-900/30 border border-purple-500/30 space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
-                    <Smartphone className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-white">PWA / Bağımsız Uygulama Olarak Yükle</div>
-                    <div className="text-xs text-purple-200/70">
-                      Chrome, Edge veya Safari&apos;de adres çubuğundaki &ldquo;Uygulamayı Yükle&rdquo; ikonuna tıklayarak doğrudan masaüstü uygulaması yapabilirsiniz.
-                    </div>
                   </div>
                 </div>
               </div>
@@ -2523,6 +2691,73 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <video ref={cameraVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
                   </div>
                 )}
+              </div>
+
+              {/* Default Screen Share & Viewer Preferences */}
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
+                <div className="text-xs font-bold uppercase tracking-wider text-white/50">
+                  Varsayılan Ekran Yayını &amp; İzleme Tercihleri
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Varsayılan HDR Yayın Modu (10-bit AV1 / VP9)</div>
+                    <div className="text-xs text-white/40">Go Live açıldığında HDR modu varsayılan olarak seçili gelir.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !defaultStreamHdr;
+                      setDefaultStreamHdr(next);
+                      try { localStorage.setItem('cakma_default_stream_hdr', String(next)); } catch {}
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
+                      defaultStreamHdr ? 'bg-amber-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${defaultStreamHdr ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/5">
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1.5">Varsayılan İzleme Kalitesi</label>
+                    <select
+                      value={defaultViewerQuality}
+                      onChange={(e) => {
+                        setDefaultViewerQuality(e.target.value);
+                        try { localStorage.setItem('cakma_default_viewer_quality', e.target.value); } catch {}
+                      }}
+                      className="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white outline-none"
+                    >
+                      <option value="auto">Otomatik</option>
+                      <option value="source">Kaynak</option>
+                      <option value="1080">1080p</option>
+                      <option value="720">720p</option>
+                      <option value="480">480p</option>
+                      <option value="360">360p</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-xs text-white/60 mb-1.5">
+                      <span>Varsayılan Yayın Sesi</span>
+                      <span className="font-mono">%{defaultStreamVolume}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={defaultStreamVolume}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setDefaultStreamVolume(v);
+                        try { localStorage.setItem('cakma_default_stream_volume', String(v)); } catch {}
+                      }}
+                      className="w-full accent-emerald-400 cursor-pointer mt-1"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           )}

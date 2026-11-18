@@ -3576,6 +3576,33 @@ io.on('connection', (socket: Socket) => {
     io.emit('servers_updated', servers);
   });
 
+  // Update existing voice/text channel settings (bitrate, userLimit, topic)
+  socket.on('update_channel_settings', ({ serverId, channelId, bitrateKbps, userLimit, topic }: { serverId: string; channelId: string; bitrateKbps?: number; userLimit?: number; topic?: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const targetServer = servers.find(s => s.id === serverId);
+    if (!targetServer) return;
+    if (!checkServerPermission(user, targetServer, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Kanal ayarlarını düzenlemek için Kanalları Yönet yetkiniz yok.' });
+    }
+    const ch = targetServer.channels.find(c => c.id === channelId);
+    if (!ch) return;
+
+    if (bitrateKbps !== undefined && ch.type === 'voice') {
+      ch.bitrateKbps = Math.min(320, Math.max(32, Number(bitrateKbps) || 128));
+    }
+    if (userLimit !== undefined && ch.type === 'voice') {
+      ch.userLimit = Math.min(99, Math.max(0, Number(userLimit) || 0));
+    }
+    if (topic !== undefined) {
+      ch.topic = topic.trim() ? sanitizeText(topic.trim()).slice(0, 100) : undefined;
+    }
+
+    saveServers(servers);
+    io.emit('servers_updated', servers);
+    addAuditLog('KANAL_GUNCELLENDI', `${targetServer.name} / #${ch.name} ayarları güncellendi (${user.username}).`);
+  });
+
   // Update Channel Notice & Topic
   socket.on('update_channel_notice', ({ serverId, channelId, notice, topic }: { serverId: string; channelId: string; notice?: string | null; topic?: string }) => {
     const user = activeUsers.get(socket.id);
