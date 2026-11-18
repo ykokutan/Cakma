@@ -4807,6 +4807,18 @@ io.on('connection', (socket: Socket) => {
     );
   });
 
+  // Viewer -> Presenter per-peer stream quality request
+  socket.on('screen_share_quality_request', ({ targetUserId, quality }: { targetUserId: string; quality: string }) => {
+    if (!targetUserId || !['auto', '360', '480', '720', '1080', 'source'].includes(quality)) return;
+    const senderUser = activeUsers.get(socket.id);
+    const targetUser = activeUsers.get(targetUserId);
+    if (!senderUser || !targetUser) return;
+    io.to(targetUserId).emit('screen_share_quality_request', {
+      fromUserId: socket.id,
+      quality,
+    });
+  });
+
   // User State Update (Mute, Deafen, Online Status - Username change is prohibited here to prevent spoofing)
   socket.on('update_user_state', ({ isMuted, isDeafened, status, avatar }: Partial<User>) => {
     const user = activeUsers.get(socket.id);

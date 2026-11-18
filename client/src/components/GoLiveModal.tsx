@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS: ScreenShareSettings = {
   audioBitrateKbps: 320,
   viewerLimit: 0,
   connectionMode: 'p2p',
+  hdrEnabled: false,
 };
 
 const PRESET_MAP: Record<
@@ -220,6 +221,10 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
 
   const audioBitrates: (64 | 96 | 128 | 192 | 256 | 320)[] = [64, 96, 128, 192, 256, 320];
   const estimatedMbps = ((settings.bitrateKbps + (settings.audioEnabled ? settings.audioBitrateKbps : 0)) / 1000).toFixed(1);
+  const displaySupportsHdr =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(dynamic-range: high)').matches;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
@@ -554,6 +559,58 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* HDR Yayın Modu (10-bit AV1 / VP9) */}
+                <div className="p-2.5 rounded-xl bg-[#161f33]/80 border border-white/10 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-gradient-to-r from-amber-500 to-rose-500 text-[10px] font-black text-white tracking-wider">
+                        HDR
+                      </span>
+                      <div>
+                        <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                          <span>HDR Yayın Modu (10-bit AV1 / VP9)</span>
+                          <span
+                            className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                              displaySupportsHdr
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-white/10 text-slate-400'
+                            }`}
+                          >
+                            {displaySupportsHdr ? 'HDR Ekran Algılandı' : 'SDR Ekran'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400">
+                          10-bit destekli AV1/VP9 codec önceliği ve yüksek bitrate (≥18 Mbps) kullanır.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextHdr = !settings.hdrEnabled;
+                        updateSettings({
+                          hdrEnabled: nextHdr,
+                          bitrateKbps: nextHdr ? Math.max(settings.bitrateKbps, 18000) : settings.bitrateKbps,
+                        });
+                      }}
+                      className={`w-10 h-5 rounded-full transition-colors relative shrink-0 ${
+                        settings.hdrEnabled ? 'bg-amber-500' : 'bg-white/15'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          settings.hdrEnabled ? 'left-5' : 'left-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {settings.hdrEnabled && (
+                    <p className="text-[10px] text-amber-300/85 leading-relaxed">
+                      Not: WebRTC codec tercihi AV1/VP9 10-bit olarak ayarlanır; Windows/WebView2 ekran yakalamanın donanımsal HDR metadata geçişi ekran sürücüsü ve tarayıcı motoruna bağlıdır.
+                    </p>
+                  )}
                 </div>
 
                 {/* İzleyici Sınırı */}

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
+import { ViewerStreamQuality } from '../types';
 import { SoundboardModal } from './SoundboardModal';
 import { VoiceRadioWidget } from './VoiceRadioWidget';
 import { WhiteboardModal } from './WhiteboardModal';
@@ -48,13 +49,20 @@ const VideoStreamPlayer: React.FC<{
   title: string;
   isFocused?: boolean;
   onToggleFocus?: () => void;
+  canSelectQuality?: boolean;
+  selectedQuality?: ViewerStreamQuality;
+  onSelectQuality?: (quality: ViewerStreamQuality) => void;
 }> = ({
   stream,
   title,
   isFocused,
   onToggleFocus,
+  canSelectQuality,
+  selectedQuality = 'auto',
+  onSelectQuality,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [hdrBoost, setHdrBoost] = useState(false);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -91,17 +99,50 @@ const VideoStreamPlayer: React.FC<{
         autoPlay
         playsInline
         muted
-        className="w-full h-full object-contain"
+        className="w-full h-full object-contain transition-[filter] duration-200"
+        style={hdrBoost ? { filter: 'contrast(1.12) saturate(1.18) brightness(1.04)' } : undefined}
       />
       {/* iOS Floating Stream Badge */}
       <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2 text-xs font-medium text-white shadow-lg">
         <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
         <span className="w-2 h-2 rounded-full bg-red-500 -ml-4" />
         <span>CANLI · {title}</span>
+        {hdrBoost && (
+          <span className="px-1.5 py-0.2 rounded bg-gradient-to-r from-amber-500 to-rose-500 text-[9px] font-black text-white">
+            HDR+
+          </span>
+        )}
       </div>
 
-      {/* Action Buttons: PiP + Focus Mode + Fullscreen */}
+      {/* Action Buttons: Quality + HDR+ + PiP + Focus Mode + Fullscreen */}
       <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
+        {canSelectQuality && onSelectQuality && (
+          <select
+            value={selectedQuality}
+            onChange={(e) => onSelectQuality(e.target.value as ViewerStreamQuality)}
+            className="px-2.5 py-1.5 bg-black/75 hover:bg-black/90 backdrop-blur-md rounded-full text-xs font-semibold text-white border border-white/15 shadow-lg outline-none cursor-pointer"
+            title="İzleme Kalitesini Seç"
+          >
+            <option value="auto">Kalite: Oto</option>
+            <option value="source">Kaynak</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+            <option value="360">360p</option>
+          </select>
+        )}
+        <button
+          type="button"
+          onClick={() => setHdrBoost((prev) => !prev)}
+          className={`px-3 py-1.5 backdrop-blur-md rounded-full text-xs font-semibold transition border shadow-lg ${
+            hdrBoost
+              ? 'bg-amber-500/80 border-amber-300/60 text-white'
+              : 'bg-black/60 hover:bg-black/90 border-white/10 text-white/80 hover:text-white'
+          }`}
+          title="HDR+ Canlı Renk ve Kontrast İyileştirme"
+        >
+          HDR+
+        </button>
         <button
           type="button"
           onClick={handlePip}
@@ -189,6 +230,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     messagesMap,
     sendMessage,
     language,
+    requestScreenShareQuality,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
@@ -205,6 +247,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
   const [isScreenFocused, setIsScreenFocused] = useState(false);
   const [selectedScreenPresenterId, setSelectedScreenPresenterId] = useState<string | null>(null);
+  const [viewerQualityByPresenter, setViewerQualityByPresenter] = useState<Record<string, ViewerStreamQuality>>({});
   const [userContextMenu, setUserContextMenu] = useState<{ user: any; x: number; y: number } | null>(null);
 
   const handleOpenUserContextMenu = (e: React.MouseEvent, user: any) => {
@@ -494,6 +537,13 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                   title={`${activePresenter?.username || 'Kullanıcı'} (Ekran Yayını)`}
                   isFocused={isScreenFocused}
                   onToggleFocus={() => setIsScreenFocused((p) => !p)}
+                  canSelectQuality
+                  selectedQuality={viewerQualityByPresenter[activeRemoteStreamEntry[0]] || 'auto'}
+                  onSelectQuality={(q) => {
+                    const pid = activeRemoteStreamEntry[0];
+                    setViewerQualityByPresenter((prev) => ({ ...prev, [pid]: q }));
+                    requestScreenShareQuality(pid, q);
+                  }}
                 />
               ) : null}
             </div>

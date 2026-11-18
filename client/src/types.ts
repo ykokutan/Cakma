@@ -394,6 +394,7 @@ export interface ServerAnalyticsData {
 export type ScreenSharePreset = '360' | '480' | '720' | '1080' | '1440' | 'source' | 'presentation';
 export type ScreenSharePrivacy = 'public' | 'contacts' | 'private';
 export type ScreenShareConnectionMode = 'p2p' | 'server';
+export type ViewerStreamQuality = 'auto' | '360' | '480' | '720' | '1080' | 'source';
 
 export interface ScreenShareSettings {
   preset: ScreenSharePreset;
@@ -406,4 +407,5 @@ export interface ScreenShareSettings {
   audioBitrateKbps: 64 | 96 | 128 | 192 | 256 | 320;
   viewerLimit: number;
   connectionMode: ScreenShareConnectionMode;
+  hdrEnabled?: boolean;
 }

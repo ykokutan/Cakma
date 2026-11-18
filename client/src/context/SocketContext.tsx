@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings } from '../types';
+import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -152,6 +152,7 @@ interface SocketContextType {
   toggleDeafen: () => void;
   startScreenShare: (settings?: ScreenShareSettings, preCapturedStream?: MediaStream | null) => Promise<void>;
   stopScreenShare: () => void;
+  requestScreenShareQuality: (presenterUserId: string, quality: ViewerStreamQuality) => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
   createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => void;
@@ -2167,6 +2168,56 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
+    newSocket.on('screen_share_quality_request', async ({ fromUserId, quality }: { fromUserId: string; quality: ViewerStreamQuality }) => {
+      const pc = peerConnectionsRef.current.get(fromUserId);
+      const localScreenTrack = screenStreamRef.current?.getVideoTracks()[0];
+      if (!pc || !localScreenTrack) return;
+
+      const sender = pc.getSenders().find((s) => s.track === localScreenTrack);
+      if (!sender) return;
+
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        const sourceHeight = localScreenTrack.getSettings?.().height || 1080;
+        const targetHeightMap: Record<string, number> = {
+          '360': 360,
+          '480': 480,
+          '720': 720,
+          '1080': 1080,
+        };
+        const bitrateMap: Record<string, number> = {
+          '360': 1_200_000,
+          '480': 2_200_000,
+          '720': 4_500_000,
+          '1080': 8_000_000,
+          'source': 15_000_000,
+          'auto': 10_000_000,
+        };
+
+        if (quality === 'auto' || quality === 'source') {
+          params.encodings[0].scaleResolutionDownBy = 1;
+          delete params.encodings[0].maxFramerate;
+        } else {
+          const targetH = targetHeightMap[quality] || 1080;
+          params.encodings[0].scaleResolutionDownBy = Math.max(1, sourceHeight / targetH);
+          if (quality === '360') {
+            params.encodings[0].maxFramerate = 24;
+          } else if (quality === '480') {
+            params.encodings[0].maxFramerate = 30;
+          } else {
+            delete params.encodings[0].maxFramerate;
+          }
+        }
+        params.encodings[0].maxBitrate = bitrateMap[quality] ?? 10_000_000;
+        await sender.setParameters(params);
+      } catch {
+        // Ignore if browser rejects dynamic encoding parameters
+      }
+    });
+
     newSocket.on('screen_share_change', ({ userId, isSharing }: { userId: string; isSharing: boolean }) => {
       setOnlineUsers(prev => prev.map(u => u.id === userId ? { ...u, isScreenSharing: isSharing } : u));
       if (!isSharing) {
@@ -4096,8 +4147,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }));
 
       const videoTrack = rawStream.getVideoTracks()[0];
-      if (videoTrack && preCapturedStream) {
-        await videoTrack.applyConstraints(videoConstraint).catch(() => {});
+      if (videoTrack) {
+        if (preCapturedStream) {
+          await videoTrack.applyConstraints(videoConstraint).catch(() => {});
+        }
+        if (settings?.hdrEnabled) {
+          try {
+            videoTrack.contentHint = 'detail';
+          } catch {}
+        }
       }
 
       // Build final broadcast stream (applying Master Volume gain if audio track exists)
@@ -4135,12 +4193,36 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
         for (const track of broadcastStream.getTracks()) {
           const sender = pc.addTrack(track, broadcastStream);
+          if (track.kind === 'video' && settings?.hdrEnabled) {
+            try {
+              const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
+              const caps = RTCRtpSender.getCapabilities?.('video');
+              if (transceiver?.setCodecPreferences && caps?.codecs?.length) {
+                const hdrPriority = caps.codecs.filter((c) => {
+                  const mime = c.mimeType.toLowerCase();
+                  return mime === 'video/av1' || mime === 'video/vp9';
+                });
+                const fallbackCodecs = caps.codecs.filter((c) => {
+                  const mime = c.mimeType.toLowerCase();
+                  return mime !== 'video/av1' && mime !== 'video/vp9';
+                });
+                if (hdrPriority.length > 0) {
+                  transceiver.setCodecPreferences([...hdrPriority, ...fallbackCodecs]);
+                }
+              }
+            } catch {
+              // Ignore if browser does not support setCodecPreferences
+            }
+          }
           try {
             const params = sender.getParameters();
             if (!params.encodings || params.encodings.length === 0) {
               params.encodings = [{}];
             }
             params.encodings[0].maxBitrate = track.kind === 'video' ? videoBitrateBps : audioBitrateBps;
+            if (track.kind === 'video' && settings?.hdrEnabled) {
+              params.degradationPreference = 'maintain-resolution';
+            }
             await sender.setParameters(params);
           } catch {
             // Browser may not support all encoding params on every sender
@@ -4179,6 +4261,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsScreenSharing(false);
     socket?.emit('screen_share_status', { isSharing: false });
   };
+
+  const requestScreenShareQuality = useCallback((presenterUserId: string, quality: ViewerStreamQuality) => {
+    if (!socket || !presenterUserId) return;
+    socket.emit('screen_share_quality_request', { targetUserId: presenterUserId, quality });
+  }, [socket]);
 
   const createServer = (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => {
     if (!socket || !name.trim()) return;
@@ -4801,6 +4888,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         toggleDeafen,
         startScreenShare,
         stopScreenShare,
+        requestScreenShareQuality,
         setInputMode,
         setPttKey,
         createServer,
