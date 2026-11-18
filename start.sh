@@ -49,7 +49,11 @@ if [ "${ENABLE_LIVEKIT:-1}" = "1" ]; then
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
       LK_ARCH="arm64"
     fi
-    LK_VER="1.8.2"
+    LK_VER=""
+    if command -v curl >/dev/null 2>&1; then
+      LK_VER="$(curl -fsSL "https://api.github.com/repos/livekit/livekit/releases/latest" 2>/dev/null | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' | head -n 1)"
+    fi
+    LK_VER="${LK_VER:-1.13.11}"
     LK_URL="https://github.com/livekit/livekit/releases/download/v${LK_VER}/livekit_${LK_VER}_linux_${LK_ARCH}.tar.gz"
     echo "📡 LiveKit SFU indiriliyor (v${LK_VER} - ${LK_ARCH})..."
     if command -v curl >/dev/null 2>&1; then
@@ -74,7 +78,7 @@ if [ "${ENABLE_LIVEKIT:-1}" = "1" ]; then
     export LIVEKIT_API_KEY
     export LIVEKIT_API_SECRET
     echo "🎙️ LiveKit SFU başlatılıyor (127.0.0.1:7880, Hibrit eşik: ${SFU_THRESHOLD:-6} kişi)..."
-    "$LK_BIN" --keys "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}" --port 7880 --bind 127.0.0.1 --rtc-tcp-port 7881 --rtc-port-range-start 50000 --rtc-port-range-end 50100 >/dev/null 2>&1 &
+    "$LK_BIN" --keys "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}" --port 7880 --bind 127.0.0.1 --rtc-tcp-port 7881 --rtc-port-range-start 50000 --rtc-port-range-end 50100 >"$ROOT_DIR/data/livekit.log" 2>&1 &
   fi
 fi
 
