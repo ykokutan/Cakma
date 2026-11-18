@@ -4315,54 +4315,73 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   const getScreenShareStats = useCallback(async (presenterUserId?: string): Promise<ScreenShareStats | null> => {
-    const targetPc = presenterUserId
-      ? peerConnectionsRef.current.get(presenterUserId)
-      : Array.from(peerConnectionsRef.current.values())[0];
-    if (!targetPc) return null;
+    const candidates = presenterUserId
+      ? ([peerConnectionsRef.current.get(presenterUserId)].filter(Boolean) as RTCPeerConnection[])
+      : Array.from(peerConnectionsRef.current.values());
 
-    try {
-      const report = await targetPc.getStats();
-      const codecMap = new Map<string, string>();
-      let bestVideo: any = null;
+    const targetType = presenterUserId ? 'inbound-rtp' : 'outbound-rtp';
+    for (const targetPc of candidates) {
+      try {
+        const report = await targetPc.getStats();
+        const codecMap = new Map<string, string>();
+        let bestVideo: any = null;
 
-      report.forEach((stat: any) => {
-        if (stat.type === 'codec' && stat.mimeType?.startsWith('video/')) {
-          codecMap.set(stat.id, stat.mimeType.replace('video/', '').toUpperCase());
-        }
-      });
-
-      const targetType = presenterUserId ? 'inbound-rtp' : 'outbound-rtp';
-      report.forEach((stat: any) => {
-        if (stat.type === targetType && (stat.kind === 'video' || stat.mediaType === 'video')) {
-          if (!bestVideo || (stat.frameWidth || 0) >= (bestVideo.frameWidth || 0)) {
-            bestVideo = stat;
+        report.forEach((stat: any) => {
+          if (stat.type === 'codec' && stat.mimeType?.startsWith('video/')) {
+            codecMap.set(stat.id, stat.mimeType.replace('video/', '').toUpperCase());
           }
+        });
+
+        report.forEach((stat: any) => {
+          if (stat.type === targetType && (stat.kind === 'video' || stat.mediaType === 'video')) {
+            if (!bestVideo || (stat.frameWidth || 0) >= (bestVideo.frameWidth || 0)) {
+              bestVideo = stat;
+            }
+          }
+        });
+
+        if (bestVideo) {
+          const bytes = Number(presenterUserId ? bestVideo.bytesReceived : bestVideo.bytesSent) || 0;
+          const now = Date.now();
+          let bitrateKbps = 0;
+          if (screenShareStatsPrevRef.current && now > screenShareStatsPrevRef.current.ts) {
+            const dtSec = (now - screenShareStatsPrevRef.current.ts) / 1000;
+            const deltaBytes = Math.max(0, bytes - screenShareStatsPrevRef.current.bytes);
+            bitrateKbps = Math.round((deltaBytes * 8) / dtSec / 1000);
+          }
+          screenShareStatsPrevRef.current = { bytes, ts: now };
+
+          return {
+            codec: (bestVideo.codecId && codecMap.get(bestVideo.codecId)) || 'VP8/VP9',
+            width: Number(bestVideo.frameWidth) || 0,
+            height: Number(bestVideo.frameHeight) || 0,
+            fps: Math.round(Number(bestVideo.framesPerSecond) || 0),
+            bitrateKbps,
+            packetsLost: Number(bestVideo.packetsLost) || 0,
+          };
         }
-      });
-
-      if (!bestVideo) return null;
-
-      const bytes = Number(presenterUserId ? bestVideo.bytesReceived : bestVideo.bytesSent) || 0;
-      const now = Date.now();
-      let bitrateKbps = 0;
-      if (screenShareStatsPrevRef.current && now > screenShareStatsPrevRef.current.ts) {
-        const dtSec = (now - screenShareStatsPrevRef.current.ts) / 1000;
-        const deltaBytes = Math.max(0, bytes - screenShareStatsPrevRef.current.bytes);
-        bitrateKbps = Math.round((deltaBytes * 8) / dtSec / 1000);
+      } catch {
+        // continue to next peer or local fallback
       }
-      screenShareStatsPrevRef.current = { bytes, ts: now };
-
-      return {
-        codec: (bestVideo.codecId && codecMap.get(bestVideo.codecId)) || 'VP8/VP9',
-        width: Number(bestVideo.frameWidth) || 0,
-        height: Number(bestVideo.frameHeight) || 0,
-        fps: Math.round(Number(bestVideo.framesPerSecond) || 0),
-        bitrateKbps,
-        packetsLost: Number(bestVideo.packetsLost) || 0,
-      };
-    } catch {
-      return null;
     }
+
+    // Fallback when there are 0 viewers in the room yet (local capture settings)
+    if (!presenterUserId) {
+      const localTrack = screenStreamRef.current?.getVideoTracks()[0];
+      const s = localTrack?.getSettings?.();
+      if (s && (s.width || s.height || s.frameRate)) {
+        return {
+          codec: 'Yerel Önizleme (İzleyici yok)',
+          width: Number(s.width) || 0,
+          height: Number(s.height) || 0,
+          fps: Math.round(Number(s.frameRate) || 0),
+          bitrateKbps: 0,
+          packetsLost: 0,
+        };
+      }
+    }
+
+    return null;
   }, []);
 
   const createServer = (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => {
