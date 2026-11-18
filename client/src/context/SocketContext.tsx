@@ -228,6 +228,10 @@ interface SocketContextType {
   setNoiseSuppression: (val: boolean) => void;
   setEchoCancellation: (val: boolean) => void;
   setAutoGainControl: (val: boolean) => void;
+  studioAudioDsp: boolean;
+  setStudioAudioDsp: (val: boolean) => void;
+  lowLatencyAudio: boolean;
+  setLowLatencyAudio: (val: boolean) => void;
   setInputSensitivity: (val: number) => void;
   setInputVolume: (val: number) => void;
   setOutputVolume: (val: number) => void;
@@ -627,12 +631,15 @@ const setOpusBitrateInSdp = (sdp: string, bitrateKbps: number): string => {
       clean = clean.replace(/;\s*stereo=\d+/gi, '');
       clean = clean.replace(/;\s*sprop-stereo=\d+/gi, '');
       clean = clean.replace(/;\s*cbr=\d+/gi, '');
-      return `a=fmtp:${pt} ${clean};maxaveragebitrate=${targetBitrate};stereo=1;sprop-stereo=1;cbr=1;useinbandfec=1`;
+      clean = clean.replace(/;\s*minptime=\d+/gi, '');
+      clean = clean.replace(/;\s*maxplaybackrate=\d+/gi, '');
+      clean = clean.replace(/;\s*sprop-maxcapturerate=\d+/gi, '');
+      return `a=fmtp:${pt} ${clean};minptime=10;useinbandfec=1;maxplaybackrate=48000;sprop-maxcapturerate=48000;maxaveragebitrate=${targetBitrate};stereo=1;sprop-stereo=1;cbr=1`;
     });
   } else {
     return sdp.replace(
       new RegExp(`(a=rtpmap:${pt}\\s+opus\\/48000[^\r\n]*)`, 'i'),
-      `$1\r\na=fmtp:${pt} minptime=10;useinbandfec=1;maxaveragebitrate=${targetBitrate};stereo=1;sprop-stereo=1;cbr=1`
+      `$1\r\na=fmtp:${pt} minptime=10;useinbandfec=1;maxplaybackrate=48000;sprop-maxcapturerate=48000;maxaveragebitrate=${targetBitrate};stereo=1;sprop-stereo=1;cbr=1`
     );
   }
 };
@@ -648,6 +655,9 @@ const applyAudioBitrate = async (pc: RTCPeerConnection, bitrateKbps: number) => 
           params.encodings = [{}];
         }
         params.encodings[0].maxBitrate = Math.max(32000, bitrateKbps * 1000);
+        try {
+          (params.encodings[0] as any).networkPriority = 'high';
+        } catch {}
         await sender.setParameters(params);
         console.log(`[WebRTC] Set audio maxBitrate to ${bitrateKbps} kbps on track ${sender.track.id}`);
       }
@@ -998,6 +1008,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_autoGainControl') : null;
     return val !== null ? val === 'true' : true;
   });
+  const [studioAudioDsp, setStudioAudioDspState] = useState<boolean>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_studioAudioDsp') : null;
+    return val !== null ? val === 'true' : true;
+  });
+  const [lowLatencyAudio, setLowLatencyAudioState] = useState<boolean>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_lowLatencyAudio') : null;
+    return val !== null ? val === 'true' : true;
+  });
+  const processedStreamRef = useRef<MediaStream | null>(null);
   const [inputSensitivity, setInputSensitivityState] = useState<number>(() => {
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_inputSensitivity') : null;
     return val !== null ? Number(val) : 25;
@@ -1529,8 +1548,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Helper to get or request audio stream with current settings
   const getLocalAudioStream = async (forceNew: boolean = false): Promise<MediaStream | null> => {
-    if (localStreamRef.current && !forceNew) return localStreamRef.current;
+    if (localStreamRef.current && !forceNew) {
+      return processedStreamRef.current || localStreamRef.current;
+    }
 
+    if (processedStreamRef.current) {
+      processedStreamRef.current.getTracks().forEach(t => t.stop());
+      processedStreamRef.current = null;
+    }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => t.stop());
       localStreamRef.current = null;
@@ -1548,17 +1573,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           echoCancellation,
           noiseSuppression,
           autoGainControl,
-        },
+          sampleRate: { ideal: 48000 },
+          channelCount: { ideal: 2 },
+          latency: { ideal: 0.01 },
+        } as MediaTrackConstraints,
         video: false
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
+      let outboundStream: MediaStream = stream;
 
       try {
         if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
           const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          audioContextRef.current = new AudioCtx();
+          audioContextRef.current = new AudioCtx({ sampleRate: 48000, latencyHint: 'interactive' });
         }
 
         const ctx = audioContextRef.current;
@@ -1575,8 +1604,33 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         gainNodeRef.current = gainNode;
 
         const source = ctx.createMediaStreamSource(stream);
-        source.connect(gainNode);
-        gainNode.connect(analyser);
+        if (studioAudioDsp) {
+          const highPass = ctx.createBiquadFilter();
+          highPass.type = 'highpass';
+          highPass.frequency.value = 80;
+          highPass.Q.value = 0.707;
+
+          const compressor = ctx.createDynamicsCompressor();
+          compressor.threshold.value = -24;
+          compressor.knee.value = 18;
+          compressor.ratio.value = 4;
+          compressor.attack.value = 0.003;
+          compressor.release.value = 0.15;
+
+          const dest = ctx.createMediaStreamDestination();
+          source.connect(highPass);
+          highPass.connect(compressor);
+          compressor.connect(gainNode);
+          gainNode.connect(analyser);
+          gainNode.connect(dest);
+          if (dest.stream.getAudioTracks().length > 0) {
+            outboundStream = dest.stream;
+            processedStreamRef.current = dest.stream;
+          }
+        } else {
+          source.connect(gainNode);
+          gainNode.connect(analyser);
+        }
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
@@ -1612,16 +1666,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.warn('Audio analysis setup warning:', err);
       }
 
-      const newAudioTrack = stream.getAudioTracks()[0];
+      const newAudioTrack = outboundStream.getAudioTracks()[0];
       for (const pc of peerConnectionsRef.current.values()) {
         const senders = pc.getSenders();
         const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-        if (audioSender) {
+        if (audioSender && newAudioTrack) {
           audioSender.replaceTrack(newAudioTrack);
         }
       }
 
-      return stream;
+      return outboundStream;
     } catch (err) {
       console.error('Mikrofon erişim izni alınamadı:', err);
       return null;
@@ -1666,6 +1720,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setAutoGainControlState(val);
     try { localStorage.setItem('dsp_autoGainControl', String(val)); } catch {}
     if (localStreamRef.current) await getLocalAudioStream(true);
+  };
+
+  const setStudioAudioDsp = async (val: boolean) => {
+    setStudioAudioDspState(val);
+    try { localStorage.setItem('dsp_studioAudioDsp', String(val)); } catch {}
+    if (localStreamRef.current) await getLocalAudioStream(true);
+  };
+
+  const setLowLatencyAudio = (val: boolean) => {
+    setLowLatencyAudioState(val);
+    try { localStorage.setItem('dsp_lowLatencyAudio', String(val)); } catch {}
+    for (const pc of peerConnectionsRef.current.values()) {
+      for (const receiver of pc.getReceivers()) {
+        if (receiver.track?.kind === 'audio' && 'playoutDelayHint' in receiver) {
+          try {
+            (receiver as any).playoutDelayHint = val ? 0.02 : 0.08;
+          } catch {}
+        }
+      }
+    }
   };
 
   const setInputVolume = (val: number) => {
@@ -2936,6 +3010,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return next;
         });
       } else {
+        if (event.receiver && 'playoutDelayHint' in event.receiver) {
+          try {
+            (event.receiver as any).playoutDelayHint = lowLatencyAudio ? 0.02 : 0.08;
+          } catch {}
+        }
         let audio = audioElementsRef.current.get(peerId);
         if (!audio) {
           audio = new Audio();
@@ -5077,6 +5156,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setNoiseSuppression,
         setEchoCancellation,
         setAutoGainControl,
+        studioAudioDsp,
+        setStudioAudioDsp,
+        lowLatencyAudio,
+        setLowLatencyAudio,
         setInputSensitivity,
         setInputVolume,
         setOutputVolume,

@@ -62,6 +62,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setEchoCancellation,
     autoGainControl,
     setAutoGainControl,
+    studioAudioDsp,
+    setStudioAudioDsp,
+    lowLatencyAudio,
+    setLowLatencyAudio,
     inputSensitivity,
     setInputSensitivity,
     inputVolume,
@@ -1096,6 +1100,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div
                       className="ios-toggle-dot"
                       style={{ transform: autoGainControl ? 'translateX(20px)' : 'translateX(0)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Studio Audio DSP Chain */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-white flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      Stüdyo DSP Zinciri (80Hz Uğultu Filtresi &amp; Compressor)
+                    </div>
+                    <div className="text-[11px] text-white/40">
+                      Masa/fan uğultusunu keser, ani bağırmalarda patlamayı önler ve gerçek giriş kazancını uygular.
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => setStudioAudioDsp(!studioAudioDsp)}
+                    className={`ios-toggle ${studioAudioDsp ? 'bg-amber-500' : 'bg-white/20'}`}
+                  >
+                    <div
+                      className="ios-toggle-dot"
+                      style={{ transform: studioAudioDsp ? 'translateX(20px)' : 'translateX(0)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Low Latency Playout Delay */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-white flex items-center gap-2">
+                      <Radio className="w-3.5 h-3.5 text-cyan-400" />
+                      Düşük Gecikmeli Ses Tamponu (20 ms)
+                    </div>
+                    <div className="text-[11px] text-white/40">
+                      Gelen ses tamponunu 20 ms seviyesine indirir; ağ dalgalıysa kapatarak kararlılık artırılabilir.
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => setLowLatencyAudio(!lowLatencyAudio)}
+                    className={`ios-toggle ${lowLatencyAudio ? 'bg-cyan-500' : 'bg-white/20'}`}
+                  >
+                    <div
+                      className="ios-toggle-dot"
+                      style={{ transform: lowLatencyAudio ? 'translateX(20px)' : 'translateX(0)' }}
                     />
                   </div>
                 </div>
