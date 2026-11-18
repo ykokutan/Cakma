@@ -21,6 +21,27 @@ export interface RadioBotState {
   volume: number;
 }
 
+export type UiThemeId =
+  | 'vision-dark'
+  | 'midnight-blue'
+  | 'cyber-emerald'
+  | 'amber-gold'
+  | 'crimson-rose'
+  | 'royal-violet'
+  | 'nordic-frost'
+  | 'oled-black'
+  | 'pearl-white'
+  | 'sky-daylight'
+  | 'warm-sand'
+  | 'mint-breeze';
+
+export const LIGHT_THEMES: ReadonlySet<string> = new Set([
+  'pearl-white',
+  'sky-daylight',
+  'warm-sand',
+  'mint-breeze',
+]);
+
 interface SocketContextType {
   socket: Socket | null;
   currentUser: User | null;
@@ -507,8 +528,8 @@ interface SocketContextType {
   }>;
   joinServerByInvite: (code: string) => Promise<{ success: boolean; serverId?: string; serverName?: string; error?: string }>;
   reorderChannel: (serverId: string, channelId: string, direction: 'up' | 'down') => void;
-  uiTheme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black';
-  setUiTheme: (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black') => void;
+  uiTheme: UiThemeId;
+  setUiTheme: (theme: UiThemeId) => void;
   chatFontSize: 'sm' | 'base' | 'lg';
   setChatFontSize: (size: 'sm' | 'base' | 'lg') => void;
   glassIntensity: 'low' | 'normal' | 'high';
@@ -788,8 +809,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     replyTo?: { id: string; username: string; content: string };
   }>>([]);
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [uiTheme, setUiThemeState] = useState<'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black'>(() => {
-    return (localStorage.getItem('dc_ui_theme') as any) || 'vision-dark';
+  const [uiTheme, setUiThemeState] = useState<UiThemeId>(() => {
+    return (localStorage.getItem('dc_ui_theme') as UiThemeId) || 'vision-dark';
   });
   const [chatFontSize, setChatFontSizeState] = useState<'sm' | 'base' | 'lg'>(() => {
     return (localStorage.getItem('dc_chat_font_size') as any) || 'base';
@@ -820,6 +841,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', uiTheme);
+    document.documentElement.setAttribute('data-theme-mode', LIGHT_THEMES.has(uiTheme) ? 'light' : 'dark');
     try { localStorage.setItem('dc_ui_theme', uiTheme); } catch {}
   }, [uiTheme]);
 
@@ -848,7 +870,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try { localStorage.setItem('dc_reduce_motion', reduceMotion ? 'true' : 'false'); } catch {}
   }, [reduceMotion]);
 
-  const setUiTheme = (theme: 'vision-dark' | 'midnight-blue' | 'cyber-emerald' | 'amber-gold' | 'crimson-rose' | 'royal-violet' | 'nordic-frost' | 'oled-black') => {
+  const setUiTheme = (theme: UiThemeId) => {
     setUiThemeState(theme);
   };
 

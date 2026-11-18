@@ -230,7 +230,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.13');
+  const [appVersion, setAppVersion] = useState<string>('0.3.14');
   const [overlayConfig, setOverlayConfig] = useState<{
     onlySpeaking: boolean;
     showControls: boolean;
@@ -2043,7 +2043,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               <div className="p-5 rounded-2xl bg-white/[0.04] border border-white/10 space-y-5">
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <div className="text-xs font-semibold text-white/90">Arayüz Teması (8 Tema)</div>
+                    <div className="text-xs font-semibold text-white/90">Arayüz Teması (8 Koyu + 4 Açık Tema)</div>
                     <span className="text-[11px] text-white/45 font-mono">{uiTheme}</span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -2056,6 +2056,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       { id: 'royal-violet', label: 'Royal Violet', desc: 'Kozmik Mor', grad: 'from-violet-950 via-purple-950 to-slate-950', dot: 'bg-violet-400' },
                       { id: 'nordic-frost', label: 'Nordic Frost', desc: 'Buz Mavisi', grad: 'from-sky-950 via-slate-900 to-zinc-950', dot: 'bg-sky-400' },
                       { id: 'oled-black', label: 'OLED Siyah', desc: 'Saf AMOLED #000', grad: 'from-black via-neutral-950 to-black', dot: 'bg-white' },
+                      { id: 'pearl-white', label: 'İnci Beyazı', desc: 'Açık · Saf Cam', grad: 'from-white via-slate-100 to-blue-100', dot: 'bg-blue-600' },
+                      { id: 'sky-daylight', label: 'Gündüz Mavisi', desc: 'Açık · Ferah Gökyüzü', grad: 'from-sky-50 via-sky-100 to-indigo-100', dot: 'bg-sky-600' },
+                      { id: 'warm-sand', label: 'Sıcak Kum', desc: 'Açık · Göz Dostu Krem', grad: 'from-amber-50 via-orange-50 to-stone-200', dot: 'bg-amber-600' },
+                      { id: 'mint-breeze', label: 'Nane Esintisi', desc: 'Açık · Pastel Yeşil', grad: 'from-emerald-50 via-teal-50 to-emerald-100', dot: 'bg-emerald-600' },
                     ].map((t) => (
                       <button
                         key={t.id}
@@ -3290,12 +3294,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.12 - Latest */}
+                  {/* v0.3.14 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.13 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.3.14 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Açık Renkli Temalar (4 Yeni Tema):</strong> İnci Beyazı, Gündüz Mavisi, Sıcak Kum ve Nane Esintisi açık temaları, uyarlanabilir cam yüzeyi ve yüksek kontrastlı metin desteğiyle eklendi.</li>
+                      <li><strong className="text-white">LiveKit SFU Yönetimi &amp; Hibrit Mimari:</strong> Sistem Yönetim Paneli&apos;ne LiveKit SFU açma/kapama, geçiş eşiği, URL/Key/Secret ve canlı erişilebilirlik göstergesi; Sunucu Ayarları&apos;na ise sunucu bazlı <code className="text-cyan-300">Otomatik / P2P / LiveKit SFU</code> seçimi eklendi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.13 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.3.13 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Özel Cam Pencere Başlık Çubuğu:</strong> Masaüstü uygulamasının üst çubuğu temaya uygun glassmorphism tasarımı, aktif sunucu/kanal göstergesi, <code className="text-cyan-300">Ctrl+K</code> Hızlı Geçiş ve canlı ping rozetiyle yenilendi.</li>
                       <li><strong className="text-white">Gelişmiş Yayın &amp; HDR:</strong> 10-bit AV1/VP9 HDR yayın modu, izleyiciye özel kalite seçimi (<code className="text-cyan-300">Oto/Kaynak/1080p/720p/480p/360p</code>), canlı FPS/bitrate ayarı, ses kontrolü, canlı istatistik kartı, lazer işaretçi ve mini PiP penceresi.</li>
