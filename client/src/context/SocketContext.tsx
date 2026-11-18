@@ -2413,6 +2413,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const pc = createPeerConnection(peer.id, localStream, newSocket);
         peerConnectionsRef.current.set(peer.id, pc);
 
+        // If peer is already sharing screen (and we aren't sending our own video track),
+        // add a recvonly video transceiver so the initial offer includes m=video.
+        if (peer.isScreenSharing && !screenStreamRef.current) {
+          try {
+            pc.addTransceiver('video', { direction: 'recvonly' });
+          } catch {}
+        }
+
         const offer = await pc.createOffer();
         const targetKbps = activeServerRef.current?.bitrateKbps || 128;
         const modifiedOffer = new RTCSessionDescription({
@@ -2451,6 +2459,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         audioElementsRef.current.get(userId)?.remove();
         audioElementsRef.current.delete(userId);
       }
+      setRemoteScreenStreams(prev => {
+        if (!prev.has(userId)) return prev;
+        const next = new Map(prev);
+        next.delete(userId);
+        return next;
+      });
     });
 
     newSocket.on('webrtc_signal', async ({ senderUserId, signal, type }: any) => {
@@ -2489,6 +2503,27 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           signal: modifiedAnswer,
           type: 'answer'
         });
+
+        // If we are already sharing our screen and the incoming offer did not negotiate
+        // our video track (e.g. peer joined after we started sharing), send a renegotiation offer.
+        if (screenStreamRef.current) {
+          const hasNegotiatedVideo = pc.getTransceivers().some(
+            (t) =>
+              t.sender.track?.kind === 'video' &&
+              (t.currentDirection === 'sendonly' || t.currentDirection === 'sendrecv')
+          );
+          if (!hasNegotiatedVideo) {
+            try {
+              const reOffer = await pc.createOffer();
+              await pc.setLocalDescription(reOffer);
+              newSocket.emit('webrtc_signal', {
+                targetUserId: senderUserId,
+                signal: reOffer,
+                type: 'offer',
+              });
+            } catch {}
+          }
+        }
       } else if (type === 'answer') {
         if (pc) {
           await pc.setRemoteDescription(new RTCSessionDescription(signal));
