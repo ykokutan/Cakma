@@ -215,6 +215,11 @@ export interface SystemConfig {
   maxBackupsToKeep?: number;
   webhookUrl?: string;
   giphyApiKey?: string;
+  sfuEnabled?: boolean;
+  sfuThreshold?: number;
+  livekitUrl?: string;
+  livekitApiKey?: string;
+  livekitApiSecret?: string;
   webhookEvents?: {
     security?: boolean;
     bans?: boolean;

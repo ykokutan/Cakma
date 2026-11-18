@@ -253,14 +253,25 @@ const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
 const SFU_THRESHOLD = Math.max(2, Number(process.env.SFU_THRESHOLD) || 6);
 
 let livekitHealthyCache: { ok: boolean; checkedAt: number } = { ok: false, checkedAt: 0 };
+function getEffectiveLiveKitConfig() {
+  return {
+    enabled: systemConfig?.sfuEnabled !== false,
+    threshold: Math.max(2, Number(systemConfig?.sfuThreshold) || SFU_THRESHOLD),
+    url: (systemConfig?.livekitUrl || '').trim() || LIVEKIT_URL,
+    apiKey: (systemConfig?.livekitApiKey || '').trim() || LIVEKIT_API_KEY,
+    apiSecret: (systemConfig?.livekitApiSecret || '').trim() || LIVEKIT_API_SECRET,
+  };
+}
+
 async function isLiveKitAvailable(): Promise<boolean> {
-  if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) return false;
+  const cfg = getEffectiveLiveKitConfig();
+  if (!cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return false;
   const now = Date.now();
   if (now - livekitHealthyCache.checkedAt < 15000) return livekitHealthyCache.ok;
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 600);
-    const resp = await fetch(LIVEKIT_URL, { signal: controller.signal });
+    const resp = await fetch(cfg.url, { signal: controller.signal });
     clearTimeout(t);
     livekitHealthyCache = { ok: resp.status < 500, checkedAt: now };
   } catch {
@@ -270,9 +281,10 @@ async function isLiveKitAvailable(): Promise<boolean> {
 }
 
 async function createLiveKitRoomToken(roomName: string, username: string): Promise<string | null> {
-  if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) return null;
+  const cfg = getEffectiveLiveKitConfig();
+  if (!cfg.apiKey || !cfg.apiSecret) return null;
   try {
-    const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+    const at = new AccessToken(cfg.apiKey, cfg.apiSecret, {
       identity: username,
       name: username,
       ttl: '6h',
@@ -294,7 +306,7 @@ server.on('upgrade', (req, socket, head) => {
   const reqUrl = req.url || '';
   if (!reqUrl.startsWith('/livekit')) return;
   try {
-    const lkUrl = new URL(LIVEKIT_URL);
+    const lkUrl = new URL(getEffectiveLiveKitConfig().url);
     const targetPort = Number(lkUrl.port) || 7880;
     const targetHost = lkUrl.hostname || '127.0.0.1';
     const upstream = net.connect(targetPort, targetHost, () => {
@@ -634,6 +646,11 @@ const defaultSystemConfig: SystemConfig = {
   maxBackupsToKeep: 7,
   webhookUrl: '',
   giphyApiKey: '',
+  sfuEnabled: true,
+  sfuThreshold: SFU_THRESHOLD,
+  livekitUrl: '',
+  livekitApiKey: '',
+  livekitApiSecret: '',
   webhookEvents: {
     security: true,
     bans: true,
@@ -3931,6 +3948,7 @@ io.on('connection', (socket: Socket) => {
     afkTimeoutMinutes?: number;
     bitrateKbps?: number;
     voiceRegion?: string;
+    sfuMode?: 'auto' | 'p2p' | 'sfu';
     systemChannelId?: string | null;
     verificationLevel?: 'none' | 'low' | 'medium' | 'high';
     defaultNotification?: 'all' | 'mentions';
@@ -3976,6 +3994,7 @@ io.on('connection', (socket: Socket) => {
     if (data.welcomeMessage !== undefined) s.welcomeMessage = sanitizeText(data.welcomeMessage).trim().slice(0, 500);
     if (data.welcomeEnabled !== undefined) s.welcomeEnabled = data.welcomeEnabled;
     if (data.autoRoleId !== undefined) s.autoRoleId = data.autoRoleId;
+    if (data.sfuMode && ['auto', 'p2p', 'sfu'].includes(data.sfuMode)) s.sfuMode = data.sfuMode;
 
     saveServers(servers);
 
@@ -4570,16 +4589,24 @@ io.on('connection', (socket: Socket) => {
       channelId: targetChannelId
     });
 
-    // Hybrid SFU: Switch room to LiveKit SFU automatically when occupancy >= SFU_THRESHOLD
-    if (peersInRoom.length + 1 >= SFU_THRESHOLD) {
+    // Hybrid SFU: Switch room to LiveKit SFU based on server sfuMode & system threshold
+    const lkCfg = getEffectiveLiveKitConfig();
+    const roomServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
+    const srvSfuMode = roomServer?.sfuMode || 'auto';
+    const shouldUseSfu =
+      lkCfg.enabled &&
+      srvSfuMode !== 'p2p' &&
+      (srvSfuMode === 'sfu' || peersInRoom.length + 1 >= lkCfg.threshold);
+
+    if (shouldUseSfu) {
       isLiveKitAvailable().then(async (ok) => {
         if (!ok) return;
         const token = await createLiveKitRoomToken(targetChannelId, user.username);
         if (token) {
           socket.emit('voice_sfu_token', { token, roomName: targetChannelId, path: '/livekit' });
         }
-        // Also upgrade existing peers in the room if they just crossed threshold
-        if (peersInRoom.length + 1 === SFU_THRESHOLD) {
+        // Also upgrade existing peers in the room if they just crossed threshold in auto mode
+        if (srvSfuMode === 'sfu' || peersInRoom.length + 1 === lkCfg.threshold) {
           for (const p of peersInRoom) {
             const pToken = await createLiveKitRoomToken(targetChannelId, p.username);
             if (pToken) {
@@ -5310,6 +5337,12 @@ io.on('connection', (socket: Socket) => {
       systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);
       gifCache.clear();
     }
+    if (typeof nextCfg.sfuEnabled === 'boolean') systemConfig.sfuEnabled = nextCfg.sfuEnabled;
+    if (typeof nextCfg.sfuThreshold === 'number') systemConfig.sfuThreshold = Math.min(Math.max(Math.floor(nextCfg.sfuThreshold), 2), 30);
+    if (typeof nextCfg.livekitUrl === 'string') systemConfig.livekitUrl = nextCfg.livekitUrl.trim().slice(0, 240);
+    if (typeof nextCfg.livekitApiKey === 'string') systemConfig.livekitApiKey = nextCfg.livekitApiKey.trim().slice(0, 120);
+    if (typeof nextCfg.livekitApiSecret === 'string') systemConfig.livekitApiSecret = nextCfg.livekitApiSecret.trim().slice(0, 200);
+    livekitHealthyCache.checkedAt = 0;
     if (nextCfg.webhookEvents && typeof nextCfg.webhookEvents === 'object') {
       systemConfig.webhookEvents = {
         security: Boolean(nextCfg.webhookEvents.security),

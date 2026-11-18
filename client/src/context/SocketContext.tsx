@@ -190,6 +190,7 @@ interface SocketContextType {
     afkTimeoutMinutes?: number;
     bitrateKbps?: number;
     voiceRegion?: string;
+    sfuMode?: 'auto' | 'p2p' | 'sfu';
     systemChannelId?: string | null;
     verificationLevel?: 'none' | 'low' | 'medium' | 'high';
     defaultNotification?: 'all' | 'mentions';
@@ -308,6 +309,11 @@ interface SocketContextType {
         dedicated?: boolean;
         backups?: boolean;
       };
+      sfuEnabled?: boolean;
+      sfuThreshold?: number;
+      livekitUrl?: string;
+      livekitApiKey?: string;
+      livekitApiSecret?: string;
     };
     bannedIps?: {
       ip: string;
@@ -372,6 +378,11 @@ interface SocketContextType {
     maxBackupsToKeep?: number;
     webhookUrl?: string;
     giphyApiKey?: string;
+    sfuEnabled?: boolean;
+    sfuThreshold?: number;
+    livekitUrl?: string;
+    livekitApiKey?: string;
+    livekitApiSecret?: string;
     webhookEvents?: {
       security?: boolean;
       bans?: boolean;
@@ -3677,6 +3688,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     maxBackupsToKeep?: number;
     webhookUrl?: string;
     giphyApiKey?: string;
+    sfuEnabled?: boolean;
+    sfuThreshold?: number;
+    livekitUrl?: string;
+    livekitApiKey?: string;
+    livekitApiSecret?: string;
     webhookEvents?: {
       security?: boolean;
       bans?: boolean;
@@ -4835,6 +4851,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     afkTimeoutMinutes?: number;
     bitrateKbps?: number;
     voiceRegion?: string;
+    sfuMode?: 'auto' | 'p2p' | 'sfu';
     systemChannelId?: string | null;
     verificationLevel?: 'none' | 'low' | 'medium' | 'high';
     defaultNotification?: 'all' | 'mentions';

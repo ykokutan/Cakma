@@ -111,6 +111,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
 
   // Voice & TeamSpeak State
   const [bitrateKbps, setBitrateKbps] = useState<number>(server.bitrateKbps || 128);
+  const [sfuMode, setSfuMode] = useState<'auto' | 'p2p' | 'sfu'>(server.sfuMode || 'auto');
   const [afkChannelId, setAfkChannelId] = useState<string>(server.afkChannelId || '');
   const [afkTimeoutMinutes, setAfkTimeoutMinutes] = useState<number>(server.afkTimeoutMinutes || 15);
   const [voiceRegion, setVoiceRegion] = useState<string>(server.voiceRegion || 'tr-istanbul');
@@ -193,6 +194,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       defaultNotification,
       vanityCode: vanityCode.trim() || undefined,
       bitrateKbps,
+      sfuMode,
       afkChannelId: afkChannelId || null,
       afkTimeoutMinutes,
       voiceRegion,
@@ -897,6 +899,35 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                       <div className="text-[10px] text-white/40 leading-tight">{preset.desc}</div>
                     </button>
                   ))}
+                </div>
+
+                {/* Hybrid P2P / LiveKit SFU Mode */}
+                <div className="pt-3 border-t border-white/10 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-white">Ses &amp; Yayın Mimarisi (P2P / LiveKit SFU)</span>
+                    <span className="text-[10px] text-white/45">Sunucu geneli geçerlidir</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {[
+                      { id: 'auto' as const, title: 'Otomatik (Hibrit)', desc: 'Küçük odalar P2P, kalabalık odalar LiveKit SFU' },
+                      { id: 'p2p' as const, title: 'Her Zaman P2P Mesh', desc: 'Doğrudan uçtan uca bağlantı (düşük gecikme)' },
+                      { id: 'sfu' as const, title: 'Her Zaman LiveKit SFU', desc: 'Tüm odalar merkezi LiveKit SFU üzerinden akar' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setSfuMode(opt.id)}
+                        className={`p-2.5 rounded-xl border text-left transition ${
+                          sfuMode === opt.id
+                            ? 'bg-blue-500/20 border-blue-400/60 text-white'
+                            : 'bg-white/[0.02] border-white/10 text-white/70 hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">{opt.title}</div>
+                        <div className="text-[10px] text-white/45 mt-0.5 leading-tight">{opt.desc}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

@@ -336,6 +336,7 @@ export interface Server {
   afkTimeoutMinutes?: number;
   bitrateKbps?: number;
   voiceRegion?: string;
+  sfuMode?: 'auto' | 'p2p' | 'sfu';
   systemChannelId?: string | null;
   verificationLevel?: 'none' | 'low' | 'medium' | 'high';
   defaultNotification?: 'all' | 'mentions';

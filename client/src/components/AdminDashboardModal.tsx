@@ -135,6 +135,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysMaxBackups, setSysMaxBackups] = useState<number>(7);
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
   const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
+  const [sysSfuEnabled, setSysSfuEnabled] = useState<boolean>(true);
+  const [sysSfuThreshold, setSysSfuThreshold] = useState<number>(6);
+  const [sysLivekitUrl, setSysLivekitUrl] = useState<string>('');
+  const [sysLivekitApiKey, setSysLivekitApiKey] = useState<string>('');
+  const [sysLivekitApiSecret, setSysLivekitApiSecret] = useState<string>('');
   const [showGiphyKey, setShowGiphyKey] = useState<boolean>(false);
   const [sysRequireEmailVerif, setSysRequireEmailVerif] = useState<boolean>(false);
   const [sysSmtpHost, setSysSmtpHost] = useState<string>('');
@@ -195,6 +200,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysMaxBackups(adminData.systemConfig.maxBackupsToKeep ?? 7);
       setSysWebhookUrl(adminData.systemConfig.webhookUrl || '');
       setSysGiphyApiKey(adminData.systemConfig.giphyApiKey || '');
+      setSysSfuEnabled(adminData.systemConfig.sfuEnabled !== false);
+      setSysSfuThreshold(adminData.systemConfig.sfuThreshold || 6);
+      setSysLivekitUrl(adminData.systemConfig.livekitUrl || '');
+      setSysLivekitApiKey(adminData.systemConfig.livekitApiKey || '');
+      setSysLivekitApiSecret(adminData.systemConfig.livekitApiSecret || '');
       setSysRequireEmailVerif(Boolean(adminData.systemConfig.requireEmailVerification));
       setSysSmtpHost(adminData.systemConfig.smtpHost || '');
       setSysSmtpPort(adminData.systemConfig.smtpPort ?? 587);
@@ -1178,6 +1188,81 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                   </div>
                 </div>
 
+                {/* LiveKit SFU (Hybrid Media Server) Settings */}
+                <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-white">LiveKit SFU (Hibrit Medya Sunucusu)</div>
+                      <div className="text-[11px] text-white/50">
+                        Kalabalık odaları P2P Mesh yerine otomatik olarak LiveKit SFU&apos;ya geçirir. URL/Key boşsa `start.sh` içindeki yerel LiveKit kullanılır.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setSysSfuEnabled((v) => !v); setIsSystemDirty(true); }}
+                      className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${
+                        sysSfuEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                      }`}
+                    >
+                      <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${sysSfuEnabled ? 'left-6' : 'left-1'}`} />
+                    </button>
+                  </div>
+
+                  {sysSfuEnabled && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/10">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                          Hibrit Geçiş Eşiği (Kişi Sayısı)
+                        </label>
+                        <input
+                          type="number"
+                          min={2}
+                          max={30}
+                          value={sysSfuThreshold}
+                          onChange={(e) => { setSysSfuThreshold(Math.min(30, Math.max(2, Number(e.target.value) || 6))); setIsSystemDirty(true); }}
+                          className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                          LiveKit URL (İsteğe bağlı)
+                        </label>
+                        <input
+                          type="text"
+                          value={sysLivekitUrl}
+                          onChange={(e) => { setSysLivekitUrl(e.target.value); setIsSystemDirty(true); }}
+                          placeholder="http://127.0.0.1:7880"
+                          className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                          LiveKit API Key (İsteğe bağlı)
+                        </label>
+                        <input
+                          type="text"
+                          value={sysLivekitApiKey}
+                          onChange={(e) => { setSysLivekitApiKey(e.target.value); setIsSystemDirty(true); }}
+                          placeholder="Otomatik (.livekit-secrets)"
+                          className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                          LiveKit API Secret (İsteğe bağlı)
+                        </label>
+                        <input
+                          type="password"
+                          value={sysLivekitApiSecret}
+                          onChange={(e) => { setSysLivekitApiSecret(e.target.value); setIsSystemDirty(true); }}
+                          placeholder="Otomatik (.livekit-secrets)"
+                          className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Email OTP Verification & SMTP Settings */}
                 <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-3">
                   <div className="flex items-center justify-between gap-3">
@@ -1412,6 +1497,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         maxBackupsToKeep: sysMaxBackups,
                         webhookUrl: sysWebhookUrl,
                         giphyApiKey: sysGiphyApiKey,
+                        sfuEnabled: sysSfuEnabled,
+                        sfuThreshold: sysSfuThreshold,
+                        livekitUrl: sysLivekitUrl,
+                        livekitApiKey: sysLivekitApiKey,
+                        livekitApiSecret: sysLivekitApiSecret,
                         requireEmailVerification: sysRequireEmailVerif,
                         smtpHost: sysSmtpHost,
                         smtpPort: sysSmtpPort,
