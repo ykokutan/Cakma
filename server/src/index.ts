@@ -210,7 +210,10 @@ app.use((_req, res, next) => {
 const apiRateLimits = new Map<string, { count: number; resetAt: number }>();
 app.use('/api', (req, res, next) => {
   const fwd = req.headers['x-forwarded-for'];
-  const ip = typeof fwd === 'string' ? fwd.split(',')[0].trim() : (req.ip || 'unknown');
+  const ip =
+    process.env.TRUST_PROXY === 'true' && typeof fwd === 'string'
+      ? fwd.split(',')[0].trim()
+      : (req.socket?.remoteAddress || req.ip || 'unknown');
   const now = Date.now();
   const entry = apiRateLimits.get(ip);
   if (!entry || now >= entry.resetAt) {
@@ -1024,9 +1027,55 @@ app.get('/api/dedicated/verify-license', (req, res) => {
   return res.json({ valid: true, status: 'active', data: licVerify.data });
 });
 
-// Master REST API Key Auth Middleware
-const MASTER_API_KEY = process.env.MASTER_API_KEY || 'cakma_master_sec_2026';
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash('sha256').update(MASTER_API_KEY + '_session_secret').digest('hex');
+// Periodic Rate-Limit Map Cleanup (prevents unbounded memory growth under scan traffic)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of apiRateLimits.entries()) {
+    if (now >= entry.resetAt) apiRateLimits.delete(ip);
+  }
+  for (const [ip, entry] of loginRateLimits.entries()) {
+    if (!entry.blockedUntil || now >= entry.blockedUntil) {
+      if (entry.blockedUntil && now >= entry.blockedUntil) loginRateLimits.delete(ip);
+    }
+  }
+  for (const [ip, entry] of registerRateLimits.entries()) {
+    if (entry.blockedUntil && now >= entry.blockedUntil) registerRateLimits.delete(ip);
+  }
+}, 10 * 60 * 1000).unref();
+
+// Master REST API Key & Session Secret (Auto-generated & persisted if not set in .env)
+function loadOrCreateServerSecrets(): { masterApiKey: string; sessionSecret: string } {
+  const envMaster = process.env.MASTER_API_KEY?.trim();
+  const envSession = process.env.SESSION_SECRET?.trim();
+  if (envMaster && envSession) {
+    return { masterApiKey: envMaster, sessionSecret: envSession };
+  }
+
+  const secretsDir = path.join(__dirname, '..', 'data');
+  const secretsFile = path.join(secretsDir, '.secrets.json');
+  let stored: { masterApiKey?: string; sessionSecret?: string } = {};
+  try {
+    if (fs.existsSync(secretsFile)) {
+      stored = JSON.parse(fs.readFileSync(secretsFile, 'utf-8'));
+    }
+  } catch {}
+
+  const masterApiKey = envMaster || stored.masterApiKey || crypto.randomBytes(32).toString('hex');
+  const sessionSecret = envSession || stored.sessionSecret || crypto.randomBytes(32).toString('hex');
+
+  if (!stored.masterApiKey || !stored.sessionSecret) {
+    try {
+      fs.mkdirSync(secretsDir, { recursive: true });
+      fs.writeFileSync(secretsFile, JSON.stringify({ masterApiKey, sessionSecret }, null, 2), { mode: 0o600 });
+    } catch {}
+  }
+
+  return { masterApiKey, sessionSecret };
+}
+
+const serverSecrets = loadOrCreateServerSecrets();
+const MASTER_API_KEY = serverSecrets.masterApiKey;
+const SESSION_SECRET = serverSecrets.sessionSecret;
 
 const soundboardCooldowns = new Map<string, number>();
 
@@ -2690,6 +2739,7 @@ io.on('connection', (socket: Socket) => {
     delete acc.pendingTwoFactorSecret;
     acc.twoFactorEnabled = true;
     acc.twoFactorBackupCodes = backupCodes.map((c) => hashPassword(c));
+    acc.minTokenIssuedAt = Date.now();
     saveAccounts(registeredAccounts);
 
     user.twoFactorEnabled = true;
