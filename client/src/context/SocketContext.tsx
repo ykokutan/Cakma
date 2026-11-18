@@ -171,6 +171,7 @@ interface SocketContextType {
   serverMuteUser: (targetUserId: string, muted?: boolean, deafened?: boolean) => void;
   muteAllVoiceChannel: (channelId: string, muted: boolean) => void;
   connectionState: 'connected' | 'reconnecting' | 'disconnected';
+  voiceTransportMode: 'p2p' | 'sfu';
   newIpAlert: { ip: string; timestamp: string } | null;
   dismissNewIpAlert: () => void;
   dmReadReceipts: Record<string, number>;
@@ -754,6 +755,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
+  const [voiceTransportMode, setVoiceTransportMode] = useState<'p2p' | 'sfu'>('p2p');
+  const livekitRoomRef = useRef<any>(null);
   const [newIpAlert, setNewIpAlert] = useState<{ ip: string; timestamp: string } | null>(null);
   const dismissNewIpAlert = useCallback(() => setNewIpAlert(null), []);
   const [dmReadReceipts, setDmReadReceipts] = useState<Record<string, number>>({});
@@ -1929,6 +1932,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     peerConnectionsRef.current.forEach(pc => pc.close());
     peerConnectionsRef.current.clear();
 
+    if (livekitRoomRef.current) {
+      try {
+        livekitRoomRef.current.disconnect();
+      } catch {}
+      livekitRoomRef.current = null;
+    }
+    setVoiceTransportMode('p2p');
+
     audioElementsRef.current.forEach(audio => {
       audio.srcObject = null;
       audio.remove();
@@ -2102,6 +2113,67 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       } else if (res.error && (res.error.includes('LİSANS') || res.error.includes('LISANS'))) {
         alert(`⛔ Giriş Engellendi:\n\n${res.error}\n\nAna sunucuya yönlendiriliyorsunuz.`);
         resetToMainServer();
+      }
+    });
+
+    newSocket.on('voice_sfu_token', async ({ token, path }: { token: string; roomName: string; path?: string }) => {
+      if (!token) return;
+      try {
+        const { Room, RoomEvent, Track } = await import('livekit-client');
+        if (livekitRoomRef.current) {
+          try { livekitRoomRef.current.disconnect(); } catch {}
+          livekitRoomRef.current = null;
+        }
+        const lkWsUrl = `${backendUrl.replace(/^http/i, 'ws')}${path || '/livekit'}`;
+        const room = new Room({ adaptiveStream: true, dynacast: true });
+
+        room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
+          const peerIdentity = participant?.identity || participant?.sid || 'sfu-peer';
+          if (track.kind === Track.Kind.Audio) {
+            const el = track.attach() as HTMLAudioElement;
+            el.muted = isDeafened;
+            el.volume = Math.min(1, Math.max(0, outputVolume / 100));
+            audioElementsRef.current.set(`sfu-${peerIdentity}`, el);
+          } else if (track.kind === Track.Kind.Video && track.mediaStreamTrack) {
+            const ms = new MediaStream([track.mediaStreamTrack]);
+            setRemoteScreenStreams((prev) => {
+              const next = new Map(prev);
+              next.set(`sfu-${peerIdentity}`, ms);
+              return next;
+            });
+          }
+        });
+
+        room.on(RoomEvent.TrackUnsubscribed, (track: any, _pub: any, participant: any) => {
+          const peerIdentity = participant?.identity || participant?.sid || 'sfu-peer';
+          if (track.kind === Track.Kind.Audio) {
+            track.detach();
+            audioElementsRef.current.delete(`sfu-${peerIdentity}`);
+          } else if (track.kind === Track.Kind.Video) {
+            setRemoteScreenStreams((prev) => {
+              const next = new Map(prev);
+              next.delete(`sfu-${peerIdentity}`);
+              return next;
+            });
+          }
+        });
+
+        await room.connect(lkWsUrl, token);
+        livekitRoomRef.current = room;
+        setVoiceTransportMode('sfu');
+
+        const localStream = await getLocalAudioStream();
+        const audioTrack = localStream?.getAudioTracks()[0];
+        if (audioTrack) {
+          await room.localParticipant.publishTrack(audioTrack);
+        }
+
+        // Close P2P mesh connections since SFU is now active
+        peerConnectionsRef.current.forEach((pc) => pc.close());
+        peerConnectionsRef.current.clear();
+      } catch (err) {
+        console.warn('[SFU] LiveKit bağlantısı kurulamadı, P2P Mesh ile devam ediliyor:', err);
+        setVoiceTransportMode('p2p');
       }
     });
 
@@ -5583,6 +5655,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addReminder,
         removeReminder,
         connectionState,
+        voiceTransportMode,
         newIpAlert,
         dismissNewIpAlert,
         dmReadReceipts,

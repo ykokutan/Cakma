@@ -5,7 +5,9 @@ try {
 
 import express from 'express';
 import http from 'http';
+import net from 'net';
 import { Server as SocketIOServer, Socket } from 'socket.io';
+import { AccessToken } from 'livekit-server-sdk';
 import cors from 'cors';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
@@ -243,6 +245,83 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 const server = http.createServer(app);
+
+// Hybrid SFU (LiveKit) WebSocket & HTTP Proxy on /livekit -> 127.0.0.1:7880
+const LIVEKIT_URL = process.env.LIVEKIT_URL || 'http://127.0.0.1:7880';
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || '';
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
+const SFU_THRESHOLD = Math.max(2, Number(process.env.SFU_THRESHOLD) || 6);
+
+let livekitHealthyCache: { ok: boolean; checkedAt: number } = { ok: false, checkedAt: 0 };
+async function isLiveKitAvailable(): Promise<boolean> {
+  if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) return false;
+  const now = Date.now();
+  if (now - livekitHealthyCache.checkedAt < 15000) return livekitHealthyCache.ok;
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 600);
+    const resp = await fetch(LIVEKIT_URL, { signal: controller.signal });
+    clearTimeout(t);
+    livekitHealthyCache = { ok: resp.status < 500, checkedAt: now };
+  } catch {
+    livekitHealthyCache = { ok: false, checkedAt: now };
+  }
+  return livekitHealthyCache.ok;
+}
+
+async function createLiveKitRoomToken(roomName: string, username: string): Promise<string | null> {
+  if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) return null;
+  try {
+    const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+      identity: username,
+      name: username,
+      ttl: '6h',
+    });
+    at.addGrant({
+      roomJoin: true,
+      room: roomName,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    });
+    return await at.toJwt();
+  } catch {
+    return null;
+  }
+}
+
+server.on('upgrade', (req, socket, head) => {
+  const reqUrl = req.url || '';
+  if (!reqUrl.startsWith('/livekit')) return;
+  try {
+    const lkUrl = new URL(LIVEKIT_URL);
+    const targetPort = Number(lkUrl.port) || 7880;
+    const targetHost = lkUrl.hostname || '127.0.0.1';
+    const upstream = net.connect(targetPort, targetHost, () => {
+      const strippedPath = reqUrl.replace(/^\/livekit/, '') || '/';
+      let headersRaw = `${req.method || 'GET'} ${strippedPath} HTTP/1.1\r\n`;
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (v !== undefined) {
+          headersRaw += `${k}: ${Array.isArray(v) ? v.join(', ') : v}\r\n`;
+        }
+      }
+      headersRaw += '\r\n';
+      upstream.write(headersRaw);
+      if (head && head.length > 0) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on('error', () => {
+      try { socket.destroy(); } catch {}
+    });
+    socket.on('error', () => {
+      try { upstream.destroy(); } catch {}
+    });
+  } catch {
+    try { socket.destroy(); } catch {}
+  }
+});
+
 const io = new SocketIOServer(server, {
   maxHttpBufferSize: 10 * 1024 * 1024, // 10MB packet limit to prevent memory DoS
   cors: {
@@ -4490,6 +4569,26 @@ io.on('connection', (socket: Socket) => {
       user,
       channelId: targetChannelId
     });
+
+    // Hybrid SFU: Switch room to LiveKit SFU automatically when occupancy >= SFU_THRESHOLD
+    if (peersInRoom.length + 1 >= SFU_THRESHOLD) {
+      isLiveKitAvailable().then(async (ok) => {
+        if (!ok) return;
+        const token = await createLiveKitRoomToken(targetChannelId, user.username);
+        if (token) {
+          socket.emit('voice_sfu_token', { token, roomName: targetChannelId, path: '/livekit' });
+        }
+        // Also upgrade existing peers in the room if they just crossed threshold
+        if (peersInRoom.length + 1 === SFU_THRESHOLD) {
+          for (const p of peersInRoom) {
+            const pToken = await createLiveKitRoomToken(targetChannelId, p.username);
+            if (pToken) {
+              io.to(p.id).emit('voice_sfu_token', { token: pToken, roomName: targetChannelId, path: '/livekit' });
+            }
+          }
+        }
+      }).catch(() => {});
+    }
 
     io.emit('voice_state_update', {
       userId: socket.id,

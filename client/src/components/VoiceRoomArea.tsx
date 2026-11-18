@@ -414,6 +414,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     laserPoints,
     sendScreenShareLaser,
     muteAllVoiceChannel,
+    voiceTransportMode,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
@@ -654,6 +655,16 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             <span className="font-mono">{ping} ms</span>
             <span>· {activeChannel.bitrateKbps || activeServer?.bitrateKbps || 128} kbps Opus HD</span>
+            <span
+              className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                voiceTransportMode === 'sfu'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  : 'bg-white/10 text-white/60'
+              }`}
+              title={voiceTransportMode === 'sfu' ? 'LiveKit SFU Modu Aktif' : 'P2P Mesh Modu'}
+            >
+              {voiceTransportMode}
+            </span>
           </button>
         </div>
       </header>
