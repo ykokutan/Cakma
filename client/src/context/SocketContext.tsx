@@ -6,6 +6,12 @@ import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotification
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
 
+export interface UserAudioEq {
+  bass: number;
+  treble: number;
+  normalize: boolean;
+}
+
 export interface RadioBotState {
   isPlaying: boolean;
   mode?: 'radio' | 'youtube';
@@ -235,6 +241,8 @@ interface SocketContextType {
   setStudioAudioDsp: (val: boolean) => void;
   lowLatencyAudio: boolean;
   setLowLatencyAudio: (val: boolean) => void;
+  userAudioEq: Record<string, UserAudioEq>;
+  setUserAudioEq: (userId: string, patch: Partial<UserAudioEq>) => void;
   setInputSensitivity: (val: number) => void;
   setInputVolume: (val: number) => void;
   setOutputVolume: (val: number) => void;
@@ -697,6 +705,41 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const timer = window.setInterval(checkExpiry, 30000);
     return () => window.clearInterval(timer);
   }, [socket, isAuthenticated, currentUser]);
+
+  // Auto-Idle after 10 minutes of keyboard/mouse inactivity, and restore 'online' on activity
+  const lastUserActivityRef = useRef<number>(Date.now());
+  const autoIdleTriggeredRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!socket || !isAuthenticated || !currentUser) return;
+
+    const markActive = () => {
+      lastUserActivityRef.current = Date.now();
+      if (autoIdleTriggeredRef.current) {
+        autoIdleTriggeredRef.current = false;
+        socket.emit('update_user_state', { status: 'online' });
+      }
+    };
+
+    const events = ['mousemove', 'keydown', 'mousedown', 'touchstart'] as const;
+    events.forEach((ev) => window.addEventListener(ev, markActive, { passive: true }));
+
+    const idleTimer = window.setInterval(() => {
+      if (
+        currentUserRef.current?.status === 'online' &&
+        !autoIdleTriggeredRef.current &&
+        Date.now() - lastUserActivityRef.current >= 10 * 60 * 1000
+      ) {
+        autoIdleTriggeredRef.current = true;
+        socket.emit('update_user_state', { status: 'idle' });
+      }
+    }, 30000);
+
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, markActive));
+      window.clearInterval(idleTimer);
+    };
+  }, [socket, isAuthenticated, currentUser]);
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServerId, setActiveServerId] = useState<string>('');
   const [activeChannelId, setActiveChannelId] = useState<string>('');
@@ -1019,6 +1062,24 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_lowLatencyAudio') : null;
     return val !== null ? val === 'true' : true;
   });
+  const [userAudioEq, setUserAudioEqState] = useState<Record<string, UserAudioEq>>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('cakma_user_audio_eq') : null;
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const userAudioEqRef = useRef<Record<string, UserAudioEq>>(userAudioEq);
+  userAudioEqRef.current = userAudioEq;
+  const remoteAudioEqChainsRef = useRef<Map<string, {
+    ctx: AudioContext;
+    source: MediaStreamAudioSourceNode;
+    lowShelf: BiquadFilterNode;
+    highShelf: BiquadFilterNode;
+    compressor: DynamicsCompressorNode;
+    gain: GainNode;
+  }>>(new Map());
   const processedStreamRef = useRef<MediaStream | null>(null);
   const [inputSensitivity, setInputSensitivityState] = useState<number>(() => {
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_inputSensitivity') : null;
@@ -1749,6 +1810,74 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  const applyRemoteAudioEq = useCallback((peerId: string, eq: UserAudioEq) => {
+    const audio = audioElementsRef.current.get(peerId);
+    if (!audio || !audio.srcObject) return;
+    const stream = audio.srcObject as MediaStream;
+    const isDefault = eq.bass === 0 && eq.treble === 0 && !eq.normalize;
+    const userVol = userVolumes[peerId] ?? 100;
+    const isLocallyMuted = userLocalMutes[peerId] ?? false;
+    const targetGain = isDeafened || isLocallyMuted ? 0 : Math.min(2, Math.max(0, (outputVolume / 100) * (userVol / 100)));
+
+    if (isDefault) {
+      const existing = remoteAudioEqChainsRef.current.get(peerId);
+      if (existing) {
+        try {
+          existing.source.disconnect();
+          existing.ctx.close().catch(() => {});
+        } catch {}
+        remoteAudioEqChainsRef.current.delete(peerId);
+      }
+      audio.muted = isDeafened || isLocallyMuted;
+      return;
+    }
+
+    try {
+      let chain = remoteAudioEqChainsRef.current.get(peerId);
+      if (!chain) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AudioCtx({ sampleRate: 48000 });
+        const source = ctx.createMediaStreamSource(stream);
+        const lowShelf = ctx.createBiquadFilter();
+        lowShelf.type = 'lowshelf';
+        lowShelf.frequency.value = 200;
+        const highShelf = ctx.createBiquadFilter();
+        highShelf.type = 'highshelf';
+        highShelf.frequency.value = 3500;
+        const compressor = ctx.createDynamicsCompressor();
+        const gain = ctx.createGain();
+        source.connect(lowShelf);
+        lowShelf.connect(highShelf);
+        highShelf.connect(compressor);
+        compressor.connect(gain);
+        gain.connect(ctx.destination);
+        chain = { ctx, source, lowShelf, highShelf, compressor, gain };
+        remoteAudioEqChainsRef.current.set(peerId, chain);
+      }
+      chain.lowShelf.gain.value = eq.bass;
+      chain.highShelf.gain.value = eq.treble;
+      chain.compressor.ratio.value = eq.normalize ? 6 : 1;
+      chain.compressor.threshold.value = eq.normalize ? -24 : 0;
+      chain.gain.gain.value = targetGain;
+      audio.muted = true;
+    } catch {}
+  }, [isDeafened, outputVolume, userVolumes, userLocalMutes]);
+
+  const setUserAudioEq = useCallback((userId: string, patch: Partial<UserAudioEq>) => {
+    setUserAudioEqState((prev) => {
+      const current = prev[userId] || { bass: 0, treble: 0, normalize: false };
+      const updated: UserAudioEq = {
+        bass: patch.bass !== undefined ? Math.max(-12, Math.min(12, patch.bass)) : current.bass,
+        treble: patch.treble !== undefined ? Math.max(-12, Math.min(12, patch.treble)) : current.treble,
+        normalize: patch.normalize !== undefined ? patch.normalize : current.normalize,
+      };
+      const next = { ...prev, [userId]: updated };
+      try { localStorage.setItem('cakma_user_audio_eq', JSON.stringify(next)); } catch {}
+      applyRemoteAudioEq(userId, updated);
+      return next;
+    });
+  }, [applyRemoteAudioEq]);
+
   const setInputVolume = (val: number) => {
     setInputVolumeState(val);
     try { localStorage.setItem('dsp_inputVolume', String(val)); } catch {}
@@ -1801,6 +1930,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.remove();
     });
     audioElementsRef.current.clear();
+    remoteAudioEqChainsRef.current.forEach((chain) => {
+      try {
+        chain.source.disconnect();
+        chain.ctx.close().catch(() => {});
+      } catch {}
+    });
+    remoteAudioEqChainsRef.current.clear();
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
@@ -3052,6 +3188,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         audio.play().catch((err) => {
           console.warn('Remote audio playback blocked:', err);
         });
+        const eq = userAudioEqRef.current[peerId];
+        if (eq && (eq.bass !== 0 || eq.treble !== 0 || eq.normalize)) {
+          applyRemoteAudioEq(peerId, eq);
+        }
       }
     };
 
@@ -5206,6 +5346,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setStudioAudioDsp,
         lowLatencyAudio,
         setLowLatencyAudio,
+        userAudioEq,
+        setUserAudioEq,
         serverMuteUser,
         muteAllVoiceChannel,
         updateChannelSettings,

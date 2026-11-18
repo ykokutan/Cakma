@@ -46,6 +46,8 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
     adminKickUser,
     serverMuteUser,
     activeServer,
+    userAudioEq,
+    setUserAudioEq,
   } = useSocket();
 
   useEffect(() => {
@@ -133,6 +135,70 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
               %100
             </button>
           </div>
+
+          {/* Per-user Equalizer & Normalizer */}
+          {(() => {
+            const eq = userAudioEq[target.id] || { bass: 0, treble: 0, normalize: false };
+            return (
+              <div className="pt-2 border-t border-white/10 space-y-2">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="font-bold text-white/60 uppercase tracking-wider">Kişiye Özel EQ</span>
+                  {(eq.bass !== 0 || eq.treble !== 0 || eq.normalize) && (
+                    <button
+                      type="button"
+                      onClick={() => setUserAudioEq(target.id, { bass: 0, treble: 0, normalize: false })}
+                      className="text-blue-300 hover:text-white"
+                    >
+                      Sıfırla
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="flex justify-between text-[10px] text-white/60 mb-0.5">
+                      <span>Bas</span>
+                      <span className="font-mono">{eq.bass > 0 ? `+${eq.bass}` : eq.bass} dB</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-12}
+                      max={12}
+                      step={1}
+                      value={eq.bass}
+                      onChange={(e) => setUserAudioEq(target.id, { bass: Number(e.target.value) })}
+                      className="w-full accent-indigo-400 cursor-pointer h-1 bg-white/10 rounded"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[10px] text-white/60 mb-0.5">
+                      <span>Tiz</span>
+                      <span className="font-mono">{eq.treble > 0 ? `+${eq.treble}` : eq.treble} dB</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-12}
+                      max={12}
+                      step={1}
+                      value={eq.treble}
+                      onChange={(e) => setUserAudioEq(target.id, { treble: Number(e.target.value) })}
+                      className="w-full accent-cyan-400 cursor-pointer h-1 bg-white/10 rounded"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUserAudioEq(target.id, { normalize: !eq.normalize })}
+                  className={`w-full py-1 rounded-lg text-[10px] font-bold border transition ${
+                    eq.normalize
+                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                      : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                  }`}
+                >
+                  {eq.normalize ? '✓ Ses Dengeleme (Normalize) Açık' : 'Ses Dengeleme (Normalize) Aç'}
+                </button>
+              </div>
+            );
+          })()}
         </div>
       ) : (
         <div className="space-y-1">
