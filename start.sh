@@ -77,8 +77,27 @@ if [ "${ENABLE_LIVEKIT:-1}" = "1" ]; then
     export LIVEKIT_URL="http://127.0.0.1:7880"
     export LIVEKIT_API_KEY
     export LIVEKIT_API_SECRET
+    LK_CFG="$ROOT_DIR/data/livekit.yaml"
+    cat > "$LK_CFG" <<EOF
+port: 7880
+bind_addresses:
+  - "127.0.0.1"
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+EOF
     echo "🎙️ LiveKit SFU başlatılıyor (127.0.0.1:7880, Hibrit eşik: ${SFU_THRESHOLD:-6} kişi)..."
-    "$LK_BIN" --keys "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}" --port 7880 --bind 127.0.0.1 --rtc-tcp-port 7881 --rtc-port-range-start 50000 --rtc-port-range-end 50100 >"$ROOT_DIR/data/livekit.log" 2>&1 &
+    "$LK_BIN" --config "$LK_CFG" >"$ROOT_DIR/data/livekit.log" 2>&1 &
+    LK_PID=$!
+    sleep 1
+    if ! kill -0 "$LK_PID" 2>/dev/null; then
+      echo "⚠️ LiveKit SFU başlatılamadı! Log:"
+      tail -n 15 "$ROOT_DIR/data/livekit.log" 2>/dev/null || true
+    fi
   fi
 fi
 
