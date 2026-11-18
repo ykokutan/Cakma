@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
-import { ViewerStreamQuality } from '../types';
+import { ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
 import { SoundboardModal } from './SoundboardModal';
 import { VoiceRadioWidget } from './VoiceRadioWidget';
 import { WhiteboardModal } from './WhiteboardModal';
@@ -47,28 +47,80 @@ import {
 const VideoStreamPlayer: React.FC<{
   stream: MediaStream;
   title: string;
+  presenterId?: string;
+  isLocalStream?: boolean;
+  viewerNames?: string[];
   isFocused?: boolean;
   onToggleFocus?: () => void;
   canSelectQuality?: boolean;
   selectedQuality?: ViewerStreamQuality;
   onSelectQuality?: (quality: ViewerStreamQuality) => void;
+  getStreamStats?: (presenterUserId?: string) => Promise<ScreenShareStats | null>;
+  laserPoints?: ScreenShareLaserPoint[];
+  onSendLaser?: (x: number, y: number) => void;
 }> = ({
   stream,
   title,
+  presenterId,
+  isLocalStream = false,
+  viewerNames = [],
   isFocused,
   onToggleFocus,
   canSelectQuality,
   selectedQuality = 'auto',
   onSelectQuality,
+  getStreamStats,
+  laserPoints = [],
+  onSendLaser,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastLaserSentRef = useRef(0);
   const [hdrBoost, setHdrBoost] = useState(false);
+  const [isStreamMuted, setIsStreamMuted] = useState<boolean>(isLocalStream);
+  const [streamVolume, setStreamVolume] = useState<number>(0.8);
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState<ScreenShareStats | null>(null);
+  const [laserMode, setLaserMode] = useState(false);
 
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
   }, [stream]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.muted = isLocalStream || isStreamMuted || streamVolume === 0;
+    videoRef.current.volume = streamVolume;
+  }, [isLocalStream, isStreamMuted, streamVolume]);
+
+  useEffect(() => {
+    if (!showStats || !getStreamStats) return;
+    let active = true;
+    const poll = async () => {
+      const next = await getStreamStats(isLocalStream ? undefined : presenterId);
+      if (active && next) setStats(next);
+    };
+    poll();
+    const timer = window.setInterval(poll, 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [showStats, getStreamStats, isLocalStream, presenterId]);
+
+  const emitLaserFromEvent = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!laserMode || !onSendLaser || !containerRef.current) return;
+    const now = Date.now();
+    if (now - lastLaserSentRef.current < 65) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    lastLaserSentRef.current = now;
+    onSendLaser(x, y);
+  };
 
   const handleFullscreen = () => {
     if (videoRef.current) {
@@ -93,29 +145,64 @@ const VideoStreamPlayer: React.FC<{
   };
 
   return (
-    <div className="relative w-full h-full rounded-2xl overflow-hidden bg-black/80 border border-white/10 shadow-2xl flex items-center justify-center group">
+    <div
+      ref={containerRef}
+      onClick={emitLaserFromEvent}
+      onMouseMove={(e) => {
+        if (e.buttons === 1) emitLaserFromEvent(e);
+      }}
+      className={`relative w-full h-full rounded-2xl overflow-hidden bg-black/80 border border-white/10 shadow-2xl flex items-center justify-center group ${
+        laserMode ? 'cursor-crosshair' : ''
+      }`}
+    >
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted
+        muted={isLocalStream || isStreamMuted || streamVolume === 0}
         className="w-full h-full object-contain transition-[filter] duration-200"
         style={hdrBoost ? { filter: 'contrast(1.12) saturate(1.18) brightness(1.04)' } : undefined}
       />
-      {/* iOS Floating Stream Badge */}
-      <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2 text-xs font-medium text-white shadow-lg">
-        <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-        <span className="w-2 h-2 rounded-full bg-red-500 -ml-4" />
-        <span>CANLI · {title}</span>
-        {hdrBoost && (
-          <span className="px-1.5 py-0.2 rounded bg-gradient-to-r from-amber-500 to-rose-500 text-[9px] font-black text-white">
-            HDR+
+
+      {/* Ephemeral Laser Pointer Overlay */}
+      {laserPoints.map((pt) => (
+        <div
+          key={pt.id}
+          style={{ left: `${pt.x * 100}%`, top: `${pt.y * 100}%` }}
+          className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 z-20 flex items-center gap-1"
+        >
+          <span
+            className="w-3.5 h-3.5 rounded-full shadow-[0_0_12px_rgba(244,63,94,0.95)] ring-2 ring-white/80 animate-ping"
+            style={{ backgroundColor: pt.color }}
+          />
+          <span className="px-1.5 py-0.5 rounded bg-black/75 text-[9px] font-bold text-white border border-white/15 whitespace-nowrap">
+            {pt.fromUsername}
           </span>
-        )}
+        </div>
+      ))}
+
+      {/* iOS Floating Stream Badge + Viewer Count */}
+      <div className="absolute top-4 left-4 flex items-center gap-2 z-10">
+        <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2 text-xs font-medium text-white shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+          <span className="w-2 h-2 rounded-full bg-red-500 -ml-4" />
+          <span>CANLI · {title}</span>
+          {hdrBoost && (
+            <span className="px-1.5 py-0.2 rounded bg-gradient-to-r from-amber-500 to-rose-500 text-[9px] font-black text-white">
+              HDR+
+            </span>
+          )}
+        </div>
+        <div
+          className="bg-black/60 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-white/10 text-[11px] font-semibold text-white/85 shadow-lg"
+          title={viewerNames.length > 0 ? `İzleyenler: ${viewerNames.join(', ')}` : 'Odada başka izleyici yok'}
+        >
+          👁️ {viewerNames.length} İzleyici
+        </div>
       </div>
 
-      {/* Action Buttons: Quality + HDR+ + PiP + Focus Mode + Fullscreen */}
-      <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
+      {/* Action Buttons: Quality + Laser + Stats + HDR+ + PiP + Focus Mode + Fullscreen */}
+      <div className="absolute top-4 right-4 flex items-center gap-1.5 flex-wrap justify-end opacity-0 group-hover:opacity-100 transition z-10">
         {canSelectQuality && onSelectQuality && (
           <select
             value={selectedQuality}
@@ -130,6 +217,40 @@ const VideoStreamPlayer: React.FC<{
             <option value="480">480p</option>
             <option value="360">360p</option>
           </select>
+        )}
+        {onSendLaser && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setLaserMode((prev) => !prev);
+            }}
+            className={`px-3 py-1.5 backdrop-blur-md rounded-full text-xs font-semibold transition border shadow-lg ${
+              laserMode
+                ? 'bg-rose-500/85 border-rose-300/60 text-white'
+                : 'bg-black/60 hover:bg-black/90 border-white/10 text-white/80 hover:text-white'
+            }`}
+            title="Yayın Üzerinde Lazer İşaretçi (Tıkla veya Sürükle)"
+          >
+            Lazer
+          </button>
+        )}
+        {getStreamStats && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowStats((prev) => !prev);
+            }}
+            className={`px-3 py-1.5 backdrop-blur-md rounded-full text-xs font-semibold transition border shadow-lg ${
+              showStats
+                ? 'bg-emerald-500/80 border-emerald-300/60 text-white'
+                : 'bg-black/60 hover:bg-black/90 border-white/10 text-white/80 hover:text-white'
+            }`}
+            title="Canlı Yayın İstatistikleri (Codec, FPS, Bitrate)"
+          >
+            İstatistik
+          </button>
         )}
         <button
           type="button"
@@ -173,6 +294,54 @@ const VideoStreamPlayer: React.FC<{
           <Maximize2 className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Stats for Nerds Card */}
+      {showStats && (
+        <div className="absolute bottom-4 left-4 z-10 bg-black/75 backdrop-blur-md border border-white/15 rounded-xl px-3 py-2 text-[11px] font-mono text-white/90 space-y-0.5 shadow-xl">
+          <div className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider">Yayın İstatistikleri</div>
+          {stats ? (
+            <>
+              <div>Codec: <span className="text-white font-semibold">{stats.codec}</span></div>
+              <div>Çözünürlük: <span className="text-white font-semibold">{stats.width}×{stats.height} @ {stats.fps} fps</span></div>
+              <div>Bit Hızı: <span className="text-white font-semibold">{stats.bitrateKbps} kbps ({(stats.bitrateKbps / 1000).toFixed(1)} Mbps)</span></div>
+              <div>Paket Kaybı: <span className="text-white font-semibold">{stats.packetsLost}</span></div>
+            </>
+          ) : (
+            <div className="text-white/60">Ölçülüyor...</div>
+          )}
+        </div>
+      )}
+
+      {/* Viewer Stream Audio Control */}
+      {!isLocalStream && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute bottom-4 right-4 z-10 bg-black/70 backdrop-blur-md border border-white/15 rounded-full px-3 py-1.5 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition shadow-lg"
+        >
+          <button
+            type="button"
+            onClick={() => setIsStreamMuted((prev) => !prev)}
+            className="text-white/85 hover:text-white transition"
+            title={isStreamMuted ? 'Yayın Sesini Aç' : 'Yayın Sesini Kapat'}
+          >
+            {isStreamMuted || streamVolume === 0 ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={isStreamMuted ? 0 : streamVolume}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setStreamVolume(v);
+              if (v > 0 && isStreamMuted) setIsStreamMuted(false);
+            }}
+            className="w-20 accent-emerald-400 cursor-pointer"
+            title={`Yayın Sesi: %${Math.round((isStreamMuted ? 0 : streamVolume) * 100)}`}
+          />
+        </div>
+      )}
     </div>
   );
 };
@@ -231,6 +400,10 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     sendMessage,
     language,
     requestScreenShareQuality,
+    updateLiveScreenShareSettings,
+    getScreenShareStats,
+    laserPoints,
+    sendScreenShareLaser,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
@@ -248,6 +421,8 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [isScreenFocused, setIsScreenFocused] = useState(false);
   const [selectedScreenPresenterId, setSelectedScreenPresenterId] = useState<string | null>(null);
   const [viewerQualityByPresenter, setViewerQualityByPresenter] = useState<Record<string, ViewerStreamQuality>>({});
+  const [liveFps, setLiveFps] = useState<5 | 30 | 60>(30);
+  const [liveBitrateKbps, setLiveBitrateKbps] = useState<number>(10000);
   const [userContextMenu, setUserContextMenu] = useState<{ user: any; x: number; y: number } | null>(null);
 
   const handleOpenUserContextMenu = (e: React.MouseEvent, user: any) => {
@@ -522,19 +697,75 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                 })}
               </div>
             )}
+            {/* Presenter Live Stream Adjustments (FPS / Bitrate without restarting) */}
+            {isScreenSharing && screenStream && (
+              <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 text-[11px] shrink-0">
+                <span className="text-white/60 font-semibold">Canlı Yayın Ayarları (Kesintisiz):</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1 bg-black/30 rounded-lg p-0.5 border border-white/10">
+                    {([5, 30, 60] as const).map((fps) => (
+                      <button
+                        key={fps}
+                        type="button"
+                        onClick={() => {
+                          setLiveFps(fps);
+                          updateLiveScreenShareSettings({ fps });
+                        }}
+                        className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                          liveFps === fps ? 'bg-blue-500 text-white' : 'text-white/65 hover:text-white'
+                        }`}
+                      >
+                        {fps} FPS
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1 bg-black/30 rounded-lg p-0.5 border border-white/10">
+                    {[
+                      { kbps: 4000, label: '4 Mbps' },
+                      { kbps: 8000, label: '8 Mbps' },
+                      { kbps: 15000, label: '15 Mbps' },
+                      { kbps: 25000, label: '25 Mbps' },
+                    ].map((b) => (
+                      <button
+                        key={b.kbps}
+                        type="button"
+                        onClick={() => {
+                          setLiveBitrateKbps(b.kbps);
+                          updateLiveScreenShareSettings({ bitrateKbps: b.kbps });
+                        }}
+                        className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                          liveBitrateKbps === b.kbps ? 'bg-emerald-500 text-white' : 'text-white/65 hover:text-white'
+                        }`}
+                      >
+                        {b.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Live Video Player */}
             <div className="flex-1 w-full min-h-[260px] rounded-2xl overflow-hidden border border-white/10 bg-black/50 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.8)]">
               {isScreenSharing && screenStream ? (
                 <VideoStreamPlayer
                   stream={screenStream}
                   title={`${currentUser?.username || 'Sen'} (Ekran Yayını)`}
+                  presenterId={currentUser?.id}
+                  isLocalStream
+                  viewerNames={usersInRoom.filter((u) => u.id !== currentUser?.id).map((u) => u.username)}
                   isFocused={isScreenFocused}
                   onToggleFocus={() => setIsScreenFocused((p) => !p)}
+                  getStreamStats={getScreenShareStats}
+                  laserPoints={laserPoints.filter((pt) => pt.presenterId === currentUser?.id)}
+                  onSendLaser={currentUser?.id ? (x, y) => sendScreenShareLaser(currentUser.id, x, y) : undefined}
                 />
               ) : activeRemoteStreamEntry ? (
                 <VideoStreamPlayer
                   stream={activeRemoteStreamEntry[1]}
                   title={`${activePresenter?.username || 'Kullanıcı'} (Ekran Yayını)`}
+                  presenterId={activeRemoteStreamEntry[0]}
+                  viewerNames={usersInRoom.filter((u) => u.id !== activeRemoteStreamEntry[0]).map((u) => u.username)}
                   isFocused={isScreenFocused}
                   onToggleFocus={() => setIsScreenFocused((p) => !p)}
                   canSelectQuality
@@ -544,6 +775,9 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                     setViewerQualityByPresenter((prev) => ({ ...prev, [pid]: q }));
                     requestScreenShareQuality(pid, q);
                   }}
+                  getStreamStats={getScreenShareStats}
+                  laserPoints={laserPoints.filter((pt) => pt.presenterId === activeRemoteStreamEntry[0])}
+                  onSendLaser={(x, y) => sendScreenShareLaser(activeRemoteStreamEntry[0], x, y)}
                 />
               ) : null}
             </div>

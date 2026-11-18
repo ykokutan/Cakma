@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality } from '../types';
+import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -153,6 +153,10 @@ interface SocketContextType {
   startScreenShare: (settings?: ScreenShareSettings, preCapturedStream?: MediaStream | null) => Promise<void>;
   stopScreenShare: () => void;
   requestScreenShareQuality: (presenterUserId: string, quality: ViewerStreamQuality) => void;
+  updateLiveScreenShareSettings: (patch: { fps?: 5 | 30 | 60; bitrateKbps?: number }) => Promise<void>;
+  getScreenShareStats: (presenterUserId?: string) => Promise<ScreenShareStats | null>;
+  laserPoints: ScreenShareLaserPoint[];
+  sendScreenShareLaser: (presenterId: string, x: number, y: number) => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
   createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => void;
@@ -693,6 +697,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
   const [dmReadReceipts, setDmReadReceipts] = useState<Record<string, number>>({});
+  const [laserPoints, setLaserPoints] = useState<ScreenShareLaserPoint[]>([]);
+  const screenShareStatsPrevRef = useRef<{ bytes: number; ts: number } | null>(null);
   const pendingMessageQueueRef = useRef<Array<{
     serverId: string;
     channelId: string;
@@ -2216,6 +2222,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       } catch {
         // Ignore if browser rejects dynamic encoding parameters
       }
+    });
+
+    newSocket.on('screen_share_laser', (point: ScreenShareLaserPoint) => {
+      if (!point?.id) return;
+      setLaserPoints((prev) => [...prev.slice(-30), point]);
+      window.setTimeout(() => {
+        setLaserPoints((prev) => prev.filter((p) => p.id !== point.id));
+      }, 2200);
     });
 
     newSocket.on('screen_share_change', ({ userId, isSharing }: { userId: string; isSharing: boolean }) => {
@@ -4267,6 +4281,90 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('screen_share_quality_request', { targetUserId: presenterUserId, quality });
   }, [socket]);
 
+  const sendScreenShareLaser = useCallback((presenterId: string, x: number, y: number) => {
+    if (!socket || !connectedVoiceChannelId || !presenterId) return;
+    socket.emit('screen_share_laser', {
+      channelId: connectedVoiceChannelId,
+      presenterId,
+      x,
+      y,
+      color: '#f43f5e',
+    });
+  }, [socket, connectedVoiceChannelId]);
+
+  const updateLiveScreenShareSettings = useCallback(async (patch: { fps?: 5 | 30 | 60; bitrateKbps?: number }) => {
+    const localVideo = screenStreamRef.current?.getVideoTracks()[0];
+    if (localVideo && patch.fps) {
+      await localVideo.applyConstraints({
+        frameRate: { ideal: patch.fps, max: patch.fps },
+      }).catch(() => {});
+    }
+    if (patch.bitrateKbps) {
+      const targetBps = patch.bitrateKbps * 1000;
+      for (const pc of peerConnectionsRef.current.values()) {
+        const sender = pc.getSenders().find((s) => s.track === localVideo);
+        if (!sender) continue;
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+          params.encodings[0].maxBitrate = targetBps;
+          await sender.setParameters(params);
+        } catch {}
+      }
+    }
+  }, []);
+
+  const getScreenShareStats = useCallback(async (presenterUserId?: string): Promise<ScreenShareStats | null> => {
+    const targetPc = presenterUserId
+      ? peerConnectionsRef.current.get(presenterUserId)
+      : Array.from(peerConnectionsRef.current.values())[0];
+    if (!targetPc) return null;
+
+    try {
+      const report = await targetPc.getStats();
+      const codecMap = new Map<string, string>();
+      let bestVideo: any = null;
+
+      report.forEach((stat: any) => {
+        if (stat.type === 'codec' && stat.mimeType?.startsWith('video/')) {
+          codecMap.set(stat.id, stat.mimeType.replace('video/', '').toUpperCase());
+        }
+      });
+
+      const targetType = presenterUserId ? 'inbound-rtp' : 'outbound-rtp';
+      report.forEach((stat: any) => {
+        if (stat.type === targetType && (stat.kind === 'video' || stat.mediaType === 'video')) {
+          if (!bestVideo || (stat.frameWidth || 0) >= (bestVideo.frameWidth || 0)) {
+            bestVideo = stat;
+          }
+        }
+      });
+
+      if (!bestVideo) return null;
+
+      const bytes = Number(presenterUserId ? bestVideo.bytesReceived : bestVideo.bytesSent) || 0;
+      const now = Date.now();
+      let bitrateKbps = 0;
+      if (screenShareStatsPrevRef.current && now > screenShareStatsPrevRef.current.ts) {
+        const dtSec = (now - screenShareStatsPrevRef.current.ts) / 1000;
+        const deltaBytes = Math.max(0, bytes - screenShareStatsPrevRef.current.bytes);
+        bitrateKbps = Math.round((deltaBytes * 8) / dtSec / 1000);
+      }
+      screenShareStatsPrevRef.current = { bytes, ts: now };
+
+      return {
+        codec: (bestVideo.codecId && codecMap.get(bestVideo.codecId)) || 'VP8/VP9',
+        width: Number(bestVideo.frameWidth) || 0,
+        height: Number(bestVideo.frameHeight) || 0,
+        fps: Math.round(Number(bestVideo.framesPerSecond) || 0),
+        bitrateKbps,
+        packetsLost: Number(bestVideo.packetsLost) || 0,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
   const createServer = (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => {
     if (!socket || !name.trim()) return;
     socket.emit('create_server', { name: name.trim(), icon, template });
@@ -4889,6 +4987,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         startScreenShare,
         stopScreenShare,
         requestScreenShareQuality,
+        updateLiveScreenShareSettings,
+        getScreenShareStats,
+        laserPoints,
+        sendScreenShareLaser,
         setInputMode,
         setPttKey,
         createServer,

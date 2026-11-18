@@ -4819,6 +4819,21 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
+  // Ephemeral Laser Pointer / Annotation over active screen share
+  socket.on('screen_share_laser', ({ channelId, presenterId, x, y, color }: { channelId: string; presenterId: string; x: number; y: number; color?: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !channelId || !presenterId) return;
+    if (typeof x !== 'number' || typeof y !== 'number' || x < 0 || x > 1 || y < 0 || y > 1) return;
+    io.to(channelId).emit('screen_share_laser', {
+      id: `${socket.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      fromUsername: user.username,
+      presenterId,
+      x,
+      y,
+      color: color || '#f43f5e',
+    });
+  });
+
   // User State Update (Mute, Deafen, Online Status - Username change is prohibited here to prevent spoofing)
   socket.on('update_user_state', ({ isMuted, isDeafened, status, avatar }: Partial<User>) => {
     const user = activeUsers.get(socket.id);

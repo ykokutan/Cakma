@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Maximize2, Minimize2, Tv, X } from 'lucide-react';
+import { Maximize2, Minimize2, Tv, Volume2, VolumeX, X } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
 export const MiniScreenSharePiP: React.FC = () => {
@@ -13,6 +13,7 @@ export const MiniScreenSharePiP: React.FC = () => {
 
   const [dismissedStreamKey, setDismissedStreamKey] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
+  const [muted, setMuted] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const entries = Array.from(remoteScreenStreams.entries());
@@ -50,6 +51,14 @@ export const MiniScreenSharePiP: React.FC = () => {
         <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
+            onClick={() => setMuted((prev) => !prev)}
+            className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition"
+            title={muted ? 'Yayın Sesini Aç' : 'Yayın Sesini Kapat'}
+          >
+            {muted ? <VolumeX className="w-3 h-3 text-rose-400" /> : <Volume2 className="w-3 h-3 text-emerald-400" />}
+          </button>
+          <button
+            type="button"
             onClick={() => setMinimized((prev) => !prev)}
             className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition"
             title={minimized ? 'Genişlet' : 'Küçült'}
@@ -80,7 +89,7 @@ export const MiniScreenSharePiP: React.FC = () => {
             ref={videoRef}
             autoPlay
             playsInline
-            muted
+            muted={muted}
             className="w-full h-full object-contain"
           />
         </div>

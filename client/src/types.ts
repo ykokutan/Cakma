@@ -396,6 +396,24 @@ export type ScreenSharePrivacy = 'public' | 'contacts' | 'private';
 export type ScreenShareConnectionMode = 'p2p' | 'server';
 export type ViewerStreamQuality = 'auto' | '360' | '480' | '720' | '1080' | 'source';
 
+export interface ScreenShareStats {
+  codec: string;
+  width: number;
+  height: number;
+  fps: number;
+  bitrateKbps: number;
+  packetsLost: number;
+}
+
+export interface ScreenShareLaserPoint {
+  id: string;
+  fromUsername: string;
+  presenterId: string;
+  x: number;
+  y: number;
+  color: string;
+}
+
 export interface ScreenShareSettings {
   preset: ScreenSharePreset;
   audioEnabled: boolean;
