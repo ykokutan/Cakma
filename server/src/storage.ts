@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData } from './types.js';
 
@@ -343,6 +344,28 @@ export interface ScheduledBackupInfo {
   createdAt: string;
 }
 
+function getBackupEncryptionKey(): Buffer {
+  const envKey = process.env.BACKUP_ENCRYPTION_KEY?.trim();
+  if (envKey) {
+    return crypto.createHash('sha256').update(envKey).digest();
+  }
+  ensureDataDir();
+  const keyFile = path.join(DATA_DIR, '.backup.key');
+  let hexKey = '';
+  try {
+    if (fs.existsSync(keyFile)) {
+      hexKey = fs.readFileSync(keyFile, 'utf-8').trim();
+    }
+  } catch {}
+  if (!hexKey) {
+    hexKey = crypto.randomBytes(32).toString('hex');
+    try {
+      fs.writeFileSync(keyFile, hexKey, { mode: 0o600 });
+    } catch {}
+  }
+  return crypto.createHash('sha256').update(hexKey).digest();
+}
+
 export function createScheduledBackup(maxToKeep = 10): ScheduledBackupInfo {
   ensureBackupsDir();
   const now = new Date();
@@ -350,7 +373,20 @@ export function createScheduledBackup(maxToKeep = 10): ScheduledBackupInfo {
   const filename = `backup-${stamp}.json`;
   const bundle = exportAllDataBundle();
   const filePath = path.join(BACKUPS_DIR, filename);
-  fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), 'utf-8');
+
+  const key = getBackupEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const plainJson = JSON.stringify(bundle);
+  const encrypted = Buffer.concat([cipher.update(plainJson, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const envelope = {
+    encrypted: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    data: encrypted.toString('base64'),
+  };
+  fs.writeFileSync(filePath, JSON.stringify(envelope, null, 2), 'utf-8');
   const stat = fs.statSync(filePath);
 
   // Prune old backups beyond maxToKeep
@@ -401,7 +437,18 @@ export function readScheduledBackup(filename: string): any {
   if (!fs.existsSync(filePath)) {
     throw new Error('Yedek dosyası bulunamadı.');
   }
-  return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  if (parsed?.encrypted === 'aes-256-gcm' && parsed.iv && parsed.tag && parsed.data) {
+    const key = getBackupEncryptionKey();
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(parsed.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(parsed.tag, 'base64'));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(parsed.data, 'base64')),
+      decipher.final(),
+    ]).toString('utf8');
+    return JSON.parse(decrypted);
+  }
+  return parsed;
 }
 
 export function deleteScheduledBackup(filename: string): boolean {

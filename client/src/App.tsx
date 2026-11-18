@@ -47,6 +47,8 @@ const MainLayout: React.FC = () => {
     toggleMute,
     toggleDeafen,
     connectionState,
+    newIpAlert,
+    dismissNewIpAlert,
   } = useSocket();
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -161,6 +163,28 @@ const MainLayout: React.FC = () => {
               ? 'Bağlantı koptu, yeniden bağlanılıyor... (Mesajlarınız sıraya alınıyor)'
               : 'Sunucu bağlantısı kesildi.'}
           </span>
+        </div>
+      )}
+
+      {/* New IP Login Security Alert Banner */}
+      {isAuthenticated && newIpAlert && (
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[125] max-w-lg w-full px-4 animate-fade-in">
+          <div className="ios-glass p-3 rounded-2xl border border-rose-500/40 bg-rose-950/90 text-white flex items-center justify-between gap-3 shadow-2xl backdrop-blur-xl">
+            <div className="text-xs leading-relaxed">
+              <div className="font-bold text-rose-300">⚠️ Yeni IP Adresinden Giriş Algılandı</div>
+              <div className="text-white/85">
+                Hesabınıza yeni bir IP adresinden (<span className="font-mono font-semibold">{newIpAlert.ip}</span>) giriş yapıldı. Siz değilseniz şifrenizi değiştirin.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={dismissNewIpAlert}
+              className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-white/70 hover:text-white shrink-0"
+              title="Kapat"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 

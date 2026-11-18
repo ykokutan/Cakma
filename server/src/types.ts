@@ -108,6 +108,7 @@ export interface RegisteredAccount {
   minTokenIssuedAt?: number;
   failedLoginCount?: number;
   lockedUntil?: number;
+  knownLoginIps?: string[];
   e2eePublicKey?: string;
 }
 

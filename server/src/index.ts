@@ -200,7 +200,7 @@ app.use((_req, res, next) => {
   res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; connect-src 'self' https: http: wss: ws:; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'"
+    "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http:; connect-src 'self' https: http: wss: ws:; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; base-uri 'self'"
   );
   res.setHeader('Permissions-Policy', 'geolocation=(), payment=(), usb=(), camera=(self), microphone=(self)');
   next();
@@ -1115,6 +1115,57 @@ export function verifySessionToken(token: string): string | null {
   return verifySessionTokenWithMeta(token)?.username ?? null;
 }
 
+function parseCookieValue(cookieHeader: string | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim();
+    if (k === name) {
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      } catch {
+        return part.slice(idx + 1).trim();
+      }
+    }
+  }
+  return null;
+}
+
+// HttpOnly session cookie endpoints for Web clients (prevents XSS reading token from localStorage)
+app.post('/api/auth/set-cookie', (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const verified = verifySessionToken(token);
+  if (!verified) {
+    return res.status(401).json({ success: false, error: 'Geçersiz oturum tokeni.' });
+  }
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const attrs = [
+    `cakma_session=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    'Max-Age=604800',
+    ...(isHttps ? ['Secure'] : []),
+  ];
+  res.setHeader('Set-Cookie', attrs.join('; '));
+  return res.json({ success: true });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const attrs = [
+    'cakma_session=',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    'Max-Age=0',
+    ...(isHttps ? ['Secure'] : []),
+  ];
+  res.setHeader('Set-Cookie', attrs.join('; '));
+  return res.json({ success: true });
+});
+
 const DISPOSABLE_EMAIL_DOMAINS = new Set([
   'mailinator.com',
   'tempmail.com',
@@ -1903,6 +1954,8 @@ io.on('connection', (socket: Socket) => {
 
     const token = generateSessionToken(user.username);
     socket.emit('auth_response', { success: true, user, token });
+    newAccount.knownLoginIps = [clientIp];
+    saveAccounts(registeredAccounts);
     socket.emit('init_data', {
       currentUser: user,
       servers,
@@ -2073,6 +2126,15 @@ io.on('connection', (socket: Socket) => {
 
     const token = generateSessionToken(user.username);
     socket.emit('auth_response', { success: true, user, token });
+    const prevIps = Array.isArray(foundAccount.knownLoginIps) ? foundAccount.knownLoginIps : [];
+    if (prevIps.length > 0 && !prevIps.includes(clientIp)) {
+      addAuditLog('YENI_IP_GIRISI', `${user.username} hesabına yeni bir IP adresinden (${clientIp}) giriş yapıldı.`, 'auth');
+      socket.emit('security_new_ip_alert', { ip: clientIp, timestamp: new Date().toISOString() });
+    }
+    if (!prevIps.includes(clientIp)) {
+      foundAccount.knownLoginIps = [...prevIps.slice(-19), clientIp];
+      saveAccounts(registeredAccounts);
+    }
     socket.emit('init_data', {
       currentUser: user,
       servers,
@@ -2175,6 +2237,15 @@ io.on('connection', (socket: Socket) => {
 
     const token = generateSessionToken(user.username);
     socket.emit('auth_response', { success: true, user, token });
+    const prevIps = Array.isArray(foundAccount.knownLoginIps) ? foundAccount.knownLoginIps : [];
+    if (prevIps.length > 0 && !prevIps.includes(clientIp)) {
+      addAuditLog('YENI_IP_GIRISI', `${user.username} hesabına yeni bir IP adresinden (${clientIp}) 2FA ile giriş yapıldı.`, 'auth');
+      socket.emit('security_new_ip_alert', { ip: clientIp, timestamp: new Date().toISOString() });
+    }
+    if (!prevIps.includes(clientIp)) {
+      foundAccount.knownLoginIps = [...prevIps.slice(-19), clientIp];
+      saveAccounts(registeredAccounts);
+    }
     socket.emit('init_data', {
       currentUser: user,
       servers,
@@ -2185,8 +2256,8 @@ io.on('connection', (socket: Socket) => {
     socket.broadcast.emit('user_connected', user);
   });
 
-  // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz)
-  socket.on('auth_token_login', ({ token }: { token: string }) => {
+  // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz, destekler: body token veya HttpOnly cookie)
+  socket.on('auth_token_login', ({ token }: { token?: string }) => {
     const clientIp = getClientIp(socket);
     const ipBan = findActiveIpBan(clientIp);
     if (ipBan) {
@@ -2196,7 +2267,11 @@ io.on('connection', (socket: Socket) => {
         error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
       });
     }
-    const verified = verifySessionTokenWithMeta(token);
+    const effectiveToken =
+      token && token !== '__cookie__'
+        ? token
+        : (parseCookieValue(socket.handshake.headers.cookie, 'cakma_session') || '');
+    const verified = verifySessionTokenWithMeta(effectiveToken);
     if (!verified) {
       return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' });
     }

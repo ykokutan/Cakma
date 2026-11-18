@@ -171,6 +171,8 @@ interface SocketContextType {
   serverMuteUser: (targetUserId: string, muted?: boolean, deafened?: boolean) => void;
   muteAllVoiceChannel: (channelId: string, muted: boolean) => void;
   connectionState: 'connected' | 'reconnecting' | 'disconnected';
+  newIpAlert: { ip: string; timestamp: string } | null;
+  dismissNewIpAlert: () => void;
   dmReadReceipts: Record<string, number>;
   markDmRead: (partnerUsername: string) => void;
   updateProfile: (username: string, avatar: string) => void;
@@ -752,6 +754,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
+  const [newIpAlert, setNewIpAlert] = useState<{ ip: string; timestamp: string } | null>(null);
+  const dismissNewIpAlert = useCallback(() => setNewIpAlert(null), []);
   const [dmReadReceipts, setDmReadReceipts] = useState<Record<string, number>>({});
   const [laserPoints, setLaserPoints] = useState<ScreenShareLaserPoint[]>([]);
   const screenShareStatsPrevRef = useRef<{ bytes: number; ts: number } | null>(null);
@@ -2043,8 +2047,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (currentSavedAuth) {
         try {
           const creds = JSON.parse(currentSavedAuth);
-          if (creds.token) {
-            newSocket.emit('auth_token_login', { token: creds.token });
+          if (creds.token || creds.cookieSession) {
+            newSocket.emit('auth_token_login', { token: creds.token || '__cookie__' });
           } else if (creds.username && creds.password) {
             newSocket.emit('auth_login', { usernameOrEmail: creds.username, password: creds.password });
           } else {
@@ -2061,11 +2065,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; tokenExpired?: boolean; error?: string }) => {
       if (res.success && res.user) {
         if (res.token) {
-          localStorage.setItem('dc_clone_auth', JSON.stringify({
-            token: res.token,
-            username: res.user.username,
-            avatar: res.user.avatar
-          }));
+          const isSameOriginWeb = !isTauriApp && typeof window !== 'undefined' && backendUrl.startsWith(window.location.origin);
+          if (isSameOriginWeb) {
+            fetch(`${backendUrl}/api/auth/set-cookie`, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: res.token }),
+            }).catch(() => {});
+            localStorage.setItem('dc_clone_auth', JSON.stringify({
+              cookieSession: true,
+              username: res.user.username,
+              avatar: res.user.avatar
+            }));
+          } else {
+            localStorage.setItem('dc_clone_auth', JSON.stringify({
+              token: res.token,
+              username: res.user.username,
+              avatar: res.user.avatar
+            }));
+          }
         }
         setCurrentUser(res.user);
         setIsAuthenticated(true);
@@ -2084,6 +2103,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         alert(`⛔ Giriş Engellendi:\n\n${res.error}\n\nAna sunucuya yönlendiriliyorsunuz.`);
         resetToMainServer();
       }
+    });
+
+    newSocket.on('security_new_ip_alert', (payload: { ip: string; timestamp: string }) => {
+      setNewIpAlert(payload);
     });
 
     newSocket.on('force_logout', (payload: { reason?: string }) => {
@@ -3387,6 +3410,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const logout = () => {
     localStorage.removeItem('dc_clone_auth');
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     socket?.emit('auth_logout');
     setIsAuthenticated(false);
     setCurrentUser(null);
@@ -5559,6 +5583,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addReminder,
         removeReminder,
         connectionState,
+        newIpAlert,
+        dismissNewIpAlert,
         dmReadReceipts,
         markDmRead,
       }}
