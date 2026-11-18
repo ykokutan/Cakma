@@ -252,32 +252,62 @@ const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || '';
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
 const SFU_THRESHOLD = Math.max(2, Number(process.env.SFU_THRESHOLD) || 6);
 
-let livekitHealthyCache: { ok: boolean; checkedAt: number } = { ok: false, checkedAt: 0 };
+let livekitHealthyCache: { ok: boolean; checkedAt: number; reason?: string } = { ok: false, checkedAt: 0 };
+function normalizeLiveKitHttpUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return LIVEKIT_URL;
+  return trimmed.replace(/^ws(s?):\/\//i, 'http$1://');
+}
+
 function getEffectiveLiveKitConfig() {
   return {
     enabled: systemConfig?.sfuEnabled !== false,
     threshold: Math.max(2, Number(systemConfig?.sfuThreshold) || SFU_THRESHOLD),
-    url: (systemConfig?.livekitUrl || '').trim() || LIVEKIT_URL,
+    url: normalizeLiveKitHttpUrl(systemConfig?.livekitUrl || LIVEKIT_URL),
     apiKey: (systemConfig?.livekitApiKey || '').trim() || LIVEKIT_API_KEY,
     apiSecret: (systemConfig?.livekitApiSecret || '').trim() || LIVEKIT_API_SECRET,
   };
 }
 
-async function isLiveKitAvailable(): Promise<boolean> {
+async function getLiveKitDiagnostics(): Promise<{
+  enabled: boolean;
+  configured: boolean;
+  reachable: boolean;
+  url: string;
+  reason: string;
+}> {
   const cfg = getEffectiveLiveKitConfig();
-  if (!cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return false;
-  const now = Date.now();
-  if (now - livekitHealthyCache.checkedAt < 15000) return livekitHealthyCache.ok;
-  try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 600);
-    const resp = await fetch(cfg.url, { signal: controller.signal });
-    clearTimeout(t);
-    livekitHealthyCache = { ok: resp.status < 500, checkedAt: now };
-  } catch {
-    livekitHealthyCache = { ok: false, checkedAt: now };
+  if (!cfg.enabled) {
+    return { enabled: false, configured: Boolean(cfg.apiKey && cfg.apiSecret), reachable: false, url: cfg.url, reason: 'Sistem ayarlarında SFU devre dışı.' };
   }
-  return livekitHealthyCache.ok;
+  if (!cfg.apiKey || !cfg.apiSecret) {
+    return { enabled: true, configured: false, reachable: false, url: cfg.url, reason: 'LIVEKIT_API_KEY veya LIVEKIT_API_SECRET tanımlı değil.' };
+  }
+  const now = Date.now();
+  if (now - livekitHealthyCache.checkedAt >= 15000) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 800);
+      const resp = await fetch(cfg.url, { signal: controller.signal });
+      clearTimeout(t);
+      const ok = resp.status < 500;
+      livekitHealthyCache = { ok, checkedAt: now, reason: ok ? 'Aktif ve erişilebilir' : `HTTP ${resp.status} hatası` };
+    } catch (err: any) {
+      livekitHealthyCache = { ok: false, checkedAt: now, reason: `LiveKit sunucusuna ulaşılamıyor (${cfg.url})` };
+    }
+  }
+  return {
+    enabled: true,
+    configured: true,
+    reachable: livekitHealthyCache.ok,
+    url: cfg.url,
+    reason: livekitHealthyCache.reason || (livekitHealthyCache.ok ? 'Aktif ve erişilebilir' : `LiveKit sunucusuna ulaşılamıyor (${cfg.url})`),
+  };
+}
+
+async function isLiveKitAvailable(): Promise<boolean> {
+  const diag = await getLiveKitDiagnostics();
+  return diag.enabled && diag.configured && diag.reachable;
 }
 
 async function createLiveKitRoomToken(roomName: string, username: string): Promise<string | null> {
@@ -4599,8 +4629,13 @@ io.on('connection', (socket: Socket) => {
       (srvSfuMode === 'sfu' || peersInRoom.length + 1 >= lkCfg.threshold);
 
     if (shouldUseSfu) {
-      isLiveKitAvailable().then(async (ok) => {
-        if (!ok) return;
+      getLiveKitDiagnostics().then(async (diag) => {
+        if (!diag.enabled || !diag.configured || !diag.reachable) {
+          if (srvSfuMode === 'sfu') {
+            socket.emit('voice_sfu_unavailable', { reason: diag.reason, url: diag.url });
+          }
+          return;
+        }
         const token = await createLiveKitRoomToken(targetChannelId, user.username);
         if (token) {
           socket.emit('voice_sfu_token', { token, roomName: targetChannelId, path: '/livekit' });
@@ -5201,14 +5236,17 @@ io.on('connection', (socket: Socket) => {
   });
 
   // ================= ADMIN DASHBOARD EVENTS =================
-  socket.on('admin_request_data', () => {
+  socket.on('admin_request_data', async () => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') {
       return socket.emit('admin_error', 'Yetkisiz erişim! Bu işlem için Sistem Yöneticisi olmalısınız.');
     }
 
+    const livekitStatus = await getLiveKitDiagnostics();
+
     socket.emit('admin_data_response', {
       stats: getSystemStats(),
+      livekitStatus,
       registeredUsers: Array.from(registeredAccounts.values()).map(acc => ({
         id: acc.id,
         username: acc.username,

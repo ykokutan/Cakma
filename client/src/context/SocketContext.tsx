@@ -315,6 +315,13 @@ interface SocketContextType {
       livekitApiKey?: string;
       livekitApiSecret?: string;
     };
+    livekitStatus?: {
+      enabled: boolean;
+      configured: boolean;
+      reachable: boolean;
+      url: string;
+      reason: string;
+    };
     bannedIps?: {
       ip: string;
       reason: string;
@@ -2186,6 +2193,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.warn('[SFU] LiveKit bağlantısı kurulamadı, P2P Mesh ile devam ediliyor:', err);
         setVoiceTransportMode('p2p');
       }
+    });
+
+    newSocket.on('voice_sfu_unavailable', ({ reason, url }: { reason?: string; url?: string }) => {
+      console.warn(`[SFU] LiveKit SFU kullanılamıyor (${url || 'varsayılan'}): ${reason || 'Bilinmeyen neden'}. P2P Mesh ile devam ediliyor.`);
+      setVoiceTransportMode('p2p');
     });
 
     newSocket.on('security_new_ip_alert', (payload: { ip: string; timestamp: string }) => {

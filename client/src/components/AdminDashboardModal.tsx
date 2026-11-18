@@ -1192,7 +1192,21 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-bold text-white">LiveKit SFU (Hibrit Medya Sunucusu)</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-white">LiveKit SFU (Hibrit Medya Sunucusu)</span>
+                        {adminData?.livekitStatus && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              adminData.livekitStatus.reachable
+                                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                                : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                            }`}
+                            title={adminData.livekitStatus.url}
+                          >
+                            {adminData.livekitStatus.reachable ? '● Aktif & Erişilebilir' : `● ${adminData.livekitStatus.reason}`}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-white/50">
                         Kalabalık odaları P2P Mesh yerine otomatik olarak LiveKit SFU&apos;ya geçirir. URL/Key boşsa `start.sh` içindeki yerel LiveKit kullanılır.
                       </div>
