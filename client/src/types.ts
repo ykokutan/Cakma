@@ -50,6 +50,8 @@ export interface User {
   currentVoiceChannelId?: string;
   isMuted: boolean;
   isDeafened: boolean;
+  isServerMuted?: boolean;
+  isServerDeafened?: boolean;
   isSpeaking: boolean;
   isHandRaised?: boolean;
   isScreenSharing?: boolean;
@@ -86,6 +88,8 @@ export interface DirectCallState {
   status: 'calling' | 'incoming' | 'connected' | 'ended';
   isMuted: boolean;
   isDeafened: boolean;
+  isServerMuted?: boolean;
+  isServerDeafened?: boolean;
   durationSeconds: number;
 }
 

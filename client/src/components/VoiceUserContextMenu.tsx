@@ -44,6 +44,8 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
     sendWhisper,
     openDirectMessage,
     adminKickUser,
+    serverMuteUser,
+    activeServer,
   } = useSocket();
 
   useEffect(() => {
@@ -213,6 +215,33 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
             >
               <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
               <span>Özel Mesaj Gönder</span>
+            </button>
+          </>
+        )}
+
+        {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) && !isMe && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                serverMuteUser(target.id, !target.isServerMuted, undefined);
+                onClose();
+              }}
+              className="w-full px-2.5 py-1.5 rounded-xl hover:bg-amber-500/20 text-xs text-amber-300 flex items-center gap-2 transition"
+            >
+              <MicOff className="w-3.5 h-3.5" />
+              <span>{target.isServerMuted ? 'Sunucu Susturmasını Kaldır' : 'Sunucudan Sustur'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                serverMuteUser(target.id, undefined, !target.isServerDeafened);
+                onClose();
+              }}
+              className="w-full px-2.5 py-1.5 rounded-xl hover:bg-amber-500/20 text-xs text-amber-300 flex items-center gap-2 transition"
+            >
+              <Headphones className="w-3.5 h-3.5" />
+              <span>{target.isServerDeafened ? 'Sunucu Sağırlaştırmasını Kaldır' : 'Sunucudan Sağırlaştır'}</span>
             </button>
           </>
         )}

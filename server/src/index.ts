@@ -3543,7 +3543,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Channel Creation
-  socket.on('create_channel', ({ serverId, name, type, isLocked, password, topic }: { serverId: string; name: string; type: 'text' | 'voice'; isLocked?: boolean; password?: string; topic?: string }) => {
+  socket.on('create_channel', ({ serverId, name, type, isLocked, password, topic, bitrateKbps, userLimit, isTempCreatorChannel }: { serverId: string; name: string; type: 'text' | 'voice'; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
     const targetServer = servers.find(s => s.id === serverId);
@@ -3563,7 +3563,10 @@ io.on('connection', (socket: Socket) => {
       serverId,
       isLocked: !!isLocked,
       password: password?.trim() || undefined,
-      topic: cleanTopic
+      topic: cleanTopic,
+      ...(type === 'voice' && bitrateKbps ? { bitrateKbps: Math.min(320, Math.max(32, Number(bitrateKbps))) } : {}),
+      ...(type === 'voice' && userLimit !== undefined ? { userLimit: Math.min(99, Math.max(0, Number(userLimit) || 0)) } : {}),
+      ...(type === 'voice' && isTempCreatorChannel ? { isTempCreatorChannel: true } : {}),
     };
 
     targetServer.channels.push(newChannel);
@@ -4273,6 +4276,20 @@ io.on('connection', (socket: Socket) => {
       }
     }
 
+    // Channel user capacity limit check (for voice rooms)
+    if (targetChannel && targetChannel.userLimit && targetChannel.userLimit > 0 && user.role !== 'admin') {
+      const server = servers.find(s => s.id === targetChannel.serverId);
+      const isOwner = server?.ownerId === user.id;
+      const currentOccupancy = Array.from(activeUsers.values()).filter(
+        u => u.currentVoiceChannelId === targetChannel.id && u.id !== socket.id
+      ).length;
+      if (!isOwner && currentOccupancy >= targetChannel.userLimit) {
+        return socket.emit('server_action_error', {
+          message: `Bu ses odası dolu (Maksimum ${targetChannel.userLimit} kişi).`
+        });
+      }
+    }
+
     // Check if user is joining the "➕ Oda Kur (+)" channel to spawn a temporary room
     if (targetChannel && (targetChannel.isTempCreatorChannel || targetChannel.name.includes('➕ Oda Kur'))) {
       const server = servers.find(s => s.id === targetChannel.serverId);
@@ -4284,7 +4301,9 @@ io.on('connection', (socket: Socket) => {
           type: 'voice',
           serverId: server.id,
           isTemporary: true,
-          createdByUserId: user.id
+          createdByUserId: user.id,
+          bitrateKbps: targetChannel.bitrateKbps || server.bitrateKbps || 128,
+          userLimit: targetChannel.userLimit || 0,
         };
         server.channels.push(tempChannel);
         saveServers(servers);
@@ -4839,12 +4858,68 @@ io.on('connection', (socket: Socket) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
 
-    if (isMuted !== undefined) user.isMuted = isMuted;
-    if (isDeafened !== undefined) user.isDeafened = isDeafened;
+    if (isMuted !== undefined) user.isMuted = user.isServerMuted ? true : isMuted;
+    if (isDeafened !== undefined) user.isDeafened = user.isServerDeafened ? true : isDeafened;
     if (status !== undefined) user.status = status;
     if (avatar !== undefined) user.avatar = avatar;
 
     io.emit('user_updated', user);
+  });
+
+  // Server-enforced Voice Mute / Deafen (Moderator action)
+  socket.on('admin_server_mute_user', ({ targetUserId, muted, deafened }: { targetUserId: string; muted?: boolean; deafened?: boolean }) => {
+    const requester = activeUsers.get(socket.id);
+    const target = activeUsers.get(targetUserId);
+    if (!requester || !target) return;
+
+    const channelId = target.currentVoiceChannelId;
+    const server = servers.find(s => s.channels.some(c => c.id === channelId)) || servers[0];
+    const canModerate = requester.role === 'admin' || (server && (server.ownerId === requester.id || checkServerPermission(requester, server, 'mute_members')));
+    if (!canModerate) {
+      return socket.emit('server_action_error', { message: 'Üyeleri sunucudan susturmak için yetkiniz yok.' });
+    }
+
+    if (muted !== undefined) {
+      target.isServerMuted = muted;
+      if (muted) target.isMuted = true;
+    }
+    if (deafened !== undefined) {
+      target.isServerDeafened = deafened;
+      if (deafened) target.isDeafened = true;
+    }
+
+    io.emit('user_updated', target);
+    io.to(targetUserId).emit('server_moderation_voice', {
+      isServerMuted: !!target.isServerMuted,
+      isServerDeafened: !!target.isServerDeafened,
+      byUsername: requester.username,
+    });
+    addAuditLog('SES_MODERASYON', `${requester.username}, ${target.username} için sunucu ses durumunu güncelledi (Sustur: ${!!target.isServerMuted}, Sağır: ${!!target.isServerDeafened}).`, 'voice');
+  });
+
+  // Meeting Mode: Server-mute / unmute everyone in a voice channel
+  socket.on('admin_mute_all_voice', ({ channelId, muted }: { channelId: string; muted: boolean }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || !channelId) return;
+    const server = servers.find(s => s.channels.some(c => c.id === channelId));
+    const canModerate = requester.role === 'admin' || (server && (server.ownerId === requester.id || checkServerPermission(requester, server, 'mute_members')));
+    if (!canModerate) {
+      return socket.emit('server_action_error', { message: 'Odadaki herkesi susturmak için yetkiniz yok.' });
+    }
+
+    for (const [sId, u] of activeUsers.entries()) {
+      if (u.currentVoiceChannelId === channelId && sId !== socket.id && u.role !== 'admin') {
+        u.isServerMuted = muted;
+        if (muted) u.isMuted = true;
+        io.emit('user_updated', u);
+        io.to(sId).emit('server_moderation_voice', {
+          isServerMuted: !!u.isServerMuted,
+          isServerDeafened: !!u.isServerDeafened,
+          byUsername: requester.username,
+        });
+      }
+    }
+    addAuditLog('TOPLANTI_SUSTURMA', `${requester.username}, ses odasındaki tüm katılımcıları ${muted ? 'susturdu' : 'açtı'}.`, 'voice');
   });
 
   // ================= ADMIN DASHBOARD EVENTS =================

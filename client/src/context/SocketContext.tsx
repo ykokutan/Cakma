@@ -160,7 +160,9 @@ interface SocketContextType {
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
   createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => void;
-  createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string }) => void;
+  createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
+  serverMuteUser: (targetUserId: string, muted?: boolean, deafened?: boolean) => void;
+  muteAllVoiceChannel: (channelId: string, muted: boolean) => void;
   connectionState: 'connected' | 'reconnecting' | 'disconnected';
   dmReadReceipts: Record<string, number>;
   markDmRead: (partnerUsername: string) => void;
@@ -1508,6 +1510,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     ? virtualDMServer?.channels[0] || null
     : (activeServer?.channels.find(c => c.id === activeChannelId) || 
        activeServer?.channels.find(c => c.type === 'text') || null);
+  const activeChannelRef = useRef<Channel | null>(null);
+  useEffect(() => {
+    activeChannelRef.current = activeChannel;
+  }, [activeChannel]);
   const messages = activeChannel ? messagesMap[activeChannel.id] || [] : [];
 
   // Enumerate Audio Devices
@@ -2298,6 +2304,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
+    newSocket.on('server_moderation_voice', ({ isServerMuted, isServerDeafened }: { isServerMuted: boolean; isServerDeafened: boolean }) => {
+      if (isServerMuted) {
+        setIsMuted(true);
+        if (localStreamRef.current) {
+          localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = false; });
+        }
+      }
+      if (isServerDeafened) {
+        setIsDeafened(true);
+        audioElementsRef.current.forEach(audio => { audio.muted = true; });
+      }
+    });
+
     newSocket.on('screen_share_laser', (point: ScreenShareLaserPoint) => {
       if (!point?.id) return;
       setLaserPoints((prev) => [...prev.slice(-30), point]);
@@ -2496,7 +2515,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
 
         const offer = await pc.createOffer();
-        const targetKbps = activeServerRef.current?.bitrateKbps || 128;
+        const targetKbps = activeChannelRef.current?.bitrateKbps || activeServerRef.current?.bitrateKbps || 128;
         const modifiedOffer = new RTCSessionDescription({
           type: offer.type,
           sdp: setOpusBitrateInSdp(offer.sdp || '', targetKbps)
@@ -2564,7 +2583,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }
         }
         const answer = await pc.createAnswer();
-        const targetKbps = activeServerRef.current?.bitrateKbps || 128;
+        const targetKbps = activeChannelRef.current?.bitrateKbps || activeServerRef.current?.bitrateKbps || 128;
         const modifiedAnswer = new RTCSessionDescription({
           type: answer.type,
           sdp: setOpusBitrateInSdp(answer.sdp || '', targetKbps)
@@ -4205,6 +4224,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const toggleMute = () => {
+    if (currentUserRef.current?.isServerMuted && isMuted) {
+      alert('Moderatör tarafından sunucudan susturuldunuz.');
+      return;
+    }
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
 
@@ -4222,6 +4245,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const toggleDeafen = () => {
+    if (currentUserRef.current?.isServerDeafened && isDeafened) {
+      alert('Moderatör tarafından sunucudan sağırlaştırıldınız.');
+      return;
+    }
     const nextDeafened = !isDeafened;
     setIsDeafened(nextDeafened);
 
@@ -4506,7 +4533,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const createChannel = (
     name: string,
     type: 'text' | 'voice',
-    options?: { isLocked?: boolean; password?: string; topic?: string }
+    options?: { isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }
   ) => {
     if (!socket || !activeServer || !name.trim()) return;
     socket.emit('create_channel', {
@@ -4515,9 +4542,22 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       type,
       isLocked: options?.isLocked,
       password: options?.password,
-      topic: options?.topic
+      topic: options?.topic,
+      bitrateKbps: options?.bitrateKbps,
+      userLimit: options?.userLimit,
+      isTempCreatorChannel: options?.isTempCreatorChannel,
     });
   };
+
+  const serverMuteUser = useCallback((targetUserId: string, muted?: boolean, deafened?: boolean) => {
+    if (!socket || !targetUserId) return;
+    socket.emit('admin_server_mute_user', { targetUserId, muted, deafened });
+  }, [socket]);
+
+  const muteAllVoiceChannel = useCallback((channelId: string, muted: boolean) => {
+    if (!socket || !channelId) return;
+    socket.emit('admin_mute_all_voice', { channelId, muted });
+  }, [socket]);
 
   const clearVoicePasswordError = useCallback(() => {
     setVoicePasswordError(null);
@@ -5160,6 +5200,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setStudioAudioDsp,
         lowLatencyAudio,
         setLowLatencyAudio,
+        serverMuteUser,
+        muteAllVoiceChannel,
         setInputSensitivity,
         setInputVolume,
         setOutputVolume,

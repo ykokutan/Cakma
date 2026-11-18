@@ -17,6 +17,9 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
   const [topic, setTopic] = useState('');
   const [isLocked, setIsLocked] = useState(false);
   const [password, setPassword] = useState('');
+  const [bitrateKbps, setBitrateKbps] = useState<number>(128);
+  const [userLimit, setUserLimit] = useState<number>(0);
+  const [isTempCreatorChannel, setIsTempCreatorChannel] = useState<boolean>(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,6 +28,9 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
       topic: topic.trim() || undefined,
       isLocked,
       password: isLocked ? password.trim() : undefined,
+      ...(channelType === 'voice'
+        ? { bitrateKbps, userLimit, isTempCreatorChannel }
+        : {}),
     });
     onClose();
   };
@@ -160,6 +166,51 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
                   </p>
                 </div>
               )}
+
+              <div className="pt-2 border-t border-white/10 grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                    Ses Kalitesi (Bitrate)
+                  </label>
+                  <select
+                    value={bitrateKbps}
+                    onChange={(e) => setBitrateKbps(Number(e.target.value))}
+                    className="w-full bg-black/40 border border-white/15 text-white text-xs rounded-xl px-2.5 py-2 outline-none"
+                  >
+                    <option value={64}>64 kbps (Ekonomi)</option>
+                    <option value={96}>96 kbps (Konuşma)</option>
+                    <option value={128}>128 kbps (Standart HD)</option>
+                    <option value={192}>192 kbps (Yüksek)</option>
+                    <option value={256}>256 kbps (Stüdyo)</option>
+                    <option value={320}>320 kbps (Ultra HD)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
+                    Kişi Limiti (0 = Sınırsız)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={userLimit}
+                    onChange={(e) => setUserLimit(Math.min(99, Math.max(0, Number(e.target.value) || 0)))}
+                    className="w-full bg-black/40 border border-white/15 text-white text-xs rounded-xl px-2.5 py-2 outline-none"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isTempCreatorChannel}
+                  onChange={(e) => setIsTempCreatorChannel(e.target.checked)}
+                  className="w-4 h-4 rounded text-emerald-500 bg-black/40 border-white/20"
+                />
+                <span className="text-[11px] font-semibold text-emerald-300">
+                  ➕ Oda Kur Kanalı (Girenlere otomatik geçici oda aç)
+                </span>
+              </label>
             </div>
           )}
 

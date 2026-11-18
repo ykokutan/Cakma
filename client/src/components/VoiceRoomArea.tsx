@@ -404,6 +404,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     getScreenShareStats,
     laserPoints,
     sendScreenShareLaser,
+    muteAllVoiceChannel,
   } = useSocket();
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
@@ -474,13 +475,35 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
               <span className="truncate">{activeChannel.name}</span>
               <span className="hidden sm:inline-flex items-center gap-1 text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 font-semibold px-2 py-0.5 rounded-full shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                {usersInRoom.length} Katılımcı
+                {activeChannel.userLimit && activeChannel.userLimit > 0
+                  ? `${usersInRoom.length} / ${activeChannel.userLimit} Katılımcı`
+                  : `${usersInRoom.length} Katılımcı`}
               </span>
+              {(activeChannel.bitrateKbps || activeServer?.bitrateKbps) && (
+                <span className="hidden md:inline-flex items-center text-[10px] bg-white/5 text-white/60 border border-white/10 font-mono px-2 py-0.5 rounded-full shrink-0">
+                  {activeChannel.bitrateKbps || activeServer?.bitrateKbps} kbps
+                </span>
+              )}
             </h2>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5 text-[11px] text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[56vw] sm:max-w-[72vw] shrink-0">
+          {/* Moderator Meeting Mode: Mute / Unmute All */}
+          {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) && usersInRoom.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                const anyUnmuted = usersInRoom.some((u) => u.id !== currentUser?.id && u.role !== 'admin' && !u.isServerMuted);
+                muteAllVoiceChannel(activeChannel.id, anyUnmuted);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 transition text-xs font-medium shrink-0"
+              title="Toplantı Modu: Odadaki katılımcıları sunucudan topluca sustur / aç"
+            >
+              <MicOff className="w-3.5 h-3.5" />
+              <span>Herkesi Sustur</span>
+            </button>
+          )}
           {/* Voice Room Audio Recorder */}
           {isConnected && (
             <button
