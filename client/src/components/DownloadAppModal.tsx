@@ -78,11 +78,14 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <header className="h-16 px-6 border-b border-white/[0.08] flex items-center justify-between bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-transparent shrink-0">
+        <header className="h-16 px-6 border-b border-white/[0.08] flex items-center justify-between bg-gradient-to-r from-red-600/15 via-rose-500/10 to-transparent shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-500 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
-              <Download className="w-5 h-5" />
-            </div>
+            <img
+              src="/app-icon.png"
+              alt="Çakma"
+              className="w-10 h-10 rounded-2xl shadow-lg shadow-red-600/25 ring-1 ring-white/15 object-cover shrink-0"
+              draggable={false}
+            />
             <div>
               <h2 className="text-base font-bold text-white tracking-tight">Uygulamayı İndir & Kur</h2>
               <p className="text-[11px] text-white/50">

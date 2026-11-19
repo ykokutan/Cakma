@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
 import { User, ServerRole } from '../types';
-import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX } from 'lucide-react';
+import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX, Search, X } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
 interface MemberListProps {
@@ -23,6 +23,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
     language,
   } = useSocket();
   const [contextMenu, setContextMenu] = useState<{ user: User; x: number; y: number } | null>(null);
+  const [memberSearch, setMemberSearch] = useState('');
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -189,9 +190,64 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
     });
   }
 
+  const trimmedSearch = memberSearch.trim().toLowerCase();
+  const filteredRoleGroups = trimmedSearch
+    ? roleGroups
+        .map((group) => ({
+          ...group,
+          users: group.users.filter(
+            (u) =>
+              u.username.toLowerCase().includes(trimmedSearch) ||
+              (u.statusMessage && u.statusMessage.toLowerCase().includes(trimmedSearch)) ||
+              (u.activity?.name && u.activity.name.toLowerCase().includes(trimmedSearch))
+          ),
+        }))
+        .filter((group) => group.users.length > 0)
+    : roleGroups;
+  const totalMemberCount = activeOnlineUsers.length + offlineMembers.length;
+
   return (
     <aside className="w-60 ios-glass-sidebar lg:rounded-2xl lg:border lg:border-white/[0.08] lg:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-y-auto p-4 border-l border-white/[0.06]">
-      {roleGroups.map((group) => (
+      <div className="mb-3 pb-2.5 border-b border-white/[0.06] space-y-2 shrink-0">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/75">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span>{activeOnlineUsers.length} {t(language, 'onlineMembers')}</span>
+          </div>
+          <span className="text-[10px] font-mono text-white/45 bg-white/[0.05] border border-white/[0.07] px-1.5 py-0.5 rounded-md">
+            / {totalMemberCount}
+          </span>
+        </div>
+        <div className="relative flex items-center">
+          <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 pointer-events-none" />
+          <input
+            type="text"
+            value={memberSearch}
+            onChange={(e) => setMemberSearch(e.target.value)}
+            placeholder="Üye ara..."
+            aria-label="Üye ara"
+            className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.06] focus:bg-white/[0.08] border border-white/[0.08] focus:border-white/20 text-xs text-white placeholder-white/40 outline-none transition"
+          />
+          {memberSearch && (
+            <button
+              type="button"
+              onClick={() => setMemberSearch('')}
+              aria-label="Aramayı temizle"
+              className="absolute right-2 p-0.5 rounded-md text-white/45 hover:text-white hover:bg-white/10 transition"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {filteredRoleGroups.length === 0 && (
+        <div className="py-8 px-2 text-center text-xs text-white/45">
+          &ldquo;{memberSearch.trim()}&rdquo; ile eşleşen üye yok.
+        </div>
+      )}
+
+      {filteredRoleGroups.map((group) => (
         <div key={group.roleName} className="mb-4">
           <div
             style={{ color: group.roleColor }}
@@ -250,8 +306,10 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                   <div className="truncate flex-1">
                     <div className="flex items-center gap-1.5">
                       <span
-                        style={{ color: userRole?.color || (isMe ? '#60a5fa' : '#f5f5f7') }}
-                        className="text-xs font-bold truncate"
+                        style={userRole?.color ? { color: userRole.color } : undefined}
+                        className={`text-xs font-bold truncate ${
+                          !userRole?.color ? (isMe ? 'text-blue-400' : 'text-white') : ''
+                        }`}
                       >
                         {user.username}
                       </span>

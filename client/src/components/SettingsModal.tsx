@@ -236,7 +236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.4.0');
+  const [appVersion, setAppVersion] = useState<string>('0.4.1');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -3437,16 +3437,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-black/25 p-6 space-y-5">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-lg font-bold text-white">Çakma Masaüstü & Web İstemcisi</div>
-                    <div className="text-xs text-white/50 mt-0.5">Sürüm: v{appVersion} • WebRTC Opus 48kHz HD</div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <img
+                      src="/app-icon.png"
+                      alt="Çakma"
+                      className="w-11 h-11 rounded-2xl shadow-lg shadow-red-600/25 ring-1 ring-white/15 shrink-0 object-cover"
+                      draggable={false}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-lg font-bold text-white truncate">Çakma Masaüstü &amp; Web İstemcisi</div>
+                      <div className="text-xs text-white/50 mt-0.5">Sürüm: v{appVersion} • WebRTC Opus 48kHz HD</div>
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={handleManualUpdateCheck}
                     disabled={isCheckingUpdate}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-xs font-semibold text-white shadow transition"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-xs font-semibold text-white shadow transition shrink-0"
                   >
                     <Download className="w-4 h-4" />
                     {isCheckingUpdate ? 'Kontrol Ediliyor...' : 'Güncellemeleri Denetle'}
@@ -3494,12 +3502,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.4.0 - Latest */}
+                  {/* v0.4.1 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.4.0 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.4.1 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Yeni Kırmızı-Beyaz Marka Logosu &amp; İkon Seti:</strong> Windows (<code className="text-cyan-300">.ico</code>), macOS (<code className="text-cyan-300">.icns</code>), PWA/Favicon, pencere başlık çubuğu ve giriş/hakkında ekranları yeni kırmızı-beyaz sesli sohbet ikonuyla yenilendi.</li>
+                      <li><strong className="text-white">Gelişmiş Pencere Başlık Çubuğu:</strong> Aktif ses odası &amp; <code className="text-cyan-300">SFU/P2P</code> rozeti, gecikmeye göre renk kodlu tıklanabilir ping/ağ teşhisi düğmesi ve klavye kısayolları (<code className="text-cyan-300">Ctrl+/</code>) butonu eklendi.</li>
+                      <li><strong className="text-white">Üye Listesi Arama &amp; Açık Tema Kontrast Düzeltmesi:</strong> Sağ panel üstüne canlı çevrimiçi/toplam üye sayacı ve hızlı arama kutusu eklendi; açık temalarda üye adlarının okunabilirliği düzeltildi.</li>
+                      <li><strong className="text-white">DM Okunmamış Rozeti &amp; Sunucu İpuçları:</strong> Sol kenar çubuğunda Direkt Mesajlar için canlı okunmamış sayacı ve sunucu ipuçlarında okunmamış mesaj sayısı eklendi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.4.0 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.4.0 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Tam LiveKit SFU &amp; TURN Desteği:</strong> SFU modunda ekran paylaşımı (Simulcast), kişi bazlı ses/EQ/cihaz kontrolü, <code className="text-cyan-300">ActiveSpeakers</code> konuşma halosu, yönetim panelinde özel TURN sunucusu ayarları ve pencereye özel WASAPI ses yakalama eklendi.</li>
                       <li><strong className="text-white">Spektral Gürültü Engelleme &amp; Zero-Lag Sayaç:</strong> 48kHz <code className="text-cyan-300">AudioWorklet</code> gürültü temizleyici ve <code className="text-cyan-300">VoiceMetricsContext</code> harici deposuyla 60 FPS mikrofonda gereksiz arayüz yeniden çizimleri kaldırıldı.</li>

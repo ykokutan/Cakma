@@ -3,6 +3,12 @@
   "name": "Çakma",
   "icons": [
     {
+      "src": "/app-icon.png",
+      "type": "image/png",
+      "sizes": "1024x1024",
+      "purpose": "any maskable"
+    },
+    {
       "src": "/icon.svg",
       "type": "image/svg+xml",
       "sizes": "192x192 512x512",
@@ -11,7 +17,7 @@
   ],
   "start_url": "/",
   "background_color": "#0f1015",
-  "theme_color": "#18191f",
+  "theme_color": "#b91c1c",
   "display": "standalone",
   "orientation": "portrait"
 }

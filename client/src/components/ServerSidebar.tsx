@@ -22,10 +22,14 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   onOpenExplore,
   onOpenDownload,
 }) => {
-  const { servers, activeServer, selectServer, unreadCounts, mentionCounts } = useSocket();
+  const { servers, activeServer, selectServer, unreadCounts, mentionCounts, unreadDMByUser } = useSocket();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 
   const isDMActive = activeServer?.id === 'direct-messages';
+  const totalDmUnreads = Object.values(unreadDMByUser || {}).reduce(
+    (sum, count) => sum + (Number(count) || 0),
+    0
+  );
   const isInstalledApp =
     typeof window !== 'undefined' &&
     ('__TAURI_INTERNALS__' in window ||
@@ -50,15 +54,23 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       {/* Direct Messages / Home */}
       <div className="relative group flex items-center justify-center w-full mb-2">
         <div
-          className={`absolute left-0 w-[3.5px] bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 rounded-r-full transition-all duration-200 ${
+          className={`absolute left-0 w-[3.5px] rounded-r-full transition-all duration-200 ${
             isDMActive
-              ? 'h-7 shadow-[0_0_12px_rgba(245,158,11,0.85)] opacity-100'
-              : 'h-0 group-hover:h-4 opacity-0 group-hover:opacity-100'
+              ? 'h-7 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 shadow-[0_0_12px_rgba(245,158,11,0.85)] opacity-100'
+              : totalDmUnreads > 0
+              ? 'h-2 bg-white/85 group-hover:h-4 opacity-100'
+              : 'h-0 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 group-hover:h-4 opacity-0 group-hover:opacity-100'
           }`}
         />
         <button
           onClick={() => selectServer('direct-messages')}
-          onMouseEnter={(e) => showTooltip(e, 'Direkt Mesajlar', 'Özel sohbetler ve aramalar')}
+          onMouseEnter={(e) =>
+            showTooltip(
+              e,
+              'Direkt Mesajlar',
+              totalDmUnreads > 0 ? `${totalDmUnreads} okunmamış özel mesaj` : 'Özel sohbetler ve aramalar'
+            )
+          }
           onMouseLeave={hideTooltip}
           className={`w-11 h-11 transition-all duration-200 flex items-center justify-center border shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] ${
             isDMActive
@@ -69,6 +81,13 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
         >
           <MessageCircle className="w-5 h-5" />
         </button>
+        {totalDmUnreads > 0 && (
+          <span
+            className="pointer-events-none absolute -bottom-0.5 right-2.5 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#0b0d14] shadow-lg"
+          >
+            {totalDmUnreads > 99 ? '99+' : totalDmUnreads}
+          </span>
+        )}
       </div>
 
       <div className="w-7 h-[1px] bg-white/[0.08] rounded-full mb-2.5 shrink-0" />
@@ -103,7 +122,11 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   showTooltip(
                     e,
                     server.name,
-                    serverMentions > 0 ? `${serverMentions} yeni bahsetme` : undefined
+                    serverMentions > 0
+                      ? `${serverMentions} yeni bahsetme`
+                      : serverUnreads > 0
+                      ? `${serverUnreads} okunmamış mesaj`
+                      : undefined
                   )
                 }
                 onMouseLeave={hideTooltip}

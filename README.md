@@ -1,6 +1,6 @@
-# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.4.0`)
+# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.4.1`)
 
-![Version](https://img.shields.io/badge/version-0.4.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.4.1-red?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20TypeScript%20%7C%20Tauri%20v2%20%7C%20Node.js%20%7C%20WebRTC%20%7C%20LiveKit%20SFU-indigo?style=flat-square)
 ![Languages](https://img.shields.io/badge/i18n-TR%20%7C%20EN%20%7C%20DE%20%7C%20RU-emerald?style=flat-square)
 
@@ -36,7 +36,8 @@
 - **Windows & macOS Desteği (Rust / Tauri v2):** Windows (`x64-setup.exe` / `.msi`) ve macOS (`Universal .dmg` — Apple Silicon & Intel) için yerel masaüstü derlemesi.
 - **Görev Çubuğu Rozeti & Tıklanabilir Bildirimler:** Okunmamış mesajlarda Windows görev çubuğu simgesi ve sistem tepsisi üzerinde canlı bildirim rozeti gösterilir; masaüstü bildirimlerine tıklandığında uygulama öne getirilip doğrudan ilgili kanala geçer.
 - **Canlı Güncelleme İlerleme Çubuğu:** Ayarlar → Hakkında ekranında tek tıkla güncelleme denetimi, canlı `%` / `MB` indirme çubuğu ve imzalı OTA kurulum (`latest.json`).
-- **Özel Cam Pencere Başlık Çubuğu:** Temaya uyumlu glassmorphism üst pencere çubuğu, aktif sunucu/kanal göstergesi, `Ctrl + K` Hızlı Geçiş ve canlı ping rozeti.
+- **Özel Cam Pencere Başlık Çubuğu & Yeni Kırmızı-Beyaz Marka Kimliği:** Masaüstü, web/PWA favicon ve giriş ekranlarında yeni kırmızı-beyaz sesli sohbet ikonu; temaya uyumlu glassmorphism üst pencere çubuğunda ise aktif sunucu/kanal göstergesi, canlı ses odası (`SFU/P2P`) rozeti, `Ctrl + K` Hızlı Geçiş, renk kodlu tıklanabilir ping/ağ teşhisi düğmesi ve klavye kısayolları (`Ctrl + /`) butonu yer alır.
+- **Akıllı Kenar Çubuğu & Üye Listesi:** Sol çubukta Direkt Mesajlar için canlı okunmamış sayacı, sağ üye listesinde canlı çevrimiçi/toplam üye sayacı ve hızlı üye arama desteği.
 - **Gelişmiş Oyun İçi Konuşanlar Overlay'i:**
   - Çerçevesiz, gerçek cam saydamlıklı (`%20–%100`) ve anti-cheat güvenli (DLL enjeksiyonu olmadan ayrı pencere tabanlı) konuşanlar penceresi.
   - **Köşe Konumu**, **Boyut** (Kompakt / Standart / Geniş), **Yalnızca Konuşanları Göster**, **Hızlı Kontrol Çubuğu**, **Canlı Ping (ms)** ve `Ctrl + Shift + O` ile **Tıklama Geçirgenliği (Kilit)**.

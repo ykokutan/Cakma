@@ -138,10 +138,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
         )}
 
         {/* Modal Header */}
-        <div className="p-6 text-center border-b border-white/[0.06] bg-gradient-to-b from-white/[0.04] to-transparent">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-2xl mx-auto shadow-lg shadow-blue-500/30 mb-3">
-            {isRegister ? <UserPlus className="w-6 h-6 text-white" /> : <Shield className="w-6 h-6 text-white" />}
-          </div>
+        <div className="p-6 text-center border-b border-white/[0.06] bg-gradient-to-b from-red-600/15 via-rose-500/[0.04] to-transparent">
+          <img
+            src="/app-icon.png"
+            alt="Çakma"
+            className="w-16 h-16 rounded-2xl mx-auto shadow-xl shadow-red-600/30 ring-1 ring-white/15 mb-3 object-cover"
+            draggable={false}
+          />
           <h2 className="text-xl font-bold text-white tracking-tight">
             {isRegister ? t(language, 'registerTitle') : t(language, 'loginTitle')}
           </h2>

@@ -122,7 +122,10 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
-      <WindowTitleBar onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)} />
+      <WindowTitleBar
+        onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
+      />
       <div className="relative flex flex-1 min-h-0 w-full overflow-hidden md:p-2.5 md:gap-2.5">
       {/* Dedicated Server Banner Indicator */}
       {isDedicatedServer && (
