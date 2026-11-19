@@ -16,6 +16,13 @@ import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
 import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
+import {
+  RemoteAssistManager,
+  RemoteAssistPermissions,
+  DirectCallLogStatus,
+  normalizeRemoteAssistPermissions,
+  buildDirectCallLogContent,
+} from './utils/remoteAssistState.js';
 import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
 import { registerCloudSyncAndEvents } from './features/cloudSyncAndEvents.js';
 import {
@@ -1838,8 +1845,73 @@ function generateAIResponse(prompt: string, senderName: string): string {
 // --- WEBRTC & CHAT INTEGRITY SECURITY ---
 const activeDirectCallPairs = new Map<string, string>(); // socketId -> socketId
 const activeDirectCallStartTimes = new Map<string, number>(); // socketId -> connected timestamp
-const pendingDirectCalls = new Map<string, { callerSocketId: string; callerUserId: string; callerUsername: string }>(); // targetUsernameLower -> caller info
+const pendingDirectCalls = new Map<
+  string,
+  {
+    callerSocketId: string;
+    callerUserId: string;
+    callerUsername: string;
+    targetUserId?: string;
+    targetUsername?: string;
+  }
+>(); // targetUsernameLower -> caller info
+const pendingDirectCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const remoteAssistManager = new RemoteAssistManager();
 const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
+
+function clearPendingDirectCallTimer(targetUsernameLower: string) {
+  const existing = pendingDirectCallTimers.get(targetUsernameLower);
+  if (existing) {
+    clearTimeout(existing);
+    pendingDirectCallTimers.delete(targetUsernameLower);
+  }
+}
+
+function persistAndEmitDirectCallLog(
+  userA: User | undefined,
+  userB: User | undefined,
+  status: DirectCallLogStatus,
+  durationSeconds: number,
+  reason?: string
+) {
+  if (!userA || !userB) return;
+  const dmChannelId = `dm-${[userA.id, userB.id].sort().join('-')}`;
+  const content = buildDirectCallLogContent(status, durationSeconds, reason);
+  const logMsg: Message = {
+    id: `call-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    serverId: 'direct-messages',
+    channelId: dmChannelId,
+    author: {
+      id: 'system-call',
+      username: 'Görüşme Kaydı',
+      avatar: status === 'ended' ? '📞' : status === 'dnd' ? '🌙' : '📵',
+    },
+    content,
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    reactions: {},
+    isPinned: false,
+  };
+
+  if (!messages[dmChannelId]) {
+    messages[dmChannelId] = [];
+  }
+  messages[dmChannelId].push(logMsg);
+  saveChannelMessages(dmChannelId, messages[dmChannelId]);
+  indexChannelMessage(dmChannelId, logMsg);
+
+  const recipientSockets = new Set<string>([userA.id, userB.id]);
+  const nameA = userA.username.toLowerCase();
+  const nameB = userB.username.toLowerCase();
+  for (const [sId, u] of activeUsers.entries()) {
+    const uname = u.username.toLowerCase();
+    if (uname === nameA || uname === nameB) {
+      recipientSockets.add(sId);
+    }
+  }
+  for (const sId of recipientSockets) {
+    io.to(sId).emit('new_message', logMsg);
+  }
+}
 
 function isMessageFlooding(userId: string): boolean {
   const now = Date.now();
@@ -3529,10 +3601,14 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  // Direct 1-on-1 Voice Calling Relay (multi-session & username-aware)
+  // Direct 1-on-1 Voice Calling Relay (multi-session, busy/DND, 40s timeout & persisted DM logs)
   socket.on('direct_call_start', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
     const caller = activeUsers.get(socket.id);
     if (!caller) return;
+
+    if (activeDirectCallPairs.has(socket.id)) {
+      return socket.emit('direct_call_declined', { reason: 'Zaten aktif bir görüşmedesiniz.' });
+    }
 
     // Resolve canonical target username from targetUsername, activeUsers, or registeredAccounts
     let resolvedUsername = (targetUsername || '').trim().toLowerCase();
@@ -3571,20 +3647,66 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('direct_call_declined', { reason: 'Bu kullanıcıya şu anda ulaşılamıyor.' });
     }
 
-    if (targetSocketIds.length > 0) {
-      const targetKey = resolvedUsername || (targetUserId || '').toLowerCase();
-      if (targetKey) {
-        pendingDirectCalls.set(targetKey, {
-          callerSocketId: socket.id,
-          callerUserId: caller.id,
-          callerUsername: caller.username.toLowerCase(),
+    if (targetSocketIds.length === 0) {
+      return socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
+    }
+
+    const targetKey = resolvedUsername || (targetUserId || '').toLowerCase();
+    const targetUsers = targetSocketIds
+      .map((id) => activeUsers.get(id))
+      .filter((u): u is User => Boolean(u));
+    const primaryTarget = targetUsers[0];
+
+    const isTargetBusy =
+      targetSocketIds.some((id) => activeDirectCallPairs.has(id)) ||
+      (targetKey ? pendingDirectCalls.has(targetKey) : false);
+    if (isTargetBusy) {
+      persistAndEmitDirectCallLog(caller, primaryTarget, 'busy', 0);
+      return socket.emit('direct_call_declined', {
+        reason: 'Kullanıcı şu anda başka bir görüşmede (meşgul).',
+      });
+    }
+
+    if (targetUsers.length > 0 && targetUsers.every((u) => u.status === 'dnd')) {
+      persistAndEmitDirectCallLog(caller, primaryTarget, 'dnd', 0);
+      return socket.emit('direct_call_declined', {
+        reason: 'Kullanıcı Rahatsız Etme (DND) modunda.',
+      });
+    }
+
+    if (targetKey) {
+      clearPendingDirectCallTimer(targetKey);
+      pendingDirectCalls.set(targetKey, {
+        callerSocketId: socket.id,
+        callerUserId: caller.id,
+        callerUsername: caller.username.toLowerCase(),
+        targetUserId: primaryTarget?.id,
+        targetUsername: primaryTarget?.username,
+      });
+
+      const timer = setTimeout(() => {
+        pendingDirectCallTimers.delete(targetKey);
+        const stillPending = pendingDirectCalls.get(targetKey);
+        if (!stillPending || stillPending.callerSocketId !== socket.id) return;
+        pendingDirectCalls.delete(targetKey);
+
+        const callerNow = activeUsers.get(stillPending.callerSocketId);
+        const targetNow = stillPending.targetUserId ? activeUsers.get(stillPending.targetUserId) : undefined;
+        io.to(stillPending.callerSocketId).emit('direct_call_declined', {
+          reason: 'Arama yanıtlanmadı (zaman aşımı).',
         });
-      }
-      for (const sId of targetSocketIds) {
-        io.to(sId).emit('direct_call_incoming', { callerUser: caller });
-      }
-    } else {
-      socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
+        for (const [sId, u] of activeUsers.entries()) {
+          if (u.username.toLowerCase() === targetKey) {
+            io.to(sId).emit('direct_call_handled');
+          }
+        }
+        persistAndEmitDirectCallLog(callerNow, targetNow, 'timeout', 0);
+      }, 40_000);
+      pendingDirectCallTimers.set(targetKey, timer);
+    }
+
+    for (const sId of targetSocketIds) {
+      io.to(sId).emit('direct_call_incoming', { callerUser: caller });
     }
   });
 
@@ -3592,8 +3714,10 @@ io.on('connection', (socket: Socket) => {
     const acceptor = activeUsers.get(socket.id);
     if (!acceptor) return;
 
-    const pending = pendingDirectCalls.get(acceptor.username.toLowerCase());
-    pendingDirectCalls.delete(acceptor.username.toLowerCase());
+    const acceptorKey = acceptor.username.toLowerCase();
+    clearPendingDirectCallTimer(acceptorKey);
+    const pending = pendingDirectCalls.get(acceptorKey);
+    pendingDirectCalls.delete(acceptorKey);
 
     const targetName = (callerUsername || '').trim().toLowerCase();
     let callerSocketId: string | null = null;
@@ -3623,31 +3747,64 @@ io.on('connection', (socket: Socket) => {
 
     // Dismiss incoming ring on any other open sessions of the acceptor
     for (const [sId, u] of activeUsers.entries()) {
-      if (sId !== socket.id && u.username.toLowerCase() === acceptor.username.toLowerCase()) {
+      if (sId !== socket.id && u.username.toLowerCase() === acceptorKey) {
         io.to(sId).emit('direct_call_handled');
       }
     }
   });
 
-  socket.on('direct_call_decline', ({ callerUserId, callerUsername }: { callerUserId?: string; callerUsername?: string }) => {
+  socket.on('direct_call_decline', ({ callerUserId, callerUsername, replyMessage }: { callerUserId?: string; callerUsername?: string; replyMessage?: string }) => {
     const decliner = activeUsers.get(socket.id);
-    const pending = decliner ? pendingDirectCalls.get(decliner.username.toLowerCase()) : undefined;
-    if (decliner) {
-      pendingDirectCalls.delete(decliner.username.toLowerCase());
+    const declinerKey = decliner?.username.toLowerCase() || '';
+    if (declinerKey) {
+      clearPendingDirectCallTimer(declinerKey);
     }
+    const pending = declinerKey ? pendingDirectCalls.get(declinerKey) : undefined;
+    if (declinerKey) {
+      pendingDirectCalls.delete(declinerKey);
+    }
+
     const paired = activeDirectCallPairs.get(socket.id);
     if (paired) {
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
     }
+
+    const cleanReply = typeof replyMessage === 'string' && replyMessage.trim()
+      ? sanitizeText(replyMessage.trim()).slice(0, 240)
+      : '';
+    const declinedReason = cleanReply
+      ? `Arama reddedildi: "${cleanReply}"`
+      : 'Arama reddedildi.';
+
     if (pending && activeUsers.has(pending.callerSocketId)) {
+      const callerUser = activeUsers.get(pending.callerSocketId);
       activeDirectCallPairs.delete(pending.callerSocketId);
       activeDirectCallStartTimes.delete(pending.callerSocketId);
       activeDirectCallStartTimes.delete(socket.id);
-      io.to(pending.callerSocketId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
-      if (decliner) {
-        io.to(pending.callerSocketId).emit('direct_call_log', { peerUsername: decliner.username, status: 'missed', durationSeconds: 0 });
-        socket.emit('direct_call_log', { peerUsername: pending.callerUsername, status: 'missed', durationSeconds: 0 });
+      io.to(pending.callerSocketId).emit('direct_call_declined', { reason: declinedReason });
+
+      if (decliner && callerUser) {
+        if (cleanReply) {
+          const dmChannelId = `dm-${[callerUser.id, decliner.id].sort().join('-')}`;
+          const quickDm: Message = {
+            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            serverId: 'direct-messages',
+            channelId: dmChannelId,
+            author: { id: decliner.id, username: decliner.username, avatar: decliner.avatar },
+            content: cleanReply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            reactions: {},
+            isPinned: false,
+          };
+          if (!messages[dmChannelId]) messages[dmChannelId] = [];
+          messages[dmChannelId].push(quickDm);
+          saveChannelMessages(dmChannelId, messages[dmChannelId]);
+          indexChannelMessage(dmChannelId, quickDm);
+          io.to(pending.callerSocketId).emit('new_message', quickDm);
+          socket.emit('new_message', quickDm);
+        }
+        persistAndEmitDirectCallLog(callerUser, decliner, 'declined', 0, cleanReply || undefined);
       }
     } else {
       const targetName = (callerUsername || '').trim().toLowerCase();
@@ -3658,13 +3815,17 @@ io.on('connection', (socket: Socket) => {
           (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
         ) {
           activeDirectCallPairs.delete(sId);
-          io.to(sId).emit('direct_call_declined', { reason: 'Arama reddedildi.' });
+          io.to(sId).emit('direct_call_declined', { reason: declinedReason });
+          if (decliner) {
+            persistAndEmitDirectCallLog(u, decliner, 'declined', 0, cleanReply || undefined);
+          }
         }
       }
     }
-    if (decliner) {
+
+    if (declinerKey) {
       for (const [sId, u] of activeUsers.entries()) {
-        if (sId !== socket.id && u.username.toLowerCase() === decliner.username.toLowerCase()) {
+        if (sId !== socket.id && u.username.toLowerCase() === declinerKey) {
           io.to(sId).emit('direct_call_handled');
         }
       }
@@ -3678,19 +3839,31 @@ io.on('connection', (socket: Socket) => {
     const durationSeconds = startedAt ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
     activeDirectCallStartTimes.delete(socket.id);
 
+    const endedAssist = remoteAssistManager.endSessionForSocket(socket.id);
+
     if (paired) {
       const partner = activeUsers.get(paired);
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
       activeDirectCallStartTimes.delete(paired);
+      if (endedAssist) {
+        io.to(paired).emit('remote_assist_stopped', { stoppedBy: ender?.username || 'Karşı taraf' });
+      }
       io.to(paired).emit('direct_call_ended');
       if (ender && partner) {
-        io.to(paired).emit('direct_call_log', { peerUsername: ender.username, status: 'ended', durationSeconds });
-        socket.emit('direct_call_log', { peerUsername: partner.username, status: 'ended', durationSeconds });
+        persistAndEmitDirectCallLog(ender, partner, 'ended', durationSeconds);
       }
-    } else if (ender && targetUsername) {
-      socket.emit('direct_call_log', { peerUsername: targetUsername, status: 'missed', durationSeconds: 0 });
+    } else if (targetUsername) {
+      const targetKey = targetUsername.trim().toLowerCase();
+      const pending = pendingDirectCalls.get(targetKey);
+      if (pending && pending.callerSocketId === socket.id) {
+        clearPendingDirectCallTimer(targetKey);
+        pendingDirectCalls.delete(targetKey);
+        const targetUser = pending.targetUserId ? activeUsers.get(pending.targetUserId) : undefined;
+        persistAndEmitDirectCallLog(ender, targetUser, 'missed', 0);
+      }
     }
+
     const targetName = (targetUsername || '').trim().toLowerCase();
     for (const [sId, u] of activeUsers.entries()) {
       if (
@@ -3702,36 +3875,106 @@ io.on('connection', (socket: Socket) => {
         activeDirectCallPairs.delete(sId);
         activeDirectCallStartTimes.delete(sId);
         io.to(sId).emit('direct_call_ended');
-        if (!paired && ender) {
-          io.to(sId).emit('direct_call_log', { peerUsername: ender.username, status: 'missed', durationSeconds: 0 });
-        }
       }
     }
   });
 
-  // 1-on-1 Remote Assistance (TeamViewer-style) Relay — strictly scoped to activeDirectCallPairs
-  socket.on('remote_assist_request', () => {
+  // 1-on-1 Remote Assistance (TeamViewer/AnyDesk-style) Relay — server-authorized & rate-limited
+  socket.on('remote_assist_request', (payload?: { permissions?: Partial<RemoteAssistPermissions> }) => {
     const caller = activeUsers.get(socket.id);
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
     if (!caller || !pairedSocketId) return;
+    const requestedPerms = normalizeRemoteAssistPermissions(payload?.permissions);
     io.to(pairedSocketId).emit('remote_assist_incoming_request', {
       fromUserId: socket.id,
-      fromUsername: caller.username
+      fromUsername: caller.username,
+      permissions: requestedPerms,
     });
   });
 
-  socket.on('remote_assist_response', ({ accepted, hostDesktopCapable }: { accepted: boolean; hostDesktopCapable?: boolean }) => {
+  socket.on('remote_assist_response', (payload: {
+    accepted: boolean;
+    hostDesktopCapable?: boolean;
+    permissions?: Partial<RemoteAssistPermissions>;
+    monitors?: Array<{ index: number; name: string; x: number; y: number; width: number; height: number; is_primary: boolean }>;
+  }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId || !payload) return;
+    const accepted = Boolean(payload.accepted);
+    if (!accepted) {
+      remoteAssistManager.endSessionForSocket(socket.id);
+      io.to(pairedSocketId).emit('remote_assist_response', {
+        accepted: false,
+        hostDesktopCapable: false,
+      });
+      return;
+    }
+
+    const perms = normalizeRemoteAssistPermissions(payload.permissions);
+    const session = remoteAssistManager.startSession(
+      pairedSocketId,
+      socket.id,
+      Boolean(payload.hostDesktopCapable),
+      perms
+    );
+    const safeMonitors = Array.isArray(payload.monitors)
+      ? payload.monitors.slice(0, 8).map((m, idx) => ({
+          index: typeof m.index === 'number' ? m.index : idx,
+          name: typeof m.name === 'string' ? m.name.slice(0, 64) : `Monitör ${idx + 1}`,
+          x: Number.isFinite(m.x) ? Math.round(m.x) : 0,
+          y: Number.isFinite(m.y) ? Math.round(m.y) : 0,
+          width: Number.isFinite(m.width) && m.width > 0 ? Math.round(m.width) : 1920,
+          height: Number.isFinite(m.height) && m.height > 0 ? Math.round(m.height) : 1080,
+          is_primary: Boolean(m.is_primary),
+        }))
+      : [];
+
+    io.to(pairedSocketId).emit('remote_assist_response', {
+      accepted: true,
+      hostDesktopCapable: session.hostDesktopCapable,
+      permissions: session.permissions,
+      monitors: safeMonitors,
+    });
+  });
+
+  socket.on('remote_assist_pause', ({ paused }: { paused: boolean }) => {
+    const actor = activeUsers.get(socket.id);
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
     if (!pairedSocketId) return;
-    io.to(pairedSocketId).emit('remote_assist_response', {
-      accepted: Boolean(accepted),
-      hostDesktopCapable: Boolean(hostDesktopCapable)
+    const session = remoteAssistManager.setPaused(socket.id, Boolean(paused));
+    if (!session) return;
+    const msg = {
+      paused: session.paused,
+      byUsername: actor?.username || 'Kullanıcı',
+    };
+    io.to(pairedSocketId).emit('remote_assist_pause_state', msg);
+    socket.emit('remote_assist_pause_state', msg);
+  });
+
+  socket.on('remote_assist_update_permissions', ({ permissions }: { permissions: Partial<RemoteAssistPermissions> }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId || !permissions) return;
+    const updated = remoteAssistManager.updatePermissions(socket.id, permissions);
+    if (!updated) return;
+    io.to(pairedSocketId).emit('remote_assist_permissions_updated', {
+      permissions: updated.permissions,
+    });
+  });
+
+  socket.on('remote_assist_select_monitor', ({ monitorIndex }: { monitorIndex: number | null }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId) return;
+    const session = remoteAssistManager.getSessionForSocket(socket.id);
+    if (!session) return;
+    io.to(pairedSocketId).emit('remote_assist_monitor_selected', {
+      monitorIndex: typeof monitorIndex === 'number' && Number.isFinite(monitorIndex) ? Math.max(0, Math.min(7, Math.floor(monitorIndex))) : null,
     });
   });
 
   socket.on('remote_assist_stop', () => {
     const user = activeUsers.get(socket.id);
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    remoteAssistManager.endSessionForSocket(socket.id);
     if (!pairedSocketId) return;
     io.to(pairedSocketId).emit('remote_assist_stopped', {
       stoppedBy: user?.username || 'Karşı taraf'
@@ -3743,18 +3986,67 @@ io.on('connection', (socket: Socket) => {
     x?: number;
     y?: number;
     button?: number;
+    delta_x?: number;
     delta_y?: number;
     key?: string;
     code?: string;
+    text?: string;
+    ctrl?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+    monitor_x?: number;
+    monitor_y?: number;
+    monitor_w?: number;
+    monitor_h?: number;
   }) => {
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
     if (!pairedSocketId || !payload || typeof payload.kind !== 'string') return;
-    io.to(pairedSocketId).emit('remote_assist_input', payload);
+    if (!['move', 'mousedown', 'mouseup', 'wheel', 'keydown', 'keyup', 'text'].includes(payload.kind)) return;
+    if (!remoteAssistManager.canSendInput(socket.id, pairedSocketId)) return;
+    if (!remoteAssistManager.allowInput(socket.id, payload.kind, Date.now())) return;
+
+    const cleanPayload: Record<string, unknown> = { kind: payload.kind };
+    if (typeof payload.x === 'number' && Number.isFinite(payload.x)) {
+      cleanPayload.x = Math.min(1, Math.max(0, payload.x));
+    }
+    if (typeof payload.y === 'number' && Number.isFinite(payload.y)) {
+      cleanPayload.y = Math.min(1, Math.max(0, payload.y));
+    }
+    if (typeof payload.button === 'number' && Number.isFinite(payload.button)) {
+      cleanPayload.button = Math.min(2, Math.max(0, Math.round(payload.button)));
+    }
+    if (typeof payload.delta_x === 'number' && Number.isFinite(payload.delta_x)) {
+      cleanPayload.delta_x = Math.min(2000, Math.max(-2000, payload.delta_x));
+    }
+    if (typeof payload.delta_y === 'number' && Number.isFinite(payload.delta_y)) {
+      cleanPayload.delta_y = Math.min(2000, Math.max(-2000, payload.delta_y));
+    }
+    if (typeof payload.key === 'string') cleanPayload.key = payload.key.slice(0, 64);
+    if (typeof payload.code === 'string') cleanPayload.code = payload.code.slice(0, 64);
+    if (typeof payload.text === 'string') cleanPayload.text = payload.text.slice(0, 512);
+    if (payload.ctrl !== undefined) cleanPayload.ctrl = Boolean(payload.ctrl);
+    if (payload.alt !== undefined) cleanPayload.alt = Boolean(payload.alt);
+    if (payload.shift !== undefined) cleanPayload.shift = Boolean(payload.shift);
+    if (payload.meta !== undefined) cleanPayload.meta = Boolean(payload.meta);
+    if (typeof payload.monitor_x === 'number' && Number.isFinite(payload.monitor_x)) cleanPayload.monitor_x = Math.round(payload.monitor_x);
+    if (typeof payload.monitor_y === 'number' && Number.isFinite(payload.monitor_y)) cleanPayload.monitor_y = Math.round(payload.monitor_y);
+    if (typeof payload.monitor_w === 'number' && Number.isFinite(payload.monitor_w)) cleanPayload.monitor_w = Math.round(payload.monitor_w);
+    if (typeof payload.monitor_h === 'number' && Number.isFinite(payload.monitor_h)) cleanPayload.monitor_h = Math.round(payload.monitor_h);
+
+    io.to(pairedSocketId).emit('remote_assist_input', cleanPayload);
   });
 
   socket.on('direct_screen_share_state', ({ isSharing }: { isSharing: boolean }) => {
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
     if (!pairedSocketId) return;
+    if (!isSharing) {
+      const activeSess = remoteAssistManager.getSessionByHost(socket.id);
+      if (activeSess) {
+        remoteAssistManager.endSessionForSocket(socket.id);
+        io.to(pairedSocketId).emit('remote_assist_stopped', { stoppedBy: 'Ekran paylaşımı durduruldu' });
+      }
+    }
     io.to(pairedSocketId).emit('direct_screen_share_state', {
       userId: socket.id,
       isSharing: Boolean(isSharing)
@@ -3770,24 +4062,93 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
+  socket.on('direct_media_meta', ({ trackId, kind, active }: { trackId: string; kind: 'screen' | 'camera'; active: boolean }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId || typeof trackId !== 'string') return;
+    if (kind !== 'screen' && kind !== 'camera') return;
+    io.to(pairedSocketId).emit('direct_media_meta', {
+      userId: socket.id,
+      trackId: trackId.slice(0, 128),
+      kind,
+      active: Boolean(active),
+    });
+  });
+
   socket.on('remote_assist_clipboard', ({ text }: { text: string }) => {
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
     const sender = activeUsers.get(socket.id);
     if (!pairedSocketId || typeof text !== 'string' || !text.trim()) return;
+    if (!remoteAssistManager.canShareClipboard(socket.id, pairedSocketId)) return;
     io.to(pairedSocketId).emit('remote_assist_clipboard', {
       fromUsername: sender?.username || 'Kullanıcı',
       text: text.slice(0, 8000),
     });
   });
 
+  socket.on('remote_assist_clipboard_pull', () => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    const requester = activeUsers.get(socket.id);
+    if (!pairedSocketId || !requester) return;
+    if (!remoteAssistManager.canShareClipboard(socket.id, pairedSocketId)) return;
+    io.to(pairedSocketId).emit('remote_assist_clipboard_pull_request', {
+      fromUsername: requester.username,
+    });
+  });
+
   socket.on('remote_assist_laser', (payload: { x: number; y: number; active: boolean }) => {
     const pairedSocketId = activeDirectCallPairs.get(socket.id);
     if (!pairedSocketId || !payload) return;
+    const sess = remoteAssistManager.getSessionForSocket(socket.id);
+    if (sess && sess.controllerSocketId === socket.id && !sess.permissions.annotate) return;
     io.to(pairedSocketId).emit('remote_assist_laser', {
-      x: Number(payload.x) || 0,
-      y: Number(payload.y) || 0,
+      x: Math.min(1, Math.max(0, Number(payload.x) || 0)),
+      y: Math.min(1, Math.max(0, Number(payload.y) || 0)),
       active: Boolean(payload.active),
     });
+  });
+
+  socket.on('remote_assist_annotation', (payload: {
+    action: 'stroke' | 'clear';
+    stroke?: {
+      id: string;
+      tool: 'pen' | 'arrow' | 'rect';
+      color: string;
+      points: Array<{ x: number; y: number }>;
+    };
+  }) => {
+    const pairedSocketId = activeDirectCallPairs.get(socket.id);
+    if (!pairedSocketId || !payload) return;
+    const sess = remoteAssistManager.getSessionForSocket(socket.id);
+    if (sess && sess.controllerSocketId === socket.id && !sess.permissions.annotate) return;
+
+    if (payload.action === 'clear') {
+      io.to(pairedSocketId).emit('remote_assist_annotation', { action: 'clear' });
+      return;
+    }
+
+    if (payload.action === 'stroke' && payload.stroke && Array.isArray(payload.stroke.points)) {
+      const allowedTools = new Set(['pen', 'arrow', 'rect']);
+      const tool = allowedTools.has(payload.stroke.tool) ? payload.stroke.tool : 'pen';
+      const safeColor = /^#[0-9a-fA-F]{6}$/.test(String(payload.stroke.color || ''))
+        ? payload.stroke.color
+        : '#f43f5e';
+      const safePoints = payload.stroke.points.slice(0, 120).map((p) => ({
+        x: Math.min(1, Math.max(0, Number(p.x) || 0)),
+        y: Math.min(1, Math.max(0, Number(p.y) || 0)),
+      }));
+      if (safePoints.length === 0) return;
+
+      io.to(pairedSocketId).emit('remote_assist_annotation', {
+        action: 'stroke',
+        stroke: {
+          id: String(payload.stroke.id || `ann-${Date.now()}`).slice(0, 64),
+          tool,
+          color: safeColor,
+          points: safePoints,
+          createdAt: Date.now(),
+        },
+      });
+    }
   });
 
   // Friends System Events
@@ -6727,16 +7088,43 @@ io.on('connection', (socket: Socket) => {
 
   // Disconnect
   socket.on('disconnect', () => {
-    // Clean up active direct calls & rate limits
+    // Clean up active direct calls, pending ring timers, remote assist sessions & rate limits
+    const user = activeUsers.get(socket.id);
     const paired = activeDirectCallPairs.get(socket.id);
+    const startedAt = activeDirectCallStartTimes.get(socket.id) || (paired ? activeDirectCallStartTimes.get(paired) : undefined);
+    const durationSeconds = startedAt ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
+    const endedAssist = remoteAssistManager.endSessionForSocket(socket.id);
+
     if (paired) {
+      const partner = activeUsers.get(paired);
       activeDirectCallPairs.delete(paired);
       activeDirectCallPairs.delete(socket.id);
+      activeDirectCallStartTimes.delete(socket.id);
+      activeDirectCallStartTimes.delete(paired);
+      if (endedAssist) {
+        io.to(paired).emit('remote_assist_stopped', { stoppedBy: user?.username || 'Bağlantı kesildi' });
+      }
+      io.to(paired).emit('direct_call_ended');
+      if (user && partner) {
+        persistAndEmitDirectCallLog(user, partner, 'ended', durationSeconds);
+      }
     }
+
+    for (const [targetKey, pending] of Array.from(pendingDirectCalls.entries())) {
+      if (pending.callerSocketId === socket.id) {
+        clearPendingDirectCallTimer(targetKey);
+        pendingDirectCalls.delete(targetKey);
+        for (const [sId, u] of activeUsers.entries()) {
+          if (u.username.toLowerCase() === targetKey) {
+            io.to(sId).emit('direct_call_handled');
+          }
+        }
+      }
+    }
+
     messageRateLimits.delete(socket.id);
 
     recordUserDisconnection(socket.id);
-    const user = activeUsers.get(socket.id);
     if (user) {
       if (user.currentVoiceChannelId) {
         socket.to(user.currentVoiceChannelId).emit('user_left_voice', {

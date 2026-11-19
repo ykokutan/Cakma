@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
+import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -12,6 +12,8 @@ import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, s
 import { parseDeepLinkUrl } from '../utils/deepLink';
 import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
 import { authFetch } from '../utils/authFetch';
+import { getDirectScreenShareConstraints, pruneExpiredAnnotations } from '../utils/remoteAssistHelpers';
+import { compressImageToWebP } from '../utils/imageCompress';
 
 export interface UserAudioEq {
   bass: number;
@@ -66,6 +68,8 @@ interface SocketContextType {
   isScreenSharing: boolean;
   screenStream: MediaStream | null;
   remoteScreenStreams: Map<string, MediaStream>;
+  remoteCameraStreams: Map<string, MediaStream>;
+  localDirectCameraStream: MediaStream | null;
   inputMode: 'vad' | 'ptt';
   pttKey: string;
   isPttActive: boolean;
@@ -86,9 +90,12 @@ interface SocketContextType {
   openDirectMessage: (user: User) => void;
   closeDirectMessage: () => void;
   directCall: DirectCallState | null;
+  directCallQuality: DirectCallQualityStats | null;
+  directCallToasts: DirectCallToast[];
+  dismissDirectCallToast: (id: string) => void;
   startDirectCall: (targetUser: User) => void;
   acceptDirectCall: () => void;
-  declineDirectCall: () => void;
+  declineDirectCall: (replyMessage?: string) => void;
   endDirectCall: () => void;
   isDirectScreenSharing: boolean;
   partnerDirectScreenSharing: boolean;
@@ -96,30 +103,44 @@ interface SocketContextType {
   partnerDirectCameraOn: boolean;
   toggleDirectCamera: () => Promise<void>;
   unreadDMByUser: Record<string, number>;
-  remoteAssist: {
-    status: 'idle' | 'requesting' | 'incoming_request' | 'controlling' | 'being_controlled';
-    hostDesktopCapable: boolean;
-    requesterName?: string;
-    remoteCursor: { x: number; y: number; clicking?: boolean } | null;
-  };
-  startDirectScreenShare: () => Promise<void>;
+  remoteAssist: RemoteAssistState;
+  startDirectScreenShare: (options?: Partial<DirectScreenShareOptions>) => Promise<void>;
   stopDirectScreenShare: () => void;
-  requestRemoteAssist: () => void;
-  respondRemoteAssist: (accepted: boolean) => void;
+  requestRemoteAssist: (permissions?: RemoteAssistPermissions) => void;
+  respondRemoteAssist: (accepted: boolean, permissions?: RemoteAssistPermissions) => void;
   stopRemoteAssist: () => void;
+  pauseRemoteAssist: (paused: boolean) => void;
+  updateRemoteAssistPermissions: (permissions: Partial<RemoteAssistPermissions>) => void;
+  selectRemoteMonitor: (monitorIndex: number | null) => void;
   sendRemoteInput: (payload: {
-    kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup';
+    kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup' | 'text';
     x?: number;
     y?: number;
     button?: number;
+    delta_x?: number;
     delta_y?: number;
     key?: string;
     code?: string;
+    text?: string;
+    ctrl?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+    monitor_x?: number;
+    monitor_y?: number;
+    monitor_w?: number;
+    monitor_h?: number;
   }) => void;
   sendRemoteClipboard: (text: string) => void;
+  pullRemoteClipboard: () => void;
   lastClipboardNotice: string | null;
   remoteLaser: { x: number; y: number; active: boolean } | null;
   sendRemoteLaser: (x: number, y: number, active: boolean) => void;
+  remoteAnnotations: RemoteAssistAnnotationStroke[];
+  sendRemoteAnnotation: (stroke: RemoteAssistAnnotationStroke) => void;
+  clearRemoteAnnotations: () => void;
+  sendFileToDirectPartner: (file: File) => Promise<void>;
+  sendScreenshotToDirectPartner: (dataUrl: string) => void;
   updateProfileDetails: (details: {
     statusMessage?: string;
     bio?: string;
@@ -1144,6 +1165,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     onlineUsersRef.current = onlineUsers;
   }, [onlineUsers]);
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
+  const connectedVoiceChannelIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    connectedVoiceChannelIdRef.current = connectedVoiceChannelId;
+  }, [connectedVoiceChannelId]);
   const [voicePullInvite, setVoicePullInvite] = useState<{
     requestId: string;
     fromUserId: string;
@@ -1193,6 +1218,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [remoteCameraStreams, setRemoteCameraStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [localDirectCameraStream, setLocalDirectCameraStream] = useState<MediaStream | null>(null);
   const [inputMode, setInputModeState] = useState<'vad' | 'ptt'>(() => {
     return (typeof window !== 'undefined' && (localStorage.getItem('dsp_inputMode') as 'vad' | 'ptt')) || 'vad';
   });
@@ -1308,30 +1335,430 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [directCall, setDirectCall] = useState<DirectCallState | null>(null);
   const directCallRef = useRef<DirectCallState | null>(null);
   const directCallTimerRef = useRef<any>(null);
+  const [directCallQuality, setDirectCallQuality] = useState<DirectCallQualityStats | null>(null);
+  const [directCallToasts, setDirectCallToasts] = useState<DirectCallToast[]>([]);
   const [isDirectScreenSharing, setIsDirectScreenSharing] = useState(false);
   const [partnerDirectScreenSharing, setPartnerDirectScreenSharing] = useState(false);
+  const partnerDirectScreenSharingRef = useRef(false);
+  useEffect(() => {
+    partnerDirectScreenSharingRef.current = partnerDirectScreenSharing;
+  }, [partnerDirectScreenSharing]);
   const [isDirectCameraOn, setIsDirectCameraOn] = useState(false);
   const [partnerDirectCameraOn, setPartnerDirectCameraOn] = useState(false);
+  const partnerDirectCameraOnRef = useRef(false);
+  useEffect(() => {
+    partnerDirectCameraOnRef.current = partnerDirectCameraOn;
+  }, [partnerDirectCameraOn]);
   const [unreadDMByUser, setUnreadDMByUser] = useState<Record<string, number>>({});
   const [lastClipboardNotice, setLastClipboardNotice] = useState<string | null>(null);
   const [remoteLaser, setRemoteLaser] = useState<{ x: number; y: number; active: boolean } | null>(null);
+  const [remoteAnnotations, setRemoteAnnotations] = useState<RemoteAssistAnnotationStroke[]>([]);
   const iceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   const directScreenStreamRef = useRef<MediaStream | null>(null);
   const directCameraStreamRef = useRef<MediaStream | null>(null);
-  const [remoteAssist, setRemoteAssist] = useState<{
-    status: 'idle' | 'requesting' | 'incoming_request' | 'controlling' | 'being_controlled';
-    hostDesktopCapable: boolean;
-    requesterName?: string;
-    remoteCursor: { x: number; y: number; clicking?: boolean } | null;
-  }>({
+  const directMediaTrackKindsRef = useRef<Map<string, 'screen' | 'camera'>>(new Map());
+  const receivedRemoteVideoTracksRef = useRef<
+    Map<string, { peerId: string; track: MediaStreamTrack; stream: MediaStream }>
+  >(new Map());
+  const screenAudioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const remoteDataChannelsRef = useRef<
+    Map<string, { control?: RTCDataChannel; move?: RTCDataChannel }>
+  >(new Map());
+  const directStatsPrevRef = useRef<{ timestamp: number; bytes: number } | null>(null);
+
+  const DEFAULT_REMOTE_ASSIST_STATE: RemoteAssistState = {
     status: 'idle',
     hostDesktopCapable: false,
     remoteCursor: null,
-  });
+    permissions: { control: true, clipboard: true, annotate: true },
+    paused: false,
+    hostMonitors: [],
+    selectedMonitorIndex: null,
+    inputTransport: 'socket',
+  };
+  const [remoteAssist, setRemoteAssist] = useState<RemoteAssistState>(DEFAULT_REMOTE_ASSIST_STATE);
   const remoteAssistRef = useRef(remoteAssist);
   useEffect(() => {
     remoteAssistRef.current = remoteAssist;
   }, [remoteAssist]);
+
+  const dismissDirectCallToast = useCallback((id: string) => {
+    setDirectCallToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const pushDirectCallToast = useCallback(
+    (message: string, variant: DirectCallToast['variant'] = 'info') => {
+      const id = `dct-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setDirectCallToasts((prev) => [...prev.slice(-3), { id, message, variant }]);
+      window.setTimeout(() => {
+        setDirectCallToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 4200);
+    },
+    []
+  );
+
+  const isTauriDesktopEnv = () =>
+    typeof window !== 'undefined' &&
+    ('__TAURI_INTERNALS__' in window ||
+      window.location.hostname === 'tauri.localhost' ||
+      window.location.protocol === 'tauri:');
+
+  const getTauriInvoke = async () => {
+    if (!tauriInvokeRef.current) {
+      const mod = await import('@tauri-apps/api/core');
+      tauriInvokeRef.current = mod.invoke as (
+        cmd: string,
+        args?: Record<string, unknown>
+      ) => Promise<unknown>;
+    }
+    return tauriInvokeRef.current;
+  };
+
+  const syncTauriRemoteAssistHost = async (opts: {
+    active: boolean;
+    controllerName?: string;
+    paused?: boolean;
+    monitor?: RemoteMonitorInfo | null;
+  }) => {
+    if (!isTauriDesktopEnv()) return;
+    try {
+      const invoke = await getTauriInvoke();
+      await invoke('set_remote_assist_killswitch', { active: opts.active && !opts.paused });
+      await invoke('set_remote_assist_host_hud', {
+        active: opts.active,
+        controllerName: opts.controllerName,
+        paused: Boolean(opts.paused),
+        monitorX: opts.monitor?.x,
+        monitorY: opts.monitor?.y,
+        monitorW: opts.monitor?.width,
+        monitorH: opts.monitor?.height,
+      });
+    } catch {
+      // Ignore Tauri HUD failures on unsupported targets
+    }
+  };
+
+  const forwardOverlayEventToTauri = async (payload: Record<string, unknown>) => {
+    if (!isTauriDesktopEnv()) return;
+    try {
+      const invoke = await getTauriInvoke();
+      await invoke('push_remote_assist_overlay_event', { payload });
+    } catch {}
+  };
+
+  const dispatchIncomingRemoteInput = async (payload: {
+    kind: string;
+    x?: number;
+    y?: number;
+    button?: number;
+    delta_x?: number;
+    delta_y?: number;
+    key?: string;
+    code?: string;
+    text?: string;
+    ctrl?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+    monitor_x?: number;
+    monitor_y?: number;
+    monitor_w?: number;
+    monitor_h?: number;
+  }) => {
+    if (
+      remoteAssistRef.current.status !== 'being_controlled' ||
+      remoteAssistRef.current.paused ||
+      !remoteAssistRef.current.permissions.control
+    ) {
+      return;
+    }
+    if (!isTauriDesktopEnv()) return;
+    try {
+      const invoke = await getTauriInvoke();
+      await invoke('simulate_remote_input', { payload });
+    } catch {
+      // Ignore input simulation errors on unsupported platforms
+    }
+  };
+
+  const cleanupDirectCallMedia = (partnerId?: string) => {
+    setIsDirectScreenSharing(false);
+    setPartnerDirectScreenSharing(false);
+    setIsDirectCameraOn(false);
+    setPartnerDirectCameraOn(false);
+    setLocalDirectCameraStream(null);
+    setDirectCallQuality(null);
+    setRemoteLaser(null);
+    setRemoteAnnotations([]);
+    setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
+
+    if (directScreenStreamRef.current) {
+      directScreenStreamRef.current.getTracks().forEach((t) => t.stop());
+      directScreenStreamRef.current = null;
+    }
+    if (directCameraStreamRef.current) {
+      directCameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      directCameraStreamRef.current = null;
+    }
+
+    if (partnerId) {
+      setRemoteScreenStreams((prev) => {
+        if (!prev.has(partnerId)) return prev;
+        const next = new Map(prev);
+        next.delete(partnerId);
+        return next;
+      });
+      setRemoteCameraStreams((prev) => {
+        if (!prev.has(partnerId)) return prev;
+        const next = new Map(prev);
+        next.delete(partnerId);
+        return next;
+      });
+      const channels = remoteDataChannelsRef.current.get(partnerId);
+      if (channels) {
+        try { channels.control?.close(); } catch {}
+        try { channels.move?.close(); } catch {}
+        remoteDataChannelsRef.current.delete(partnerId);
+      }
+      const scrAudio = screenAudioElementsRef.current.get(partnerId);
+      if (scrAudio) {
+        scrAudio.srcObject = null;
+        scrAudio.remove();
+        screenAudioElementsRef.current.delete(partnerId);
+      }
+    } else {
+      setRemoteScreenStreams(new Map());
+      setRemoteCameraStreams(new Map());
+      remoteDataChannelsRef.current.forEach((chs) => {
+        try { chs.control?.close(); } catch {}
+        try { chs.move?.close(); } catch {}
+      });
+      remoteDataChannelsRef.current.clear();
+      screenAudioElementsRef.current.forEach((audio) => {
+        audio.srcObject = null;
+        audio.remove();
+      });
+      screenAudioElementsRef.current.clear();
+    }
+
+    directMediaTrackKindsRef.current.clear();
+    receivedRemoteVideoTracksRef.current.clear();
+    directStatsPrevRef.current = null;
+    void syncTauriRemoteAssistHost({ active: false });
+  };
+
+  const attachIncomingDataChannelHandlers = (peerId: string, dc: RTCDataChannel) => {
+    const existing = remoteDataChannelsRef.current.get(peerId) || {};
+    if (dc.label === 'ra-move') {
+      existing.move = dc;
+    } else if (dc.label === 'ra-control') {
+      existing.control = dc;
+    } else {
+      return;
+    }
+    remoteDataChannelsRef.current.set(peerId, existing);
+
+    const updateTransport = () => {
+      if (directCallRef.current?.partner.id !== peerId) return;
+      const chs = remoteDataChannelsRef.current.get(peerId);
+      const isOpen =
+        chs?.control?.readyState === 'open' || chs?.move?.readyState === 'open';
+      setRemoteAssist((prev) => ({
+        ...prev,
+        inputTransport: isOpen ? 'datachannel' : 'socket',
+      }));
+    };
+
+    dc.onopen = updateTransport;
+    dc.onclose = updateTransport;
+    dc.onerror = updateTransport;
+    dc.onmessage = (ev) => {
+      if (typeof ev.data !== 'string') return;
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg?.type === 'input' && msg.payload) {
+          void dispatchIncomingRemoteInput(msg.payload);
+        } else if (msg?.type === 'laser' && msg.payload) {
+          if (
+            remoteAssistRef.current.status === 'being_controlled' &&
+            !remoteAssistRef.current.permissions.annotate
+          ) {
+            return;
+          }
+          const lp = {
+            x: Math.min(1, Math.max(0, Number(msg.payload.x) || 0)),
+            y: Math.min(1, Math.max(0, Number(msg.payload.y) || 0)),
+            active: Boolean(msg.payload.active),
+          };
+          setRemoteLaser(lp.active ? lp : null);
+          void forwardOverlayEventToTauri({ type: 'laser', ...lp });
+        } else if (msg?.type === 'annotation' && msg.payload) {
+          if (
+            remoteAssistRef.current.status === 'being_controlled' &&
+            !remoteAssistRef.current.permissions.annotate
+          ) {
+            return;
+          }
+          if (msg.payload.action === 'clear') {
+            setRemoteAnnotations([]);
+            void forwardOverlayEventToTauri({ type: 'clear' });
+          } else if (msg.payload.action === 'stroke' && msg.payload.stroke) {
+            const stamped = { ...msg.payload.stroke, createdAt: Date.now() };
+            setRemoteAnnotations((prev) => [...prev.slice(-49), stamped]);
+            void forwardOverlayEventToTauri({ type: 'stroke', stroke: stamped });
+          }
+        }
+      } catch {}
+    };
+    updateTransport();
+  };
+
+  const setupDirectDataChannelsOnPeer = (peerId: string, pc: RTCPeerConnection) => {
+    try {
+      const controlDc = pc.createDataChannel('ra-control', { ordered: true });
+      const moveDc = pc.createDataChannel('ra-move', {
+        ordered: false,
+        maxRetransmits: 0,
+      });
+      attachIncomingDataChannelHandlers(peerId, controlDc);
+      attachIncomingDataChannelHandlers(peerId, moveDc);
+    } catch {}
+  };
+
+  const renegotiateDirectPeerConnection = async (
+    peerId: string,
+    pc: RTCPeerConnection,
+    activeSocket: Socket | null
+  ) => {
+    if (!activeSocket || pc.signalingState === 'closed') return;
+    try {
+      if (pc.signalingState !== 'stable') {
+        await new Promise((res) => window.setTimeout(res, 120));
+        if ((pc.signalingState as RTCSignalingState) !== 'stable') return;
+      }
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      activeSocket.emit('webrtc_signal', {
+        targetUserId: peerId,
+        signal: offer,
+        type: 'offer',
+      });
+    } catch {}
+  };
+
+  // Prune expired live annotations every 800ms
+  useEffect(() => {
+    if (remoteAnnotations.length === 0) return;
+    const timer = window.setInterval(() => {
+      setRemoteAnnotations((prev) => pruneExpiredAnnotations(prev, Date.now(), 4500));
+    }, 800);
+    return () => window.clearInterval(timer);
+  }, [remoteAnnotations.length]);
+
+  // 1-on-1 RTCPeerConnection live telemetry poller (RTT, FPS, Resolution, Bitrate, Loss, Path)
+  useEffect(() => {
+    if (directCall?.status !== 'connected') {
+      setDirectCallQuality(null);
+      directStatsPrevRef.current = null;
+      return;
+    }
+    const partnerId = directCall.partner.id;
+    const poll = async () => {
+      const pc = peerConnectionsRef.current.get(partnerId);
+      if (!pc || pc.connectionState === 'closed') return;
+      try {
+        const report = await pc.getStats();
+        let rttMs = 0;
+        let fps = 0;
+        let width = 0;
+        let height = 0;
+        let totalBytes = 0;
+        let packetsLost = 0;
+        let packetsReceived = 0;
+        let pathType: DirectCallQualityStats['pathType'] = 'unknown';
+
+        const localCandidates = new Map<string, string>();
+        const remoteCandidates = new Map<string, string>();
+        let selectedPairId: string | null = null;
+
+        report.forEach((stat: any) => {
+          if (stat.type === 'local-candidate') {
+            localCandidates.set(stat.id, stat.candidateType || '');
+          } else if (stat.type === 'remote-candidate') {
+            remoteCandidates.set(stat.id, stat.candidateType || '');
+          } else if (stat.type === 'transport' && stat.selectedCandidatePairId) {
+            selectedPairId = stat.selectedCandidatePairId;
+          }
+        });
+
+        report.forEach((stat: any) => {
+          if (
+            stat.type === 'candidate-pair' &&
+            (stat.id === selectedPairId || (stat.nominated && stat.state === 'succeeded'))
+          ) {
+            if (typeof stat.currentRoundTripTime === 'number') {
+              rttMs = Math.round(stat.currentRoundTripTime * 1000);
+            }
+            const lType = localCandidates.get(stat.localCandidateId) || '';
+            const rType = remoteCandidates.get(stat.remoteCandidateId) || '';
+            pathType = lType === 'relay' || rType === 'relay' ? 'relay' : 'p2p';
+          } else if (stat.type === 'inbound-rtp') {
+            if (typeof stat.bytesReceived === 'number') {
+              totalBytes += stat.bytesReceived;
+            }
+            if (typeof stat.packetsLost === 'number') {
+              packetsLost += Math.max(0, stat.packetsLost);
+            }
+            if (typeof stat.packetsReceived === 'number') {
+              packetsReceived += Math.max(0, stat.packetsReceived);
+            }
+            if (stat.kind === 'video') {
+              if (typeof stat.framesPerSecond === 'number' && stat.framesPerSecond > fps) {
+                fps = Math.round(stat.framesPerSecond);
+              }
+              if (typeof stat.frameWidth === 'number' && stat.frameWidth > width) {
+                width = stat.frameWidth;
+              }
+              if (typeof stat.frameHeight === 'number' && stat.frameHeight > height) {
+                height = stat.frameHeight;
+              }
+            }
+          }
+        });
+
+        const now = Date.now();
+        let bitrateKbps = 0;
+        const prev = directStatsPrevRef.current;
+        if (prev && now > prev.timestamp && totalBytes >= prev.bytes) {
+          const dtSec = (now - prev.timestamp) / 1000;
+          bitrateKbps = Math.round(((totalBytes - prev.bytes) * 8) / 1000 / dtSec);
+        }
+        directStatsPrevRef.current = { timestamp: now, bytes: totalBytes };
+
+        const totalPkts = packetsLost + packetsReceived;
+        const packetLossPct =
+          totalPkts > 0 ? Math.round((packetsLost / totalPkts) * 1000) / 10 : 0;
+
+        const chs = remoteDataChannelsRef.current.get(partnerId);
+        const dcOpen =
+          chs?.control?.readyState === 'open' || chs?.move?.readyState === 'open';
+
+        setDirectCallQuality({
+          rttMs,
+          fps,
+          width,
+          height,
+          bitrateKbps,
+          packetLossPct,
+          pathType,
+          inputTransport: dcOpen ? 'datachannel' : 'socket',
+        });
+      } catch {}
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => window.clearInterval(timer);
+  }, [directCall?.status, directCall?.partner.id]);
 
   // Friends System State
   const [friends, setFriends] = useState<FriendUser[]>([]);
@@ -2226,6 +2653,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.remove();
     });
     audioElementsRef.current.clear();
+    screenAudioElementsRef.current.forEach(audio => {
+      audio.srcObject = null;
+      audio.remove();
+    });
+    screenAudioElementsRef.current.clear();
+    remoteDataChannelsRef.current.forEach(chs => {
+      try { chs.control?.close(); } catch {}
+      try { chs.move?.close(); } catch {}
+    });
+    remoteDataChannelsRef.current.clear();
     remoteAudioEqChainsRef.current.forEach((chain) => {
       try {
         chain.source.disconnect();
@@ -2246,6 +2683,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setScreenStream(null);
     setIsScreenSharing(false);
     setRemoteScreenStreams(new Map());
+    setRemoteCameraStreams(new Map());
+    setLocalDirectCameraStream(null);
 
     if (micTestAudioRef.current) {
       micTestAudioRef.current.pause();
@@ -3012,6 +3451,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         next.delete(disconnectedId);
         return next;
       });
+      setRemoteCameraStreams(prev => {
+        if (!prev.has(disconnectedId)) return prev;
+        const next = new Map(prev);
+        next.delete(disconnectedId);
+        return next;
+      });
+      if (screenAudioElementsRef.current.has(disconnectedId)) {
+        screenAudioElementsRef.current.get(disconnectedId)?.remove();
+        screenAudioElementsRef.current.delete(disconnectedId);
+      }
       if (peerConnectionsRef.current.has(disconnectedId)) {
         peerConnectionsRef.current.get(disconnectedId)?.close();
         peerConnectionsRef.current.delete(disconnectedId);
@@ -3321,7 +3770,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    // Direct 1-on-1 Voice Calling Listeners
+    // Direct 1-on-1 Voice Calling Listeners (single deduplicated registration)
     newSocket.on('direct_call_incoming', ({ callerUser }: { callerUser: User }) => {
       setDirectCall({
         partner: callerUser,
@@ -3333,14 +3782,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (currentUserRef.current?.status !== 'dnd') {
         sendDesktopNotification('Gelen 1-e-1 Arama', `${callerUser.username} seni arıyor...`);
       }
-      const isTauri = typeof window !== 'undefined' && (
-        '__TAURI_INTERNALS__' in window ||
-        window.location.hostname === 'tauri.localhost' ||
-        window.location.protocol === 'tauri:'
-      );
-      if (isTauri) {
-        import('@tauri-apps/api/core')
-          .then(({ invoke }) => invoke('request_window_attention'))
+      if (isTauriDesktopEnv()) {
+        getTauriInvoke()
+          .then((invoke) => invoke('request_window_attention'))
           .catch(() => {});
       }
     });
@@ -3358,6 +3802,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (localStream) {
         const pc = createPeerConnection(targetUser.id, localStream, newSocket);
         peerConnectionsRef.current.set(targetUser.id, pc);
+        setupDirectDataChannelsOnPeer(targetUser.id, pc);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         newSocket.emit('webrtc_signal', {
@@ -3369,73 +3814,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('direct_call_declined', ({ reason }: { reason?: string }) => {
-      alert(reason || 'Arama reddedildi.');
+      pushDirectCallToast(reason || 'Arama reddedildi.', 'warning');
+      const partnerId = directCallRef.current?.partner.id;
       setDirectCall(null);
-      setIsDirectScreenSharing(false);
-      setPartnerDirectScreenSharing(false);
-      if (directScreenStreamRef.current) {
-        directScreenStreamRef.current.getTracks().forEach(t => t.stop());
-        directScreenStreamRef.current = null;
-      }
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+      cleanupDirectCallMedia(partnerId);
     });
 
     newSocket.on('direct_call_handled', () => {
+      const partnerId = directCallRef.current?.partner.id;
       setDirectCall(null);
-      setIsDirectScreenSharing(false);
-      setPartnerDirectScreenSharing(false);
-      setIsDirectCameraOn(false);
-      setPartnerDirectCameraOn(false);
-      setRemoteLaser(null);
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
-    });
-
-    newSocket.on('direct_call_log', ({ peerUsername, status, durationSeconds }: { peerUsername: string; status: 'ended' | 'missed'; durationSeconds: number }) => {
-      const me = currentUserRef.current;
-      if (!me || !peerUsername) return;
-      const mins = Math.floor(durationSeconds / 60).toString().padStart(2, '0');
-      const secs = (durationSeconds % 60).toString().padStart(2, '0');
-      const content =
-        status === 'ended'
-          ? `📞 1-e-1 sesli görüşme sonlandı (${mins}:${secs})`
-          : `📵 Cevapsız / reddedilen 1-e-1 arama`;
-      const targetChannelId = activeChannelIdRef.current?.startsWith('dm-')
-        ? activeChannelIdRef.current
-        : `dm-${[me.id, peerUsername].sort().join('-')}`;
-      const logMsg: Message = {
-        id: `call-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        channelId: targetChannelId,
-        serverId: 'direct-messages',
-        author: {
-          id: 'system-call',
-          username: 'Görüşme Kaydı',
-          avatar: '📞',
-        },
-        content,
-        timestamp: new Date().toISOString(),
-      };
-      setMessagesMap(prev => ({
-        ...prev,
-        [targetChannelId]: [...(prev[targetChannelId] || []), logMsg],
-      }));
-    });
-
-    newSocket.on('direct_camera_state', ({ isCameraOn }: { userId: string; isCameraOn: boolean }) => {
-      setPartnerDirectCameraOn(Boolean(isCameraOn));
-    });
-
-    newSocket.on('remote_assist_clipboard', async ({ fromUsername, text }: { fromUsername: string; text: string }) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setLastClipboardNotice(`${fromUsername} panosu kopyalandı`);
-        setTimeout(() => setLastClipboardNotice(null), 3500);
-      } catch {
-        // Ignore clipboard permission failure
-      }
-    });
-
-    newSocket.on('remote_assist_laser', (payload: { x: number; y: number; active: boolean }) => {
-      setRemoteLaser(payload.active ? payload : null);
+      cleanupDirectCallMedia(partnerId);
     });
 
     newSocket.on('direct_call_ended', () => {
@@ -3449,73 +3837,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           audioElementsRef.current.get(partnerId)?.remove();
           audioElementsRef.current.delete(partnerId);
         }
+        setDirectCall(null);
+        cleanupDirectCallMedia(partnerId);
+      } else {
+        setDirectCall(null);
+        cleanupDirectCallMedia();
       }
-      setDirectCall(null);
-      setIsDirectScreenSharing(false);
-      setPartnerDirectScreenSharing(false);
-      if (directScreenStreamRef.current) {
-        directScreenStreamRef.current.getTracks().forEach(t => t.stop());
-        directScreenStreamRef.current = null;
-      }
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
-    });
-
-    newSocket.on('direct_call_handled', () => {
-      setDirectCall(null);
-      setIsDirectScreenSharing(false);
-      setPartnerDirectScreenSharing(false);
-      setIsDirectCameraOn(false);
-      setPartnerDirectCameraOn(false);
-      setRemoteLaser(null);
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
-    });
-
-    newSocket.on('direct_call_log', ({ peerUsername, status, durationSeconds }: { peerUsername: string; status: 'ended' | 'missed'; durationSeconds: number }) => {
-      const me = currentUserRef.current;
-      if (!me || !peerUsername) return;
-      const mins = Math.floor(durationSeconds / 60).toString().padStart(2, '0');
-      const secs = (durationSeconds % 60).toString().padStart(2, '0');
-      const content =
-        status === 'ended'
-          ? `📞 1-e-1 sesli görüşme sonlandı (${mins}:${secs})`
-          : `📵 Cevapsız / reddedilen 1-e-1 arama`;
-      const targetChannelId = activeChannelIdRef.current?.startsWith('dm-')
-        ? activeChannelIdRef.current
-        : `dm-${[me.id, peerUsername].sort().join('-')}`;
-      const logMsg: Message = {
-        id: `call-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        channelId: targetChannelId,
-        serverId: 'direct-messages',
-        author: {
-          id: 'system-call',
-          username: 'Görüşme Kaydı',
-          avatar: '📞',
-        },
-        content,
-        timestamp: new Date().toISOString(),
-      };
-      setMessagesMap(prev => ({
-        ...prev,
-        [targetChannelId]: [...(prev[targetChannelId] || []), logMsg],
-      }));
-    });
-
-    newSocket.on('direct_camera_state', ({ isCameraOn }: { userId: string; isCameraOn: boolean }) => {
-      setPartnerDirectCameraOn(Boolean(isCameraOn));
-    });
-
-    newSocket.on('remote_assist_clipboard', async ({ fromUsername, text }: { fromUsername: string; text: string }) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setLastClipboardNotice(`${fromUsername} panosu kopyalandı`);
-        setTimeout(() => setLastClipboardNotice(null), 3500);
-      } catch {
-        // Ignore clipboard permission failure
-      }
-    });
-
-    newSocket.on('remote_assist_laser', (payload: { x: number; y: number; active: boolean }) => {
-      setRemoteLaser(payload.active ? payload : null);
     });
 
     newSocket.on('direct_screen_share_state', ({ userId, isSharing }: { userId: string; isSharing: boolean }) => {
@@ -3527,62 +3854,252 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           next.delete(userId);
           return next;
         });
-        setRemoteAssist(prev => (prev.status === 'controlling' || prev.status === 'requesting' ? { status: 'idle', hostDesktopCapable: false, remoteCursor: null } : prev));
+        setRemoteAssist(prev =>
+          prev.status === 'controlling' || prev.status === 'requesting'
+            ? DEFAULT_REMOTE_ASSIST_STATE
+            : prev
+        );
       }
     });
 
-    newSocket.on('remote_assist_incoming_request', ({ fromUsername }: { fromUsername: string }) => {
+    newSocket.on('direct_camera_state', ({ userId, isCameraOn }: { userId: string; isCameraOn: boolean }) => {
+      setPartnerDirectCameraOn(Boolean(isCameraOn));
+      if (!isCameraOn) {
+        setRemoteCameraStreams(prev => {
+          if (!prev.has(userId)) return prev;
+          const next = new Map(prev);
+          next.delete(userId);
+          return next;
+        });
+      }
+    });
+
+    newSocket.on('direct_media_meta', ({ userId, trackId, kind, active }: { userId: string; trackId: string; kind: 'screen' | 'camera'; active: boolean }) => {
+      if (active) {
+        directMediaTrackKindsRef.current.set(trackId, kind);
+        const rec = receivedRemoteVideoTracksRef.current.get(trackId);
+        if (rec) {
+          if (kind === 'camera') {
+            setRemoteCameraStreams(prev => {
+              const next = new Map(prev);
+              next.set(rec.peerId, new MediaStream([rec.track]));
+              return next;
+            });
+            setRemoteScreenStreams(prev => {
+              if (!prev.has(rec.peerId)) return prev;
+              const current = prev.get(rec.peerId);
+              if (current?.getVideoTracks().some(t => t.id === trackId)) {
+                const next = new Map(prev);
+                next.delete(rec.peerId);
+                return next;
+              }
+              return prev;
+            });
+          } else {
+            setRemoteScreenStreams(prev => {
+              const next = new Map(prev);
+              next.set(rec.peerId, rec.stream);
+              return next;
+            });
+            setRemoteCameraStreams(prev => {
+              if (!prev.has(rec.peerId)) return prev;
+              const current = prev.get(rec.peerId);
+              if (current?.getVideoTracks().some(t => t.id === trackId)) {
+                const next = new Map(prev);
+                next.delete(rec.peerId);
+                return next;
+              }
+              return prev;
+            });
+          }
+        }
+      } else {
+        directMediaTrackKindsRef.current.delete(trackId);
+        receivedRemoteVideoTracksRef.current.delete(trackId);
+        if (kind === 'camera') {
+          setRemoteCameraStreams(prev => {
+            if (!prev.has(userId)) return prev;
+            const next = new Map(prev);
+            next.delete(userId);
+            return next;
+          });
+        } else {
+          setRemoteScreenStreams(prev => {
+            if (!prev.has(userId)) return prev;
+            const next = new Map(prev);
+            next.delete(userId);
+            return next;
+          });
+        }
+      }
+    });
+
+    newSocket.on('remote_assist_clipboard', async ({ fromUsername, text }: { fromUsername: string; text: string }) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        setLastClipboardNotice(`${fromUsername} panosu kopyalandı`);
+        pushDirectCallToast(`${fromUsername} panosu yerel panonuza kopyalandı.`, 'success');
+        setTimeout(() => setLastClipboardNotice(null), 3500);
+      } catch {
+        pushDirectCallToast(`${fromUsername} pano metni gönderdi ancak tarayıcı pano erişimi kapalı.`, 'warning');
+      }
+    });
+
+    newSocket.on('remote_assist_clipboard_pull_request', async ({ fromUsername }: { fromUsername: string }) => {
+      if (
+        remoteAssistRef.current.status === 'being_controlled' &&
+        !remoteAssistRef.current.permissions.clipboard
+      ) {
+        return;
+      }
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          newSocket.emit('remote_assist_clipboard', { text });
+          setLastClipboardNotice(`Pano ${fromUsername} ile paylaşıldı`);
+          setTimeout(() => setLastClipboardNotice(null), 3000);
+        }
+      } catch {}
+    });
+
+    newSocket.on('remote_assist_laser', (payload: { x: number; y: number; active: boolean }) => {
+      if (
+        remoteAssistRef.current.status === 'being_controlled' &&
+        !remoteAssistRef.current.permissions.annotate
+      ) {
+        return;
+      }
+      setRemoteLaser(payload.active ? payload : null);
+      void forwardOverlayEventToTauri({ type: 'laser', ...payload });
+    });
+
+    newSocket.on('remote_assist_annotation', (payload: { action: 'stroke' | 'clear'; stroke?: RemoteAssistAnnotationStroke }) => {
+      if (
+        remoteAssistRef.current.status === 'being_controlled' &&
+        !remoteAssistRef.current.permissions.annotate
+      ) {
+        return;
+      }
+      if (payload.action === 'clear') {
+        setRemoteAnnotations([]);
+        void forwardOverlayEventToTauri({ type: 'clear' });
+      } else if (payload.action === 'stroke' && payload.stroke) {
+        const stamped: RemoteAssistAnnotationStroke = { ...payload.stroke, createdAt: Date.now() };
+        setRemoteAnnotations(prev => [...prev.slice(-49), stamped]);
+        void forwardOverlayEventToTauri({ type: 'stroke', stroke: stamped });
+      }
+    });
+
+    newSocket.on('remote_assist_incoming_request', ({ fromUsername, permissions }: { fromUsername: string; permissions?: RemoteAssistPermissions }) => {
       setRemoteAssist(prev => ({
         ...prev,
         status: 'incoming_request',
         requesterName: fromUsername,
+        requestedPermissions: permissions || { control: true, clipboard: true, annotate: true },
       }));
     });
 
-    newSocket.on('remote_assist_response', ({ accepted, hostDesktopCapable }: { accepted: boolean; hostDesktopCapable: boolean }) => {
+    newSocket.on('remote_assist_response', ({ accepted, hostDesktopCapable, permissions, monitors }: {
+      accepted: boolean;
+      hostDesktopCapable: boolean;
+      permissions?: RemoteAssistPermissions;
+      monitors?: RemoteMonitorInfo[];
+    }) => {
       if (accepted) {
-        setRemoteAssist({
+        const safeMonitors = Array.isArray(monitors) ? monitors : [];
+        const primary = safeMonitors.find(m => m.is_primary) || safeMonitors[0];
+        setRemoteAssist(prev => ({
+          ...prev,
           status: 'controlling',
           hostDesktopCapable: Boolean(hostDesktopCapable),
           remoteCursor: null,
-        });
+          permissions: permissions || { control: true, clipboard: true, annotate: true },
+          paused: false,
+          hostMonitors: safeMonitors,
+          selectedMonitorIndex: primary ? primary.index : null,
+        }));
       } else {
-        setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
-        alert('Karşı taraf uzaktan kontrol isteğini reddetti.');
+        setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
+        pushDirectCallToast('Karşı taraf uzaktan kontrol isteğini reddetti.', 'warning');
       }
     });
 
-    newSocket.on('remote_assist_stopped', () => {
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    newSocket.on('remote_assist_pause_state', ({ paused, byUsername }: { paused: boolean; byUsername: string }) => {
+      setRemoteAssist(prev => ({ ...prev, paused: Boolean(paused) }));
+      pushDirectCallToast(
+        paused
+          ? `Uzaktan kontrol ${byUsername} tarafından duraklatıldı.`
+          : `Uzaktan kontrol ${byUsername} tarafından devam ettirildi.`,
+        'info'
+      );
+      if (remoteAssistRef.current.status === 'being_controlled') {
+        const cur = remoteAssistRef.current;
+        const mon =
+          cur.hostMonitors.find(m => m.index === cur.selectedMonitorIndex) ||
+          cur.hostMonitors.find(m => m.is_primary) ||
+          cur.hostMonitors[0] ||
+          null;
+        void syncTauriRemoteAssistHost({
+          active: true,
+          controllerName: cur.requesterName || directCallRef.current?.partner.username,
+          paused: Boolean(paused),
+          monitor: mon,
+        });
+      }
     });
 
-    newSocket.on('remote_assist_input', async (payload: {
-      kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup';
+    newSocket.on('remote_assist_permissions_updated', ({ permissions }: { permissions: RemoteAssistPermissions }) => {
+      setRemoteAssist(prev => ({ ...prev, permissions }));
+      pushDirectCallToast('Host uzaktan kontrol izinlerini güncelledi.', 'info');
+    });
+
+    newSocket.on('remote_assist_monitor_selected', ({ monitorIndex }: { monitorIndex: number | null }) => {
+      setRemoteAssist(prev => {
+        const nextMon =
+          prev.hostMonitors.find(m => m.index === monitorIndex) ||
+          prev.hostMonitors.find(m => m.is_primary) ||
+          prev.hostMonitors[0] ||
+          null;
+        if (prev.status === 'being_controlled') {
+          void syncTauriRemoteAssistHost({
+            active: true,
+            controllerName: prev.requesterName || directCallRef.current?.partner.username,
+            paused: prev.paused,
+            monitor: nextMon,
+          });
+        }
+        return { ...prev, selectedMonitorIndex: monitorIndex };
+      });
+    });
+
+    newSocket.on('remote_assist_stopped', ({ stoppedBy }: { stoppedBy?: string } = {}) => {
+      setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
+      void syncTauriRemoteAssistHost({ active: false });
+      if (stoppedBy) {
+        pushDirectCallToast(`Uzaktan yardım sonlandırıldı (${stoppedBy}).`, 'info');
+      }
+    });
+
+    newSocket.on('remote_assist_input', (payload: {
+      kind: string;
       x?: number;
       y?: number;
       button?: number;
+      delta_x?: number;
       delta_y?: number;
       key?: string;
       code?: string;
+      text?: string;
+      ctrl?: boolean;
+      alt?: boolean;
+      shift?: boolean;
+      meta?: boolean;
+      monitor_x?: number;
+      monitor_y?: number;
+      monitor_w?: number;
+      monitor_h?: number;
     }) => {
-      if (remoteAssistRef.current.status !== 'being_controlled') return;
-
-      const isTauri = typeof window !== 'undefined' && (
-        '__TAURI_INTERNALS__' in window ||
-        window.location.hostname === 'tauri.localhost' ||
-        window.location.protocol === 'tauri:'
-      );
-      if (isTauri) {
-        try {
-          if (!tauriInvokeRef.current) {
-            const mod = await import('@tauri-apps/api/core');
-            tauriInvokeRef.current = mod.invoke as (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-          }
-          await tauriInvokeRef.current('simulate_remote_input', { payload });
-        } catch {
-          // Ignore input simulation errors on unsupported platforms
-        }
-      }
+      void dispatchIncomingRemoteInput(payload);
     });
 
     newSocket.on('profile_updated', (updatedUser: User) => {
@@ -3728,26 +4245,94 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     };
 
+    pc.ondatachannel = (event) => {
+      attachIncomingDataChannelHandlers(peerId, event.channel);
+    };
+
     pc.ontrack = (event) => {
       const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
       if (event.track.kind === 'video') {
-        setRemoteScreenStreams(prev => {
-          const next = new Map(prev);
-          next.set(peerId, remoteStream);
-          return next;
+        receivedRemoteVideoTracksRef.current.set(event.track.id, {
+          peerId,
+          track: event.track,
+          stream: remoteStream,
         });
+        const trackKindHint = directMediaTrackKindsRef.current.get(event.track.id);
+        const isDirectPeer = directCallRef.current?.partner.id === peerId;
+        const treatAsCamera =
+          trackKindHint === 'camera' ||
+          (trackKindHint !== 'screen' &&
+            isDirectPeer &&
+            partnerDirectCameraOnRef.current &&
+            !partnerDirectScreenSharingRef.current);
+
+        if (treatAsCamera) {
+          setRemoteCameraStreams(prev => {
+            const next = new Map(prev);
+            next.set(peerId, new MediaStream([event.track]));
+            return next;
+          });
+          event.track.onended = () => {
+            receivedRemoteVideoTracksRef.current.delete(event.track.id);
+            setRemoteCameraStreams(prev => {
+              if (!prev.has(peerId)) return prev;
+              const next = new Map(prev);
+              next.delete(peerId);
+              return next;
+            });
+          };
+        } else {
+          setRemoteScreenStreams(prev => {
+            const next = new Map(prev);
+            next.set(peerId, remoteStream);
+            return next;
+          });
+          event.track.onended = () => {
+            receivedRemoteVideoTracksRef.current.delete(event.track.id);
+            setRemoteScreenStreams(prev => {
+              if (!prev.has(peerId)) return prev;
+              const next = new Map(prev);
+              next.delete(peerId);
+              return next;
+            });
+          };
+        }
       } else {
+        const existingPrimary = audioElementsRef.current.get(peerId);
+        const existingStreamId = existingPrimary?.dataset.streamId;
+        const isSecondaryDirectAudio =
+          Boolean(existingPrimary && existingStreamId && existingStreamId !== remoteStream.id) ||
+          (Boolean(existingPrimary) && remoteStream.getVideoTracks().length > 0);
+
+        if (isSecondaryDirectAudio) {
+          let scrAudio = screenAudioElementsRef.current.get(peerId);
+          if (!scrAudio) {
+            scrAudio = new Audio();
+            scrAudio.autoplay = true;
+            screenAudioElementsRef.current.set(peerId, scrAudio);
+          }
+          scrAudio.srcObject = remoteStream;
+          scrAudio.muted = isDeafened;
+          scrAudio.volume = Math.min(1, Math.max(0, outputVolume / 100));
+          if ('setSinkId' in scrAudio && selectedOutputDeviceId) {
+            (scrAudio as any).setSinkId(selectedOutputDeviceId).catch(() => {});
+          }
+          scrAudio.play().catch(() => {});
+          return;
+        }
+
         if (event.receiver && 'playoutDelayHint' in event.receiver) {
           try {
             (event.receiver as any).playoutDelayHint = lowLatencyAudio ? 0.02 : 0.08;
           } catch {}
         }
-        let audio = audioElementsRef.current.get(peerId);
+        let audio = existingPrimary;
         if (!audio) {
           audio = new Audio();
           audio.autoplay = true;
           audioElementsRef.current.set(peerId, audio);
         }
+        audio.dataset.streamId = remoteStream.id;
         audio.srcObject = remoteStream;
         const userVol = userVolumes[peerId] ?? 100;
         const isLocallyMuted = userLocalMutes[peerId] ?? false;
@@ -4429,6 +5014,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const startDirectCall = useCallback(async (targetUser: User) => {
     if (!socket || !currentUser) return;
+    if (connectedVoiceChannelIdRef.current) {
+      leaveVoiceChannelRef.current();
+    }
     setDirectCall({
       partner: targetUser,
       status: 'calling',
@@ -4441,6 +5029,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const acceptDirectCall = useCallback(async () => {
     if (!socket || !directCall || !currentUser) return;
+    if (connectedVoiceChannelIdRef.current) {
+      leaveVoiceChannelRef.current();
+    }
     const partner = directCall.partner;
     socket.emit('direct_call_accept', { callerUserId: partner.id, callerUsername: partner.username });
 
@@ -4450,133 +5041,250 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await getLocalAudioStream();
   }, [socket, directCall, currentUser]);
 
-  const declineDirectCall = useCallback(() => {
+  const declineDirectCall = useCallback((replyMessage?: string) => {
     if (!socket || !directCall) return;
-    socket.emit('direct_call_decline', { callerUserId: directCall.partner.id, callerUsername: directCall.partner.username });
+    const partnerId = directCall.partner.id;
+    socket.emit('direct_call_decline', {
+      callerUserId: partnerId,
+      callerUsername: directCall.partner.username,
+      replyMessage: typeof replyMessage === 'string' && replyMessage.trim() ? replyMessage.trim() : undefined,
+    });
     setDirectCall(null);
-    setIsDirectScreenSharing(false);
-    setPartnerDirectScreenSharing(false);
-    if (directScreenStreamRef.current) {
-      directScreenStreamRef.current.getTracks().forEach(t => t.stop());
-      directScreenStreamRef.current = null;
-    }
-    setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    cleanupDirectCallMedia(partnerId);
   }, [socket, directCall]);
 
   const endDirectCall = useCallback(() => {
     if (!socket || !directCall) return;
-    socket.emit('direct_call_end', { targetUserId: directCall.partner.id, targetUsername: directCall.partner.username });
-    if (peerConnectionsRef.current.has(directCall.partner.id)) {
-      peerConnectionsRef.current.get(directCall.partner.id)?.close();
-      peerConnectionsRef.current.delete(directCall.partner.id);
+    const partnerId = directCall.partner.id;
+    socket.emit('direct_call_end', { targetUserId: partnerId, targetUsername: directCall.partner.username });
+    if (peerConnectionsRef.current.has(partnerId)) {
+      peerConnectionsRef.current.get(partnerId)?.close();
+      peerConnectionsRef.current.delete(partnerId);
     }
-    if (audioElementsRef.current.has(directCall.partner.id)) {
-      audioElementsRef.current.get(directCall.partner.id)?.remove();
-      audioElementsRef.current.delete(directCall.partner.id);
+    if (audioElementsRef.current.has(partnerId)) {
+      audioElementsRef.current.get(partnerId)?.remove();
+      audioElementsRef.current.delete(partnerId);
     }
     setDirectCall(null);
-    setIsDirectScreenSharing(false);
-    setPartnerDirectScreenSharing(false);
-    if (directScreenStreamRef.current) {
-      directScreenStreamRef.current.getTracks().forEach(t => t.stop());
-      directScreenStreamRef.current = null;
-    }
-    setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    cleanupDirectCallMedia(partnerId);
   }, [socket, directCall]);
 
   const stopDirectScreenShare = useCallback(() => {
+    const partnerId = directCallRef.current?.partner.id;
+    const pc = partnerId ? peerConnectionsRef.current.get(partnerId) : undefined;
+    let removedAny = false;
     if (directScreenStreamRef.current) {
-      const partnerId = directCallRef.current?.partner.id;
-      const pc = partnerId ? peerConnectionsRef.current.get(partnerId) : undefined;
       directScreenStreamRef.current.getTracks().forEach(track => {
+        if (track.kind === 'video') {
+          socket?.emit('direct_media_meta', { trackId: track.id, kind: 'screen', active: false });
+        }
         if (pc) {
           const sender = pc.getSenders().find(s => s.track === track);
           if (sender) {
-            try { pc.removeTrack(sender); } catch {}
+            try {
+              pc.removeTrack(sender);
+              removedAny = true;
+            } catch {}
           }
         }
         track.stop();
       });
       directScreenStreamRef.current = null;
     }
+    if (removedAny && partnerId && pc) {
+      void renegotiateDirectPeerConnection(partnerId, pc, socket);
+    }
     setIsDirectScreenSharing(false);
     socket?.emit('direct_screen_share_state', { isSharing: false });
     if (remoteAssistRef.current.status === 'being_controlled') {
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+      setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
+      void syncTauriRemoteAssistHost({ active: false });
       socket?.emit('remote_assist_stop');
     }
   }, [socket]);
 
-  const startDirectScreenShare = useCallback(async () => {
+  const startDirectScreenShare = useCallback(async (options?: Partial<DirectScreenShareOptions>) => {
     if (!socket || !directCallRef.current) return;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
-      alert('Ekran paylaşımı için güvenli bağlantı (HTTPS veya masaüstü uygulaması) gereklidir.');
+      pushDirectCallToast('Ekran paylaşımı için güvenli bağlantı (HTTPS veya masaüstü uygulaması) gereklidir.', 'error');
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: 30, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      });
+      const cfg = getDirectScreenShareConstraints(options);
+      const stream = await navigator.mediaDevices.getDisplayMedia(cfg.displayMediaOptions);
       directScreenStreamRef.current = stream;
       const videoTrack = stream.getVideoTracks()[0];
+      const audioTrack = stream.getAudioTracks()[0];
       const partnerId = directCallRef.current.partner.id;
       const pc = peerConnectionsRef.current.get(partnerId);
-      if (pc && videoTrack) {
-        pc.addTrack(videoTrack, stream);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('webrtc_signal', {
-          targetUserId: partnerId,
-          signal: offer,
-          type: 'offer',
-        });
+
+      if (videoTrack) {
+        try {
+          if ('contentHint' in videoTrack) {
+            videoTrack.contentHint = cfg.contentHint;
+          }
+        } catch {}
+        socket.emit('direct_media_meta', { trackId: videoTrack.id, kind: 'screen', active: true });
       }
-      videoTrack.onended = () => {
-        stopDirectScreenShare();
-      };
+
+      if (pc && videoTrack) {
+        const sender = pc.addTrack(videoTrack, stream);
+        try {
+          const params = sender.getParameters();
+          params.encodings = params.encodings && params.encodings.length > 0 ? params.encodings : [{}];
+          params.encodings[0].maxBitrate = cfg.maxBitrateBps;
+          await sender.setParameters(params);
+        } catch {}
+        if (audioTrack) {
+          pc.addTrack(audioTrack, stream);
+        }
+        await renegotiateDirectPeerConnection(partnerId, pc, socket);
+      }
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          stopDirectScreenShare();
+        };
+      }
       setIsDirectScreenSharing(true);
       socket.emit('direct_screen_share_state', { isSharing: true });
     } catch {
       // User cancelled screen picker
     }
-  }, [socket, stopDirectScreenShare]);
+  }, [socket, stopDirectScreenShare, pushDirectCallToast]);
 
-  const requestRemoteAssist = useCallback(() => {
+  const requestRemoteAssist = useCallback((permissions?: RemoteAssistPermissions) => {
     if (!socket || !directCallRef.current) return;
-    setRemoteAssist(prev => ({ ...prev, status: 'requesting' }));
-    socket.emit('remote_assist_request');
+    const requested = permissions || { control: true, clipboard: true, annotate: true };
+    setRemoteAssist(prev => ({
+      ...prev,
+      status: 'requesting',
+      requestedPermissions: requested,
+    }));
+    socket.emit('remote_assist_request', { permissions: requested });
   }, [socket]);
 
-  const respondRemoteAssist = useCallback((accepted: boolean) => {
+  const respondRemoteAssist = useCallback(async (accepted: boolean, permissions?: RemoteAssistPermissions) => {
     if (!socket) return;
-    const isTauri = typeof window !== 'undefined' && (
-      '__TAURI_INTERNALS__' in window ||
-      window.location.hostname === 'tauri.localhost' ||
-      window.location.protocol === 'tauri:'
-    );
-    socket.emit('remote_assist_response', { accepted, hostDesktopCapable: isTauri });
-    if (accepted) {
-      setRemoteAssist({ status: 'being_controlled', hostDesktopCapable: isTauri, remoteCursor: null });
-    } else {
-      setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    const isTauri = isTauriDesktopEnv();
+    if (!accepted) {
+      socket.emit('remote_assist_response', { accepted: false, hostDesktopCapable: isTauri });
+      setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
+      void syncTauriRemoteAssistHost({ active: false });
+      return;
     }
+
+    let monitors: RemoteMonitorInfo[] = [];
+    if (isTauri) {
+      try {
+        const invoke = await getTauriInvoke();
+        const res = await invoke('get_display_monitors');
+        if (Array.isArray(res)) {
+          monitors = res as RemoteMonitorInfo[];
+        }
+      } catch {}
+    }
+
+    const perms =
+      permissions ||
+      remoteAssistRef.current.requestedPermissions || { control: true, clipboard: true, annotate: true };
+    const primaryMon = monitors.find(m => m.is_primary) || monitors[0] || null;
+    const controllerName = remoteAssistRef.current.requesterName || directCallRef.current?.partner.username || 'Kullanıcı';
+
+    socket.emit('remote_assist_response', {
+      accepted: true,
+      hostDesktopCapable: isTauri,
+      permissions: perms,
+      monitors,
+    });
+
+    setRemoteAssist({
+      status: 'being_controlled',
+      hostDesktopCapable: isTauri,
+      requesterName: controllerName,
+      remoteCursor: null,
+      permissions: perms,
+      paused: false,
+      hostMonitors: monitors,
+      selectedMonitorIndex: primaryMon ? primaryMon.index : null,
+      inputTransport: remoteAssistRef.current.inputTransport,
+    });
+
+    await syncTauriRemoteAssistHost({
+      active: true,
+      controllerName,
+      paused: false,
+      monitor: primaryMon,
+    });
   }, [socket]);
 
   const stopRemoteAssist = useCallback(() => {
-    setRemoteAssist({ status: 'idle', hostDesktopCapable: false, remoteCursor: null });
+    setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
+    void syncTauriRemoteAssistHost({ active: false });
     socket?.emit('remote_assist_stop');
   }, [socket]);
 
+  const pauseRemoteAssist = useCallback((paused: boolean) => {
+    setRemoteAssist(prev => {
+      const next = { ...prev, paused };
+      if (prev.status === 'being_controlled') {
+        const mon =
+          prev.hostMonitors.find(m => m.index === prev.selectedMonitorIndex) ||
+          prev.hostMonitors.find(m => m.is_primary) ||
+          prev.hostMonitors[0] ||
+          null;
+        void syncTauriRemoteAssistHost({
+          active: true,
+          controllerName: prev.requesterName || directCallRef.current?.partner.username,
+          paused,
+          monitor: mon,
+        });
+      }
+      return next;
+    });
+    socket?.emit('remote_assist_pause', { paused });
+  }, [socket]);
+
+  const updateRemoteAssistPermissions = useCallback((permissions: Partial<RemoteAssistPermissions>) => {
+    setRemoteAssist(prev => ({
+      ...prev,
+      permissions: { ...prev.permissions, ...permissions },
+    }));
+    socket?.emit('remote_assist_update_permissions', { permissions });
+  }, [socket]);
+
+  const selectRemoteMonitor = useCallback((monitorIndex: number | null) => {
+    setRemoteAssist(prev => ({ ...prev, selectedMonitorIndex: monitorIndex }));
+    socket?.emit('remote_assist_select_monitor', { monitorIndex });
+  }, [socket]);
+
   const sendRemoteInput = useCallback((payload: {
-    kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup';
+    kind: 'move' | 'mousedown' | 'mouseup' | 'wheel' | 'keydown' | 'keyup' | 'text';
     x?: number;
     y?: number;
     button?: number;
+    delta_x?: number;
     delta_y?: number;
     key?: string;
     code?: string;
+    text?: string;
+    ctrl?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+    monitor_x?: number;
+    monitor_y?: number;
+    monitor_w?: number;
+    monitor_h?: number;
   }) => {
+    const partnerId = directCallRef.current?.partner.id;
+    const chs = partnerId ? remoteDataChannelsRef.current.get(partnerId) : undefined;
+    const dc = payload.kind === 'move' ? chs?.move || chs?.control : chs?.control;
+    if (dc && dc.readyState === 'open') {
+      try {
+        dc.send(JSON.stringify({ type: 'input', payload }));
+        return;
+      } catch {}
+    }
     socket?.emit('remote_assist_input', payload);
   }, [socket]);
 
@@ -4585,9 +5293,106 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('remote_assist_clipboard', { text });
   }, [socket]);
 
+  const pullRemoteClipboard = useCallback(() => {
+    if (!socket) return;
+    socket.emit('remote_assist_clipboard_pull');
+  }, [socket]);
+
   const sendRemoteLaser = useCallback((x: number, y: number, active: boolean) => {
+    const partnerId = directCallRef.current?.partner.id;
+    const chs = partnerId ? remoteDataChannelsRef.current.get(partnerId) : undefined;
+    const dc = chs?.move || chs?.control;
+    if (dc && dc.readyState === 'open') {
+      try {
+        dc.send(JSON.stringify({ type: 'laser', payload: { x, y, active } }));
+        return;
+      } catch {}
+    }
     socket?.emit('remote_assist_laser', { x, y, active });
   }, [socket]);
+
+  const sendRemoteAnnotation = useCallback((stroke: RemoteAssistAnnotationStroke) => {
+    const stamped = { ...stroke, createdAt: Date.now() };
+    setRemoteAnnotations(prev => [...prev.slice(-49), stamped]);
+    const partnerId = directCallRef.current?.partner.id;
+    const chs = partnerId ? remoteDataChannelsRef.current.get(partnerId) : undefined;
+    if (chs?.control && chs.control.readyState === 'open') {
+      try {
+        chs.control.send(JSON.stringify({ type: 'annotation', payload: { action: 'stroke', stroke: stamped } }));
+        return;
+      } catch {}
+    }
+    socket?.emit('remote_assist_annotation', { action: 'stroke', stroke: stamped });
+  }, [socket]);
+
+  const clearRemoteAnnotations = useCallback(() => {
+    setRemoteAnnotations([]);
+    const partnerId = directCallRef.current?.partner.id;
+    const chs = partnerId ? remoteDataChannelsRef.current.get(partnerId) : undefined;
+    if (chs?.control && chs.control.readyState === 'open') {
+      try {
+        chs.control.send(JSON.stringify({ type: 'annotation', payload: { action: 'clear' } }));
+        return;
+      } catch {}
+    }
+    socket?.emit('remote_assist_annotation', { action: 'clear' });
+  }, [socket]);
+
+  const sendFileToDirectPartner = useCallback(async (file: File) => {
+    const me = currentUserRef.current;
+    const partner = directCallRef.current?.partner;
+    if (!socket || !me || !partner) return;
+    try {
+      const optimized = await compressImageToWebP(file);
+      if (optimized.size > 5 * 1024 * 1024) {
+        pushDirectCallToast(`"${file.name}" 5MB sınırını aşıyor.`, 'error');
+        return;
+      }
+      const dmChannelId = `dm-${[me.id, partner.id].sort().join('-')}`;
+      const attachment: MessageAttachment = {
+        id: `ra-att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: optimized.name,
+        size: optimized.size,
+        type: optimized.type,
+        url: optimized.dataUrl,
+      };
+      socket.emit('send_message', {
+        serverId: 'direct-messages',
+        channelId: dmChannelId,
+        content: `📎 Uzaktan yardım dosya transferi: ${optimized.name}`,
+        attachments: [attachment],
+      });
+      pushDirectCallToast(`"${optimized.name}" DM üzerinden gönderildi.`, 'success');
+    } catch {
+      pushDirectCallToast(`"${file.name}" okunamadı.`, 'error');
+    }
+  }, [socket, pushDirectCallToast]);
+
+  const sendScreenshotToDirectPartner = useCallback((dataUrl: string) => {
+    const me = currentUserRef.current;
+    const partner = directCallRef.current?.partner;
+    if (!socket || !me || !partner || !dataUrl) return;
+    const approxSize = Math.round((dataUrl.length * 3) / 4);
+    if (approxSize > 5 * 1024 * 1024) {
+      pushDirectCallToast('Ekran görüntüsü boyutu 5MB sınırını aşıyor.', 'error');
+      return;
+    }
+    const dmChannelId = `dm-${[me.id, partner.id].sort().join('-')}`;
+    const attachment: MessageAttachment = {
+      id: `ra-ss-${Date.now()}`,
+      name: `uzaktan-yardim-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.png`,
+      size: approxSize,
+      type: 'image/png',
+      url: dataUrl,
+    };
+    socket.emit('send_message', {
+      serverId: 'direct-messages',
+      channelId: dmChannelId,
+      content: '📸 Uzaktan yardım anlık ekran görüntüsü',
+      attachments: [attachment],
+    });
+    pushDirectCallToast('Ekran görüntüsü DM sohbetine gönderildi.', 'success');
+  }, [socket, pushDirectCallToast]);
 
   const toggleDirectCamera = useCallback(async () => {
     if (!socket || !directCallRef.current) return;
@@ -4595,18 +5400,30 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const pc = peerConnectionsRef.current.get(partnerId);
 
     if (isDirectCameraOn) {
+      let removedAny = false;
       if (directCameraStreamRef.current) {
         const tracks = directCameraStreamRef.current.getTracks();
-        if (pc) {
-          pc.getSenders().forEach(sender => {
-            if (sender.track && tracks.includes(sender.track)) {
-              pc.removeTrack(sender);
+        tracks.forEach(t => {
+          if (t.kind === 'video') {
+            socket.emit('direct_media_meta', { trackId: t.id, kind: 'camera', active: false });
+          }
+          if (pc) {
+            const sender = pc.getSenders().find(s => s.track === t);
+            if (sender) {
+              try {
+                pc.removeTrack(sender);
+                removedAny = true;
+              } catch {}
             }
-          });
-        }
-        tracks.forEach(t => t.stop());
+          }
+          t.stop();
+        });
         directCameraStreamRef.current = null;
       }
+      if (removedAny && pc) {
+        void renegotiateDirectPeerConnection(partnerId, pc, socket);
+      }
+      setLocalDirectCameraStream(null);
       setIsDirectCameraOn(false);
       socket.emit('direct_camera_state', { isCameraOn: false });
       return;
@@ -4618,27 +5435,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         audio: false,
       });
       directCameraStreamRef.current = stream;
+      setLocalDirectCameraStream(stream);
       const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        socket.emit('direct_media_meta', { trackId: videoTrack.id, kind: 'camera', active: true });
+      }
       if (pc && videoTrack) {
         pc.addTrack(videoTrack, stream);
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit('webrtc_signal', {
-          targetUserId: partnerId,
-          signal: offer,
-          type: 'offer',
-        });
+        await renegotiateDirectPeerConnection(partnerId, pc, socket);
       }
-      videoTrack.onended = () => {
-        setIsDirectCameraOn(false);
-        socket.emit('direct_camera_state', { isCameraOn: false });
-      };
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          setLocalDirectCameraStream(null);
+          setIsDirectCameraOn(false);
+          socket.emit('direct_media_meta', { trackId: videoTrack.id, kind: 'camera', active: false });
+          socket.emit('direct_camera_state', { isCameraOn: false });
+        };
+      }
       setIsDirectCameraOn(true);
       socket.emit('direct_camera_state', { isCameraOn: true });
     } catch {
-      alert('Kamera erişimi reddedildi veya kamera bulunamadı.');
+      pushDirectCallToast('Kamera erişimi reddedildi veya kamera bulunamadı.', 'error');
     }
-  }, [socket, isDirectCameraOn]);
+  }, [socket, isDirectCameraOn, pushDirectCallToast]);
 
   const updateProfileDetails = useCallback((details: {
     statusMessage?: string;
@@ -5777,12 +6596,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const leaveVoiceChannelRef = useRef(leaveVoiceChannel);
   const updateProfileDetailsRef = useRef(updateProfileDetails);
   const joinServerByInviteRef = useRef(joinServerByInvite);
+  const stopRemoteAssistRef = useRef(stopRemoteAssist);
+  const pauseRemoteAssistRef = useRef(pauseRemoteAssist);
+  const pushDirectCallToastRef = useRef(pushDirectCallToast);
   useEffect(() => {
     toggleMuteRef.current = toggleMute;
     toggleDeafenRef.current = toggleDeafen;
     leaveVoiceChannelRef.current = leaveVoiceChannel;
     updateProfileDetailsRef.current = updateProfileDetails;
     joinServerByInviteRef.current = joinServerByInvite;
+    stopRemoteAssistRef.current = stopRemoteAssist;
+    pauseRemoteAssistRef.current = pauseRemoteAssist;
+    pushDirectCallToastRef.current = pushDirectCallToast;
   });
 
   useEffect(() => {
@@ -5815,6 +6640,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             const parsed = parseDeepLinkUrl(ev.payload);
             if (parsed?.type === 'invite' && isAuthenticated) {
               joinServerByInviteRef.current(parsed.code);
+            }
+          }),
+          listen('remote-assist-emergency-stop', () => {
+            stopRemoteAssistRef.current();
+            pushDirectCallToastRef.current('Acil Durdurma (Ctrl+Alt+Esc / Pause): Uzaktan kontrol kesildi.', 'warning');
+          }),
+          listen<{ action?: string; paused?: boolean }>('remote-assist-hud-action', (ev) => {
+            const p = ev.payload || {};
+            if (p.action === 'stop') {
+              stopRemoteAssistRef.current();
+            } else if (p.action === 'toggle_pause') {
+              pauseRemoteAssistRef.current(Boolean(p.paused));
             }
           }),
         ]);
@@ -6067,6 +6904,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isScreenSharing,
         screenStream,
         remoteScreenStreams,
+        remoteCameraStreams,
+        localDirectCameraStream,
         inputMode,
         pttKey,
         isPttActive,
@@ -6087,6 +6926,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         openDirectMessage,
         closeDirectMessage,
         directCall,
+        directCallQuality,
+        directCallToasts,
+        dismissDirectCallToast,
         startDirectCall,
         acceptDirectCall,
         declineDirectCall,
@@ -6103,11 +6945,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         requestRemoteAssist,
         respondRemoteAssist,
         stopRemoteAssist,
+        pauseRemoteAssist,
+        updateRemoteAssistPermissions,
+        selectRemoteMonitor,
         sendRemoteInput,
         sendRemoteClipboard,
+        pullRemoteClipboard,
         lastClipboardNotice,
         remoteLaser,
         sendRemoteLaser,
+        remoteAnnotations,
+        sendRemoteAnnotation,
+        clearRemoteAnnotations,
+        sendFileToDirectPartner,
+        sendScreenshotToDirectPartner,
         updateProfileDetails,
         transferWalletBalance,
 

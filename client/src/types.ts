@@ -459,3 +459,62 @@ export interface ScreenShareSettings {
   hdrEnabled?: boolean;
   appAudioOnly?: boolean;
 }
+
+export interface RemoteAssistPermissions {
+  control: boolean;
+  clipboard: boolean;
+  annotate: boolean;
+}
+
+export interface RemoteMonitorInfo {
+  index: number;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  is_primary: boolean;
+}
+
+export interface RemoteAssistAnnotationStroke {
+  id: string;
+  tool: 'pen' | 'arrow' | 'rect';
+  color: string;
+  points: Array<{ x: number; y: number }>;
+  createdAt: number;
+}
+
+export interface DirectScreenShareOptions {
+  preset: 'sharp-text' | 'balanced' | 'smooth-60' | 'source';
+  shareAudio: boolean;
+}
+
+export interface DirectCallQualityStats {
+  rttMs: number;
+  fps: number;
+  width: number;
+  height: number;
+  bitrateKbps: number;
+  packetLossPct: number;
+  pathType: 'p2p' | 'relay' | 'unknown';
+  inputTransport?: 'datachannel' | 'socket';
+}
+
+export interface DirectCallToast {
+  id: string;
+  message: string;
+  variant: 'info' | 'warning' | 'error' | 'success';
+}
+
+export interface RemoteAssistState {
+  status: 'idle' | 'requesting' | 'incoming_request' | 'controlling' | 'being_controlled';
+  hostDesktopCapable: boolean;
+  requesterName?: string;
+  remoteCursor?: { x: number; y: number } | null;
+  permissions: RemoteAssistPermissions;
+  requestedPermissions?: RemoteAssistPermissions;
+  paused: boolean;
+  hostMonitors: RemoteMonitorInfo[];
+  selectedMonitorIndex: number | null;
+  inputTransport: 'datachannel' | 'socket';
+}

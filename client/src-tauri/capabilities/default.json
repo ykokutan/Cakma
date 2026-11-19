@@ -4,7 +4,9 @@
   "description": "enables the default permissions",
   "windows": [
     "main",
-    "overlay"
+    "overlay",
+    "remote-assist-hud",
+    "remote-assist-overlay"
   ],
   "permissions": [
     "core:default",

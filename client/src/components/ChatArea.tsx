@@ -9,6 +9,7 @@ import { compressImageToWebP } from '../utils/imageCompress';
 import { ChatLightbox } from './ChatLightbox';
 import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
 import { computeVirtualWindow } from '../utils/virtualWindow';
+import { classifyConnectionQuality, formatCallDuration } from '../utils/remoteAssistHelpers';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -23,7 +24,12 @@ const ThreadPanel = lazy(() => import('./ThreadPanel').then((m) => ({ default: m
 const RemoteAssistModal = lazy(() => import('./RemoteAssistModal').then((m) => ({ default: m.RemoteAssistModal })));
 const GlobalInboxModal = lazy(() => import('./GlobalInboxModal').then((m) => ({ default: m.GlobalInboxModal })));
 const ServerEventsModal = lazy(() => import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal })));
-import { MessageAttachment, User } from '../types';
+import {
+  DirectScreenShareOptions,
+  MessageAttachment,
+  RemoteAssistPermissions,
+  User,
+} from '../types';
 import {
   Hash,
   Bell,
@@ -76,6 +82,9 @@ import {
   Calendar,
   Lock,
   Compass,
+  Wifi,
+  Pause,
+  Play,
 } from 'lucide-react';
 
 const SLASH_COMMANDS = [
@@ -184,6 +193,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     activeDMUser,
     startDirectCall,
     directCall,
+    directCallQuality,
     acceptDirectCall,
     declineDirectCall,
     endDirectCall,
@@ -199,10 +209,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     toggleDirectCamera,
     lastClipboardNotice,
     remoteScreenStreams,
+    remoteCameraStreams,
+    localDirectCameraStream,
+    userVolumes,
+    setUserVolume,
     remoteAssist,
     startDirectScreenShare,
     stopDirectScreenShare,
     respondRemoteAssist,
+    pauseRemoteAssist,
+    updateRemoteAssistPermissions,
     stopRemoteAssist,
     onlineUsers,
     addReaction,
@@ -233,9 +249,21 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
   const [isCallStageCollapsed, setIsCallStageCollapsed] = useState(false);
   const [isDMRemoteAssistOpen, setIsDMRemoteAssistOpen] = useState(false);
+  const [showDmShareOptions, setShowDmShareOptions] = useState(false);
+  const [dmShareOptions, setDmShareOptions] = useState<DirectScreenShareOptions>({
+    preset: 'balanced',
+    shareAudio: false,
+  });
+  const [dmConsentPerms, setDmConsentPerms] = useState<RemoteAssistPermissions>({
+    control: true,
+    clipboard: true,
+    annotate: true,
+  });
   const [dmE2eeEnabled, setDmE2eeEnabled] = useState(false);
   const [decryptedDmMap, setDecryptedDmMap] = useState<Record<string, string>>({});
   const dmScreenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localCamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const partnerCamVideoRef = useRef<HTMLVideoElement | null>(null);
   const activeThreadMessage = activeThreadMsgId ? messages.find((m) => m.id === activeThreadMsgId) || null : null;
 
   const [initialUnreadDividerCount, setInitialUnreadDividerCount] = useState(0);
@@ -297,12 +325,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const dmCallPartnerStream = directCall?.partner?.id
     ? remoteScreenStreams.get(directCall.partner.id)
     : undefined;
+  const dmPartnerCameraStream = directCall?.partner?.id
+    ? remoteCameraStreams.get(directCall.partner.id)
+    : undefined;
 
   useEffect(() => {
     if (dmScreenVideoRef.current && dmCallPartnerStream) {
       dmScreenVideoRef.current.srcObject = dmCallPartnerStream;
     }
   }, [dmCallPartnerStream, isCallStageCollapsed]);
+
+  useEffect(() => {
+    if (localCamVideoRef.current && localDirectCameraStream) {
+      localCamVideoRef.current.srcObject = localDirectCameraStream;
+    }
+  }, [localDirectCameraStream, isDirectCameraOn, isCallStageCollapsed]);
+
+  useEffect(() => {
+    if (partnerCamVideoRef.current && dmPartnerCameraStream) {
+      partnerCamVideoRef.current.srcObject = dmPartnerCameraStream;
+    }
+  }, [dmPartnerCameraStream, partnerDirectCameraOn, isCallStageCollapsed]);
+
+  useEffect(() => {
+    if (remoteAssist.status === 'incoming_request' && remoteAssist.requestedPermissions) {
+      setDmConsentPerms(remoteAssist.requestedPermissions);
+    }
+  }, [remoteAssist.status, remoteAssist.requestedPermissions]);
 
   useEffect(() => {
     if (remoteAssist.status === 'controlling') {
@@ -1052,330 +1101,562 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         dmPartner &&
         directCall &&
         (directCall.partner.id === dmPartner.id ||
-          directCall.partner.username.toLowerCase() === dmPartner.username.toLowerCase()) && (
-          <div className="border-b border-emerald-500/20 bg-gradient-to-b from-[#131d19] via-[#10141d] to-[#0c0e14] backdrop-blur-md select-none transition-all">
-            {isCallStageCollapsed ? (
-              <div className="px-5 py-2.5 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex items-center -space-x-2 shrink-0">
-                    <div
-                      className={`w-8 h-8 rounded-xl bg-white/10 overflow-hidden border-2 transition-all ${
-                        isSpeaking && !isMuted ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-[#121c18]'
-                      }`}
-                    >
-                      <AvatarView avatar={currentUser?.avatar} alt={currentUser?.username || 'Sen'} fallback="👤" className="w-full h-full object-cover" />
+          directCall.partner.username.toLowerCase() === dmPartner.username.toLowerCase()) && (() => {
+          const partnerVol = userVolumes[directCall.partner.id] ?? 100;
+          const qualityInfo = directCallQuality
+            ? classifyConnectionQuality(directCallQuality.rttMs, directCallQuality.packetLossPct)
+            : null;
+          return (
+            <div className="border-b border-emerald-500/20 bg-gradient-to-b from-[#131d19] via-[#10141d] to-[#0c0e14] backdrop-blur-md select-none transition-all">
+              {isCallStageCollapsed ? (
+                <div className="px-5 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center -space-x-2 shrink-0">
+                      <div
+                        className={`w-8 h-8 rounded-xl bg-white/10 overflow-hidden border-2 transition-all ${
+                          isSpeaking && !isMuted ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-[#121c18]'
+                        }`}
+                      >
+                        <AvatarView avatar={currentUser?.avatar} alt={currentUser?.username || 'Sen'} fallback="👤" className="w-full h-full object-cover" />
+                      </div>
+                      <div
+                        className={`w-8 h-8 rounded-xl bg-white/10 overflow-hidden border-2 transition-all ${
+                          directCall.partner.isSpeaking ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-[#121c18]'
+                        }`}
+                      >
+                        <AvatarView avatar={directCall.partner.avatar} alt={directCall.partner.username} fallback="👤" className="w-full h-full object-cover" />
+                      </div>
                     </div>
-                    <div
-                      className={`w-8 h-8 rounded-xl bg-white/10 overflow-hidden border-2 transition-all ${
-                        directCall.partner.isSpeaking ? 'border-emerald-400 ring-2 ring-emerald-400/40' : 'border-[#121c18]'
-                      }`}
-                    >
-                      <AvatarView avatar={directCall.partner.avatar} alt={directCall.partner.username} fallback="👤" className="w-full h-full object-cover" />
-                    </div>
-                  </div>
-                  <span className="text-xs font-bold text-white truncate">
-                    {currentUser?.username} ↔ {directCall.partner.username}
-                  </span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                    {directCall.status === 'connected'
-                      ? `${Math.floor(directCall.durationSeconds / 60).toString().padStart(2, '0')}:${(directCall.durationSeconds % 60).toString().padStart(2, '0')}`
-                      : directCall.status === 'incoming'
-                      ? 'Gelen Arama'
-                      : 'Aranıyor...'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setIsCallStageCollapsed(false)}
-                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 text-[11px] font-semibold flex items-center gap-1 transition"
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                    Genişlet
-                  </button>
-                  <button
-                    onClick={endDirectCall}
-                    className="px-2.5 py-1 rounded-full bg-red-500 hover:bg-red-400 text-white text-[11px] font-semibold flex items-center gap-1 transition"
-                  >
-                    <PhoneOff className="w-3 h-3" />
-                    Kapat
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="px-6 py-4 space-y-4">
-                {/* Top bar: status + collapse */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`w-2.5 h-2.5 rounded-full ${
-                        directCall.status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'
-                      }`}
-                    />
-                    <span className="text-xs font-bold text-white/90">
-                      {directCall.status === 'connected'
-                        ? '1-e-1 Sesli Görüşme'
-                        : directCall.status === 'incoming'
-                        ? `${directCall.partner.username} seni arıyor...`
-                        : `${directCall.partner.username} aranıyor...`}
+                    <span className="text-xs font-bold text-white truncate">
+                      {currentUser?.username} ↔ {directCall.partner.username}
                     </span>
-                    {directCall.status === 'connected' && (
-                      <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                        {Math.floor(directCall.durationSeconds / 60).toString().padStart(2, '0')}:
-                        {(directCall.durationSeconds % 60).toString().padStart(2, '0')}
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                      {directCall.status === 'connected'
+                        ? formatCallDuration(directCall.durationSeconds)
+                        : directCall.status === 'incoming'
+                        ? 'Gelen Arama'
+                        : 'Aranıyor...'}
+                    </span>
+                    {directCall.status === 'connected' && directCallQuality && qualityInfo && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/10 text-white/80 flex items-center gap-1">
+                        <Wifi className="w-2.5 h-2.5 text-emerald-400" />
+                        {directCallQuality.rttMs}ms
                       </span>
                     )}
                   </div>
-                  <button
-                    onClick={() => setIsCallStageCollapsed(true)}
-                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/75 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition"
-                  >
-                    <ChevronUp className="w-3.5 h-3.5" />
-                    Küçült
-                  </button>
-                </div>
-
-                {/* Centered 2-User Stage Cards + Optional Screen Share Preview */}
-                <div className="flex flex-col lg:flex-row items-center justify-center gap-4">
-                  <div className="flex items-center justify-center gap-5 sm:gap-8">
-                    {/* Self Card */}
-                    <div
-                      className={`w-36 sm:w-44 rounded-2xl p-3.5 border bg-white/[0.04] flex flex-col items-center gap-2 transition-all ${
-                        isSpeaking && !isMuted
-                          ? 'border-emerald-400/80 shadow-[0_0_24px_rgba(16,185,129,0.28)] bg-emerald-500/[0.07]'
-                          : 'border-white/10'
-                      }`}
-                    >
-                      <div className="relative">
-                        <div
-                          className={`w-16 h-16 rounded-2xl bg-white/10 overflow-hidden border-2 transition-all ${
-                            isSpeaking && !isMuted ? 'border-emerald-400 scale-105' : 'border-white/15'
-                          }`}
-                        >
-                          <AvatarView avatar={currentUser?.avatar} alt={currentUser?.username || 'Sen'} fallback="👤" className="w-full h-full object-cover" />
-                        </div>
-                        {isMuted && (
-                          <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-red-500 border-2 border-[#10141d] flex items-center justify-center text-white">
-                            <MicOff className="w-3 h-3" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-center min-w-0 w-full">
-                        <div className="text-xs font-bold text-white truncate">{currentUser?.username} (Sen)</div>
-                        <div className="text-[10px] text-white/50 truncate">
-                          {isDeafened ? 'Sağırlaştırıldı' : isMuted ? 'Mikrofon Kapalı' : isSpeaking ? 'Konuşuyor...' : 'Hazır'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Partner Card */}
-                    <div
-                      className={`w-36 sm:w-44 rounded-2xl p-3.5 border bg-white/[0.04] flex flex-col items-center gap-2 transition-all ${
-                        directCall.partner.isSpeaking
-                          ? 'border-emerald-400/80 shadow-[0_0_24px_rgba(16,185,129,0.28)] bg-emerald-500/[0.07]'
-                          : 'border-white/10'
-                      }`}
-                    >
-                      <div className="relative">
-                        <div
-                          className={`w-16 h-16 rounded-2xl bg-white/10 overflow-hidden border-2 transition-all ${
-                            directCall.partner.isSpeaking ? 'border-emerald-400 scale-105' : 'border-white/15'
-                          }`}
-                        >
-                          <AvatarView avatar={directCall.partner.avatar} alt={directCall.partner.username} fallback="👤" className="w-full h-full object-cover" />
-                        </div>
-                        {directCall.status === 'connected' && (
-                          <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 border-2 border-[#10141d]" />
-                        )}
-                      </div>
-                      <div className="text-center min-w-0 w-full">
-                        <div className="text-xs font-bold text-white truncate">{directCall.partner.username}</div>
-                        <div className="text-[10px] text-white/50 truncate">
-                          {directCall.status === 'connected'
-                            ? directCall.partner.isSpeaking
-                              ? 'Konuşuyor...'
-                              : 'Bağlı'
-                            : directCall.status === 'incoming'
-                            ? 'Arıyor...'
-                            : 'Çalıyor...'}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Inline Partner Screen Share / Camera Preview */}
-                  {(partnerDirectScreenSharing || partnerDirectCameraOn || Boolean(dmCallPartnerStream)) && (
-                    <div className="relative w-full max-w-xs h-32 rounded-2xl overflow-hidden border border-sky-400/35 bg-black shadow-lg group">
-                      {dmCallPartnerStream ? (
-                        <video ref={dmScreenVideoRef} autoPlay playsInline muted className="w-full h-full object-contain" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-xs text-white/50">
-                          Görüntü akışı hazırlanıyor...
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setIsDMRemoteAssistOpen(true)}
-                        className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1.5 text-xs font-bold text-white"
-                      >
-                        <Maximize2 className="w-4 h-4 text-sky-300" />
-                        <span>Tam Ekran & Uzaktan Kontrol</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Incoming Remote Assist Request Banner */}
-                {remoteAssist.status === 'incoming_request' && (
-                  <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs text-amber-200 font-semibold">
-                      <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>{directCall.partner.username} bilgisayarını uzaktan kontrol etmek için izin istiyor.</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => respondRemoteAssist(true)}
-                        className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold transition"
-                      >
-                        İzin Ver
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => respondRemoteAssist(false)}
-                        className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
-                      >
-                        Reddet
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {remoteAssist.status === 'being_controlled' && (
-                  <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-200">
-                    <div className="space-y-0.5 min-w-0">
-                      <div className="flex items-center gap-2 font-semibold">
-                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>{directCall.partner.username} şu anda bilgisayarınızı kontrol ediyor</span>
-                      </div>
-                      <p className="text-[11px] text-amber-200/85 pl-6">
-                        İpucu: Görev Yöneticisi veya Yönetici (UAC) pencerelerinin de kontrol edilebilmesi için Çakma&apos;yı &ldquo;Yönetici olarak çalıştır&rdquo; ile açabilirsiniz.
-                      </p>
-                      {lastClipboardNotice && (
-                        <p className="text-[11px] text-sky-300 pl-6 font-semibold">
-                          📋 {lastClipboardNotice}
-                        </p>
-                      )}
-                    </div>
+                  <div className="flex items-center gap-1.5">
                     <button
-                      type="button"
-                      onClick={stopRemoteAssist}
-                      className="px-3 py-1 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1 transition shrink-0"
+                      onClick={() => setIsCallStageCollapsed(false)}
+                      className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 text-[11px] font-semibold flex items-center gap-1 transition"
                     >
-                      <Hand className="w-3.5 h-3.5" />
-                      <span>Kontrolü Kes</span>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      Genişlet
+                    </button>
+                    <button
+                      onClick={endDirectCall}
+                      className="px-2.5 py-1 rounded-full bg-red-500 hover:bg-red-400 text-white text-[11px] font-semibold flex items-center gap-1 transition"
+                    >
+                      <PhoneOff className="w-3 h-3" />
+                      Kapat
                     </button>
                   </div>
-                )}
-
-                {/* Action Dock */}
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  {directCall.status === 'incoming' ? (
-                    <>
-                      <button
-                        onClick={acceptDirectCall}
-                        className="px-4 py-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-emerald-500/20"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                        Yanıtla
-                      </button>
-                      <button
-                        onClick={declineDirectCall}
-                        className="px-4 py-2 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-bold flex items-center gap-1.5 transition"
-                      >
-                        <PhoneOff className="w-3.5 h-3.5" />
-                        Reddet
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={toggleMute}
-                        className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
-                          isMuted
-                            ? 'bg-red-500/25 text-red-200 border border-red-400/40'
-                            : 'bg-white/10 hover:bg-white/20 text-white'
-                        }`}
-                      >
-                        {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                        <span>{isMuted ? 'Mikrofon Kapalı' : 'Mikrofon Açık'}</span>
-                      </button>
-
-                      <button
-                        onClick={toggleDeafen}
-                        className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
-                          isDeafened
-                            ? 'bg-red-500/25 text-red-200 border border-red-400/40'
-                            : 'bg-white/10 hover:bg-white/20 text-white'
-                        }`}
-                      >
-                        {isDeafened ? <Volume2 className="w-3.5 h-3.5" /> : <Headphones className="w-3.5 h-3.5" />}
-                        <span>{isDeafened ? 'Sağırlaştırıldı' : 'Kulaklık'}</span>
-                      </button>
-
-                      {directCall.status === 'connected' && (
-                        <>
-                          <button
-                            onClick={toggleDirectCamera}
-                            className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
-                              isDirectCameraOn
-                                ? 'bg-emerald-500 hover:bg-emerald-400 text-black font-bold'
-                                : 'bg-white/10 hover:bg-white/20 text-white'
-                            }`}
-                          >
-                            {isDirectCameraOn ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
-                            <span>{isDirectCameraOn ? 'Kamera Açık' : 'Kamera'}</span>
-                          </button>
-
-                          <button
-                            onClick={() => (isDirectScreenSharing ? stopDirectScreenShare() : startDirectScreenShare())}
-                            className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
-                              isDirectScreenSharing
-                                ? 'bg-indigo-500 hover:bg-indigo-400 text-white'
-                                : 'bg-white/10 hover:bg-white/20 text-white'
-                            }`}
-                          >
-                            {isDirectScreenSharing ? <MonitorOff className="w-3.5 h-3.5" /> : <MonitorUp className="w-3.5 h-3.5" />}
-                            <span>{isDirectScreenSharing ? 'Paylaşımı Durdur' : 'Ekran Paylaş'}</span>
-                          </button>
-
-                          <button
-                            onClick={() => setIsDMRemoteAssistOpen(true)}
-                            className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
-                              remoteAssist.status === 'controlling'
-                                ? 'bg-sky-500 text-white'
-                                : 'bg-sky-500/20 hover:bg-sky-500/35 text-sky-200 border border-sky-400/30'
-                            }`}
-                          >
-                            <MousePointerClick className="w-3.5 h-3.5" />
-                            <span>{remoteAssist.status === 'controlling' ? 'Kontrol Paneli' : 'Uzaktan Yardım'}</span>
-                          </button>
-                        </>
-                      )}
-
-                      <button
-                        onClick={endDirectCall}
-                        className="px-4 py-2 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-red-500/25"
-                      >
-                        <PhoneOff className="w-3.5 h-3.5" />
-                        <span>Görüşmeyi Bitir</span>
-                      </button>
-                    </>
-                  )}
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              ) : (
+                <div className="px-6 py-4 space-y-4">
+                  {/* Top bar: status, telemetry, volume slider + collapse */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full ${
+                          directCall.status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'
+                        }`}
+                      />
+                      <span className="text-xs font-bold text-white/90">
+                        {directCall.status === 'connected'
+                          ? '1-e-1 Sesli Görüşme'
+                          : directCall.status === 'incoming'
+                          ? `${directCall.partner.username} seni arıyor...`
+                          : `${directCall.partner.username} aranıyor...`}
+                      </span>
+                      {directCall.status === 'connected' && (
+                        <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                          {formatCallDuration(directCall.durationSeconds)}
+                        </span>
+                      )}
+                      {directCall.status === 'connected' && directCallQuality && qualityInfo && (
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                            qualityInfo.level === 'poor'
+                              ? 'bg-rose-500/15 border-rose-400/30 text-rose-300'
+                              : qualityInfo.level === 'fair'
+                              ? 'bg-amber-500/15 border-amber-400/30 text-amber-300'
+                              : 'bg-white/[0.06] border-white/10 text-emerald-300'
+                          }`}
+                          title={`Kayıp: %${directCallQuality.packetLossPct} • Yol: ${directCallQuality.pathType}`}
+                        >
+                          <Wifi className="w-3 h-3" />
+                          <span>
+                            {directCallQuality.rttMs}ms • {directCallQuality.pathType.toUpperCase()} ({qualityInfo.label})
+                          </span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {directCall.status === 'connected' && (
+                        <div className="flex items-center gap-1.5 bg-white/[0.06] border border-white/10 rounded-full px-2.5 py-1">
+                          <Volume2 className="w-3 h-3 text-sky-300 shrink-0" />
+                          <input
+                            type="range"
+                            min={0}
+                            max={200}
+                            step={5}
+                            value={partnerVol}
+                            onChange={(e) => setUserVolume(directCall.partner.id, Number(e.target.value))}
+                            className="w-20 accent-sky-400 cursor-pointer"
+                            title={`${directCall.partner.username} Ses Seviyesi: %${partnerVol}`}
+                          />
+                          <span className="text-[10px] font-mono text-white/75 w-8 text-right">%{partnerVol}</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => setIsCallStageCollapsed(true)}
+                        className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/75 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                        Küçült
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Centered 2-User Stage Cards (with separate PiP Camera videos) + Screen Share Preview */}
+                  <div className="flex flex-col lg:flex-row items-center justify-center gap-4">
+                    <div className="flex items-center justify-center gap-5 sm:gap-8">
+                      {/* Self Card */}
+                      <div
+                        className={`w-40 sm:w-48 rounded-2xl p-3 border bg-white/[0.04] flex flex-col items-center gap-2 transition-all ${
+                          isSpeaking && !isMuted
+                            ? 'border-emerald-400/80 shadow-[0_0_24px_rgba(16,185,129,0.28)] bg-emerald-500/[0.07]'
+                            : 'border-white/10'
+                        }`}
+                      >
+                        {isDirectCameraOn && localDirectCameraStream ? (
+                          <div className="relative w-full h-24 rounded-xl overflow-hidden bg-black border border-emerald-400/40">
+                            <video
+                              ref={localCamVideoRef}
+                              autoPlay
+                              playsInline
+                              muted
+                              className="w-full h-full object-cover scale-x-[-1]"
+                            />
+                            {isMuted && (
+                              <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-red-500 flex items-center justify-center text-white">
+                                <MicOff className="w-2.5 h-2.5" />
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <div
+                              className={`w-16 h-16 rounded-2xl bg-white/10 overflow-hidden border-2 transition-all ${
+                                isSpeaking && !isMuted ? 'border-emerald-400 scale-105' : 'border-white/15'
+                              }`}
+                            >
+                              <AvatarView avatar={currentUser?.avatar} alt={currentUser?.username || 'Sen'} fallback="👤" className="w-full h-full object-cover" />
+                            </div>
+                            {isMuted && (
+                              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-red-500 border-2 border-[#10141d] flex items-center justify-center text-white">
+                                <MicOff className="w-3 h-3" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="text-center min-w-0 w-full">
+                          <div className="text-xs font-bold text-white truncate">{currentUser?.username} (Sen)</div>
+                          <div className="text-[10px] text-white/50 truncate">
+                            {isDeafened ? 'Sağırlaştırıldı' : isMuted ? 'Mikrofon Kapalı' : isSpeaking ? 'Konuşuyor...' : 'Hazır'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Partner Card */}
+                      <div
+                        className={`w-40 sm:w-48 rounded-2xl p-3 border bg-white/[0.04] flex flex-col items-center gap-2 transition-all ${
+                          directCall.partner.isSpeaking
+                            ? 'border-emerald-400/80 shadow-[0_0_24px_rgba(16,185,129,0.28)] bg-emerald-500/[0.07]'
+                            : 'border-white/10'
+                        }`}
+                      >
+                        {(partnerDirectCameraOn || dmPartnerCameraStream) && dmPartnerCameraStream ? (
+                          <div className="relative w-full h-24 rounded-xl overflow-hidden bg-black border border-sky-400/40">
+                            <video
+                              ref={partnerCamVideoRef}
+                              autoPlay
+                              playsInline
+                              muted
+                              className="w-full h-full object-cover"
+                            />
+                            {directCall.status === 'connected' && (
+                              <div className="absolute bottom-1 right-1 w-3 h-3 rounded-full bg-emerald-400 border border-black" />
+                            )}
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <div
+                              className={`w-16 h-16 rounded-2xl bg-white/10 overflow-hidden border-2 transition-all ${
+                                directCall.partner.isSpeaking ? 'border-emerald-400 scale-105' : 'border-white/15'
+                              }`}
+                            >
+                              <AvatarView avatar={directCall.partner.avatar} alt={directCall.partner.username} fallback="👤" className="w-full h-full object-cover" />
+                            </div>
+                            {directCall.status === 'connected' && (
+                              <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 border-2 border-[#10141d]" />
+                            )}
+                          </div>
+                        )}
+                        <div className="text-center min-w-0 w-full">
+                          <div className="text-xs font-bold text-white truncate">{directCall.partner.username}</div>
+                          <div className="text-[10px] text-white/50 truncate">
+                            {directCall.status === 'connected'
+                              ? directCall.partner.isSpeaking
+                                ? 'Konuşuyor...'
+                                : 'Bağlı'
+                              : directCall.status === 'incoming'
+                              ? 'Arıyor...'
+                              : 'Çalıyor...'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Inline Partner Screen Share Preview (separate from camera stream) */}
+                    {(partnerDirectScreenSharing || Boolean(dmCallPartnerStream)) && (
+                      <div className="relative w-full max-w-xs h-32 rounded-2xl overflow-hidden border border-sky-400/35 bg-black shadow-lg group">
+                        {dmCallPartnerStream ? (
+                          <video ref={dmScreenVideoRef} autoPlay playsInline muted className="w-full h-full object-contain" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-xs text-white/50">
+                            Ekran akışı hazırlanıyor...
+                          </div>
+                        )}
+                        {directCallQuality && directCallQuality.width > 0 && (
+                          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/70 text-[10px] font-mono text-sky-300">
+                            {directCallQuality.width}×{directCallQuality.height}
+                            {directCallQuality.fps > 0 ? ` • ${directCallQuality.fps}fps` : ''}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setIsDMRemoteAssistOpen(true)}
+                          className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1.5 text-xs font-bold text-white"
+                        >
+                          <Maximize2 className="w-4 h-4 text-sky-300" />
+                          <span>Tam Ekran & Uzaktan Kontrol</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Incoming Remote Assist Granular Request Banner */}
+                  {remoteAssist.status === 'incoming_request' && (
+                    <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 text-xs text-amber-200 font-semibold">
+                          <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>{directCall.partner.username} bilgisayarını uzaktan kontrol etmek için izin istiyor:</span>
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-[11px] text-white/85 pl-6">
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={dmConsentPerms.control}
+                              onChange={(e) => setDmConsentPerms((p) => ({ ...p, control: e.target.checked }))}
+                              className="accent-emerald-500"
+                            />
+                            <span>Fare & Klavye</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={dmConsentPerms.clipboard}
+                              onChange={(e) => setDmConsentPerms((p) => ({ ...p, clipboard: e.target.checked }))}
+                              className="accent-emerald-500"
+                            />
+                            <span>Pano Paylaşımı</span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={dmConsentPerms.annotate}
+                              onChange={(e) => setDmConsentPerms((p) => ({ ...p, annotate: e.target.checked }))}
+                              className="accent-emerald-500"
+                            />
+                            <span>Lazer & Çizim</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => respondRemoteAssist(true, dmConsentPerms)}
+                          className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold transition"
+                        >
+                          İzin Ver
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => respondRemoteAssist(false)}
+                          className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
+                        >
+                          Reddet
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {remoteAssist.status === 'being_controlled' && (
+                    <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-200">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 font-semibold">
+                          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>
+                            {remoteAssist.paused
+                              ? `${directCall.partner.username} — Kontrol Duraklatıldı`
+                              : `${directCall.partner.username} şu anda bilgisayarınızı kontrol ediyor`}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 pl-6 text-[10px]">
+                          {(
+                            [
+                              { key: 'control', label: 'Fare & Klavye' },
+                              { key: 'clipboard', label: 'Pano' },
+                              { key: 'annotate', label: 'Çizim & Lazer' },
+                            ] as const
+                          ).map((item) => {
+                            const active = remoteAssist.permissions[item.key];
+                            return (
+                              <button
+                                key={item.key}
+                                type="button"
+                                onClick={() => updateRemoteAssistPermissions({ [item.key]: !active })}
+                                className={`px-2 py-0.5 rounded-full border transition ${
+                                  active
+                                    ? 'border-emerald-400/45 bg-emerald-500/20 text-emerald-200'
+                                    : 'border-white/15 bg-white/5 text-white/45 line-through'
+                                }`}
+                              >
+                                {item.label}
+                              </button>
+                            );
+                          })}
+                          <span className="text-amber-200/85 font-mono ml-1">
+                            • Acil Kes: Ctrl+Alt+Esc / Pause
+                          </span>
+                        </div>
+                        {lastClipboardNotice && (
+                          <p className="text-[11px] text-sky-300 pl-6 font-semibold">
+                            📋 {lastClipboardNotice}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => pauseRemoteAssist(!remoteAssist.paused)}
+                          className="px-3 py-1 rounded-full bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 text-xs font-bold flex items-center gap-1 transition"
+                        >
+                          {remoteAssist.paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                          <span>{remoteAssist.paused ? 'Devam Et' : 'Duraklat'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={stopRemoteAssist}
+                          className="px-3 py-1 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1 transition"
+                        >
+                          <Hand className="w-3.5 h-3.5" />
+                          <span>Kontrolü Kes</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Dock */}
+                  <div className="relative flex flex-wrap items-center justify-center gap-2">
+                    {directCall.status === 'incoming' ? (
+                      <>
+                        <button
+                          onClick={acceptDirectCall}
+                          className="px-4 py-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-emerald-500/20"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                          Yanıtla
+                        </button>
+                        <button
+                          onClick={() => declineDirectCall()}
+                          className="px-4 py-2 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-bold flex items-center gap-1.5 transition"
+                        >
+                          <PhoneOff className="w-3.5 h-3.5" />
+                          Reddet
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={toggleMute}
+                          className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
+                            isMuted
+                              ? 'bg-red-500/25 text-red-200 border border-red-400/40'
+                              : 'bg-white/10 hover:bg-white/20 text-white'
+                          }`}
+                        >
+                          {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+                          <span>{isMuted ? 'Mikrofon Kapalı' : 'Mikrofon Açık'}</span>
+                        </button>
+
+                        <button
+                          onClick={toggleDeafen}
+                          className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
+                            isDeafened
+                              ? 'bg-red-500/25 text-red-200 border border-red-400/40'
+                              : 'bg-white/10 hover:bg-white/20 text-white'
+                          }`}
+                        >
+                          {isDeafened ? <Volume2 className="w-3.5 h-3.5" /> : <Headphones className="w-3.5 h-3.5" />}
+                          <span>{isDeafened ? 'Sağırlaştırıldı' : 'Kulaklık'}</span>
+                        </button>
+
+                        {directCall.status === 'connected' && (
+                          <>
+                            <button
+                              onClick={toggleDirectCamera}
+                              className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
+                                isDirectCameraOn
+                                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black font-bold'
+                                  : 'bg-white/10 hover:bg-white/20 text-white'
+                              }`}
+                            >
+                              {isDirectCameraOn ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
+                              <span>{isDirectCameraOn ? 'Kamera Açık' : 'Kamera'}</span>
+                            </button>
+
+                            <div className="relative flex items-center">
+                              <button
+                                onClick={() =>
+                                  isDirectScreenSharing
+                                    ? stopDirectScreenShare()
+                                    : startDirectScreenShare(dmShareOptions)
+                                }
+                                className={`px-3.5 py-2 rounded-l-full text-xs font-semibold flex items-center gap-1.5 transition ${
+                                  isDirectScreenSharing
+                                    ? 'bg-indigo-500 hover:bg-indigo-400 text-white'
+                                    : 'bg-white/10 hover:bg-white/20 text-white'
+                                }`}
+                              >
+                                {isDirectScreenSharing ? <MonitorOff className="w-3.5 h-3.5" /> : <MonitorUp className="w-3.5 h-3.5" />}
+                                <span>{isDirectScreenSharing ? 'Paylaşımı Durdur' : 'Ekran Paylaş'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowDmShareOptions((v) => !v)}
+                                className="px-2 py-2 rounded-r-full bg-white/[0.07] hover:bg-white/20 border-l border-black/30 text-white/80 transition"
+                                title="Ekran Paylaşımı Kalite Seçenekleri"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+
+                              {showDmShareOptions && (
+                                <div className="absolute left-0 top-full mt-2 w-64 rounded-2xl border border-white/15 bg-[#121622] p-3 shadow-2xl z-30 space-y-2 text-left">
+                                  <div className="flex items-center justify-between text-xs font-bold text-white">
+                                    <span>Paylaşım Kalitesi</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowDmShareOptions(false)}
+                                      className="text-white/50 hover:text-white"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                  <div className="grid grid-cols-1 gap-1">
+                                    {(
+                                      [
+                                        { id: 'sharp-text', label: 'Keskin Metin (1080p / 15 FPS)' },
+                                        { id: 'balanced', label: 'Dengeli (1080p / 30 FPS)' },
+                                        { id: 'smooth-60', label: 'Akıcı (1080p / 60 FPS)' },
+                                        { id: 'source', label: 'Kaynak Çözünürlüğü (60 FPS)' },
+                                      ] as const
+                                    ).map((opt) => (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() =>
+                                          setDmShareOptions((prev) => ({ ...prev, preset: opt.id }))
+                                        }
+                                        className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-left transition ${
+                                          dmShareOptions.preset === opt.id
+                                            ? 'bg-sky-500/25 text-sky-200 border border-sky-400/45'
+                                            : 'bg-white/[0.05] text-white/75 hover:bg-white/10'
+                                        }`}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <label className="flex items-center justify-between text-xs text-white/80 cursor-pointer pt-1">
+                                    <span>Sistem sesini paylaş</span>
+                                    <input
+                                      type="checkbox"
+                                      checked={dmShareOptions.shareAudio}
+                                      onChange={(e) =>
+                                        setDmShareOptions((prev) => ({ ...prev, shareAudio: e.target.checked }))
+                                      }
+                                      className="accent-emerald-500"
+                                    />
+                                  </label>
+                                  {!isDirectScreenSharing && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setShowDmShareOptions(false);
+                                        void startDirectScreenShare(dmShareOptions);
+                                      }}
+                                      className="w-full py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold transition"
+                                    >
+                                      Paylaşımı Başlat
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <button
+                              onClick={() => setIsDMRemoteAssistOpen(true)}
+                              className={`px-3.5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 transition ${
+                                remoteAssist.status === 'controlling'
+                                  ? 'bg-sky-500 text-white'
+                                  : 'bg-sky-500/20 hover:bg-sky-500/35 text-sky-200 border border-sky-400/30'
+                              }`}
+                            >
+                              <MousePointerClick className="w-3.5 h-3.5" />
+                              <span>{remoteAssist.status === 'controlling' ? 'Kontrol Paneli' : 'Uzaktan Yardım'}</span>
+                            </button>
+                          </>
+                        )}
+
+                        <button
+                          onClick={endDirectCall}
+                          className="px-4 py-2 rounded-full bg-red-500 hover:bg-red-400 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-red-500/25"
+                        >
+                          <PhoneOff className="w-3.5 h-3.5" />
+                          <span>Görüşmeyi Bitir</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
       <Suspense fallback={null}>
         <RemoteAssistModal
@@ -1518,6 +1799,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 const isNewMessagesStart =
                   initialUnreadDividerCount > 0 &&
                   index === Math.max(0, displayedMessages.length - initialUnreadDividerCount);
+
+          if (msg.author.id === 'system-call') {
+            return (
+              <React.Fragment key={msg.id}>
+                <div className="flex justify-center my-2.5">
+                  <div className="px-4 py-2 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-sm flex flex-wrap items-center gap-3 text-xs text-white/80 shadow-sm">
+                    <span className="text-base">{msg.author.avatar || '📞'}</span>
+                    <span className="font-medium">{msg.content}</span>
+                    <span className="text-[10px] font-mono text-white/40">{msg.timestamp}</span>
+                    {isDM && dmPartner && !directCall && (
+                      <button
+                        type="button"
+                        onClick={() => startDirectCall(dmPartner)}
+                        className="px-2.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/35 text-emerald-300 text-[11px] font-bold flex items-center gap-1 transition"
+                      >
+                        <Phone className="w-3 h-3" />
+                        <span>Geri Ara</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </React.Fragment>
+            );
+          }
 
           return (
             <React.Fragment key={msg.id}>
