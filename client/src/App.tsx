@@ -147,7 +147,7 @@ const MainLayout: React.FC = () => {
     return (
       <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-transparent">
         <WindowTitleBar />
-        <div className="flex-1 flex items-center justify-center overflow-hidden">
+        <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
           <AuthModal forced={true} onClose={() => {}} />
         </div>
       </div>
