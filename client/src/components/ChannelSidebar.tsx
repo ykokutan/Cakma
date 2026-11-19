@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
 import { appConfirm } from '../utils/appDialogs';
+import { isUserServerOwner } from '../utils/serverIdentity';
 import { User, Channel } from '../types';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
 import {
@@ -143,8 +144,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     activeServer &&
     currentUser &&
     (
-      activeServer.ownerId === currentUser.id ||
-      activeServer.ownerId === currentUser.username ||
+      isUserServerOwner(currentUser, activeServer) ||
       currentUser.role === 'admin' ||
       activeServer.members?.some((m) => {
         if (m.username.toLowerCase() !== currentUser.username.toLowerCase()) return false;
@@ -202,7 +202,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   const handleVoiceChannelClick = (channel: Channel) => {
     selectChannel(channel.id);
     const requiresPassword = Boolean(channel.password || channel.isLocked);
-    const isOwner = activeServer?.ownerId === currentUser?.id;
+    const isOwner = isUserServerOwner(currentUser, activeServer);
     const isAdmin = currentUser?.role === 'admin';
     const isAlreadyUnlocked = unlockedChannelIds.includes(channel.id);
 
@@ -350,12 +350,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             <span className="text-[10px] text-indigo-300">Paylaş</span>
           </button>
 
-          {currentUser &&
-            activeServer.ownerId !== currentUser.id &&
-            activeServer.ownerId?.toLowerCase() !== currentUser.username.toLowerCase() &&
-            !activeServer.members?.some(
-              (m) => m.isOwner && m.username.toLowerCase() === currentUser.username.toLowerCase()
-            ) && (
+          {currentUser && !isUserServerOwner(currentUser, activeServer) && (
               <div className="pt-1 mt-1 border-t border-white/10">
                 {confirmLeaveServer ? (
                   <div className="flex items-center justify-between gap-1.5 px-2 py-1.5">
@@ -732,7 +727,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               const isLocked = Boolean(channel.password || channel.isLocked);
               const isTempCreator = Boolean(channel.isTempCreatorChannel || channel.name.includes('➕ Oda Kur'));
               const isDropTarget = dragOverChannelId === channel.id && !isTempCreator;
-              const canMoveOthers = currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id;
+              const canMoveOthers = currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer);
 
               return (
                 <div

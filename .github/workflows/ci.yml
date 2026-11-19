@@ -1,0 +1,78 @@
+name: CI Verification
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install Server Dependencies
+        working-directory: server
+        run: npm ci
+      - name: Build & Run Server Tests
+        working-directory: server
+        run: npm test
+
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install Client Dependencies
+        working-directory: client
+        run: npm ci
+      - name: Run Client Unit Tests
+        working-directory: client
+        run: npm test
+      - name: TypeScript & Vite Production Build
+        working-directory: client
+        run: npm run build
+
+  dedicated-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dedicated-server/package-lock.json
+      - name: Install Dedicated Server Dependencies
+        working-directory: dedicated-server
+        run: npm ci
+      - name: Build Dedicated Server
+        working-directory: dedicated-server
+        run: npm run build
+
+  tauri-rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Prepare Minimal Dist Placeholder for Rust Tests
+        shell: bash
+        run: mkdir -p client/dist && echo "<html></html>" > client/dist/index.html
+      - name: Run Rust Unit Tests
+        working-directory: client/src-tauri
+        run: cargo test

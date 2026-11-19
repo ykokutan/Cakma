@@ -1,5 +1,6 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useDirectCallQuality } from '../context/PresenceStore';
 import { AvatarView } from './AvatarView';
 import { playCallRingtone } from '../utils/tsSoundEffects';
 import type {
@@ -47,7 +48,6 @@ const QUICK_DECLINE_REPLIES = [
 export const DirectCallModal: React.FC = () => {
   const {
     directCall,
-    directCallQuality,
     directCallToasts,
     dismissDirectCallToast,
     activeServer,
@@ -66,6 +66,8 @@ export const DirectCallModal: React.FC = () => {
     toggleDirectCamera,
     remoteScreenStreams,
     remoteAssist,
+    remoteAssistSafeMode,
+    setRemoteAssistSafeMode,
     userVolumes,
     setUserVolume,
     startDirectScreenShare,
@@ -75,6 +77,7 @@ export const DirectCallModal: React.FC = () => {
     updateRemoteAssistPermissions,
     stopRemoteAssist,
   } = useSocket();
+  const directCallQuality = useDirectCallQuality();
 
   const [isRemoteAssistOpen, setIsRemoteAssistOpen] = useState(false);
   const [showDeclineReplies, setShowDeclineReplies] = useState(false);
@@ -682,9 +685,24 @@ export const DirectCallModal: React.FC = () => {
                   );
                 })}
               </div>
-              <span className="text-amber-200/80 font-mono">
-                Acil Kes: Ctrl+Alt+Esc / Pause
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRemoteAssistSafeMode(!remoteAssistSafeMode)}
+                  className={`px-2 py-0.5 rounded-md border text-[10px] font-semibold flex items-center gap-1 transition ${
+                    remoteAssistSafeMode
+                      ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-200'
+                      : 'border-amber-400/40 bg-amber-500/20 text-amber-200'
+                  }`}
+                  title="Alt+F4, Win+R/X/L/E ve Ctrl+Shift+Esc gibi sistem kısayollarını engelle"
+                >
+                  {remoteAssistSafeMode ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                  <span>{remoteAssistSafeMode ? 'Kısayol Koruması' : 'Kısayol Açık'}</span>
+                </button>
+                <span className="text-amber-200/80 font-mono">
+                  Acil Kes: Ctrl+Alt+Esc / Pause
+                </span>
+              </div>
             </div>
           </div>
         )}

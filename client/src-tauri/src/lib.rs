@@ -1,5 +1,5 @@
 use std::sync::{
-  atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+  atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering},
   Mutex, OnceLock,
 };
 use tauri::{
@@ -12,6 +12,9 @@ static GLOBAL_PTT_ENABLED: AtomicBool = AtomicBool::new(false);
 static GLOBAL_PTT_VK: AtomicU8 = AtomicU8::new(0x11);
 static GLOBAL_PTT_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 static REMOTE_ASSIST_HOST_ACTIVE: AtomicBool = AtomicBool::new(false);
+static REMOTE_ASSIST_SAFE_MODE: AtomicBool = AtomicBool::new(true);
+static REMOTE_INPUT_WINDOW_SEC: AtomicU64 = AtomicU64::new(0);
+static REMOTE_INPUT_WINDOW_COUNT: AtomicU32 = AtomicU32::new(0);
 static REMOTE_ASSIST_KILL_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 static LAST_WIN_SAVE_MS: AtomicU64 = AtomicU64::new(0);
@@ -735,10 +738,79 @@ unsafe fn send_unicode_string(text: &str) {
   }
 }
 
+fn allow_remote_input_event() -> bool {
+  let now_sec = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_secs())
+    .unwrap_or(0);
+  let prev_sec = REMOTE_INPUT_WINDOW_SEC.load(Ordering::Relaxed);
+  if now_sec != prev_sec {
+    REMOTE_INPUT_WINDOW_SEC.store(now_sec, Ordering::Relaxed);
+    REMOTE_INPUT_WINDOW_COUNT.store(1, Ordering::Relaxed);
+    return true;
+  }
+  let count = REMOTE_INPUT_WINDOW_COUNT.fetch_add(1, Ordering::Relaxed);
+  count < 240
+}
+
+fn is_blocked_remote_shortcut(
+  key: &str,
+  code: &str,
+  ctrl: bool,
+  alt: bool,
+  shift: bool,
+  meta: bool,
+) -> bool {
+  let k = key.trim().to_ascii_lowercase();
+  let c = code.trim().to_ascii_lowercase();
+  if alt && (k == "f4" || c == "f4") {
+    return true;
+  }
+  if meta && matches!(k.as_str(), "r" | "x" | "l" | "e") {
+    return true;
+  }
+  if meta && matches!(c.as_str(), "keyr" | "keyx" | "keyl" | "keye") {
+    return true;
+  }
+  if ctrl && shift && (k == "escape" || c == "escape") {
+    return true;
+  }
+  if ctrl && alt && (k == "delete" || k == "del" || c == "delete") {
+    return true;
+  }
+  false
+}
+
+#[tauri::command]
+fn set_remote_assist_safe_mode(enabled: bool) -> bool {
+  REMOTE_ASSIST_SAFE_MODE.store(enabled, Ordering::Relaxed);
+  enabled
+}
+
+#[tauri::command]
+fn get_remote_assist_safe_mode() -> bool {
+  REMOTE_ASSIST_SAFE_MODE.load(Ordering::Relaxed)
+}
+
 #[tauri::command]
 fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> {
   if !REMOTE_ASSIST_HOST_ACTIVE.load(Ordering::Relaxed) {
     return Ok(());
+  }
+  if !allow_remote_input_event() {
+    return Ok(());
+  }
+
+  let ctrl = payload.ctrl.unwrap_or(false);
+  let alt = payload.alt.unwrap_or(false);
+  let shift = payload.shift.unwrap_or(false);
+  let meta = payload.meta.unwrap_or(false);
+  if REMOTE_ASSIST_SAFE_MODE.load(Ordering::Relaxed) && payload.kind == "keydown" {
+    let key_str = payload.key.as_deref().unwrap_or("");
+    let code_str = payload.code.as_deref().unwrap_or("");
+    if is_blocked_remote_shortcut(key_str, code_str, ctrl, alt, shift, meta) {
+      return Ok(());
+    }
   }
 
   #[cfg(target_os = "windows")]
@@ -814,7 +886,8 @@ fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> {
         }
         "text" => {
           if let Some(ref txt) = payload.text {
-            send_unicode_string(txt);
+            let clamped: String = txt.chars().take(2000).collect();
+            send_unicode_string(&clamped);
           }
         }
         "keydown" | "keyup" => {
@@ -1312,6 +1385,8 @@ pub fn run() {
       take_pending_deep_link,
       get_display_monitors,
       set_remote_assist_killswitch,
+      set_remote_assist_safe_mode,
+      get_remote_assist_safe_mode,
       set_remote_assist_host_hud,
       push_remote_assist_overlay_event
     ]);
@@ -1464,4 +1539,27 @@ pub fn run() {
     })
     .run(tauri::generate_context!())
     .expect("error while building tauri application");
+}
+
+#[cfg(test)]
+mod remote_assist_tests {
+  use super::is_blocked_remote_shortcut;
+
+  #[test]
+  fn blocks_critical_system_shortcuts() {
+    assert!(is_blocked_remote_shortcut("F4", "F4", false, true, false, false));
+    assert!(is_blocked_remote_shortcut("r", "KeyR", false, false, false, true));
+    assert!(is_blocked_remote_shortcut("X", "KeyX", false, false, false, true));
+    assert!(is_blocked_remote_shortcut("l", "KeyL", false, false, false, true));
+    assert!(is_blocked_remote_shortcut("Escape", "Escape", true, false, true, false));
+    assert!(is_blocked_remote_shortcut("Delete", "Delete", true, true, false, false));
+  }
+
+  #[test]
+  fn allows_regular_editing_shortcuts() {
+    assert!(!is_blocked_remote_shortcut("c", "KeyC", true, false, false, false));
+    assert!(!is_blocked_remote_shortcut("v", "KeyV", true, false, false, false));
+    assert!(!is_blocked_remote_shortcut("Tab", "Tab", false, true, false, false));
+    assert!(!is_blocked_remote_shortcut("a", "KeyA", false, false, false, false));
+  }
 }

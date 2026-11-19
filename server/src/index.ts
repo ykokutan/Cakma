@@ -18,10 +18,17 @@ import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, 
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
 import {
   buildPersistentDmChannelId,
+  parseDmChannelParticipants,
   isUserParticipantInDm,
   findServerByChannelId,
   canUserAccessChannel,
 } from './utils/channelAccess.js';
+import {
+  getPersistentUserId,
+  findServerMember,
+  isServerOwner,
+  resolveServerLevelRecord,
+} from './utils/serverIdentity.js';
 import {
   RemoteAssistManager,
   RemoteAssistPermissions,
@@ -29,8 +36,16 @@ import {
   normalizeRemoteAssistPermissions,
   buildDirectCallLogContent,
 } from './utils/remoteAssistState.js';
-import { generateLicenseKey, verifyLicenseKey } from './licenseGenerator.js';
+import {
+  configureLicenseKeys,
+  generateEd25519KeyPair,
+  generateLicenseKey,
+  verifyLicenseKey,
+} from './licenseGenerator.js';
+import { generateVapidKeyPair, sendWebPush, type VapidKeys } from './utils/webPush.js';
 import { registerCloudSyncAndEvents } from './features/cloudSyncAndEvents.js';
+import { registerHealthAndPushRoutes, pruneGifCache, clearGifCache } from './features/healthAndPushRoutes.js';
+import { registerDedicatedAndMasterRoutes, notifyDedicatedLicenseRevoked } from './features/dedicatedRoutes.js';
 import {
   generateBase32Secret,
   generateOtpAuthUri,
@@ -38,9 +53,12 @@ import {
   generateBackupCodes,
 } from './totp.js';
 import {
+  getPersistentDir,
   loadAccounts, saveAccounts,
   loadServers, saveServers,
   loadMessages, saveMessages, saveChannelMessages,
+  saveChannelMessageUpsert, saveChannelMessageDelete, saveChannelMessageBulkReplace,
+  getChannelMessagesPageSmart,
   loadLicenses, saveLicenses,
   loadStoreSettings, saveStoreSettings,
   loadAuditLogs, saveAuditLogs,
@@ -125,6 +143,7 @@ export function getClientIp(socket: Socket): string {
 interface RateLimitEntry {
   count: number;
   blockedUntil?: number;
+  lastAttempt?: number;
 }
 
 const loginRateLimits = new Map<string, RateLimitEntry>();
@@ -148,6 +167,7 @@ export function recordFailedLogin(ip: string): void {
   const lockoutMins = systemConfig?.loginLockoutMinutes ? Math.min(Math.max(systemConfig.loginLockoutMinutes, 1), 120) : 15;
   const entry = loginRateLimits.get(ip) || { count: 0 };
   entry.count++;
+  entry.lastAttempt = now;
   if (entry.count >= maxAttempts) {
     entry.blockedUntil = now + lockoutMins * 60 * 1000;
     entry.count = 0;
@@ -175,6 +195,7 @@ export function recordRegisterAttempt(ip: string): void {
   const now = Date.now();
   const entry = registerRateLimits.get(ip) || { count: 0 };
   entry.count++;
+  entry.lastAttempt = now;
   if (entry.count >= 3) {
     entry.blockedUntil = now + 10 * 60 * 1000; // 10 minutes block
     entry.count = 0;
@@ -493,34 +514,27 @@ const miniGameRooms = new Map<string, MiniGameState>();
 
 function addMemberXP(serverId: string, user: User, amount: number, isMessage = false) {
   if (!serverId || !user) return;
+  const targetServer = servers.find(s => s.id === serverId);
   if (!serverLevels[serverId]) serverLevels[serverId] = {};
   const userLevels = serverLevels[serverId];
-  if (!userLevels[user.id]) {
-    userLevels[user.id] = {
-      userId: user.id,
-      username: user.username,
-      avatar: user.avatar,
-      xp: 0,
-      level: 1,
-      messageCount: 0,
-      voiceMinutes: 0
-    };
-  }
-  const data = userLevels[user.id];
-  data.username = user.username;
-  data.avatar = user.avatar;
+  const { key: persistentKey, record: data } = resolveServerLevelRecord(userLevels, user);
   data.xp += amount;
   if (isMessage) data.messageCount += 1;
   const newLevel = Math.max(1, Math.floor(0.2 * Math.sqrt(data.xp)));
   if (newLevel > data.level) {
     data.level = newLevel;
-    io.emit('member_level_up', {
+    const payload = {
       serverId,
-      userId: user.id,
+      userId: persistentKey,
       username: user.username,
       level: newLevel,
       xp: data.xp
-    });
+    };
+    if (targetServer) {
+      emitToServerMembers(targetServer, 'member_level_up', payload);
+    } else {
+      emitToUserSockets(user.username, 'member_level_up', payload);
+    }
   }
   saveServerLevels(serverLevels);
 }
@@ -533,28 +547,18 @@ setInterval(() => {
       if (server) {
         if (!serverLevels[server.id]) serverLevels[server.id] = {};
         const userLevels = serverLevels[server.id];
-        if (!userLevels[user.id]) {
-          userLevels[user.id] = {
-            userId: user.id,
-            username: user.username,
-            avatar: user.avatar,
-            xp: 0,
-            level: 1,
-            messageCount: 0,
-            voiceMinutes: 0
-          };
-        }
-        userLevels[user.id].xp += 10;
-        userLevels[user.id].voiceMinutes += 1;
-        const newLevel = Math.max(1, Math.floor(0.2 * Math.sqrt(userLevels[user.id].xp)));
-        if (newLevel > userLevels[user.id].level) {
-          userLevels[user.id].level = newLevel;
-          io.emit('member_level_up', {
+        const { key: persistentKey, record } = resolveServerLevelRecord(userLevels, user);
+        record.xp += 10;
+        record.voiceMinutes += 1;
+        const newLevel = Math.max(1, Math.floor(0.2 * Math.sqrt(record.xp)));
+        if (newLevel > record.level) {
+          record.level = newLevel;
+          emitToServerMembers(server, 'member_level_up', {
             serverId: server.id,
-            userId: user.id,
+            userId: persistentKey,
             username: user.username,
             level: newLevel,
-            xp: userLevels[user.id].xp
+            xp: record.xp
           });
         }
       }
@@ -577,6 +581,22 @@ function emitToServerMembers(srv: Server, event: string, payload: unknown) {
     if (isUserMemberOfServer(u, srv)) {
       io.to(sId).emit(event, payload);
     }
+  }
+}
+
+function emitToVoiceChannelAudience(
+  channelId: string | null | undefined,
+  fallbackUser: User | undefined,
+  event: string,
+  payload: unknown
+) {
+  const srv = channelId ? findServerByChannelId(servers, channelId) : undefined;
+  if (srv) {
+    emitToServerMembers(srv, event, payload);
+    return;
+  }
+  if (fallbackUser) {
+    emitToUserSockets(fallbackUser.username, event, payload);
   }
 }
 
@@ -645,28 +665,28 @@ function getInitialMessagesForServers(userServers: Server[], username: string, u
 }
 
 function syncUserMembershipProfiles(user: User) {
+  const persistentId = getPersistentUserId(user);
+  if (!persistentId) return;
   let changed = false;
   servers.forEach((srv) => {
     if (!srv.members) { srv.members = []; changed = true; }
     if (!srv.roles) { srv.roles = getDefaultRoles(); changed = true; }
-    const existing = srv.members.find(
-      (m) => m.userId === user.id || m.username.toLowerCase() === user.username.toLowerCase()
-    );
+    const existing = findServerMember(srv, user);
     if (existing) {
-      if (existing.userId !== user.id || existing.avatar !== user.avatar || existing.username !== user.username) {
-        existing.userId = user.id;
+      if (existing.userId !== persistentId || existing.avatar !== user.avatar || existing.username !== user.username) {
+        existing.userId = persistentId;
         existing.avatar = user.avatar;
         existing.username = user.username;
         changed = true;
       }
-      if (existing.isOwner && srv.ownerId !== user.id) {
-        srv.ownerId = user.id;
+      if (existing.isOwner && srv.ownerId !== persistentId) {
+        srv.ownerId = persistentId;
         changed = true;
       }
     } else if (user.role === 'admin' && srv.ownerId === 'usr-admin-system' && srv.members.length === 0) {
-      srv.ownerId = user.id;
+      srv.ownerId = persistentId;
       srv.members.push({
-        userId: user.id,
+        userId: persistentId,
         username: user.username,
         avatar: user.avatar,
         roleIds: ['role-owner', 'role-admin'],
@@ -687,12 +707,13 @@ function addUserToServer(user: User, srv: Server): boolean {
   if (isUserMemberOfServer(user, srv)) {
     return false;
   }
+  const persistentId = getPersistentUserId(user);
   const initialRoles = ['role-everyone'];
   if (srv.autoRoleId && !initialRoles.includes(srv.autoRoleId)) {
     initialRoles.push(srv.autoRoleId);
   }
   srv.members.push({
-    userId: user.id,
+    userId: persistentId,
     username: user.username,
     avatar: user.avatar,
     roleIds: initialRoles,
@@ -722,7 +743,7 @@ function addUserToServer(user: User, srv: Server): boolean {
       };
       if (!messages[srv.welcomeChannelId]) messages[srv.welcomeChannelId] = [];
       messages[srv.welcomeChannelId].push(welcomeMsg);
-      saveMessages(messages);
+      saveChannelMessageUpsert(srv.welcomeChannelId, messages[srv.welcomeChannelId], welcomeMsg);
       emitToServerMembers(srv, 'new_message', welcomeMsg);
     }
   }
@@ -1076,337 +1097,140 @@ function buildRuntimeMetrics() {
   };
 }
 
-app.get('/api/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    ...buildRuntimeMetrics(),
-    stats: getSystemStats()
-  });
-});
+// Health, Metrics, Web Push & GIF endpoints are modularized in features/healthAndPushRoutes.ts
+// Dedicated Server & Master License endpoints are modularized in features/dedicatedRoutes.ts
 
-app.get('/api/metrics', (req, res) => {
-  const m = buildRuntimeMetrics();
-  if (req.query.format === 'prometheus') {
-    const lines = [
-      '# HELP cakma_uptime_seconds Backend process uptime in seconds',
-      '# TYPE cakma_uptime_seconds gauge',
-      `cakma_uptime_seconds ${m.uptimeSeconds}`,
-      '# HELP cakma_online_users Number of online users',
-      '# TYPE cakma_online_users gauge',
-      `cakma_online_users ${m.onlineUsers}`,
-      '# HELP cakma_active_voice_rooms Active voice rooms count',
-      '# TYPE cakma_active_voice_rooms gauge',
-      `cakma_active_voice_rooms ${m.activeVoiceRooms}`,
-      '# HELP cakma_memory_rss_mb Resident set size in MiB',
-      '# TYPE cakma_memory_rss_mb gauge',
-      `cakma_memory_rss_mb ${m.memoryRssMb}`,
-      '# HELP cakma_memory_heap_used_mb V8 heap used in MiB',
-      '# TYPE cakma_memory_heap_used_mb gauge',
-      `cakma_memory_heap_used_mb ${m.memoryHeapUsedMb}`,
-      '# HELP cakma_pending_storage_writes Pending async disk write count',
-      '# TYPE cakma_pending_storage_writes gauge',
-      `cakma_pending_storage_writes ${m.pendingStorageWrites}`,
-    ];
-    return res.type('text/plain').send(`${lines.join('\n')}\n`);
-  }
-  return res.json(m);
-});
+// Master REST API Key, Session Secret, Ed25519 License Keys & VAPID Web Push Keys
+interface ServerSecretsStore {
+  masterApiKey?: string;
+  sessionSecret?: string;
+  licensePrivateKeyPem?: string;
+  licensePublicKeyPem?: string;
+  vapidPublicKey?: string;
+  vapidPrivateKeyPem?: string;
+  vapidSubject?: string;
+}
 
-app.get('/api/push/status', (_req, res) => {
-  res.json({ enabled: true, subscriptionCount: pushSubscriptions.length });
-});
-
-app.post('/api/push/subscribe', (req, res) => {
-  const cookieToken = parseCookieValue(req.headers.cookie, 'cakma_session');
-  const token = (cookieToken || req.body?.token || '').toString().trim();
-  const username = token ? verifySessionToken(token) : null;
-  if (!username) {
-    return res.status(401).json({ success: false, error: 'Oturum doğrulanamadı.' });
-  }
-  const subscription = req.body?.subscription;
-  const endpoint = (subscription?.endpoint || '').toString().trim();
-  if (!subscription || !endpoint) {
-    return res.status(400).json({ success: false, error: 'Geçersiz abonelik nesnesi.' });
-  }
-  pushSubscriptions = pushSubscriptions.filter((s) => s.endpoint !== endpoint);
-  pushSubscriptions.push({
-    username,
-    endpoint,
-    subscription,
-    updatedAt: new Date().toISOString(),
-  });
-  if (pushSubscriptions.length > 500) {
-    pushSubscriptions = pushSubscriptions.slice(-500);
-  }
-  savePushSubscriptions(pushSubscriptions);
-  return res.json({ success: true, count: pushSubscriptions.length });
-});
-
-app.delete('/api/push/unsubscribe', (req, res) => {
-  const endpoint = (req.body?.endpoint || '').toString().trim();
-  if (!endpoint) {
-    return res.status(400).json({ success: false, error: 'endpoint gerekli.' });
-  }
-  pushSubscriptions = pushSubscriptions.filter((s) => s.endpoint !== endpoint);
-  savePushSubscriptions(pushSubscriptions);
-  return res.json({ success: true });
-});
-
-// GIPHY Proxy Endpoint with 5-minute in-memory cache
-const gifCache = new Map<string, { ts: number; gifs: Array<{ id: string; title: string; url: string; previewUrl: string; category: string }> }>();
-const GIF_CATEGORY_QUERY_MAP: Record<string, string> = {
-  Oyun: 'gaming',
-  Tepki: 'reaction',
-  Müzik: 'music',
-  Anime: 'anime',
-};
-
-app.get('/api/gifs', async (req, res) => {
-  const apiKey = (systemConfig.giphyApiKey || process.env.GIPHY_API_KEY || '').trim();
-  if (!apiKey) {
-    return res.json({ configured: false, source: 'fallback', gifs: [] });
-  }
-
-  const rawQuery = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
-  const rawCategory = typeof req.query.category === 'string' ? req.query.category.trim() : 'Tümü';
-  const limit = Math.min(Math.max(Number(req.query.limit) || 24, 6), 36);
-
-  const mappedCategoryQuery = GIF_CATEGORY_QUERY_MAP[rawCategory] || '';
-  const effectiveQuery = rawQuery || mappedCategoryQuery;
-  const cacheKey = `${effectiveQuery.toLowerCase()}|${rawCategory}|${limit}`;
-
-  const cached = gifCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < 5 * 60 * 1000) {
-    return res.json({ configured: true, source: 'giphy', cached: true, gifs: cached.gifs });
-  }
-
-  try {
-    const endpoint = effectiveQuery
-      ? `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(apiKey)}&q=${encodeURIComponent(effectiveQuery)}&limit=${limit}&rating=pg-13&lang=tr`
-      : `https://api.giphy.com/v1/gifs/trending?api_key=${encodeURIComponent(apiKey)}&limit=${limit}&rating=pg-13`;
-
-    const response = await fetch(endpoint);
-    if (!response.ok) {
-      return res.json({ configured: true, source: 'fallback', error: `GIPHY HTTP ${response.status}`, gifs: [] });
-    }
-
-    const payload = (await response.json()) as { data?: any[] };
-    const gifs = (Array.isArray(payload?.data) ? payload.data : [])
-      .map((item) => {
-        const url = item?.images?.fixed_height?.url || item?.images?.original?.url || '';
-        const previewUrl = item?.images?.fixed_width_small?.url || item?.images?.fixed_height_small?.url || url;
-        if (!url) return null;
-        return {
-          id: String(item.id || Math.random()),
-          title: String(item.title || 'GIF').trim() || 'GIF',
-          url,
-          previewUrl,
-          category: rawCategory || 'Tümü',
-        };
-      })
-      .filter((x): x is { id: string; title: string; url: string; previewUrl: string; category: string } => Boolean(x));
-
-    if (gifCache.size > 100) {
-      const oldestKey = gifCache.keys().next().value;
-      if (oldestKey) gifCache.delete(oldestKey);
-    }
-    gifCache.set(cacheKey, { ts: Date.now(), gifs });
-    return res.json({ configured: true, source: 'giphy', gifs });
-  } catch {
-    return res.json({ configured: true, source: 'fallback', error: 'GIPHY bağlantı hatası', gifs: [] });
-  }
-});
-
-// Dedicated Server Heartbeat & Registry Endpoints
-app.post('/api/dedicated/heartbeat', (req, res) => {
-  const {
-    id,
-    serverName,
-    host,
-    port,
-    licenseKey,
-    channelsCount,
-    onlineCount,
-    uptimeSeconds
-  } = req.body;
-
-  if (!id || !licenseKey || !serverName) {
-    return res.status(400).json({ success: false, error: 'Eksik sunucu veya lisans parametresi.' });
-  }
-
-  const licVerify = verifyLicenseKey(licenseKey);
-  if (!licVerify.valid || !licVerify.data) {
-    return res.status(403).json({ success: false, error: licVerify.error || 'Geçersiz lisans anahtarı.' });
-  }
-
-  // Check if license was revoked by Admin
-  let matchedIssuedLicense: IssuedLicense | undefined;
-  for (const lic of issuedLicenses.values()) {
-    if (lic.licenseKey === licenseKey || (licVerify.data && lic.licensee.toLowerCase() === licVerify.data.licensee.toLowerCase())) {
-      matchedIssuedLicense = lic;
-      break;
-    }
-  }
-
-  if (matchedIssuedLicense) {
-    if (matchedIssuedLicense.status === 'revoked') {
-      const existing = dedicatedServersRegistry.get(id);
-      if (existing) {
-        existing.status = 'revoked';
-        io.to('admins').emit('admin_dedicated_updated', existing);
-      }
-      return res.status(403).json({
-        success: false,
-        revoked: true,
-        error: 'LİSANS İPTAL EDİLDİ: Bu lisans sistem yöneticisi tarafından feshedilmiştir.'
-      });
-    }
-    matchedIssuedLicense.activeServerHost = host || `localhost:${port || 4001}`;
-  }
-
-  const isNew = !dedicatedServersRegistry.has(id);
-  const serverInfo: DedicatedServerInfo = {
-    id,
-    serverName,
-    host: host || `localhost:${port || 4001}`,
-    port: port || 4001,
-    licenseKey,
-    licensee: licVerify.data.licensee,
-    tier: licVerify.data.tier,
-    maxSlots: licVerify.data.maxSlots,
-    onlineCount: onlineCount || 0,
-    channelsCount: channelsCount || 0,
-    uptimeSeconds: uptimeSeconds || 0,
-    lastHeartbeat: new Date().toISOString(),
-    status: 'online'
-  };
-
-  dedicatedServersRegistry.set(id, serverInfo);
-
-  if (isNew) {
-    addAuditLog('DEDICATED_SUNUCU_BAGLANDI', `Yeni Dedicated Ses Sunucusu sinyal verdi: "${serverName}" (${serverInfo.host}) - Lisans: ${serverInfo.licensee}`, 'info');
-  }
-
-  // Real-time broadcast to connected admin panels
-  io.to('admins').emit('admin_dedicated_updated', serverInfo);
-
-  res.json({ success: true, message: 'Heartbeat kabul edildi.' });
-});
-
-app.post('/api/dedicated/shutdown', (req, res) => {
-  const { id, licenseKey } = req.body || {};
-  if (id && dedicatedServersRegistry.has(id)) {
-    const s = dedicatedServersRegistry.get(id)!;
-    const isMaster = isMasterRequest(req);
-    const hasMatchingLicense =
-      typeof licenseKey === 'string' &&
-      licenseKey.length > 0 &&
-      typeof s.licenseKey === 'string' &&
-      s.licenseKey.length > 0 &&
-      crypto.timingSafeEqual(
-        crypto.createHash('sha256').update(licenseKey).digest(),
-        crypto.createHash('sha256').update(s.licenseKey).digest()
-      );
-    if (!isMaster && !hasMatchingLicense) {
-      return res.status(401).json({ success: false, error: 'Yetkisiz erişim: Geçersiz sunucu lisans anahtarı.' });
-    }
-    s.status = 'offline';
-    addAuditLog('DEDICATED_SUNUCU_KAPANDI', `Dedicated Ses Sunucusu kapandi: "${s.serverName}" (${s.host})`, 'warn');
-    io.to('admins').emit('admin_dedicated_updated', s);
-  }
-  res.json({ success: true });
-});
-
-app.get('/api/dedicated/list', (req, res) => {
-  const sessionUser = getSessionUserFromRequest(req);
-  const isAdminSession = sessionUser ? registeredAccounts.get(sessionUser.toLowerCase())?.role === 'admin' : false;
-  if (!isMasterRequest(req) && !isAdminSession) {
-    return res.status(401).json({ success: false, error: 'Yetkisiz erişim.' });
-  }
-  res.json({
-    total: dedicatedServersRegistry.size,
-    servers: Array.from(dedicatedServersRegistry.values())
-  });
-});
-
-app.get('/api/dedicated/verify-license', (req, res) => {
-  const licenseKey = (req.query.licenseKey as string)?.trim();
-  if (!licenseKey) {
-    return res.status(400).json({ valid: false, error: 'Lisans anahtarı parametresi eksik.' });
-  }
-
-  const licVerify = verifyLicenseKey(licenseKey);
-  if (!licVerify.valid || !licVerify.data) {
-    return res.status(403).json({ valid: false, error: licVerify.error || 'Lisans anahtarı imza kontrolünü geçemedi.' });
-  }
-
-  for (const lic of issuedLicenses.values()) {
-    if (lic.licenseKey === licenseKey || (licVerify.data && lic.licensee.toLowerCase() === licVerify.data.licensee.toLowerCase())) {
-      if (lic.status !== 'active') {
-        return res.status(403).json({
-          valid: false,
-          status: lic.status,
-          error: lic.status === 'revoked'
-            ? 'Bu lisans sistem yöneticisi tarafından feshedilmiştir.'
-            : 'Bu lisans henüz aktif değildir (Ödeme veya yönetici onayı bekleniyor).'
-        });
-      }
-      return res.json({ valid: true, status: lic.status, data: licVerify.data });
-    }
-  }
-
-  return res.json({ valid: true, status: 'active', data: licVerify.data });
-});
-
-// Periodic Rate-Limit Map Cleanup (prevents unbounded memory growth under scan traffic)
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of apiRateLimits.entries()) {
-    if (now >= entry.resetAt) apiRateLimits.delete(ip);
-  }
-  for (const [ip, entry] of loginRateLimits.entries()) {
-    if (!entry.blockedUntil || now >= entry.blockedUntil) {
-      if (entry.blockedUntil && now >= entry.blockedUntil) loginRateLimits.delete(ip);
-    }
-  }
-  for (const [ip, entry] of registerRateLimits.entries()) {
-    if (entry.blockedUntil && now >= entry.blockedUntil) registerRateLimits.delete(ip);
-  }
-}, 10 * 60 * 1000).unref();
-
-// Master REST API Key & Session Secret (Auto-generated & persisted if not set in .env)
-function loadOrCreateServerSecrets(): { masterApiKey: string; sessionSecret: string } {
-  const envMaster = process.env.MASTER_API_KEY?.trim();
-  const envSession = process.env.SESSION_SECRET?.trim();
-  if (envMaster && envSession) {
-    return { masterApiKey: envMaster, sessionSecret: envSession };
-  }
-
-  const secretsDir = path.join(__dirname, '..', 'data');
+function loadOrCreateServerSecrets(): {
+  masterApiKey: string;
+  sessionSecret: string;
+  licensePrivateKeyPem: string;
+  licensePublicKeyPem: string;
+  vapidKeys: VapidKeys;
+} {
+  const secretsDir = getPersistentDir();
   const secretsFile = path.join(secretsDir, '.secrets.json');
-  let stored: { masterApiKey?: string; sessionSecret?: string } = {};
+  const legacySecretsFile = path.join(__dirname, '..', 'data', '.secrets.json');
+
+  let stored: ServerSecretsStore = {};
   try {
     if (fs.existsSync(secretsFile)) {
-      stored = JSON.parse(fs.readFileSync(secretsFile, 'utf-8'));
+      stored = JSON.parse(fs.readFileSync(secretsFile, 'utf-8')) as ServerSecretsStore;
+    } else if (fs.existsSync(legacySecretsFile)) {
+      stored = JSON.parse(fs.readFileSync(legacySecretsFile, 'utf-8')) as ServerSecretsStore;
     }
   } catch {}
+
+  const envMaster = process.env.MASTER_API_KEY?.trim();
+  const envSession = process.env.SESSION_SECRET?.trim();
+  const envLicPriv = process.env.LICENSE_PRIVATE_KEY?.trim();
+  const envLicPub = process.env.LICENSE_PUBLIC_KEY?.trim();
+  const envVapidPub = process.env.VAPID_PUBLIC_KEY?.trim();
+  const envVapidPriv = process.env.VAPID_PRIVATE_KEY?.trim();
+  const envVapidSub = process.env.VAPID_SUBJECT?.trim();
 
   const masterApiKey = envMaster || stored.masterApiKey || crypto.randomBytes(32).toString('hex');
   const sessionSecret = envSession || stored.sessionSecret || crypto.randomBytes(32).toString('hex');
 
-  if (!stored.masterApiKey || !stored.sessionSecret) {
+  let licensePrivateKeyPem = envLicPriv || stored.licensePrivateKeyPem || '';
+  let licensePublicKeyPem = envLicPub || stored.licensePublicKeyPem || '';
+  if (!licensePrivateKeyPem || !licensePublicKeyPem) {
+    const pair = generateEd25519KeyPair();
+    licensePrivateKeyPem = licensePrivateKeyPem || pair.privateKeyPem;
+    licensePublicKeyPem = licensePublicKeyPem || pair.publicKeyPem;
+  }
+
+  let vapidPublicKey = envVapidPub || stored.vapidPublicKey || '';
+  let vapidPrivateKeyPem = envVapidPriv || stored.vapidPrivateKeyPem || '';
+  const vapidSubject = envVapidSub || stored.vapidSubject || 'mailto:admin@ses.yahyakemalokutan.com';
+  if (!vapidPublicKey || !vapidPrivateKeyPem) {
+    const generated = generateVapidKeyPair(vapidSubject);
+    vapidPublicKey = vapidPublicKey || generated.publicKey;
+    vapidPrivateKeyPem = vapidPrivateKeyPem || generated.privateKeyPem;
+  }
+
+  const nextStore: ServerSecretsStore = {
+    masterApiKey,
+    sessionSecret,
+    licensePrivateKeyPem,
+    licensePublicKeyPem,
+    vapidPublicKey,
+    vapidPrivateKeyPem,
+    vapidSubject,
+  };
+
+  if (
+    !fs.existsSync(secretsFile) ||
+    !stored.masterApiKey ||
+    !stored.sessionSecret ||
+    !stored.licensePrivateKeyPem ||
+    !stored.licensePublicKeyPem ||
+    !stored.vapidPublicKey ||
+    !stored.vapidPrivateKeyPem
+  ) {
     try {
       fs.mkdirSync(secretsDir, { recursive: true });
-      fs.writeFileSync(secretsFile, JSON.stringify({ masterApiKey, sessionSecret }, null, 2), { mode: 0o600 });
+      fs.writeFileSync(secretsFile, JSON.stringify(nextStore, null, 2), { mode: 0o600 });
     } catch {}
   }
 
-  return { masterApiKey, sessionSecret };
+  return {
+    masterApiKey,
+    sessionSecret,
+    licensePrivateKeyPem,
+    licensePublicKeyPem,
+    vapidKeys: {
+      publicKey: vapidPublicKey,
+      privateKeyPem: vapidPrivateKeyPem,
+      subject: vapidSubject,
+    },
+  };
 }
 
 const serverSecrets = loadOrCreateServerSecrets();
 const MASTER_API_KEY = serverSecrets.masterApiKey;
 const SESSION_SECRET = serverSecrets.sessionSecret;
+const VAPID_KEYS = serverSecrets.vapidKeys;
+configureLicenseKeys({
+  privateKeyPem: serverSecrets.licensePrivateKeyPem,
+  publicKeyPem: serverSecrets.licensePublicKeyPem,
+  allowLegacyHmac: process.env.ALLOW_LEGACY_HMAC_LICENSES !== 'false',
+});
+
+async function sendWebPushToUsername(
+  username: string,
+  payload: { title: string; body: string; url?: string }
+): Promise<void> {
+  const targetLower = String(username || '').trim().toLowerCase();
+  if (!targetLower) return;
+  const targets = pushSubscriptions.filter((s) => s.username.toLowerCase() === targetLower);
+  if (targets.length === 0) return;
+
+  const goneEndpoints = new Set<string>();
+  await Promise.allSettled(
+    targets.map(async (rec) => {
+      const res = await sendWebPush(rec.subscription as any, payload, VAPID_KEYS);
+      if (res.gone) {
+        goneEndpoints.add(rec.endpoint);
+      }
+    })
+  );
+
+  if (goneEndpoints.size > 0) {
+    pushSubscriptions = pushSubscriptions.filter((s) => !goneEndpoints.has(s.endpoint));
+    savePushSubscriptions(pushSubscriptions);
+  }
+}
 
 const soundboardCooldowns = new Map<string, number>();
 
@@ -1698,170 +1522,32 @@ function isMasterRequest(req: express.Request): boolean {
   return false;
 }
 
-function getSessionUserFromRequest(req: express.Request): string | null {
-  const authHeader = req.headers['authorization'];
-  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    const bearer = authHeader.slice(7).trim();
-    return verifySessionToken(bearer);
-  }
-  return null;
-}
-
-function requireMasterAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (isMasterRequest(req)) {
-    return next();
-  }
-  return res.status(401).json({ success: false, error: 'Yetkisiz erişim: Geçersiz master API anahtarı.' });
-}
-
-// Master REST API for syncing licenses & settings across all dedicated servers & clients
-app.get('/api/master/licenses', requireMasterAuth, (req, res) => {
-  res.json({
-    success: true,
-    licenses: Array.from(issuedLicenses.values())
-  });
+registerHealthAndPushRoutes(app, {
+  systemConfig,
+  buildRuntimeMetrics,
+  getSystemStats,
+  getPushSubscriptions: () => pushSubscriptions,
+  setPushSubscriptions: (records) => {
+    pushSubscriptions = records;
+  },
+  savePushSubscriptions,
+  getVapidKeys: () => VAPID_KEYS,
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  isMasterRequest,
 });
 
-app.get('/api/master/user-licenses', (req, res) => {
-  const username = (req.query.username as string)?.trim()?.toLowerCase();
-  const isMaster = isMasterRequest(req);
-  const sessionUser = getSessionUserFromRequest(req);
-  const isAdminSession = sessionUser ? registeredAccounts.get(sessionUser.toLowerCase())?.role === 'admin' : false;
-
-  if (!isMaster && (!sessionUser || (!isAdminSession && sessionUser.toLowerCase() !== username))) {
-    return res.status(401).json({ success: false, error: 'Yetkisiz erişim.' });
-  }
-
-  if (!username) {
-    return res.json({ success: true, licenses: [] });
-  }
-  const userLics = Array.from(issuedLicenses.values()).filter(
-    l => l.assignedUsername.toLowerCase() === username
-  );
-  res.json({ success: true, licenses: userLics });
+registerDedicatedAndMasterRoutes(app, io, {
+  dedicatedServersRegistry,
+  issuedLicenses,
+  saveLicenses,
+  storeSettings,
+  saveStoreSettings,
+  registeredAccounts,
+  verifySessionTokenWithMeta,
+  isMasterRequest,
+  addAuditLog,
 });
-
-app.post('/api/master/license/generate', requireMasterAuth, (req, res) => {
-  const { licensee, maxSlots, expireDays, tier, assignedUsername } = req.body;
-  const cleanLicensee = (licensee || 'Ozel Musteri').trim();
-  const slots = Number(maxSlots) || 64;
-  const days = Number(expireDays) || 365;
-  const selectedTier = tier || 'Pro';
-  const targetUsername = assignedUsername?.trim() || 'admin';
-
-  const licenseKey = generateLicenseKey(cleanLicensee, slots, days, selectedTier);
-  const expiresAt = days === -1
-    ? 'lifetime'
-    : new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-
-  const newLicense: IssuedLicense = {
-    id: `lic-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    licenseKey,
-    licensee: cleanLicensee,
-    assignedUsername: targetUsername,
-    maxSlots: slots,
-    tier: selectedTier,
-    status: 'active',
-    issuedAt: new Date().toISOString(),
-    expiresAt,
-    source: 'admin'
-  };
-
-  issuedLicenses.set(newLicense.id, newLicense);
-  saveLicenses(issuedLicenses);
-  io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
-  res.json({ success: true, license: newLicense });
-});
-
-app.post('/api/master/license/revoke', requireMasterAuth, (req, res) => {
-  const { licenseId, reason } = req.body;
-  const lic = issuedLicenses.get(licenseId);
-  if (lic) {
-    lic.status = 'revoked';
-    saveLicenses(issuedLicenses);
-    io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
-
-    for (const s of dedicatedServersRegistry.values()) {
-      if (s.licenseKey === lic.licenseKey || s.licensee.toLowerCase() === lic.licensee.toLowerCase()) {
-        s.status = 'revoked';
-        io.to('admins').emit('admin_dedicated_updated', s);
-      }
-    }
-    const directFallbacks = ['http://127.0.0.1:4001/api/license/revoked', 'http://localhost:4001/api/license/revoked'];
-    for (const endpoint of directFallbacks) {
-      try {
-        fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason: reason || 'Sistem yöneticisi tarafından lisans feshedildi.' })
-        }).catch(() => {});
-      } catch {}
-    }
-    io.emit('dedicated_server_terminated', {
-      title: 'Sunucu Lisansı İptal Edildi',
-      reason: reason || 'Sistem yöneticisi bu lisansı feshetti.',
-      action: 'disconnect'
-    });
-    return res.json({ success: true, message: 'Lisans iptal edildi.' });
-  }
-  res.status(404).json({ success: false, error: 'Lisans bulunamadı.' });
-});
-
-app.post('/api/master/license/extend', requireMasterAuth, (req, res) => {
-  const { licenseId, addDays } = req.body;
-  const lic = issuedLicenses.get(licenseId);
-  if (!lic) return res.status(404).json({ success: false, error: 'Lisans bulunamadı.' });
-
-  const days = Number(addDays);
-  let newExpiresAt: string;
-  if (days === -1) {
-    newExpiresAt = 'lifetime';
-  } else {
-    const currentExpiry = (lic.expiresAt === 'lifetime' || lic.expiresAt.startsWith('2099'))
-      ? Date.now()
-      : new Date(lic.expiresAt).getTime();
-    const baseTime = currentExpiry > Date.now() ? currentExpiry : Date.now();
-    newExpiresAt = new Date(baseTime + days * 24 * 60 * 60 * 1000).toISOString();
-  }
-
-  const newLicenseKey = generateLicenseKey(lic.licensee, lic.maxSlots, newExpiresAt, lic.tier);
-  lic.licenseKey = newLicenseKey;
-  lic.expiresAt = newExpiresAt;
-  if (lic.status === 'expired') {
-    lic.status = 'active';
-  }
-
-  saveLicenses(issuedLicenses);
-  io.to('admins').emit('admin_licenses_list', Array.from(issuedLicenses.values()));
-  res.json({ success: true, license: lic });
-});
-
-app.get('/api/master/store-settings', (req, res) => {
-  res.json(storeSettings);
-});
-
-app.post('/api/master/store-settings', requireMasterAuth, (req, res) => {
-  Object.assign(storeSettings, req.body);
-  saveStoreSettings(storeSettings);
-  io.emit('store_settings_updated', storeSettings);
-  res.json({ success: true, storeSettings });
-});
-
-// Periodic Heartbeat Sweeper: 30 saniye sinyal vermeyenleri offline yap
-setInterval(() => {
-  const now = Date.now();
-  let changed = false;
-  for (const server of dedicatedServersRegistry.values()) {
-    if (server.status === 'online' && now - new Date(server.lastHeartbeat).getTime() > 30000) {
-      server.status = 'offline';
-      changed = true;
-      io.to('admins').emit('admin_dedicated_updated', server);
-    }
-  }
-  if (changed) {
-    io.to('admins').emit('admin_dedicated_list', Array.from(dedicatedServersRegistry.values()));
-  }
-}, 15000);
 
 // Intelligent AI Assistant Response Generator
 function generateAIResponse(prompt: string, senderName: string): string {
@@ -1903,6 +1589,145 @@ const pendingDirectCalls = new Map<
 const pendingDirectCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const remoteAssistManager = new RemoteAssistManager();
 const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
+const pendingVoicePullInvites = new Map<
+  string,
+  {
+    fromUserId: string;
+    fromUsername: string;
+    targetUserId: string;
+    targetChannelId: string;
+    channelName: string;
+    expiresAt: number;
+  }
+>();
+
+function cleanupTemporaryChannels() {
+  let changed = false;
+  for (const server of servers) {
+    const toRemove: string[] = [];
+    for (const channel of server.channels) {
+      if (channel.isTemporary) {
+        const usersInCh = Array.from(activeUsers.values()).filter(u => u.currentVoiceChannelId === channel.id);
+        if (usersInCh.length === 0) {
+          toRemove.push(channel.id);
+        }
+      }
+    }
+    if (toRemove.length > 0) {
+      server.channels = server.channels.filter(c => !toRemove.includes(c.id));
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveServers(servers);
+    emitServersUpdatedForAll();
+  }
+}
+
+function performVoiceMove(
+  targetUserId: string,
+  targetChannelId: string,
+  movedByUsername: string,
+  isSelf: boolean
+) {
+  const targetUser = activeUsers.get(targetUserId);
+  const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === targetChannelId);
+  const parentServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
+  const targetSock = io.sockets.sockets.get(targetUserId);
+  if (!targetUser || !targetChannel || !targetSock) return;
+  if (targetUser.currentVoiceChannelId === targetChannelId) return;
+
+  const oldChannelId = targetUser.currentVoiceChannelId;
+  if (oldChannelId) {
+    targetSock.leave(oldChannelId);
+    io.to(oldChannelId).emit('user_left_voice', { userId: targetUserId, channelId: oldChannelId });
+    cleanupTemporaryChannels();
+  }
+
+  targetUser.currentVoiceChannelId = targetChannelId;
+  userVoiceActivity.set(targetUserId, Date.now());
+  targetSock.join(targetChannelId);
+
+  const peersInRoom: User[] = [];
+  for (const [sId, u] of activeUsers.entries()) {
+    if (u.currentVoiceChannelId === targetChannelId && sId !== targetUserId) {
+      peersInRoom.push(u);
+    }
+  }
+
+  targetSock.emit('moved_to_voice_channel', {
+    channelId: targetChannelId,
+    channelName: targetChannel.name,
+    movedBy: movedByUsername,
+    isSelf
+  });
+
+  targetSock.emit('voice_room_users', {
+    channelId: targetChannelId,
+    peers: peersInRoom
+  });
+
+  targetSock.to(targetChannelId).emit('user_joined_voice', {
+    user: targetUser,
+    channelId: targetChannelId
+  });
+
+  const voicePayload = {
+    userId: targetUserId,
+    channelId: targetChannelId,
+    isMuted: targetUser.isMuted,
+    isDeafened: targetUser.isDeafened
+  };
+  emitToVoiceChannelAudience(targetChannelId, targetUser, 'voice_state_update', voicePayload);
+  if (oldChannelId) {
+    const oldSrv = findServerByChannelId(servers, oldChannelId);
+    if (oldSrv && oldSrv.id !== parentServer?.id) {
+      emitToServerMembers(oldSrv, 'voice_state_update', voicePayload);
+    }
+  }
+
+  if (!isSelf) {
+    addAuditLog('KULLANICI_TASINDI', `${movedByUsername}, ${targetUser.username} kullanıcısını #${targetChannel.name} odasına taşıdı.`, 'voice');
+  }
+  updateUserConnectionLocation(targetUserId, parentServer?.name || 'Ana Topluluk', `Ses: ${targetChannel.name}`);
+}
+
+// Comprehensive Periodic In-Memory Cache & Rate-Limit Map Cleanup
+setInterval(() => {
+  const now = Date.now();
+  const todayKey = new Date().toISOString().slice(0, 10);
+  for (const [ip, entry] of apiRateLimits.entries()) {
+    if (now >= entry.resetAt) apiRateLimits.delete(ip);
+  }
+  for (const [ip, entry] of loginRateLimits.entries()) {
+    if ((entry.blockedUntil && now >= entry.blockedUntil) || (!entry.blockedUntil && entry.lastAttempt && now - entry.lastAttempt > 30 * 60_000)) {
+      loginRateLimits.delete(ip);
+    }
+  }
+  for (const [ip, entry] of registerRateLimits.entries()) {
+    if ((entry.blockedUntil && now >= entry.blockedUntil) || (!entry.blockedUntil && entry.lastAttempt && now - entry.lastAttempt > 30 * 60_000)) {
+      registerRateLimits.delete(ip);
+    }
+  }
+  for (const [k, ts] of soundboardCooldowns.entries()) {
+    if (now - ts > 5 * 60_000) soundboardCooldowns.delete(k);
+  }
+  for (const [uId, stamps] of messageRateLimits.entries()) {
+    const fresh = stamps.filter((t) => now - t < 60_000);
+    if (fresh.length === 0) messageRateLimits.delete(uId);
+    else messageRateLimits.set(uId, fresh);
+  }
+  for (const [emailKey, otp] of pendingEmailOtps.entries()) {
+    if (now > otp.expiresAt) pendingEmailOtps.delete(emailKey);
+  }
+  for (const [ip, rec] of ipDailyRegistrations.entries()) {
+    if (rec.date !== todayKey) ipDailyRegistrations.delete(ip);
+  }
+  for (const [reqId, inv] of pendingVoicePullInvites.entries()) {
+    if (now > inv.expiresAt) pendingVoicePullInvites.delete(reqId);
+  }
+  pruneGifCache();
+}, 10 * 60 * 1000).unref();
 
 function clearPendingDirectCallTimer(targetUsernameLower: string) {
   const existing = pendingDirectCallTimers.get(targetUsernameLower);
@@ -1941,8 +1766,7 @@ function persistAndEmitDirectCallLog(
     messages[dmChannelId] = [];
   }
   messages[dmChannelId].push(logMsg);
-  saveChannelMessages(dmChannelId, messages[dmChannelId]);
-  indexChannelMessage(dmChannelId, logMsg);
+  saveChannelMessageUpsert(dmChannelId, messages[dmChannelId], logMsg);
 
   const recipientSockets = new Set<string>([userA.id, userB.id]);
   const nameA = userA.username.toLowerCase();
@@ -2020,7 +1844,7 @@ io.on('connection', (socket: Socket) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || !channelId) return;
     if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) return;
-    const page = getChannelMessagesPage(messages[channelId], beforeId, limit || 50);
+    const page = getChannelMessagesPageSmart(messages, channelId, beforeId, limit || 50);
     socket.emit('older_messages_loaded', {
       channelId,
       messages: page.messages,
@@ -2351,6 +2175,7 @@ io.on('connection', (socket: Socket) => {
     // Create session user
     const user: User = {
       id: socket.id,
+      accountId: newAccount.id,
       username: newAccount.username,
       email: newAccount.email,
       role: newAccount.role,
@@ -2509,6 +2334,7 @@ io.on('connection', (socket: Socket) => {
     // Bind socket to account
     const user: User = {
       id: socket.id,
+      accountId: foundAccount.id,
       username: foundAccount.username,
       email: foundAccount.email,
       role: foundAccount.role,
@@ -2622,6 +2448,7 @@ io.on('connection', (socket: Socket) => {
 
     const user: User = {
       id: socket.id,
+      accountId: foundAccount.id,
       username: foundAccount.username,
       email: foundAccount.email,
       role: foundAccount.role,
@@ -2729,6 +2556,7 @@ io.on('connection', (socket: Socket) => {
 
     const user: User = {
       id: socket.id,
+      accountId: foundAccount.id,
       username: foundAccount.username,
       email: foundAccount.email,
       role: foundAccount.role,
@@ -2908,10 +2736,55 @@ io.on('connection', (socket: Socket) => {
       messages[channelId] = [];
     }
     messages[channelId].push(newMessage);
-    saveChannelMessages(channelId, messages[channelId]);
-    indexChannelMessage(channelId, newMessage);
+    saveChannelMessageUpsert(channelId, messages[channelId], newMessage);
 
     emitToChannelAudience(channelId, serverId, 'new_message', newMessage);
+
+    // Trigger Web Push notifications for offline DM recipients or offline @mentioned channel members
+    const pushBodyPreview = textContent.startsWith('E2EE_V1:')
+      ? '🔒 Şifreli bir mesaj gönderdi'
+      : (textContent || (attachments?.length ? '📎 Dosya eki gönderdi' : 'Yeni mesaj')).slice(0, 140);
+
+    if (channelId.startsWith('dm-') || serverId === 'direct-messages') {
+      const dmPair = parseDmChannelParticipants(channelId);
+      const senderLower = sender.username.toLowerCase();
+      const targetNames = (dmPair || []).filter((n) => n && n !== senderLower);
+      for (const targetName of targetNames) {
+        const isOnlineActive = Array.from(activeUsers.values()).some(
+          (u) => u.username.toLowerCase() === targetName && u.status !== 'offline' && u.status !== 'dnd'
+        );
+        if (!isOnlineActive) {
+          void sendWebPushToUsername(targetName, {
+            title: `${sender.username} (Direkt Mesaj)`,
+            body: pushBodyPreview,
+            url: '/',
+          });
+        }
+      }
+    } else if (textContent.includes('@')) {
+      const mentionMatches = textContent.match(/@([a-zA-Z0-9_.\-çğıöşüÇĞİÖŞÜ]+)/g) || [];
+      const uniqueTargets = new Set(mentionMatches.map((m) => m.slice(1).toLowerCase()));
+      uniqueTargets.delete(sender.username.toLowerCase());
+      uniqueTargets.delete('ai');
+      uniqueTargets.delete('bot');
+      for (const targetName of uniqueTargets) {
+        const acc = registeredAccounts.get(targetName);
+        if (!acc) continue;
+        if (!canUserAccessChannel({ id: acc.id, accountId: acc.id, username: acc.username, role: acc.role }, channelId, servers, serverId)) {
+          continue;
+        }
+        const isOnlineActive = Array.from(activeUsers.values()).some(
+          (u) => u.username.toLowerCase() === targetName && u.status !== 'offline'
+        );
+        if (!isOnlineActive) {
+          void sendWebPushToUsername(acc.username, {
+            title: `${sender.username} senden bahsetti`,
+            body: pushBodyPreview,
+            url: '/',
+          });
+        }
+      }
+    }
 
     // 1. Leveling & XP System (+20 XP per message)
     const userAcc = registeredAccounts.get(sender.username.toLowerCase());
@@ -2954,8 +2827,7 @@ io.on('connection', (socket: Socket) => {
 
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(aiMessage);
-        saveChannelMessages(channelId, messages[channelId]);
-        indexChannelMessage(channelId, aiMessage);
+        saveChannelMessageUpsert(channelId, messages[channelId], aiMessage);
         emitToChannelAudience(channelId, serverId, 'new_message', aiMessage);
       }, 600);
     }
@@ -2976,8 +2848,7 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(rollMsg);
-        saveChannelMessages(channelId, messages[channelId]);
-        indexChannelMessage(channelId, rollMsg);
+        saveChannelMessageUpsert(channelId, messages[channelId], rollMsg);
         emitToChannelAudience(channelId, serverId, 'new_message', rollMsg);
       }, 300);
     } else if (lowerContent === '/yazitura' || lowerContent === '/coinflip' || lowerContent === '/yazi-tura') {
@@ -2995,8 +2866,7 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(coinMsg);
-        saveChannelMessages(channelId, messages[channelId]);
-        indexChannelMessage(channelId, coinMsg);
+        saveChannelMessageUpsert(channelId, messages[channelId], coinMsg);
         emitToChannelAudience(channelId, serverId, 'new_message', coinMsg);
       }, 300);
     } else if (lowerContent.startsWith('/8ball')) {
@@ -3025,22 +2895,13 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(ballMsg);
-        saveChannelMessages(channelId, messages[channelId]);
-        indexChannelMessage(channelId, ballMsg);
+        saveChannelMessageUpsert(channelId, messages[channelId], ballMsg);
         emitToChannelAudience(channelId, serverId, 'new_message', ballMsg);
       }, 300);
     } else if (lowerContent === '/rank' || lowerContent === '/seviye') {
       setTimeout(() => {
-        const sLevels = serverLevels[serverId] || {};
-        const memberData = sLevels[sender.id] || {
-          userId: sender.id,
-          username: sender.username,
-          avatar: sender.avatar,
-          xp: 20,
-          level: 1,
-          messageCount: 1,
-          voiceMinutes: 0
-        };
+        if (!serverLevels[serverId]) serverLevels[serverId] = {};
+        const memberData = resolveServerLevelRecord(serverLevels[serverId], sender).record;
         const rankMsg: Message = {
           id: `msg-cmd-${Date.now()}`,
           serverId,
@@ -3053,8 +2914,7 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(rankMsg);
-        saveChannelMessages(channelId, messages[channelId]);
-        indexChannelMessage(channelId, rankMsg);
+        saveChannelMessageUpsert(channelId, messages[channelId], rankMsg);
         emitToChannelAudience(channelId, serverId, 'new_message', rankMsg);
       }, 300);
     } else if (lowerContent === '/liderlik' || lowerContent === '/top') {
@@ -3082,8 +2942,7 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(leadMsg);
-        saveChannelMessages(channelId, messages[channelId]);
-        indexChannelMessage(channelId, leadMsg);
+        saveChannelMessageUpsert(channelId, messages[channelId], leadMsg);
         emitToChannelAudience(channelId, serverId, 'new_message', leadMsg);
       }, 300);
     }
@@ -3112,7 +2971,7 @@ io.on('connection', (socket: Socket) => {
       msg.reactions[emoji].push(user.username);
     }
 
-    saveChannelMessages(channelId, channelMsgs);
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
     emitToChannelAudience(channelId, msg.serverId, 'message_reaction_updated', { channelId, messageId, reactions: msg.reactions });
   });
 
@@ -3132,8 +2991,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     msg.isPinned = !msg.isPinned;
-    saveChannelMessages(channelId, channelMsgs);
-    indexChannelMessage(channelId, msg);
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
     emitToChannelAudience(channelId, msg.serverId, 'message_pin_updated', { channelId, messageId, isPinned: msg.isPinned });
   });
 
@@ -3152,8 +3010,7 @@ io.on('connection', (socket: Socket) => {
     if (!clean) return;
     msg.content = clean;
     msg.isEdited = true;
-    saveChannelMessages(channelId, channelMsgs);
-    indexChannelMessage(channelId, msg);
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
     emitToChannelAudience(channelId, msg.serverId, 'message_edited', { channelId, messageId, content: msg.content, isEdited: true });
   });
 
@@ -3176,8 +3033,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     channelMsgs.splice(idx, 1);
-    saveChannelMessages(channelId, channelMsgs);
-    removeIndexedMessage(messageId);
+    saveChannelMessageDelete(channelId, channelMsgs, messageId);
     emitToChannelAudience(channelId, msg.serverId, 'message_deleted', { channelId, messageId });
   });
 
@@ -3383,7 +3239,7 @@ io.on('connection', (socket: Socket) => {
     if (!user || !serverId || !name || !url) return;
     const srv = servers.find((s) => s.id === serverId);
     if (!srv) return;
-    if (user.role !== 'admin' && srv.ownerId !== user.username && !checkServerPermission(user, srv, 'manage_server')) return;
+    if (user.role !== 'admin' && !isServerOwner(user, srv) && !checkServerPermission(user, srv, 'manage_server')) return;
     if (url.length > 512 * 1024) return;
     if (!srv.customEmojis) srv.customEmojis = [];
     const cleanName = sanitizeText(name).replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24) || 'emoji';
@@ -3397,7 +3253,7 @@ io.on('connection', (socket: Socket) => {
     if (!user || !serverId || !emojiId) return;
     const srv = servers.find((s) => s.id === serverId);
     if (!srv || !srv.customEmojis) return;
-    if (user.role !== 'admin' && srv.ownerId !== user.username && !checkServerPermission(user, srv, 'manage_server')) return;
+    if (user.role !== 'admin' && !isServerOwner(user, srv) && !checkServerPermission(user, srv, 'manage_server')) return;
     srv.customEmojis = srv.customEmojis.filter((e) => e.id !== emojiId);
     saveServers(servers);
     emitServerUpdatedToMembers(srv);
@@ -3458,7 +3314,7 @@ io.on('connection', (socket: Socket) => {
     msg.poll.options.forEach(o => total += o.votes.length);
     msg.poll.totalVotes = total;
 
-    saveChannelMessages(channelId, channelMsgs);
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
     emitToChannelAudience(channelId, msg.serverId, 'poll_updated', { channelId, messageId, poll: msg.poll });
   });
 
@@ -3717,6 +3573,13 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (targetSocketIds.length === 0) {
+      if (resolvedUsername) {
+        void sendWebPushToUsername(resolvedUsername, {
+          title: 'Gelen Arama',
+          body: `${caller.username} seni aramaya çalıştı 📞`,
+          url: '/',
+        });
+      }
       return socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
     }
 
@@ -3776,6 +3639,13 @@ io.on('connection', (socket: Socket) => {
 
     for (const sId of targetSocketIds) {
       io.to(sId).emit('direct_call_incoming', { callerUser: caller });
+    }
+    if (primaryTarget?.username || resolvedUsername) {
+      void sendWebPushToUsername(primaryTarget?.username || resolvedUsername, {
+        title: 'Gelen Arama',
+        body: `${caller.username} seni 1-e-1 arıyor...`,
+        url: '/',
+      });
     }
   });
 
@@ -3868,8 +3738,7 @@ io.on('connection', (socket: Socket) => {
           };
           if (!messages[dmChannelId]) messages[dmChannelId] = [];
           messages[dmChannelId].push(quickDm);
-          saveChannelMessages(dmChannelId, messages[dmChannelId]);
-          indexChannelMessage(dmChannelId, quickDm);
+          saveChannelMessageUpsert(dmChannelId, messages[dmChannelId], quickDm);
           io.to(pending.callerSocketId).emit('new_message', quickDm);
           socket.emit('new_message', quickDm);
         }
@@ -4495,12 +4364,12 @@ io.on('connection', (socket: Socket) => {
   // Server Creation
   socket.on('create_server', ({ name, icon, template, isPublic, category }: { name: string; icon?: string; template?: 'empty' | 'gaming' | 'friends' | 'work'; isPublic?: boolean; category?: ServerCategory }) => {
     const user = activeUsers.get(socket.id);
-    const ownerId = user ? user.id : `usr-${Date.now()}`;
+    const ownerId = user ? getPersistentUserId(user) : `usr-${Date.now()}`;
     const newServerId = `server-${Date.now()}`;
     const roles = getDefaultRoles();
     const members: ServerMember[] = user ? [
       {
-        userId: user.id,
+        userId: getPersistentUserId(user),
         username: user.username,
         avatar: user.avatar,
         roleIds: ['role-owner', 'role-admin'],
@@ -4576,9 +4445,9 @@ io.on('connection', (socket: Socket) => {
 
   // Helper to check user permission in server
   function checkServerPermission(user: User, server: Server, permission: ServerPermission): boolean {
-    if (server.ownerId === user.id) return true;
+    if (isServerOwner(user, server)) return true;
     if (user.role === 'admin') return true;
-    const member = server.members?.find(m => m.userId === user.id);
+    const member = findServerMember(server, user);
     if (!member) return false;
     if (member.isOwner) return true;
 
@@ -4814,15 +4683,24 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (!s.members) s.members = [];
-    let member = s.members.find(m => m.userId === targetUserId);
+    const activeTarget = activeUsers.get(targetUserId);
+    const lookupIdentity = activeTarget
+      ? activeTarget
+      : { id: targetUserId, accountId: targetUserId, username: targetUserId };
+    let member = findServerMember(s, lookupIdentity);
     if (!member) {
-      let targetUser: User | undefined;
-      for (const u of activeUsers.values()) {
-        if (u.id === targetUserId) { targetUser = u; break; }
+      let targetUser: User | undefined = activeTarget;
+      if (!targetUser) {
+        for (const u of activeUsers.values()) {
+          if (u.id === targetUserId || u.accountId === targetUserId || u.username.toLowerCase() === String(targetUserId || '').toLowerCase()) {
+            targetUser = u;
+            break;
+          }
+        }
       }
       if (targetUser) {
         member = {
-          userId: targetUser.id,
+          userId: getPersistentUserId(targetUser),
           username: targetUser.username,
           avatar: targetUser.avatar,
           roleIds: [],
@@ -4853,19 +4731,35 @@ io.on('connection', (socket: Socket) => {
     if (!checkServerPermission(user, s, 'kick_members')) {
       return socket.emit('server_action_error', { message: 'Üyeyi atmak için yetkiniz yok.' });
     }
-    if (targetUserId === s.ownerId) {
+
+    const activeTarget = activeUsers.get(targetUserId);
+    const lookupIdentity = activeTarget
+      ? activeTarget
+      : { id: targetUserId, accountId: targetUserId, username: targetUserId };
+    const kickedMember = findServerMember(s, lookupIdentity);
+    if (
+      targetUserId === s.ownerId ||
+      (kickedMember && kickedMember.isOwner) ||
+      isServerOwner(lookupIdentity, s)
+    ) {
       return socket.emit('server_action_error', { message: 'Sunucu sahibini atamazsınız!' });
     }
 
-    const kickedMember = s.members?.find(m => m.userId === targetUserId);
     if (s.members) {
-      s.members = s.members.filter(m => m.userId !== targetUserId);
+      const targetLower = String(lookupIdentity.username || '').toLowerCase();
+      s.members = s.members.filter(
+        m =>
+          m.userId !== targetUserId &&
+          (!lookupIdentity.accountId || m.userId !== lookupIdentity.accountId) &&
+          (!targetLower || m.username.toLowerCase() !== targetLower)
+      );
     }
     saveServers(servers);
     addAuditLog('UYE_ATILDI', `${kickedMember?.username || targetUserId} sunucudan atildi (Yetkili: ${user.username})`, 'warn');
     emitServerUpdatedToMembers(s);
-    if (kickedMember?.username) {
-      emitToUserSockets(kickedMember.username, 'server_removed', { serverId });
+    const kickedName = kickedMember?.username || activeTarget?.username;
+    if (kickedName) {
+      emitToUserSockets(kickedName, 'server_removed', { serverId });
     }
   });
 
@@ -4880,7 +4774,7 @@ io.on('connection', (socket: Socket) => {
     }
     const targetLower = targetUsername.toLowerCase();
     const targetAcc = registeredAccounts.get(targetLower);
-    if (targetAcc?.role === 'admin' || s.ownerId === targetAcc?.id) {
+    if (targetAcc?.role === 'admin' || isServerOwner({ id: targetAcc?.id, accountId: targetAcc?.id, username: targetAcc?.username || targetUsername }, s)) {
       return socket.emit('server_action_error', { message: 'Yöneticilere veya sunucu sahibine zaman aşımı uygulanamaz.' });
     }
 
@@ -5047,7 +4941,7 @@ io.on('connection', (socket: Socket) => {
       timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
     };
     parent.threadMessages.push(threadMsg);
-    saveChannelMessages(channelId, channelMsgs);
+    saveChannelMessageUpsert(channelId, channelMsgs, parent);
     emitToChannelAudience(channelId, parent.serverId, 'thread_message_added', { channelId, parentMessageId, threadMessage: threadMsg });
   });
 
@@ -5063,7 +4957,7 @@ io.on('connection', (socket: Socket) => {
     const list = messages[channelId] || [];
     if (list.length === 0) return;
     messages[channelId] = list.slice(0, Math.max(0, list.length - safeCount));
-    saveChannelMessages(channelId, messages[channelId]);
+    saveChannelMessageBulkReplace(channelId, messages[channelId]);
     emitToChannelAudience(channelId, serverId, 'channel_messages_cleared', { channelId, messages: messages[channelId] });
   });
 
@@ -5129,7 +5023,7 @@ io.on('connection', (socket: Socket) => {
     if (sIdx === -1) return;
     const s = servers[sIdx];
 
-    if (s.ownerId !== user.id && user.role !== 'admin') {
+    if (!isServerOwner(user, s) && user.role !== 'admin') {
       return socket.emit('server_action_error', { message: 'Yalnızca sunucu sahibi veya Sistem Yöneticisi sunucuyu silebilir!' });
     }
 
@@ -5147,29 +5041,6 @@ io.on('connection', (socket: Socket) => {
       io.to(sId).emit('server_deleted', { serverId });
     }
   });
-
-  function cleanupTemporaryChannels() {
-    let changed = false;
-    for (const server of servers) {
-      const toRemove: string[] = [];
-      for (const channel of server.channels) {
-        if (channel.isTemporary) {
-          const usersInCh = Array.from(activeUsers.values()).filter(u => u.currentVoiceChannelId === channel.id);
-          if (usersInCh.length === 0) {
-            toRemove.push(channel.id);
-          }
-        }
-      }
-      if (toRemove.length > 0) {
-        server.channels = server.channels.filter(c => !toRemove.includes(c.id));
-        changed = true;
-      }
-    }
-    if (changed) {
-      saveServers(servers);
-      emitServersUpdatedForAll();
-    }
-  }
 
   // Voice Channel Join
   socket.on('join_voice', ({ channelId, password }: { channelId: string; password?: string }) => {
@@ -5190,7 +5061,7 @@ io.on('connection', (socket: Socket) => {
     // Password verification for locked channels
     if (targetChannel && targetChannel.password && user.role !== 'admin') {
       const server = servers.find(s => s.id === targetChannel.serverId);
-      const isOwner = server?.ownerId === user.id;
+      const isOwner = isServerOwner(user, server);
       if (!isOwner && password !== targetChannel.password) {
         return socket.emit('voice_password_error', {
           channelId,
@@ -5203,7 +5074,7 @@ io.on('connection', (socket: Socket) => {
     // Channel user capacity limit check (for voice rooms)
     if (targetChannel && targetChannel.userLimit && targetChannel.userLimit > 0 && user.role !== 'admin') {
       const server = servers.find(s => s.id === targetChannel.serverId);
-      const isOwner = server?.ownerId === user.id;
+      const isOwner = isServerOwner(user, server);
       const currentOccupancy = Array.from(activeUsers.values()).filter(
         u => u.currentVoiceChannelId === targetChannel.id && u.id !== socket.id
       ).length;
@@ -5237,9 +5108,20 @@ io.on('connection', (socket: Socket) => {
     }
 
     if (user.currentVoiceChannelId && user.currentVoiceChannelId !== targetChannelId) {
-      socket.leave(user.currentVoiceChannelId);
-      io.to(user.currentVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: user.currentVoiceChannelId });
+      const oldVoiceChannelId = user.currentVoiceChannelId;
+      socket.leave(oldVoiceChannelId);
+      io.to(oldVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: oldVoiceChannelId });
       cleanupTemporaryChannels();
+      const oldSrv = findServerByChannelId(servers, oldVoiceChannelId);
+      const newSrv = findServerByChannelId(servers, targetChannelId);
+      if (oldSrv && oldSrv.id !== newSrv?.id) {
+        emitToServerMembers(oldSrv, 'voice_state_update', {
+          userId: socket.id,
+          channelId: targetChannelId,
+          isMuted: user.isMuted,
+          isDeafened: user.isDeafened
+        });
+      }
     }
 
     user.currentVoiceChannelId = targetChannelId;
@@ -5298,7 +5180,7 @@ io.on('connection', (socket: Socket) => {
       }).catch(() => {});
     }
 
-    io.emit('voice_state_update', {
+    emitToVoiceChannelAudience(targetChannelId, user, 'voice_state_update', {
       userId: socket.id,
       channelId: targetChannelId,
       isMuted: user.isMuted,
@@ -5320,79 +5202,6 @@ io.on('connection', (socket: Socket) => {
     updateUserConnectionLocation(socket.id, sName, `Ses: ${channelName}`);
   });
 
-  const pendingVoicePullInvites = new Map<
-    string,
-    {
-      fromUserId: string;
-      fromUsername: string;
-      targetUserId: string;
-      targetChannelId: string;
-      channelName: string;
-      expiresAt: number;
-    }
-  >();
-
-  const performVoiceMove = (
-    targetUserId: string,
-    targetChannelId: string,
-    movedByUsername: string,
-    isSelf: boolean
-  ) => {
-    const targetUser = activeUsers.get(targetUserId);
-    const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === targetChannelId);
-    const parentServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
-    const targetSock = io.sockets.sockets.get(targetUserId);
-    if (!targetUser || !targetChannel || !targetSock) return;
-    if (targetUser.currentVoiceChannelId === targetChannelId) return;
-
-    const oldChannelId = targetUser.currentVoiceChannelId;
-    if (oldChannelId) {
-      targetSock.leave(oldChannelId);
-      io.to(oldChannelId).emit('user_left_voice', { userId: targetUserId, channelId: oldChannelId });
-      cleanupTemporaryChannels();
-    }
-
-    targetUser.currentVoiceChannelId = targetChannelId;
-    userVoiceActivity.set(targetUserId, Date.now());
-    targetSock.join(targetChannelId);
-
-    const peersInRoom: User[] = [];
-    for (const [sId, u] of activeUsers.entries()) {
-      if (u.currentVoiceChannelId === targetChannelId && sId !== targetUserId) {
-        peersInRoom.push(u);
-      }
-    }
-
-    targetSock.emit('moved_to_voice_channel', {
-      channelId: targetChannelId,
-      channelName: targetChannel.name,
-      movedBy: movedByUsername,
-      isSelf
-    });
-
-    targetSock.emit('voice_room_users', {
-      channelId: targetChannelId,
-      peers: peersInRoom
-    });
-
-    targetSock.to(targetChannelId).emit('user_joined_voice', {
-      user: targetUser,
-      channelId: targetChannelId
-    });
-
-    io.emit('voice_state_update', {
-      userId: targetUserId,
-      channelId: targetChannelId,
-      isMuted: targetUser.isMuted,
-      isDeafened: targetUser.isDeafened
-    });
-
-    if (!isSelf) {
-      addAuditLog('KULLANICI_TASINDI', `${movedByUsername}, ${targetUser.username} kullanıcısını #${targetChannel.name} odasına taşıdı.`, 'voice');
-    }
-    updateUserConnectionLocation(targetUserId, parentServer?.name || 'Ana Topluluk', `Ses: ${targetChannel.name}`);
-  };
-
   // Move user between voice channels (Self or Admin / Server Owner)
   socket.on('move_voice_user', ({ targetUserId, targetChannelId }: { targetUserId: string; targetChannelId: string }) => {
     const requester = activeUsers.get(socket.id);
@@ -5406,7 +5215,7 @@ io.on('connection', (socket: Socket) => {
 
     const isSelf = targetUserId === socket.id;
     const isAdmin = requester.role === 'admin';
-    const isOwner = parentServer?.ownerId === requester.id;
+    const isOwner = isServerOwner(requester, parentServer);
 
     if (!isSelf && !isAdmin && !isOwner) {
       return socket.emit('server_action_error', { message: 'Kullanıcıları başka odaya taşıma yetkiniz yok.' });
@@ -5499,7 +5308,7 @@ io.on('connection', (socket: Socket) => {
       channelId: oldChannelId
     });
 
-    io.emit('voice_state_update', {
+    emitToVoiceChannelAudience(oldChannelId, user, 'voice_state_update', {
       userId: socket.id,
       channelId: null,
       isMuted: user.isMuted,
@@ -5511,18 +5320,26 @@ io.on('connection', (socket: Socket) => {
     cleanupTemporaryChannels();
   });
 
-  // Priority Speaker relay
+  // Priority Speaker relay (scoped to voice channel)
   socket.on('priority_speaker_toggle', ({ active }: { active: boolean }) => {
     const user = activeUsers.get(socket.id);
-    if (!user) return;
-    io.emit('priority_speaker_active', { userId: socket.id, username: user.username, active });
+    if (!user || !user.currentVoiceChannelId) return;
+    io.to(user.currentVoiceChannelId).emit('priority_speaker_active', { userId: socket.id, username: user.username, active });
   });
 
-  // Webcam state update relay
+  // Webcam state update relay (scoped to voice channel or active direct call)
   socket.on('webcam_state_update', ({ active }: { active: boolean }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
-    io.emit('user_webcam_update', { userId: socket.id, active });
+    if (user.currentVoiceChannelId) {
+      io.to(user.currentVoiceChannelId).emit('user_webcam_update', { userId: socket.id, active });
+      return;
+    }
+    socket.emit('user_webcam_update', { userId: socket.id, active });
+    const pairedId = activeDirectCallPairs.get(socket.id);
+    if (pairedId) {
+      io.to(pairedId).emit('user_webcam_update', { userId: socket.id, active });
+    }
   });
 
   // Whiteboard Canvas Relay (Scoped to user's active voice channel)
@@ -5833,7 +5650,7 @@ io.on('connection', (socket: Socket) => {
 
     const channelId = target.currentVoiceChannelId;
     const server = servers.find(s => s.channels.some(c => c.id === channelId)) || servers[0];
-    const canModerate = requester.role === 'admin' || (server && (server.ownerId === requester.id || checkServerPermission(requester, server, 'mute_members')));
+    const canModerate = requester.role === 'admin' || (server && (isServerOwner(requester, server) || checkServerPermission(requester, server, 'mute_members')));
     if (!canModerate) {
       return socket.emit('server_action_error', { message: 'Üyeleri sunucudan susturmak için yetkiniz yok.' });
     }
@@ -5861,7 +5678,7 @@ io.on('connection', (socket: Socket) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || !channelId) return;
     const server = servers.find(s => s.channels.some(c => c.id === channelId));
-    const canModerate = requester.role === 'admin' || (server && (server.ownerId === requester.id || checkServerPermission(requester, server, 'mute_members')));
+    const canModerate = requester.role === 'admin' || (server && (isServerOwner(requester, server) || checkServerPermission(requester, server, 'mute_members')));
     if (!canModerate) {
       return socket.emit('server_action_error', { message: 'Odadaki herkesi susturmak için yetkiniz yok.' });
     }
@@ -6020,7 +5837,7 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.webhookUrl === 'string') systemConfig.webhookUrl = nextCfg.webhookUrl.trim().slice(0, 500);
     if (typeof nextCfg.giphyApiKey === 'string') {
       systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);
-      gifCache.clear();
+      clearGifCache();
     }
     if (typeof nextCfg.sfuEnabled === 'boolean') systemConfig.sfuEnabled = nextCfg.sfuEnabled;
     if (typeof nextCfg.sfuThreshold === 'number') systemConfig.sfuThreshold = Math.min(Math.max(Math.floor(nextCfg.sfuThreshold), 2), 30);
@@ -6391,7 +6208,7 @@ io.on('connection', (socket: Socket) => {
       messages[channelId] = messages[channelId].slice(0, Math.max(0, totalBefore - n));
     }
     const deletedCount = totalBefore - messages[channelId].length;
-    saveChannelMessages(channelId, messages[channelId]);
+    saveChannelMessageBulkReplace(channelId, messages[channelId]);
     emitToChannelAudience(channelId, undefined, 'channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
     socket.emit('channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
     addAuditLog('MESAJ_TEMIZLENDI', `${requester.username}, #${channelId} kanalından ${deletedCount} mesaj temizledi.`, 'warn');
@@ -6652,48 +6469,8 @@ io.on('connection', (socket: Socket) => {
         }
       }
 
-      // Active Dedicated Server termination: update registry & send instant shutdown webhook to all candidate hosts
-      for (const s of dedicatedServersRegistry.values()) {
-        if (s.licenseKey === lic.licenseKey || s.licensee.toLowerCase() === lic.licensee.toLowerCase()) {
-          s.status = 'revoked';
-          io.to('admins').emit('admin_dedicated_updated', s);
-
-          const hostsToTry = [
-            s.host,
-            s.host.replace('localhost', '127.0.0.1'),
-            `127.0.0.1:${s.port || 4001}`,
-            `localhost:${s.port || 4001}`
-          ];
-          for (const h of hostsToTry) {
-            try {
-              fetch(`http://${h}/api/license/revoked`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reason: reason || 'Sistem yöneticisi tarafından lisans feshedildi.' })
-              }).catch(() => {});
-            } catch {}
-          }
-        }
-      }
-
-      // Direct fallback to port 4001 and localhost:4001 in case server was not in registry
-      const directFallbacks = ['http://127.0.0.1:4001/api/license/revoked', 'http://localhost:4001/api/license/revoked'];
-      for (const endpoint of directFallbacks) {
-        try {
-          fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason: reason || 'Sistem yöneticisi tarafından lisans feshedildi.' })
-          }).catch(() => {});
-        } catch {}
-      }
-
-      // Broadcast termination event to all connected sockets
-      io.emit('dedicated_server_terminated', {
-        title: 'Sunucu Lisansı İptal Edildi',
-        reason: reason || 'Sistem yöneticisi bu özel sunucunun lisansını feshetti.',
-        action: 'disconnect'
-      });
+      // Active Dedicated Server termination: update registry & send authenticated instant shutdown webhook
+      notifyDedicatedLicenseRevoked(io, dedicatedServersRegistry, lic, reason);
     }
   });
 
@@ -6894,10 +6671,7 @@ io.on('connection', (socket: Socket) => {
     if (!srv) {
       return socket.emit('leave_server_response', { success: false, error: 'Sunucu bulunamadı.' });
     }
-    const isOwner =
-      srv.ownerId === user.id ||
-      srv.ownerId.toLowerCase() === user.username.toLowerCase() ||
-      (srv.members || []).some((m) => m.isOwner && m.username.toLowerCase() === user.username.toLowerCase());
+    const isOwner = isServerOwner(user, srv);
     if (isOwner) {
       return socket.emit('leave_server_response', {
         success: false,
@@ -6907,7 +6681,10 @@ io.on('connection', (socket: Socket) => {
 
     if (srv.members) {
       srv.members = srv.members.filter(
-        (m) => m.userId !== user.id && m.username.toLowerCase() !== user.username.toLowerCase()
+        (m) =>
+          m.userId !== user.id &&
+          (!user.accountId || m.userId !== user.accountId) &&
+          m.username.toLowerCase() !== user.username.toLowerCase()
       );
     }
 
@@ -7259,7 +7036,7 @@ setInterval(() => {
 
       io.to(oldChannelId).emit('user_left_voice', { userId: sid, channelId: oldChannelId });
       io.to(afkChannel.id).emit('user_joined_voice', { user, channelId: afkChannel.id });
-      io.emit('voice_state_update', {
+      emitToVoiceChannelAudience(afkChannel.id, user, 'voice_state_update', {
         userId: sid,
         channelId: afkChannel.id,
         isMuted: user.isMuted,
@@ -7277,6 +7054,8 @@ registerCloudSyncAndEvents(app, io, activeUsers, {
   getServers: () => servers,
   verifySessionTokenWithMeta,
   getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  isUserMemberOfServer: (u, srv) => isUserMemberOfServer(u, srv),
+  emitToServerMembers: (srv, event, payload) => emitToServerMembers(srv, event, payload),
   getEffectiveLiveKitConfig: () => ({
     ...getEffectiveLiveKitConfig(),
     turnUrl: (systemConfig?.turnUrl || process.env.TURN_URL || '').trim(),

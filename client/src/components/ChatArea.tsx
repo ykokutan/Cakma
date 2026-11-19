@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useTypingUsers, useDirectCallQuality } from '../context/PresenceStore';
+import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
+import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
@@ -89,16 +92,6 @@ import {
   Play,
 } from 'lucide-react';
 
-const SLASH_COMMANDS = [
-  { cmd: '/zar', desc: '1-6 arası rastgele zar atar' },
-  { cmd: '/yazitura', desc: 'Yazı veya Tura atar' },
-  { cmd: '/anket', desc: 'Hızlı anket oluşturma penceresini açar' },
-  { cmd: '/hatirlat', desc: 'Hatırlatıcı kurar (Örn: /hatirlat 10dk Mola bitti)' },
-  { cmd: '/temizle', desc: 'Son N mesajı temizler (Örn: /temizle 10)' },
-  { cmd: '/davet', desc: 'Sunucu davet bağlantısı oluşturup paylaşır' },
-  { cmd: '/yardim', desc: 'Kullanılabilir slash komutlarını listeler' },
-];
-
 interface ChatAreaProps {
   onToggleMembers: () => void;
   showMembers: boolean;
@@ -107,76 +100,6 @@ interface ChatAreaProps {
   onOpenExplore?: () => void;
   onOpenCreateServer?: () => void;
 }
-
-const SpoilerText: React.FC<{ text: string }> = ({ text }) => {
-  const [revealed, setRevealed] = useState(false);
-  return (
-    <span
-      onClick={() => setRevealed(true)}
-      className={`px-1.5 py-0.5 rounded cursor-pointer transition select-none ${
-        revealed
-          ? 'bg-white/15 text-white'
-          : 'bg-neutral-800 text-transparent hover:bg-neutral-700'
-      }`}
-      title={revealed ? '' : 'Spoilerı görmek için tıklayın'}
-    >
-      {text}
-    </span>
-  );
-};
-
-const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
-  if (!text) return null;
-  const lines = text.split('\n');
-  return (
-    <div className="space-y-1">
-      {lines.map((line, lineIdx) => {
-        const isQuote = line.startsWith('> ');
-        const processedLine = isQuote ? line.slice(2) : line;
-        const parts = processedLine.split(/(\|\|[\s\S]*?\|\||\*\*[\s\S]*?\*\*|\*[\s\S]*?\*|~~[\s\S]*?~~)/g);
-
-        return (
-          <span
-            key={lineIdx}
-            className={
-              isQuote
-                ? 'block border-l-2 border-amber-400 pl-2.5 py-0.5 text-white/70 italic bg-white/[0.02] rounded-r'
-                : 'block'
-            }
-          >
-            {parts.map((p, pIdx) => {
-              if (p.startsWith('||') && p.endsWith('||') && p.length >= 4) {
-                return <SpoilerText key={pIdx} text={p.slice(2, -2)} />;
-              }
-              if (p.startsWith('**') && p.endsWith('**') && p.length >= 4) {
-                return (
-                  <strong key={pIdx} className="font-bold text-white">
-                    {p.slice(2, -2)}
-                  </strong>
-                );
-              }
-              if (p.startsWith('*') && p.endsWith('*') && p.length >= 2) {
-                return (
-                  <em key={pIdx} className="italic text-white/90">
-                    {p.slice(1, -1)}
-                  </em>
-                );
-              }
-              if (p.startsWith('~~') && p.endsWith('~~') && p.length >= 4) {
-                return (
-                  <del key={pIdx} className="line-through text-white/50">
-                    {p.slice(2, -2)}
-                  </del>
-                );
-              }
-              return <span key={pIdx}>{p}</span>;
-            })}
-          </span>
-        );
-      })}
-    </div>
-  );
-};
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
   onToggleMembers,
@@ -196,7 +119,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     activeDMUser,
     startDirectCall,
     directCall,
-    directCallQuality,
     acceptDirectCall,
     declineDirectCall,
     endDirectCall,
@@ -231,7 +153,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     updateChannelNotice,
     editMessage,
     deleteMessage,
-    typingUsers,
     sendTyping,
     chatFontSize,
     clearChannelMessages,
@@ -248,6 +169,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     isLoadingOlderMessages,
     requestOlderMessages,
   } = useSocket();
+  const activeChannelTypers = useTypingUsers(activeChannel?.id);
+  const directCallQuality = useDirectCallQuality();
 
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
   const [isCallStageCollapsed, setIsCallStageCollapsed] = useState(false);
@@ -583,7 +506,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     (activeServer?.members || []).forEach((m) => {
       const key = m.username.toLowerCase();
       if (seen.has(key)) return;
-      if (m.userId === currentUser?.id) return;
+      if (isSameUser({ id: m.userId, username: m.username }, currentUser)) return;
       if (!mentionQuery || key.includes(mentionQuery)) {
         seen.add(key);
         list.push({ id: m.userId, username: m.username, avatar: m.avatar || '🎮', status: 'offline' });
@@ -1692,7 +1615,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
 
           {/* Admin actions: Edit / remove sticky notice */}
-          {(currentUser?.role === 'admin' || activeServer.ownerId === currentUser?.id) && (
+          {(currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer)) && (
             <div className="flex items-center gap-1.5 shrink-0 pl-3">
               <button
                 onClick={() => {
@@ -1938,7 +1861,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       <Edit2 className="w-3 h-3" />
                     </button>
                   )}
-                  {(isMe || activeServer?.ownerId === currentUser?.id) && (
+                  {(isMe || isUserServerOwner(currentUser, activeServer)) && (
                     <button
                       type="button"
                       onClick={() => deleteMessage(msg.id)}
@@ -2343,7 +2266,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           <div className="relative">
             {/* Typing Indicator */}
             {(() => {
-              const activeTypers = (typingUsers[activeChannel.id] || []).filter(
+              const activeTypers = activeChannelTypers.filter(
                 (u) => u !== currentUser?.username && !currentUser?.blockedUsers?.includes(u)
               );
               if (activeTypers.length === 0) return null;

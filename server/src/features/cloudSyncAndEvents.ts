@@ -6,6 +6,7 @@ import fs from 'fs';
 import { getPersistentDir, getStorageEngineInfo } from '../storage.js';
 import { collectReferencedMediaUrls, scanAndCleanOrphanUploads } from '../utils/uploadCleaner.js';
 import { validateAttachmentSafety } from '../utils/security.js';
+import { isServerOwner } from '../utils/serverIdentity.js';
 import {
   AuthenticatedRequest,
   createAuthMiddlewares,
@@ -47,7 +48,9 @@ function readJson<T>(filePath: string, fallback: T): T {
 
 function writeJson(filePath: string, data: unknown) {
   ensureDirs();
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  const tempPath = `${filePath}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tempPath, filePath);
 }
 
 function toHttpUrlFromLiveKit(raw: string): string {
@@ -81,6 +84,11 @@ export interface CloudSyncContext extends OrphanCleanupContext {
   getEffectiveLiveKitConfig?: () => EffectiveLiveKitConfigSnapshot;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
   getMaxUploadSizeMb?: () => number;
+  isUserMemberOfServer?: (
+    user: { id?: string; accountId?: string; username: string; role?: string },
+    server: Server
+  ) => boolean;
+  emitToServerMembers?: (server: Server, event: string, payload: unknown) => void;
 }
 
 export function registerCloudSyncAndEvents(
@@ -157,18 +165,58 @@ export function registerCloudSyncAndEvents(
     res.json({ ok: true, prefs: all[uname] });
   });
 
-  // 2. Server Events (Etkinlikler)
+  // 2. Server Events (Etkinlikler) - Membership & Audience Isolated
+  const resolveAuthorizedServer = (req: Request, res: Response, rawServerId: string): Server | null => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
+    const serverId = String(rawServerId || '').trim();
+    const targetServer = context?.getServers?.()?.find((s) => s.id === serverId);
+    if (!targetServer) {
+      res.status(404).json({ ok: false, error: 'Sunucu bulunamadı.' });
+      return null;
+    }
+    const isMember =
+      authUser.role === 'admin' ||
+      Boolean(
+        context?.isUserMemberOfServer?.(
+          {
+            id: authUser.account.id,
+            accountId: authUser.account.id,
+            username: authUser.username,
+            role: authUser.role,
+          },
+          targetServer
+        )
+      );
+    if (!isMember) {
+      res.status(403).json({ ok: false, error: 'Bu sunucunun etkinliklerine erişim yetkiniz yok.' });
+      return null;
+    }
+    return targetServer;
+  };
+
+  const broadcastServerEvents = (targetServer: Server, events: ServerEventItem[]) => {
+    const payload = { serverId: targetServer.id, events };
+    if (context?.emitToServerMembers) {
+      context.emitToServerMembers(targetServer, 'server_events_updated', payload);
+    } else {
+      io.to('admins').emit('server_events_updated', payload);
+    }
+  };
+
   app.get('/api/events/:serverId', requireAuth, (req, res) => {
-    const serverId = String(req.params.serverId || '').trim();
+    const targetServer = resolveAuthorizedServer(req, res, req.params.serverId);
+    if (!targetServer) return;
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
-    res.json({ ok: true, events: all[serverId] || [] });
+    res.json({ ok: true, events: all[targetServer.id] || [] });
   });
 
   app.post('/api/events/:serverId', requireAuth, express.json({ limit: '256kb' }), (req, res) => {
     const authUser = (req as AuthenticatedRequest).authUser!;
-    const serverId = String(req.params.serverId || '').trim();
+    const targetServer = resolveAuthorizedServer(req, res, req.params.serverId);
+    if (!targetServer) return;
+    const serverId = targetServer.id;
     const { title, description, scheduledAt, createdBy } = req.body || {};
-    if (!serverId || !title || !scheduledAt) {
+    if (!title || !scheduledAt) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     const creator =
@@ -189,13 +237,16 @@ export function registerCloudSyncAndEvents(
     };
     all[serverId] = [item, ...(all[serverId] || [])].slice(0, 50);
     writeJson(EVENTS_FILE, all);
-    io.emit('server_events_updated', { serverId, events: all[serverId] });
+    broadcastServerEvents(targetServer, all[serverId]);
     res.json({ ok: true, event: item, events: all[serverId] });
   });
 
   app.post('/api/events/:serverId/:eventId/rsvp', requireAuth, express.json({ limit: '64kb' }), (req, res) => {
     const authUser = (req as AuthenticatedRequest).authUser!;
-    const { serverId, eventId } = req.params;
+    const targetServer = resolveAuthorizedServer(req, res, req.params.serverId);
+    if (!targetServer) return;
+    const serverId = targetServer.id;
+    const { eventId } = req.params;
     const requestedName = String(req.body?.username || '').trim();
     const username = authUser.role === 'admin' && requestedName ? requestedName : authUser.username;
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
@@ -208,29 +259,34 @@ export function registerCloudSyncAndEvents(
       target.attendees.push(username);
     }
     writeJson(EVENTS_FILE, all);
-    io.emit('server_events_updated', { serverId, events: list });
+    broadcastServerEvents(targetServer, list);
     res.json({ ok: true, events: list });
   });
 
   app.delete('/api/events/:serverId/:eventId', requireAuth, (req, res) => {
     const authUser = (req as AuthenticatedRequest).authUser!;
-    const { serverId, eventId } = req.params;
+    const targetServer = resolveAuthorizedServer(req, res, req.params.serverId);
+    if (!targetServer) return;
+    const serverId = targetServer.id;
+    const { eventId } = req.params;
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
     const list = all[serverId] || [];
     const target = list.find((e) => e.id === eventId);
     if (!target) {
       return res.status(404).json({ ok: false, error: 'Etkinlik bulunamadı.' });
     }
-    const targetServer = context?.getServers?.()?.find((s) => s.id === serverId);
-    const isServerOwner = Boolean(targetServer && targetServer.ownerId === authUser.account.id);
+    const ownerCheck = isServerOwner(
+      { id: authUser.account.id, accountId: authUser.account.id, username: authUser.username },
+      targetServer
+    );
     const isCreator = target.createdBy.toLowerCase() === authUser.username.toLowerCase();
-    if (authUser.role !== 'admin' && !isCreator && !isServerOwner) {
+    if (authUser.role !== 'admin' && !isCreator && !ownerCheck) {
       return res.status(403).json({ ok: false, error: 'Bu etkinliği silme yetkiniz yok.' });
     }
 
     all[serverId] = list.filter((e) => e.id !== eventId);
     writeJson(EVENTS_FILE, all);
-    io.emit('server_events_updated', { serverId, events: all[serverId] });
+    broadcastServerEvents(targetServer, all[serverId]);
     res.json({ ok: true, events: all[serverId] });
   });
 
@@ -261,8 +317,12 @@ export function registerCloudSyncAndEvents(
   // Keep GET /api/sounds/:filename readable for <audio src="/api/sounds/..."> elements
   app.get('/api/sounds/:filename', (req, res) => {
     const safeName = path.basename(String(req.params.filename || ''));
+    if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
+      return res.status(400).json({ error: 'Geçersiz dosya adı' });
+    }
     const fullPath = path.join(SOUNDS_DIR, safeName);
     if (!fs.existsSync(fullPath)) return res.status(404).end();
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.sendFile(fullPath);
   });
 
@@ -545,7 +605,23 @@ export function registerCloudSyncAndEvents(
     '.mp4': 'video/mp4',
   };
 
-  app.post('/api/upload', requireAuth, express.json({ limit: '35mb' }), (req, res) => {
+  const uploadQuotaMap = new Map<
+    string,
+    { countWindowStart: number; count: number; bytesWindowStart: number; bytes: number }
+  >();
+  if (context) {
+    const quotaPruner = setInterval(() => {
+      const now = Date.now();
+      for (const [k, q] of uploadQuotaMap.entries()) {
+        if (now - q.bytesWindowStart > 3600_000 && now - q.countWindowStart > 600_000) {
+          uploadQuotaMap.delete(k);
+        }
+      }
+    }, 10 * 60_000);
+    quotaPruner.unref?.();
+  }
+
+  app.post('/api/upload', requireAuth, express.json({ limit: '35mb' }), async (req, res) => {
     const authUser = (req as AuthenticatedRequest).authUser!;
     const { name, type, dataUrl } = req.body || {};
     if (typeof name !== 'string' || typeof dataUrl !== 'string' || !name.trim() || !dataUrl) {
@@ -567,11 +643,50 @@ export function registerCloudSyncAndEvents(
       return res.status(400).json({ ok: false, error: safety.error || 'Dosya güvenlik kontrolünden geçemedi.' });
     }
 
+    // Per-user upload rate limit (20 files / 10 min) & hourly quota (100 MB / hr, higher for admin)
+    const now = Date.now();
+    const uKey = authUser.username.toLowerCase();
+    const q = uploadQuotaMap.get(uKey) || {
+      countWindowStart: now,
+      count: 0,
+      bytesWindowStart: now,
+      bytes: 0,
+    };
+    if (now - q.countWindowStart > 600_000) {
+      q.countWindowStart = now;
+      q.count = 0;
+    }
+    if (now - q.bytesWindowStart > 3600_000) {
+      q.bytesWindowStart = now;
+      q.bytes = 0;
+    }
+    const maxCount = authUser.role === 'admin' ? 100 : 20;
+    const maxHourlyBytes = (authUser.role === 'admin' ? 500 : 100) * 1024 * 1024;
+    if (q.count + 1 > maxCount) {
+      return res.status(429).json({
+        ok: false,
+        error: '10 dakikalık dosya yükleme limitine ulaştınız. Lütfen biraz bekleyin.',
+      });
+    }
+    if (q.bytes + buffer.length > maxHourlyBytes) {
+      return res.status(429).json({
+        ok: false,
+        error: 'Saatlik yükleme kotanız doldu. Lütfen daha sonra tekrar deneyin.',
+      });
+    }
     const rawExt = path.extname(name.trim()).toLowerCase().replace(/^\./, '');
     const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
-    const storedName = `upl-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
-    ensureDirs();
-    fs.writeFileSync(path.join(UPLOADS_DIR, storedName), buffer);
+    const storedName = `upl-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
+    try {
+      ensureDirs();
+      await fs.promises.writeFile(path.join(UPLOADS_DIR, storedName), buffer);
+    } catch (err) {
+      console.error('❌ [Upload] Dosya yazılamadı:', err);
+      return res.status(500).json({ ok: false, error: 'Dosya sunucuya kaydedilemedi.' });
+    }
+    q.count += 1;
+    q.bytes += buffer.length;
+    uploadQuotaMap.set(uKey, q);
 
     context?.addAuditLog?.(
       'DOSYA_YUKLENDI',
@@ -582,7 +697,7 @@ export function registerCloudSyncAndEvents(
     return res.json({
       ok: true,
       attachment: {
-        id: `att-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        id: `att-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
         name: name.trim().slice(0, 140),
         size: buffer.length,
         type: mimeType.slice(0, 120),

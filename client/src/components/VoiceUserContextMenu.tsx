@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { isUserServerOwner } from '../utils/serverIdentity';
 import { AvatarView } from './AvatarView';
 import { appPrompt } from '../utils/appDialogs';
 import { User } from '../types';
@@ -286,7 +287,7 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
           </>
         )}
 
-        {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) && !isMe && (
+        {(currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer)) && !isMe && (
           <>
             <button
               type="button"

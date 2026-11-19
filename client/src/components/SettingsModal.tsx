@@ -7,6 +7,8 @@ import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import { authFetch, resolveBackendBaseUrl } from '../utils/authFetch';
 import { appToast } from '../utils/appDialogs';
+import { WebPushSettingsCard } from './settings/WebPushSettingsCard';
+import { ChangelogTab } from './settings/ChangelogTab';
 import {
   X,
   Mic,
@@ -3241,6 +3243,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </p>
               </div>
 
+              <WebPushSettingsCard currentServerHost={currentServerHost} />
+
               <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -3537,163 +3541,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-bold text-white">Sürüm Geçmişi &amp; Yenilikler</div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold">
-                    Güncel: v{appVersion}
-                  </span>
-                </div>
-
-                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.6.0 - Latest */}
-                  <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.6.0 — Son Sürüm</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
-                    </div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Sunucuları Keşfet &amp; İsteğe Bağlı Üyelik:</strong> Yeni kayıt olan kullanıcılar artık sunuculara otomatik eklenmez; kategoriler, canlı çevrimiçi/ses sayıları, davet önizlemesi ve aranabilir platform rehberi sunan yenilenmiş Keşfet merkezinden gönüllü katılır.</li>
-                      <li><strong className="text-white">1-e-1 Görüşme &amp; Pro Uzaktan Yardım:</strong> <code className="text-cyan-300">RTCDataChannel</code> üzerinden düşük gecikmeli kontrol, Windows <code className="text-cyan-300">SendInput</code> Unicode (Türkçe tam destek) ve çoklu monitör seçimi, <code className="text-cyan-300">Ctrl+Alt+Esc / Pause</code> acil durdurma, host ekranı üst kontrol HUD&apos;ı, canlı çizim/lazer, Zoom &amp; Pan, dosya/pano transferi ve kalıcı DM arama kayıtları eklendi.</li>
-                      <li><strong className="text-white">Gizlilik İzolasyonu, Kalıcı DM &amp; Disk Yükleme:</strong> DM ve kanal olayları yalnızca yetkili üyelere kapsamlandı; oturumdan bağımsız kalıcı DM kanal kimlikleri, <code className="text-cyan-300">/api/upload</code> disk tabanlı dosya/görsel barındırma ve yerel tarayıcı kutularının yerini alan uygulama içi toast/onay modalları eklendi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.5.1 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.5.1 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Yönetim Paneli &amp; REST API Güvenliği:</strong> Tüm <code className="text-cyan-300">/api/admin/*</code>, <code className="text-cyan-300">/api/sessions/*</code>, <code className="text-cyan-300">/api/user-prefs/*</code>, etkinlik ve ses yükleme uç noktalarına oturum/admin yetki doğrulaması ve Webhook SSRF koruması eklendi.</li>
-                      <li><strong className="text-white">Modern Uygulama İçi Modallar &amp; Çekmece:</strong> Tarayıcı <code className="text-cyan-300">prompt/confirm/alert</code> kutuları kaldırılarak süre seçenekli yasaklama, şifre üreteci, cüzdan düzenleme, kanal temizleme ve birleşik Kullanıcı Detay Çekmecesi (aktif oturum iptali, IP, lisans, log) eklendi.</li>
-                      <li><strong className="text-white">Canlı Metrik Grafiği &amp; LiveKit/TURN Testi:</strong> Genel Bakış sekmesine <code className="text-cyan-300">/api/metrics</code> canlı RAM/kullanıcı SVG sparkline grafikleri, gerçek oda adı + hızlı Sustur/At butonları; Sistem Ayarlarına alt sekmeler, yapışkan kaydet çubuğu ve canlı LiveKit/TURN bağlantı testi eklendi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.5.0 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.5.0 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Doğal Masaüstü Yetenekleri (Tauri / Rust):</strong> Tek pencere kilidi (<code className="text-cyan-300">single-instance</code>), oyun içi global <strong>Bas-Konuş (PTT)</strong>, pencere boyut/konum hatırlama, kapatma tuşunda tepsi/çıkış tercihi, <code className="text-cyan-300">cakma://invite</code> derin bağlantı ve zengin sistem tepsisi menüsü (Sağırlaştır, Odadan Ayrıl, Durum Değiştir).</li>
-                      <li><strong className="text-white">Sohbet UX &amp; Performans:</strong> Kanal/DM taslak kaydı, boş kutuda <code className="text-cyan-300">↑</code> ile son mesajı düzenleme, <code className="text-cyan-300">Alt + ↑/↓</code> kanal gezintisi, zoom/galerili <strong>Lightbox</strong>, 80+ mesajda sanallaştırılmış liste ve modal lazy-loading.</li>
-                      <li><strong className="text-white">Ses, Video &amp; Bulut Ayarları:</strong> Kanal/sunucu susturma tercihleri, kişi bazlı ses/EQ bulut senkronizasyonu, ses odasında <strong>Spotlight</strong> + kamera arka plan bulanıklaştırma ve ağ kesintisinde <strong>ICE Restart</strong> / otomatik odaya dönüş.</li>
-                      <li><strong className="text-white">Sunucu Motoru &amp; Temizlik:</strong> Asenkron <code className="text-cyan-300">crypto.scrypt</code>, Node 22+ ortamlarda sıfır-native yerleşik <code className="text-cyan-300">node:sqlite</code> (WAL + FTS5) adaptörü ve referanssız artık yükleme çöp toplayıcısı eklendi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.4.1 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.4.1 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Yeni Kırmızı-Beyaz Marka Logosu &amp; İkon Seti:</strong> Windows (<code className="text-cyan-300">.ico</code>), macOS (<code className="text-cyan-300">.icns</code>), PWA/Favicon, pencere başlık çubuğu ve giriş/hakkında ekranları yeni kırmızı-beyaz sesli sohbet ikonuyla yenilendi.</li>
-                      <li><strong className="text-white">Gelişmiş Pencere Başlık Çubuğu:</strong> Aktif ses odası &amp; <code className="text-cyan-300">SFU/P2P</code> rozeti, gecikmeye göre renk kodlu tıklanabilir ping/ağ teşhisi düğmesi ve klavye kısayolları (<code className="text-cyan-300">Ctrl+/</code>) butonu eklendi.</li>
-                      <li><strong className="text-white">Üye Listesi Arama &amp; Açık Tema Kontrast Düzeltmesi:</strong> Sağ panel üstüne canlı çevrimiçi/toplam üye sayacı ve hızlı arama kutusu eklendi; açık temalarda üye adlarının okunabilirliği düzeltildi.</li>
-                      <li><strong className="text-white">DM Okunmamış Rozeti &amp; Sunucu İpuçları:</strong> Sol kenar çubuğunda Direkt Mesajlar için canlı okunmamış sayacı ve sunucu ipuçlarında okunmamış mesaj sayısı eklendi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.4.0 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.4.0 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Tam LiveKit SFU &amp; TURN Desteği:</strong> SFU modunda ekran paylaşımı (Simulcast), kişi bazlı ses/EQ/cihaz kontrolü, <code className="text-cyan-300">ActiveSpeakers</code> konuşma halosu, yönetim panelinde özel TURN sunucusu ayarları ve pencereye özel WASAPI ses yakalama eklendi.</li>
-                      <li><strong className="text-white">Spektral Gürültü Engelleme &amp; Zero-Lag Sayaç:</strong> 48kHz <code className="text-cyan-300">AudioWorklet</code> gürültü temizleyici ve <code className="text-cyan-300">VoiceMetricsContext</code> harici deposuyla 60 FPS mikrofonda gereksiz arayüz yeniden çizimleri kaldırıldı.</li>
-                      <li><strong className="text-white">Parçalı Asenkron Depolama &amp; Sayfalama:</strong> Kanal bazlı parçalı mesaj kaydı, başlangıçta son 60 mesaj + sunucudan eski mesaj yükleme, <code className="text-cyan-300">/api/metrics</code> ve istemci WebP görsel sıkıştırma eklendi.</li>
-                      <li><strong className="text-white">Masaüstü &amp; Tema Geliştirmeleri:</strong> Windows görev çubuğu okunmamış rozeti, tıklanınca kanala odaklanan bildirimler, canlı yüzde/MB güncelleme çubuğu, Web Push PWA ve Özel Tema Oluşturucu eklendi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.14 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.14 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Açık Renkli Temalar (4 Yeni Tema):</strong> İnci Beyazı, Gündüz Mavisi, Sıcak Kum ve Nane Esintisi açık temaları, uyarlanabilir cam yüzeyi ve yüksek kontrastlı metin desteğiyle eklendi.</li>
-                      <li><strong className="text-white">LiveKit SFU Yönetimi &amp; Hibrit Mimari:</strong> Sistem Yönetim Paneli&apos;ne LiveKit SFU açma/kapama, geçiş eşiği, URL/Key/Secret ve canlı erişilebilirlik göstergesi; Sunucu Ayarları&apos;na ise sunucu bazlı <code className="text-cyan-300">Otomatik / P2P / LiveKit SFU</code> seçimi eklendi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.13 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.13 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Özel Cam Pencere Başlık Çubuğu:</strong> Masaüstü uygulamasının üst çubuğu temaya uygun glassmorphism tasarımı, aktif sunucu/kanal göstergesi, <code className="text-cyan-300">Ctrl+K</code> Hızlı Geçiş ve canlı ping rozetiyle yenilendi.</li>
-                      <li><strong className="text-white">Gelişmiş Yayın &amp; HDR:</strong> 10-bit AV1/VP9 HDR yayın modu, izleyiciye özel kalite seçimi (<code className="text-cyan-300">Oto/Kaynak/1080p/720p/480p/360p</code>), canlı FPS/bitrate ayarı, ses kontrolü, canlı istatistik kartı, lazer işaretçi ve mini PiP penceresi.</li>
-                      <li><strong className="text-white">Stüdyo Ses &amp; Kişiye Özel EQ:</strong> 48 kHz + 80 Hz uğultu filtresi + Compressor DSP zinciri, 20 ms düşük gecikmeli tampon, sağ tık menüsünde kişi bazlı Bas/Tiz EQ + Normalize, kanal bazlı bitrate/kişi limiti ve sunucu susturma / toplantı modu.</li>
-                      <li><strong className="text-white">Sohbet, Oda &amp; Varlık:</strong> Ses odası içi yazılı sohbet (Oda Sohbeti), Audio Ducking (%10–%70), DM <code className="text-emerald-300">✓✓ Görüldü</code>, Yeni Mesajlar çizgisi, sunucu şablonları, tıklanabilir rozet açıklamaları, özel durum süresi ve 10 dk otomatik Boşta (Idle) modu.</li>
-                      <li><strong className="text-white">Ayarlar &amp; Overlay Yeniliği:</strong> Ayarlar içi hızlı arama, canlı önizlemeli ayrı Oyun İçi Overlay sekmesi, gerçek cam saydamlık ve canlı ping göstergesi.</li>
-                      <li><strong className="text-white">Güvenlik Güçlendirmesi:</strong> Web için <code className="text-cyan-300">HttpOnly</code> cookie oturumu, sıkılaştırılmış CSP, yeni IP giriş uyarısı, rastgele kalıcı sunucu anahtarları ve AES-256-GCM şifreli sunucu yedekleri.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.10 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.10 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Overlay Düzeltmesi &amp; Kilit Modu:</strong> Overlay penceresinin boş açılması çözüldü; açılışta kayıtlı köşeye konumlanma ve <code className="text-cyan-300">Ctrl+Shift+O</code> ile tıklama geçirgenliği (click-through) eklendi.</li>
-                      <li><strong className="text-white">Genişletilmiş Oyun Algılama:</strong> 40+ yeni popüler oyun (Marvel Rivals, PoE 2, WoW, CoD, Battlefield, Forza, Valheim, DayZ vb.) otomatik algılamaya eklendi.</li>
-                      <li><strong className="text-white">GIPHY GIF Galerisi:</strong> Yönetim panelinden GIPHY API anahtarı tanımlanarak canlı trend ve arama destekli GIF galerisi.</li>
-                      <li><strong className="text-white">Ses Odasına Çekme İzni:</strong> Ses odasında olmayan kullanıcılara bildirimli onay isteği ve ret bildirimi.</li>
-                      <li><strong className="text-white">Kayıt Güvenliği &amp; E-Posta OTP:</strong> Davet kodlu kayıt, anti-bot doğrulaması, 6 haneli e-posta OTP, E2EE DM ve yönetim paneli güvenlik denetimi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.5 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.5 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Gelişmiş Profil Kartı:</strong> Avatar çerçeveleri, banner odak noktası (Yukarı/Orta/Aşağı), tek tıkla ID kopyalama ve hızlı durum değiştirici.</li>
-                      <li><strong className="text-white">Rozet Sabitleme &amp; Sosyal Bağlantılar:</strong> Rozet üzerine gelince açıklama, öne çıkan rozet seçimi, tıklanabilir Bio linkleri ve Steam/GitHub/Web bağlantıları.</li>
-                      <li><strong className="text-white">Sekmeli Profil &amp; Bakiye Transferi:</strong> Ortak Sunucular / Ortak Arkadaşlar sekmeleri, mini istatistikler ve profil üzerinden doğrudan ₺ bakiye gönderme.</li>
-                      <li><strong className="text-white">Hesap &amp; Profil Banner Düzeltmesi:</strong> Ayarlar önizleme kartında özel yüklenen GIF/resim bannerların görünmesi ve düzenlenmesi.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.4 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.4 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Çoklu Dil Desteği (TR / EN / DE / RU):</strong> Görünüm ayarlarından uygulama dilini değiştirme ve bulut senkronizasyonu.</li>
-                      <li><strong className="text-white">Yenilenen Hesap &amp; Profil:</strong> Canlı afiş/avatar/durum önizleme kartı, özel görsel/GIF yükleme, afiş gradyanları, durum ve hakkımda düzenleme.</li>
-                      <li><strong className="text-white">Özel Durum (Rich Presence) Yenilemesi:</strong> Sayfa merkezinde açılan yeni pencere, özel durum şablonları, emoji seçici, geçen süre ve otomatik silme zamanlayıcısı.</li>
-                      <li><strong className="text-white">Türkçe Yayın Başlatma Ekranı:</strong> Yayın ayarları tamamen Türkçeleştirildi, canlı kalite özeti ve açıklayıcı ipuçları eklendi.</li>
-                      <li><strong className="text-white">Yönetim Paneli Raporlar &amp; Disk Sekmesi:</strong> Disk kullanımı, ses ve etkinlik yönetimi, CSV/JSON dışa aktarma ve toplu işlemler.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.3 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.3 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
-                      <li><strong className="text-white">Gelen Kutusu &amp; Global Arama:</strong> Tüm kanallardaki `@bahsetme` bildirimleri ve mesaj aramaları tek pencerede.</li>
-                      <li><strong className="text-white">Sunucu Etkinlikleri (Events):</strong> Etkinlik oluşturma, katılacağım (RSVP) takibi ve silme desteği.</li>
-                      <li><strong className="text-white">Hazır Ses &amp; Kodek Profilleri:</strong> Ses İşleme (DSP) sekmesinde tek tıkla Oyun, Toplantı ve Müzik profilleri.</li>
-                      <li><strong className="text-white">Bulut Tercih Senkronizasyonu:</strong> Tema, zil sesi paketi, bağlantı önizlemesi, kullanıcı notları ve yer imlerinin hesapla eşitlenmesi.</li>
-                      <li><strong className="text-white">Ekran Paylaşımında PiP &amp; Performans:</strong> Resim İçinde Resim (PiP) modu, mesaj listesi sayfalama ve kod bölme ile daha hızlı açılış.</li>
-                      <li><strong className="text-white">Sunucu Tarafı Soundboard &amp; Uzaktan Oturum Çıkışı:</strong> Özel seslerin sunucuda saklanması ve diğer cihazlardaki oturumları kapatma.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.2 */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-cyan-300">v0.3.2 — Önceki Sürüm</div>
-                    <ul className="space-y-1 text-xs text-white/70 list-disc pl-4">
-                      <li><strong className="text-white">Windows Otomatik Başlatma &amp; Overlay Ayarları:</strong> Başlangıçta açılma, overlay köşe seçimi ve saydamlık kaydırıcısı.</li>
-                      <li><strong className="text-white">Arama Zil Sesi Paketleri:</strong> Modern, Klasik, Minimal ve Sessiz zil seçenekleri + Test Et butonu.</li>
-                      <li><strong className="text-white">Özel Soundboard &amp; Kullanıcı Notları:</strong> Özel kısa ses yükleme, yalnızca size özel kullanıcı notları ve yönetimi.</li>
-                      <li><strong className="text-white">Yer İmleri, /hatirlat &amp; Hızlı Ekran Görüntüsü:</strong> Mesaj kaydetme, zamanlayıcı komutu, zengin bağlantı önizlemeleri ve tek tıkla ekran görüntüsü ekleme.</li>
-                    </ul>
-                  </div>
-
-                  {/* v0.3.1 & v0.2.x */}
-                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
-                    <div className="text-xs font-bold text-white/80">v0.3.1 &amp; v0.2.x — Önceki Güncellemeler</div>
-                    <ul className="space-y-1 text-xs text-white/65 list-disc pl-4">
-                      <li><strong className="text-white">Tema &amp; Görünüm Özelleştirme:</strong> Ekstra temalar, cam yoğunluğu, mesaj aralığı, köşe stili ve hareket azaltma.</li>
-                      <li><strong className="text-white">1-e-1 DM Görüşme Sahnesi &amp; Uzaktan Yardım:</strong> Canlı çift taraflı konuşma kartları, Türkçe Q ekran klavyesi, Windows kısayolları ve UAC yönetici ipucu.</li>
-                      <li><strong className="text-white">Sürükle-Bırak Oda Taşıma &amp; Oyun Overlay:</strong> Ses odalarında sürükle-bırak taşıma ve otomatik oyun algılama.</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
+              <ChangelogTab appVersion={appVersion} />
             </div>
           )}
         </div>

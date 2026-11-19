@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
+import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX, Search, X } from 'lucide-react';
 import { AvatarView } from './AvatarView';
@@ -55,10 +56,13 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   // Helper to find member's highest role
   const getUserRoleInfo = (user: User): { role: ServerRole | null; isOwner: boolean } => {
     if (!activeServer) return { role: null, isOwner: false };
-    const isOwner = activeServer.ownerId === user.id;
+    const isOwner = isUserServerOwner(user, activeServer);
 
     const member = activeServer.members?.find(
-      (m) => m.userId === user.id || m.username.toLowerCase() === user.username.toLowerCase()
+      (m) =>
+        (user.accountId && m.userId === user.accountId) ||
+        m.userId === user.id ||
+        m.username.toLowerCase() === user.username.toLowerCase()
     );
 
     if (isOwner) {
@@ -272,7 +276,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
 
           <div className="space-y-1">
             {group.users.map((user) => {
-              const isMe = user.id === currentUser?.id;
+              const isMe = isSameUser(user, currentUser);
               const { role: userRole, isOwner } = getUserRoleInfo(user);
               const currentVoice = activeServer?.channels.find(
                 (c) => c.id === user.currentVoiceChannelId
@@ -423,7 +427,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
               <span>Profili Görüntüle</span>
             </button>
 
-            {contextMenu.user.id !== currentUser?.id && (
+            {!isSameUser(contextMenu.user, currentUser) && (
               <>
                 <button
                   type="button"
@@ -451,7 +455,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                   </button>
                 )}
 
-                {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) &&
+                {(currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer)) &&
                   contextMenu.user.status !== 'offline' &&
                   connectedVoiceChannelId &&
                   contextMenu.user.currentVoiceChannelId !== connectedVoiceChannelId && (

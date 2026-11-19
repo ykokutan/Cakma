@@ -24,8 +24,22 @@ export const sqliteStore = new SqliteStore(DATA_DIR);
 export async function initStorageEngine(messagesMap?: Record<string, Message[]>) {
   const ok = await sqliteStore.init();
   if (ok && messagesMap) {
-    const indexed = sqliteStore.syncAllMessages(messagesMap);
-    console.log(`🗄️ [Storage] SQLite WAL + FTS5 aktif (${indexed} mesaj indekslendi).`);
+    const existingCount = sqliteStore.getMessageCount();
+    if (existingCount === 0) {
+      const imported = sqliteStore.importMessagesMap(messagesMap);
+      console.log(`🗄️ [Storage] SQLite WAL + FTS5 aktif (${imported} mesaj JSON'dan SQLite'a aktarıldı).`);
+    } else {
+      const recent = sqliteStore.loadRecentMessagesPerChannel(300);
+      for (const chId of Object.keys(messagesMap)) {
+        if (!recent[chId]) {
+          delete messagesMap[chId];
+        }
+      }
+      for (const [chId, msgs] of Object.entries(recent)) {
+        messagesMap[chId] = msgs;
+      }
+      console.log(`🗄️ [Storage] SQLite WAL + FTS5 aktif (toplam ${existingCount} mesaj, son pencere yüklendi).`);
+    }
   } else {
     console.log(`💾 [Storage] Depolama motoru: ${sqliteStore.getEngineName()} (${sqliteStore.getInfo().reason})`);
   }
@@ -56,7 +70,13 @@ export function searchMessagesSmart(
       const hydrated: Array<{ channelId: string; message: Message }> = [];
       for (const hit of ftsHits) {
         if (allowedChannelIds && !allowedChannelIds.has(hit.channelId)) continue;
-        const found = byId.get(hit.id);
+        let found = byId.get(hit.id);
+        if (!found) {
+          const fromDb = sqliteStore.getMessageById(hit.id);
+          if (fromDb && fromDb.channelId === hit.channelId) {
+            found = fromDb.message;
+          }
+        }
         if (found) hydrated.push({ channelId: hit.channelId, message: found });
         if (hydrated.length >= limit) break;
       }
@@ -64,6 +84,21 @@ export function searchMessagesSmart(
     }
   }
   return searchAllMessages(allMessages, query, allowedChannelIds, limit);
+}
+
+export function getChannelMessagesPageSmart(
+  allMessages: Record<string, Message[]>,
+  channelId: string,
+  beforeId?: string,
+  limit = 50
+): { messages: Message[]; hasMore: boolean } {
+  if (sqliteStore.isActive()) {
+    const page = sqliteStore.getChannelMessagesPage(channelId, beforeId, limit);
+    if (page.messages.length > 0 || !allMessages[channelId]?.length) {
+      return page;
+    }
+  }
+  return getChannelMessagesPage(allMessages[channelId], beforeId, limit);
 }
 
 const pendingWrites = new Map<string, any>();
@@ -205,10 +240,39 @@ export function loadMessages(defaultMessages: Record<string, Message[]>): Record
 }
 
 export function saveChannelMessages(channelId: string, channelMessages: Message[]) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.replaceChannelMessages(channelId, channelMessages);
+    return;
+  }
+  messageStore.scheduleSaveChannel(channelId, channelMessages);
+}
+
+export function saveChannelMessageUpsert(channelId: string, channelMessages: Message[], msg: Message) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.upsertMessage(channelId, msg);
+    return;
+  }
+  messageStore.scheduleSaveChannel(channelId, channelMessages);
+}
+
+export function saveChannelMessageDelete(channelId: string, channelMessages: Message[], messageId: string) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.deleteMessage(messageId);
+    return;
+  }
+  messageStore.scheduleSaveChannel(channelId, channelMessages);
+}
+
+export function saveChannelMessageBulkReplace(channelId: string, channelMessages: Message[]) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.replaceChannelMessages(channelId, channelMessages);
+    return;
+  }
   messageStore.scheduleSaveChannel(channelId, channelMessages);
 }
 
 export function indexChannelMessage(channelId: string, msg: Message) {
+  if (!sqliteStore.isActive()) return;
   sqliteStore.indexMessage(channelId, msg);
 }
 
@@ -221,6 +285,14 @@ export function closeStorageEngine() {
 }
 
 export function saveMessages(messages: Record<string, Message[]>) {
+  if (sqliteStore.isActive()) {
+    for (const [chId, list] of Object.entries(messages)) {
+      if (Array.isArray(list)) {
+        sqliteStore.replaceChannelMessages(chId, list);
+      }
+    }
+    return;
+  }
   for (const [chId, list] of Object.entries(messages)) {
     if (Array.isArray(list)) {
       messageStore.scheduleSaveChannel(chId, list);
@@ -451,6 +523,9 @@ export function exportAllDataBundle(): {
       } catch {}
     }
   }
+  if (sqliteStore.isActive()) {
+    files['messages.json'] = sqliteStore.exportAllMessagesMap();
+  }
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -467,6 +542,12 @@ export function importAllDataBundle(bundle: { files?: Record<string, any> }): st
   for (const filename of BACKUP_FILENAMES) {
     if (Object.prototype.hasOwnProperty.call(bundle.files, filename)) {
       safeWriteJson(filename, bundle.files[filename]);
+      if (filename === 'messages.json' && bundle.files[filename] && typeof bundle.files[filename] === 'object') {
+        if (sqliteStore.isActive()) {
+          sqliteStore.importMessagesMap(bundle.files[filename], true);
+        }
+        saveMessages(bundle.files[filename]);
+      }
       restored.push(filename);
     }
   }

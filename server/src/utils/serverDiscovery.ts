@@ -1,4 +1,5 @@
 import type { Server, ServerCategory, User } from '../types.js';
+import { isServerOwner } from './serverIdentity.js';
 
 export interface DiscoverableServerSummary {
   id: string;
@@ -22,15 +23,17 @@ export interface DiscoverableServerSummary {
 }
 
 export function isUserMemberOfServer(
-  user: { id?: string; username: string },
+  user: { id?: string; accountId?: string; username: string },
   srv: Pick<Server, 'ownerId' | 'members'>
 ): boolean {
   const unameLower = String(user.username || '').trim().toLowerCase();
-  if (!unameLower && !user.id) return false;
+  if (!unameLower && !user.id && !user.accountId) return false;
+  if (user.accountId && srv.ownerId === user.accountId) return true;
   if (user.id && srv.ownerId === user.id) return true;
   if (unameLower && srv.ownerId && srv.ownerId.toLowerCase() === unameLower) return true;
   return (srv.members || []).some(
     (m) =>
+      (user.accountId && m.userId === user.accountId) ||
       (user.id && m.userId === user.id) ||
       (unameLower !== '' && m.username.toLowerCase() === unameLower)
   );
@@ -38,7 +41,7 @@ export function isUserMemberOfServer(
 
 export function filterServersForUser(
   allServers: Server[],
-  user: { id?: string; username: string }
+  user: { id?: string; accountId?: string; username: string }
 ): Server[] {
   return allServers.filter((srv) => isUserMemberOfServer(user, srv));
 }
@@ -46,7 +49,7 @@ export function filterServersForUser(
 export function buildDiscoverableServerSummaries(
   allServers: Server[],
   activeUsers: Iterable<User>,
-  currentUser?: { id?: string; username: string } | null
+  currentUser?: { id?: string; accountId?: string; username: string } | null
 ): DiscoverableServerSummary[] {
   const uniqueOnlineByName = new Map<string, User>();
   for (const u of activeUsers) {
@@ -91,17 +94,7 @@ export function buildDiscoverableServerSummaries(
       }));
 
       const isJoined = currentUser ? isUserMemberOfServer(currentUser, srv) : false;
-      const isOwner = Boolean(
-        currentUser &&
-          ((currentUser.id && srv.ownerId === currentUser.id) ||
-            (currentUser.username && srv.ownerId.toLowerCase() === currentUser.username.toLowerCase()) ||
-            (srv.members || []).some(
-              (m) =>
-                m.isOwner &&
-                currentUser.username &&
-                m.username.toLowerCase() === currentUser.username.toLowerCase()
-            ))
-      );
+      const isOwner = Boolean(currentUser && isServerOwner(currentUser, srv));
 
       return {
         id: srv.id,

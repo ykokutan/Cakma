@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Calendar, Plus, Trash2, Users, X, Check } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 import { authFetch } from '../utils/authFetch';
+import { isUserServerOwner } from '../utils/serverIdentity';
 
 interface ServerEventItem {
   id: string;
@@ -188,7 +189,7 @@ export const ServerEventsModal: React.FC<ServerEventsModalProps> = ({ isOpen = t
               const joined = currentUser?.username ? evt.attendees.includes(currentUser.username) : false;
               const canDelete =
                 evt.createdBy === currentUser?.username ||
-                activeServer.ownerId === currentUser?.id ||
+                isUserServerOwner(currentUser, activeServer) ||
                 currentUser?.role === 'admin';
               return (
                 <div key={evt.id} className="p-4 rounded-xl bg-white/[0.04] border border-white/10 space-y-2.5">

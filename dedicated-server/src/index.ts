@@ -5,12 +5,35 @@ try {
 
 import express from 'express';
 import http from 'http';
+import crypto from 'crypto';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { verifyLicenseKey, OFFICIAL_CLIENT_SIGNATURE } from './licenseValidator.js';
+import { verifyLicenseKey, OFFICIAL_CLIENT_SIGNATURE, type LicenseData } from './licenseValidator.js';
+
+function hashPasswordScrypt(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyPasswordScrypt(password: string, stored: string): boolean {
+  if (!stored || !password) return false;
+  if (stored.startsWith('scrypt$')) {
+    const parts = stored.split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, originalHash] = parts;
+    const derived = crypto.scryptSync(password, salt, 64).toString('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(originalHash, 'hex'), Buffer.from(derived, 'hex'));
+    } catch {
+      return false;
+    }
+  }
+  return password === stored;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,34 +52,35 @@ console.log('\n============================================================');
 console.log('🛡️  DEDICATED SES SUNUCUSU LİSANS DENETİMİ YAPILIYOR...');
 console.log('============================================================');
 
-const licenseResult = verifyLicenseKey(config.licenseKey);
-
-if (!licenseResult.valid || !licenseResult.data) {
-  console.error('\n❌ ============================================================');
-  console.error('❌ [LİSANS HATASI]: SUNUCU BAŞLATILAMADI!');
-  console.error(`❌ Sebep: ${licenseResult.error || 'Geçersiz lisans anahtarı.'}`);
-  console.error('❌ Lütfen sunucu sahibinden geçerli bir lisans temin edin.');
-  console.error('============================================================\n');
-  process.exit(1);
-}
-
-const license = licenseResult.data;
-console.log(`✓ LİSANS GEÇERLİ: ${license.licensee}`);
-console.log(`✓ MAKSİMUM KAPASİTE: ${license.maxSlots} Kişi (Slots)`);
-console.log(`✓ LİSANS PAKETİ: ${license.tier}`);
-console.log(`✓ GEÇERLİLİK TARİHİ: ${license.expiresAt === 'lifetime' ? 'Ömür Boyu (Lifetime)' : new Date(license.expiresAt).toLocaleDateString('tr-TR')}`);
-
-// Master Server Online Check
 const rawMaster = config.masterServerUrl || 'http://127.0.0.1:4000';
 const MASTER_SERVER_URL = rawMaster.replace('localhost', '127.0.0.1');
 
-async function verifyWithMasterOnStartup() {
+let licenseResult = verifyLicenseKey(config.licenseKey, config.licensePublicKey);
+
+async function resolveAndVerifyLicenseAtStartup(): Promise<LicenseData> {
+  const urls = Array.from(new Set([MASTER_SERVER_URL, 'http://127.0.0.1:4000', 'http://localhost:4000']));
+
+  // 1) If LIC2- Ed25519 without local public key, try fetching Master's Ed25519 public key
+  if (!licenseResult.valid && licenseResult.needsOnlineVerification && config.licenseKey.startsWith('LIC2-')) {
+    for (const u of urls) {
+      try {
+        const pkRes = await fetch(`${u}/api/dedicated/public-key`, { signal: AbortSignal.timeout(2000) });
+        const pkJson: any = await pkRes.json().catch(() => ({}));
+        if (pkRes.ok && pkJson?.publicKeyPem) {
+          licenseResult = verifyLicenseKey(config.licenseKey, pkJson.publicKeyPem);
+          if (licenseResult.valid && licenseResult.data) {
+            break;
+          }
+        }
+      } catch {}
+    }
+  }
+
   console.log('📡 Merkezi Lisans Sunucusu ile iletişim kuruluyor...');
-  const urls = [MASTER_SERVER_URL, 'http://127.0.0.1:4000', 'http://localhost:4000'];
   for (const u of urls) {
     try {
       const res = await fetch(`${u}/api/dedicated/verify-license?licenseKey=${encodeURIComponent(config.licenseKey)}`, {
-        signal: AbortSignal.timeout(2000)
+        signal: AbortSignal.timeout(2000),
       });
       const data: any = await res.json().catch(() => ({}));
       if (res.status === 403 || data.revoked || data.status === 'revoked') {
@@ -66,27 +90,110 @@ async function verifyWithMasterOnStartup() {
         console.error('❌ ============================================================\n');
         process.exit(1);
       }
-      if (res.ok && data.valid) {
+      if (res.ok && data.valid && data.data) {
+        if (!licenseResult.valid) {
+          licenseResult = { valid: true, data: data.data };
+        }
         console.log('✓ MERKEZİ SUNUCU ONAYI: Lisans aktif ve onaylandı.');
-        return;
+        return licenseResult.data || data.data;
       }
     } catch {}
   }
+
+  if (!licenseResult.valid || !licenseResult.data) {
+    console.error('\n❌ ============================================================');
+    console.error('❌ [LİSANS HATASI]: SUNUCU BAŞLATILAMADI!');
+    console.error(`❌ Sebep: ${licenseResult.error || 'Geçersiz lisans anahtarı veya ana sunucuya ulaşılamadı.'}`);
+    console.error('❌ Lütfen sunucu sahibinden geçerli bir lisans temin edin.');
+    console.error('============================================================\n');
+    process.exit(1);
+  }
+
+  return licenseResult.data;
 }
-await verifyWithMasterOnStartup();
+
+const license = await resolveAndVerifyLicenseAtStartup();
+console.log(`✓ LİSANS GEÇERLİ: ${license.licensee}`);
+console.log(`✓ MAKSİMUM KAPASİTE: ${license.maxSlots} Kişi (Slots)`);
+console.log(`✓ LİSANS PAKETİ: ${license.tier}`);
+console.log(`✓ GEÇERLİLİK TARİHİ: ${license.expiresAt === 'lifetime' ? 'Ömür Boyu (Lifetime)' : new Date(license.expiresAt).toLocaleDateString('tr-TR')}`);
 console.log('============================================================\n');
 
-// 3. SERVER SETUP
+// 3. SERVER SETUP & SECURITY HARDENING
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use((_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+const defaultAllowedOrigins = [
+  'https://ses.yahyakemalokutan.com',
+  'http://ses.yahyakemalokutan.com',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'tauri://localhost',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4000',
+  'http://127.0.0.1:4000',
+];
+try {
+  const mOrigin = new URL(MASTER_SERVER_URL).origin;
+  if (!defaultAllowedOrigins.includes(mOrigin)) defaultAllowedOrigins.push(mOrigin);
+} catch {}
+
+const envOrigins = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const configOrigins = Array.isArray(config.allowedOrigins) ? config.allowedOrigins.map((s: any) => String(s).trim()).filter(Boolean) : [];
+const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envOrigins, ...configOrigins]));
+const allowAllOrigins = Boolean(config.allowAllOrigins === true || process.env.ALLOW_ALL_ORIGINS === 'true');
+
+const corsOriginValidator = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+  if (!origin || allowAllOrigins || allowedOrigins.includes(origin)) {
+    callback(null, true);
+  } else {
+    callback(new Error('Not allowed by CORS'));
+  }
+};
+
+app.use(cors({ origin: corsOriginValidator, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+
+const apiRateLimits = new Map<string, { count: number; resetAt: number }>();
+app.use('/api', (req, res, next) => {
+  const ip = req.socket?.remoteAddress || req.ip || 'unknown';
+  const now = Date.now();
+  const entry = apiRateLimits.get(ip);
+  if (!entry || now >= entry.resetAt) {
+    apiRateLimits.set(ip, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  entry.count += 1;
+  if (entry.count > 120) {
+    return res.status(429).json({ success: false, error: 'Çok fazla istek gönderildi.' });
+  }
+  next();
+});
+const rateLimitCleaner = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of apiRateLimits.entries()) {
+    if (now >= entry.resetAt) apiRateLimits.delete(ip);
+  }
+}, 5 * 60_000);
+rateLimitCleaner.unref?.();
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+    origin: corsOriginValidator,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
 });
 
 const PORT = config.port || 4001;
@@ -182,7 +289,7 @@ const registeredAccounts = new Map<string, Account>([
     {
       username: 'admin',
       email: 'admin@dedicated.local',
-      password: 'admin123',
+      password: hashPasswordScrypt('admin123'),
       avatar: '🛡️',
       role: 'admin',
       statusMessage: '👑 Dedicated Sunucu Aktif',
@@ -197,7 +304,7 @@ const registeredAccounts = new Map<string, Account>([
     {
       username: 'ahmet',
       email: 'ahmet@dedicated.local',
-      password: '123456',
+      password: hashPasswordScrypt('123456'),
       avatar: '🎮',
       role: 'user',
       statusMessage: '🎧 Müzik Dinliyor (Lo-Fi)',
@@ -401,8 +508,11 @@ io.on('connection', (socket: Socket) => {
       }
     }
 
-    if (!foundAccount || foundAccount.password !== password) {
+    if (!foundAccount || !verifyPasswordScrypt(password, foundAccount.password)) {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
+    }
+    if (!foundAccount.password.startsWith('scrypt$')) {
+      foundAccount.password = hashPasswordScrypt(password);
     }
 
     user.username = foundAccount.username;
@@ -446,7 +556,7 @@ io.on('connection', (socket: Socket) => {
     const newAcc: Account = {
       username: cleanUsername,
       email: email?.trim() || `${cleanUsername.toLowerCase()}@dedicated.local`,
-      password,
+      password: hashPasswordScrypt(password),
       avatar: avatar || '🎮',
       role
     };
@@ -1104,8 +1214,15 @@ function shutdownDueToLicenseRevocation(reason: string) {
   }, 400);
 }
 
-// Remote revocation webhook endpoint
+// Remote revocation webhook endpoint (authenticated with the dedicated server licenseKey)
 app.post('/api/license/revoked', (req, res) => {
+  const providedKey = String(req.body?.licenseKey || req.headers['x-license-key'] || '').trim();
+  const expectedKey = String(config.licenseKey || '').trim();
+  const providedDigest = crypto.createHash('sha256').update(providedKey).digest();
+  const expectedDigest = crypto.createHash('sha256').update(expectedKey).digest();
+  if (!providedKey || !expectedKey || !crypto.timingSafeEqual(providedDigest, expectedDigest)) {
+    return res.status(401).json({ success: false, error: 'Yetkisiz iptal sinyali: Geçersiz lisans anahtarı.' });
+  }
   const { reason } = req.body || {};
   res.json({ success: true, message: 'Revocation signal received. Shutting down...' });
   shutdownDueToLicenseRevocation(reason || 'Sistem yöneticisi tarafından lisans iptal edildi.');

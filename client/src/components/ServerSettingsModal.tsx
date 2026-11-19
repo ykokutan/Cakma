@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { Server, ServerCategory, ServerRole, ServerPermission } from '../types';
 import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
 import { appConfirm, appPrompt, appToast } from '../utils/appDialogs';
@@ -146,7 +147,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   // Members Tab Search
   const [memberSearch, setMemberSearch] = useState('');
 
-  const isOwner = currentUser?.id === server.ownerId;
+  const isOwner = isUserServerOwner(currentUser, server);
   const canManageServer = hasServerPermission('manage_server');
   const canManageRoles = hasServerPermission('manage_roles');
   const canKick = hasServerPermission('kick_members');
@@ -1415,7 +1416,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                           </div>
                         )}
 
-                        {canKick && !m.isOwner && m.userId !== currentUser?.id && (
+                        {canKick && !m.isOwner && !isSameUser({ id: m.userId, username: m.username }, currentUser) && (
                           <button
                             type="button"
                             onClick={async () => {

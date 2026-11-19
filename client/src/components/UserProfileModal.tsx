@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
+import { isUserServerOwner } from '../utils/serverIdentity';
 import {
   STATUS_EXPIRY_KEY,
   STATUS_EXPIRY_OPTIONS,
@@ -167,7 +168,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     !isMe &&
       activeServer &&
       activeServer.id !== 'direct-messages' &&
-      (activeServer.ownerId === currentUser?.id || currentUser?.role === 'admin')
+      (isUserServerOwner(currentUser, activeServer) || currentUser?.role === 'admin')
   );
   const isFriend = friends.some((f) => f.username.toLowerCase() === user.username.toLowerCase());
   const incomingReq = incomingFriendRequests.find((r) => r.fromUsername.toLowerCase() === user.username.toLowerCase());

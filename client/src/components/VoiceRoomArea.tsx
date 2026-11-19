@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { useNetworkPing } from '../context/NetworkMetricsContext';
+import { isUserServerOwner } from '../utils/serverIdentity';
 import { t } from '../utils/i18n';
 import { ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
 import { SoundboardModal } from './SoundboardModal';
@@ -539,7 +540,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             </button>
           )}
           {/* Moderator Meeting Mode: Mute / Unmute All */}
-          {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) && usersInRoom.length > 1 && (
+          {(currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer)) && usersInRoom.length > 1 && (
             <button
               type="button"
               onClick={() => {

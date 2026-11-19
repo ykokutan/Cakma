@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
@@ -7,6 +7,8 @@ import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
 import { setVoiceMicVolume, resetVoiceMetrics } from './VoiceMetricsContext';
 import { setNetworkPing, setNetworkConnectionState } from './NetworkMetricsContext';
+import { setChannelTypingState, clearAllTypingUsers, setDirectCallQualitySnapshot } from './PresenceStore';
+import { isUserServerOwner } from '../utils/serverIdentity';
 import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } from '../utils/themeBuilder';
 import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, shouldShowUnreadForChannel } from '../utils/notificationPrefs';
 import { parseDeepLinkUrl } from '../utils/deepLink';
@@ -92,7 +94,6 @@ interface SocketContextType {
   openDirectMessage: (user: User) => void;
   closeDirectMessage: () => void;
   directCall: DirectCallState | null;
-  directCallQuality: DirectCallQualityStats | null;
   directCallToasts: DirectCallToast[];
   dismissDirectCallToast: (id: string) => void;
   startDirectCall: (targetUser: User) => void;
@@ -106,6 +107,8 @@ interface SocketContextType {
   toggleDirectCamera: () => Promise<void>;
   unreadDMByUser: Record<string, number>;
   remoteAssist: RemoteAssistState;
+  remoteAssistSafeMode: boolean;
+  setRemoteAssistSafeMode: (enabled: boolean) => void;
   startDirectScreenShare: (options?: Partial<DirectScreenShareOptions>) => Promise<void>;
   stopDirectScreenShare: () => void;
   requestRemoteAssist: (permissions?: RemoteAssistPermissions) => void;
@@ -548,7 +551,6 @@ interface SocketContextType {
   // Message Edit/Delete, Typing & Unread Badges
   editMessage: (messageId: string, newContent: string) => void;
   deleteMessage: (messageId: string) => void;
-  typingUsers: Record<string, string[]>;
   sendTyping: (isTyping: boolean) => void;
   unreadCounts: Record<string, number>;
   mentionCounts: Record<string, number>;
@@ -855,7 +857,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
 
-  const [typingUsers, setTypingUsers] = useState<Record<string, string[]>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
@@ -1341,7 +1342,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [directCall, setDirectCall] = useState<DirectCallState | null>(null);
   const directCallRef = useRef<DirectCallState | null>(null);
   const directCallTimerRef = useRef<any>(null);
-  const [directCallQuality, setDirectCallQuality] = useState<DirectCallQualityStats | null>(null);
   const [directCallToasts, setDirectCallToasts] = useState<DirectCallToast[]>([]);
   const [isDirectScreenSharing, setIsDirectScreenSharing] = useState(false);
   const [partnerDirectScreenSharing, setPartnerDirectScreenSharing] = useState(false);
@@ -1388,6 +1388,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     remoteAssistRef.current = remoteAssist;
   }, [remoteAssist]);
 
+  const [remoteAssistSafeMode, setRemoteAssistSafeModeState] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('cakma_remote_assist_safe_mode');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const remoteAssistSafeModeRef = useRef(remoteAssistSafeMode);
+  useEffect(() => {
+    remoteAssistSafeModeRef.current = remoteAssistSafeMode;
+  }, [remoteAssistSafeMode]);
+
   const dismissDirectCallToast = useCallback((id: string) => {
     setDirectCallToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
@@ -1420,6 +1433,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return tauriInvokeRef.current;
   };
 
+  const setRemoteAssistSafeMode = useCallback((enabled: boolean) => {
+    setRemoteAssistSafeModeState(enabled);
+    remoteAssistSafeModeRef.current = enabled;
+    try {
+      localStorage.setItem('cakma_remote_assist_safe_mode', String(enabled));
+    } catch {}
+    if (isTauriDesktopEnv()) {
+      void getTauriInvoke()
+        .then((invoke) => invoke('set_remote_assist_safe_mode', { enabled }))
+        .catch(() => {});
+    }
+  }, []);
+
   const syncTauriRemoteAssistHost = async (opts: {
     active: boolean;
     controllerName?: string;
@@ -1429,6 +1455,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!isTauriDesktopEnv()) return;
     try {
       const invoke = await getTauriInvoke();
+      await invoke('set_remote_assist_safe_mode', { enabled: remoteAssistSafeModeRef.current });
       await invoke('set_remote_assist_killswitch', { active: opts.active && !opts.paused });
       await invoke('set_remote_assist_host_hud', {
         active: opts.active,
@@ -1493,7 +1520,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsDirectCameraOn(false);
     setPartnerDirectCameraOn(false);
     setLocalDirectCameraStream(null);
-    setDirectCallQuality(null);
+    setDirectCallQualitySnapshot(null);
     setRemoteLaser(null);
     setRemoteAnnotations([]);
     setRemoteAssist(DEFAULT_REMOTE_ASSIST_STATE);
@@ -1664,7 +1691,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // 1-on-1 RTCPeerConnection live telemetry poller (RTT, FPS, Resolution, Bitrate, Loss, Path)
   useEffect(() => {
     if (directCall?.status !== 'connected') {
-      setDirectCallQuality(null);
+      setDirectCallQualitySnapshot(null);
       directStatsPrevRef.current = null;
       return;
     }
@@ -1749,7 +1776,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const dcOpen =
           chs?.control?.readyState === 'open' || chs?.move?.readyState === 'open';
 
-        setDirectCallQuality({
+        setDirectCallQualitySnapshot({
           rttMs,
           fps,
           width,
@@ -3157,15 +3184,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('user_typing', ({ channelId, username, isTyping }: { channelId: string; username: string; isTyping: boolean }) => {
-      setTypingUsers(prev => {
-        const list = prev[channelId] || [];
-        if (isTyping) {
-          if (list.includes(username)) return prev;
-          return { ...prev, [channelId]: [...list, username] };
-        } else {
-          return { ...prev, [channelId]: list.filter(u => u !== username) };
-        }
-      });
+      setChannelTypingState(channelId, username, isTyping);
     });
 
     newSocket.on('message_reaction_updated', ({ channelId, messageId, reactions }: { channelId: string; messageId: string; reactions: Record<string, string[]> }) => {
@@ -4587,6 +4606,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     localStorage.removeItem('dc_clone_auth');
     fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     socket?.emit('auth_logout');
+    clearAllTypingUsers();
+    setDirectCallQualitySnapshot(null);
     setIsAuthenticated(false);
     setCurrentUser(null);
     cleanupWebRTC();
@@ -6358,8 +6379,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const hasServerPermission = useCallback((permission: ServerPermission): boolean => {
     if (!currentUser || !activeServer) return false;
-    if (activeServer.ownerId === currentUser.id || currentUser.role === 'admin') return true;
-    const member = activeServer.members?.find(m => m.userId === currentUser.id || m.username === currentUser.username);
+    if (isUserServerOwner(currentUser, activeServer) || currentUser.role === 'admin') return true;
+    const unameLower = currentUser.username.toLowerCase();
+    const member = activeServer.members?.find(
+      (m) =>
+        (currentUser.accountId && m.userId === currentUser.accountId) ||
+        m.userId === currentUser.id ||
+        m.username.toLowerCase() === unameLower
+    );
     if (!member) return false;
     if (member.isOwner) return true;
 
@@ -6879,401 +6906,530 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     notificationPrefs,
   ]);
 
+  const contextValue = useMemo(
+    () => ({
+      socket,
+      currentUser,
+      isAuthenticated,
+      servers,
+      activeServer,
+      activeChannel,
+      messages,
+      onlineUsers,
+      connectedVoiceChannelId,
+      isMuted,
+      isDeafened,
+      isSpeaking,
+      isScreenSharing,
+      screenStream,
+      remoteScreenStreams,
+      remoteCameraStreams,
+      localDirectCameraStream,
+      inputMode,
+      pttKey,
+      isPttActive,
+
+      // Friends System
+      friends,
+      incomingFriendRequests,
+      outgoingFriendRequests,
+      sendFriendRequest,
+      acceptFriendRequest,
+      declineFriendRequest,
+      cancelFriendRequest,
+      removeFriend,
+      fetchFriendsData,
+
+      // Direct Messaging & 1-on-1 Voice Calling
+      activeDMUser,
+      openDirectMessage,
+      closeDirectMessage,
+      directCall,
+      directCallToasts,
+      dismissDirectCallToast,
+      startDirectCall,
+      acceptDirectCall,
+      declineDirectCall,
+      endDirectCall,
+      isDirectScreenSharing,
+      partnerDirectScreenSharing,
+      isDirectCameraOn,
+      partnerDirectCameraOn,
+      toggleDirectCamera,
+      unreadDMByUser,
+      remoteAssist,
+      remoteAssistSafeMode,
+      setRemoteAssistSafeMode,
+      startDirectScreenShare,
+      stopDirectScreenShare,
+      requestRemoteAssist,
+      respondRemoteAssist,
+      stopRemoteAssist,
+      pauseRemoteAssist,
+      updateRemoteAssistPermissions,
+      selectRemoteMonitor,
+      sendRemoteInput,
+      sendRemoteClipboard,
+      pullRemoteClipboard,
+      lastClipboardNotice,
+      remoteLaser,
+      sendRemoteLaser,
+      remoteAnnotations,
+      sendRemoteAnnotation,
+      clearRemoteAnnotations,
+      sendFileToDirectPartner,
+      sendScreenshotToDirectPartner,
+      updateProfileDetails,
+      transferWalletBalance,
+
+      // System Announcement
+      systemAnnouncement,
+      pinnedBanner,
+      maintenanceStatus,
+      dismissAnnouncement,
+
+      // Detailed Audio Settings
+      audioInputDevices,
+      audioOutputDevices,
+      selectedInputDeviceId,
+      selectedOutputDeviceId,
+      noiseSuppression,
+      echoCancellation,
+      autoGainControl,
+      inputSensitivity,
+      inputVolume,
+      outputVolume,
+      isMicTesting,
+      micVolumeLevel,
+
+      selectServer,
+      selectChannel,
+      sendMessage,
+      toggleRaiseHand,
+      addServerEmoji,
+      deleteServerEmoji,
+      toggleOverlayWindow,
+      overlayEnabled,
+      setOverlayEnabled,
+      detectedGame,
+      refreshDetectedGame,
+      joinVoiceChannel,
+      moveVoiceUser,
+      voicePullInvite,
+      voicePullNotice,
+      respondVoicePullInvite,
+      dismissVoicePullNotice,
+      leaveVoiceChannel,
+      toggleMute,
+      toggleDeafen,
+      startScreenShare,
+      stopScreenShare,
+      requestScreenShareQuality,
+      updateLiveScreenShareSettings,
+      getScreenShareStats,
+      laserPoints,
+      sendScreenShareLaser,
+      setInputMode,
+      setPttKey,
+      createServer,
+      createChannel,
+      updateProfile,
+
+      // Server Roles & Detailed Settings
+      updateServerSettings,
+      restoreServerBackup,
+      createServerRole,
+      updateServerRole,
+      deleteServerRole,
+      toggleMemberRole,
+      kickServerMember,
+      deleteServer,
+      hasServerPermission,
+      getServerMemberHighestRole,
+
+      // Auth
+      login,
+      verify2faLogin,
+      register,
+      requestRegisterChallenge,
+      sendRegisterEmailCode,
+      logout,
+
+      // Audio Device Handlers
+      setSelectedInputDeviceId,
+      setSelectedOutputDeviceId,
+      setNoiseSuppression,
+      setEchoCancellation,
+      setAutoGainControl,
+      studioAudioDsp,
+      setStudioAudioDsp,
+      aiNoiseSuppression,
+      setAiNoiseSuppression,
+      lowLatencyAudio,
+      setLowLatencyAudio,
+      userAudioEq,
+      setUserAudioEq,
+      serverMuteUser,
+      muteAllVoiceChannel,
+      updateChannelSettings,
+      setInputSensitivity,
+      setInputVolume,
+      setOutputVolume,
+      toggleMicTest,
+      refreshAudioDevices,
+
+      // Admin Dashboard
+      adminData,
+      fetchAdminData,
+      adminChangeRole,
+      adminKickUser,
+      adminDeleteChannel,
+      adminBroadcastAnnouncement,
+      adminClearPinnedBanner,
+      adminCreateRegInvite,
+      adminDeleteRegInvite,
+      adminTestSmtp,
+      generateDedicatedLicense,
+      adminRevokeLicense,
+      adminActivateLicense,
+      adminExtendLicense,
+      adminUpdateStoreSettings,
+      adminUpdateSystemConfig,
+      adminClearConnectionLogs,
+      adminUpdateWallet,
+      adminBanUser,
+      adminUnbanUser,
+      adminResetUser2fa,
+      adminBanIp,
+      adminUnbanIp,
+      adminExportFullBackup,
+      adminRestoreFullBackup,
+      adminTriggerBackupNow,
+      adminRestoreScheduledBackup,
+      adminDeleteScheduledBackup,
+      adminTestWebhook,
+      adminPurgeMessages,
+      adminResetUserPassword,
+      adminCreateChannel,
+      adminDeleteServer,
+      adminClearAuditLogs,
+      adminFeedback,
+      generatedLicense,
+      clearGeneratedLicense,
+      connectToDedicatedServer,
+      resetToMainServer,
+      currentServerHost,
+      isDedicatedServer: Boolean(localStorage.getItem('dc_dedicated_server_host')),
+
+      // Store & User Licenses
+      storeSettings,
+      myLicenses,
+      fetchMyLicenses,
+      storePurchaseLicense,
+      storeExtendLicense,
+
+      // Soundboard, Radio & Activities
+      playSoundboard,
+      activeSoundboardEffect,
+      radioBotState,
+      syncRadioState,
+      updateUserActivity,
+
+      // Reactions, Pinned & Polls
+      addReaction,
+      togglePinMessage,
+      createPoll,
+      votePoll,
+
+      // Diagnostics & Network Telemetry
+      ping,
+      messagesMap,
+      socketId: socket?.id || null,
+      language,
+      setLanguage,
+      jitter,
+      packetLoss,
+      pingHistory,
+      measurePing,
+      isDiagnosticsOpen,
+      setIsDiagnosticsOpen,
+      openDiagnostics,
+
+      // Per-User Audio Controls
+      userVolumes,
+      setUserVolume,
+      userLocalMutes,
+      toggleUserLocalMute,
+
+      // Voice Room Recorder
+      isVoiceRecording,
+      voiceRecordingSeconds,
+      startVoiceRecording,
+      stopVoiceRecording,
+
+      // Webcam, Blur & Priority Speaker
+      isWebcamActive,
+      toggleWebcam,
+      webcamStream,
+      webcamBlurEnabled,
+      toggleWebcamBlur,
+      remoteWebcamUserIds,
+      isPrioritySpeakerActive,
+      prioritySpeakerUsername,
+      togglePrioritySpeaker,
+      notificationPrefs,
+      setTargetNotificationPref,
+
+      // 3D Spatial Audio & Panning
+      userPans,
+      setUserPan,
+
+      // Watch Together
+      watchTogetherState,
+      startWatchTogether,
+      sendWatchTogetherAction,
+      stopWatchTogether,
+
+      // Mini Games
+      miniGameState,
+      startMiniGame,
+      joinMiniGame,
+      sendMiniGameMove,
+      resetMiniGame,
+      stopMiniGame,
+
+      // TeamSpeak Sound Events & Push Notifications
+      tsSoundEffectsEnabled,
+      setTsSoundEffectsEnabled,
+      soundPack,
+      setSoundPack,
+      pttBeepEnabled,
+      setPttBeepEnabled,
+      desktopNotificationsEnabled,
+      setDesktopNotificationsEnabled,
+      sendThreadMessage,
+      clearChannelMessages,
+      createServerEvent,
+      rsvpServerEvent,
+      deleteServerEvent,
+
+      // TeamSpeak Whisper
+      activeWhisperFrom,
+      sendWhisper,
+
+      // Server Leaderboard
+      leaderboardData,
+      fetchLeaderboard,
+
+      // Server Analytics & Statistics
+      serverAnalyticsData,
+      fetchServerAnalytics,
+
+      // Channel Sticky Notices & Topics
+      updateChannelNotice,
+
+      // Voice Channel Security & Password Protection
+      voicePasswordError,
+      clearVoicePasswordError,
+      unlockedChannelIds,
+      unlockChannel,
+
+      // Message Edit/Delete & Unread Badges
+      editMessage,
+      deleteMessage,
+      sendTyping,
+      unreadCounts,
+      mentionCounts,
+
+      // Account Security, Block, Timeout, Invites & UI Themes
+      changePassword,
+      blockUser,
+      unblockUser,
+      timeoutMember,
+      createServerInvite,
+      previewServerInvite,
+      joinServerByInvite,
+      reorderChannel,
+      uiTheme,
+      setUiTheme,
+      customTheme,
+      setCustomTheme,
+      hasMoreMessages,
+      isLoadingOlderMessages,
+      requestOlderMessages,
+      chatFontSize,
+      setChatFontSize,
+      glassIntensity,
+      setGlassIntensity,
+      messageDensity,
+      setMessageDensity,
+      cornerStyle,
+      setCornerStyle,
+      bgPattern,
+      setBgPattern,
+      reduceMotion,
+      setReduceMotion,
+      overlayCorner,
+      setOverlayCorner,
+      overlayOpacity,
+      setOverlayOpacity,
+      ringtonePack,
+      setRingtonePack,
+      showLinkPreviews,
+      setShowLinkPreviews,
+      customSoundboard,
+      addCustomSound,
+      removeCustomSound,
+      userNotes,
+      setUserNote,
+      bookmarkedMessages,
+      toggleBookmarkMessage,
+      reminders,
+      addReminder,
+      removeReminder,
+      connectionState,
+      voiceTransportMode,
+      newIpAlert,
+      dismissNewIpAlert,
+      dmReadReceipts,
+      markDmRead,
+      shouldAutoOpenExplore,
+      consumeAutoOpenExplore,
+      fetchDiscoverableServers,
+      joinPublicServer,
+      leaveServer,
+    }),
+    [
+      socket,
+      currentUser,
+      isAuthenticated,
+      servers,
+      activeServer,
+      activeChannel,
+      messages,
+      onlineUsers,
+      connectedVoiceChannelId,
+      isMuted,
+      isDeafened,
+      isSpeaking,
+      isScreenSharing,
+      screenStream,
+      remoteScreenStreams,
+      remoteCameraStreams,
+      localDirectCameraStream,
+      inputMode,
+      pttKey,
+      isPttActive,
+      friends,
+      incomingFriendRequests,
+      outgoingFriendRequests,
+      activeDMUser,
+      directCall,
+      directCallToasts,
+      isDirectScreenSharing,
+      partnerDirectScreenSharing,
+      isDirectCameraOn,
+      partnerDirectCameraOn,
+      unreadDMByUser,
+      remoteAssist,
+      remoteAssistSafeMode,
+      setRemoteAssistSafeMode,
+      lastClipboardNotice,
+      remoteLaser,
+      remoteAnnotations,
+      systemAnnouncement,
+      pinnedBanner,
+      maintenanceStatus,
+      audioInputDevices,
+      audioOutputDevices,
+      selectedInputDeviceId,
+      selectedOutputDeviceId,
+      noiseSuppression,
+      echoCancellation,
+      autoGainControl,
+      inputSensitivity,
+      inputVolume,
+      outputVolume,
+      isMicTesting,
+      micVolumeLevel,
+      overlayEnabled,
+      detectedGame,
+      voicePullInvite,
+      voicePullNotice,
+      laserPoints,
+      hasServerPermission,
+      studioAudioDsp,
+      aiNoiseSuppression,
+      lowLatencyAudio,
+      userAudioEq,
+      adminData,
+      adminFeedback,
+      generatedLicense,
+      currentServerHost,
+      storeSettings,
+      myLicenses,
+      activeSoundboardEffect,
+      radioBotState,
+      ping,
+      messagesMap,
+      language,
+      jitter,
+      packetLoss,
+      pingHistory,
+      isDiagnosticsOpen,
+      userVolumes,
+      userLocalMutes,
+      isVoiceRecording,
+      voiceRecordingSeconds,
+      isWebcamActive,
+      webcamStream,
+      webcamBlurEnabled,
+      remoteWebcamUserIds,
+      isPrioritySpeakerActive,
+      prioritySpeakerUsername,
+      notificationPrefs,
+      userPans,
+      watchTogetherState,
+      miniGameState,
+      tsSoundEffectsEnabled,
+      soundPack,
+      pttBeepEnabled,
+      desktopNotificationsEnabled,
+      activeWhisperFrom,
+      leaderboardData,
+      serverAnalyticsData,
+      voicePasswordError,
+      unlockedChannelIds,
+      unreadCounts,
+      mentionCounts,
+      uiTheme,
+      customTheme,
+      hasMoreMessages,
+      isLoadingOlderMessages,
+      chatFontSize,
+      glassIntensity,
+      messageDensity,
+      cornerStyle,
+      bgPattern,
+      reduceMotion,
+      overlayCorner,
+      overlayOpacity,
+      ringtonePack,
+      showLinkPreviews,
+      customSoundboard,
+      userNotes,
+      bookmarkedMessages,
+      reminders,
+      connectionState,
+      voiceTransportMode,
+      newIpAlert,
+      dmReadReceipts,
+      shouldAutoOpenExplore,
+    ]
+  );
+
   return (
-    <SocketContext.Provider
-      value={{
-        socket,
-        currentUser,
-        isAuthenticated,
-        servers,
-        activeServer,
-        activeChannel,
-        messages,
-        onlineUsers,
-        connectedVoiceChannelId,
-        isMuted,
-        isDeafened,
-        isSpeaking,
-        isScreenSharing,
-        screenStream,
-        remoteScreenStreams,
-        remoteCameraStreams,
-        localDirectCameraStream,
-        inputMode,
-        pttKey,
-        isPttActive,
-
-        // Friends System
-        friends,
-        incomingFriendRequests,
-        outgoingFriendRequests,
-        sendFriendRequest,
-        acceptFriendRequest,
-        declineFriendRequest,
-        cancelFriendRequest,
-        removeFriend,
-        fetchFriendsData,
-
-        // Direct Messaging & 1-on-1 Voice Calling
-        activeDMUser,
-        openDirectMessage,
-        closeDirectMessage,
-        directCall,
-        directCallQuality,
-        directCallToasts,
-        dismissDirectCallToast,
-        startDirectCall,
-        acceptDirectCall,
-        declineDirectCall,
-        endDirectCall,
-        isDirectScreenSharing,
-        partnerDirectScreenSharing,
-        isDirectCameraOn,
-        partnerDirectCameraOn,
-        toggleDirectCamera,
-        unreadDMByUser,
-        remoteAssist,
-        startDirectScreenShare,
-        stopDirectScreenShare,
-        requestRemoteAssist,
-        respondRemoteAssist,
-        stopRemoteAssist,
-        pauseRemoteAssist,
-        updateRemoteAssistPermissions,
-        selectRemoteMonitor,
-        sendRemoteInput,
-        sendRemoteClipboard,
-        pullRemoteClipboard,
-        lastClipboardNotice,
-        remoteLaser,
-        sendRemoteLaser,
-        remoteAnnotations,
-        sendRemoteAnnotation,
-        clearRemoteAnnotations,
-        sendFileToDirectPartner,
-        sendScreenshotToDirectPartner,
-        updateProfileDetails,
-        transferWalletBalance,
-
-        // System Announcement
-        systemAnnouncement,
-        pinnedBanner,
-        maintenanceStatus,
-        dismissAnnouncement,
-
-        // Detailed Audio Settings
-        audioInputDevices,
-        audioOutputDevices,
-        selectedInputDeviceId,
-        selectedOutputDeviceId,
-        noiseSuppression,
-        echoCancellation,
-        autoGainControl,
-        inputSensitivity,
-        inputVolume,
-        outputVolume,
-        isMicTesting,
-        micVolumeLevel,
-
-        selectServer,
-        selectChannel,
-        sendMessage,
-        toggleRaiseHand,
-        addServerEmoji,
-        deleteServerEmoji,
-        toggleOverlayWindow,
-        overlayEnabled,
-        setOverlayEnabled,
-        detectedGame,
-        refreshDetectedGame,
-        joinVoiceChannel,
-        moveVoiceUser,
-        voicePullInvite,
-        voicePullNotice,
-        respondVoicePullInvite,
-        dismissVoicePullNotice,
-        leaveVoiceChannel,
-        toggleMute,
-        toggleDeafen,
-        startScreenShare,
-        stopScreenShare,
-        requestScreenShareQuality,
-        updateLiveScreenShareSettings,
-        getScreenShareStats,
-        laserPoints,
-        sendScreenShareLaser,
-        setInputMode,
-        setPttKey,
-        createServer,
-        createChannel,
-        updateProfile,
-
-        // Server Roles & Detailed Settings
-        updateServerSettings,
-        restoreServerBackup,
-        createServerRole,
-        updateServerRole,
-        deleteServerRole,
-        toggleMemberRole,
-        kickServerMember,
-        deleteServer,
-        hasServerPermission,
-        getServerMemberHighestRole,
-
-        // Auth
-        login,
-        verify2faLogin,
-        register,
-        requestRegisterChallenge,
-        sendRegisterEmailCode,
-        logout,
-
-        // Audio Device Handlers
-        setSelectedInputDeviceId,
-        setSelectedOutputDeviceId,
-        setNoiseSuppression,
-        setEchoCancellation,
-        setAutoGainControl,
-        studioAudioDsp,
-        setStudioAudioDsp,
-        aiNoiseSuppression,
-        setAiNoiseSuppression,
-        lowLatencyAudio,
-        setLowLatencyAudio,
-        userAudioEq,
-        setUserAudioEq,
-        serverMuteUser,
-        muteAllVoiceChannel,
-        updateChannelSettings,
-        setInputSensitivity,
-        setInputVolume,
-        setOutputVolume,
-        toggleMicTest,
-        refreshAudioDevices,
-
-        // Admin Dashboard
-        adminData,
-        fetchAdminData,
-        adminChangeRole,
-        adminKickUser,
-        adminDeleteChannel,
-        adminBroadcastAnnouncement,
-        adminClearPinnedBanner,
-        adminCreateRegInvite,
-        adminDeleteRegInvite,
-        adminTestSmtp,
-        generateDedicatedLicense,
-        adminRevokeLicense,
-        adminActivateLicense,
-        adminExtendLicense,
-        adminUpdateStoreSettings,
-        adminUpdateSystemConfig,
-        adminClearConnectionLogs,
-        adminUpdateWallet,
-        adminBanUser,
-        adminUnbanUser,
-        adminResetUser2fa,
-        adminBanIp,
-        adminUnbanIp,
-        adminExportFullBackup,
-        adminRestoreFullBackup,
-        adminTriggerBackupNow,
-        adminRestoreScheduledBackup,
-        adminDeleteScheduledBackup,
-        adminTestWebhook,
-        adminPurgeMessages,
-        adminResetUserPassword,
-        adminCreateChannel,
-        adminDeleteServer,
-        adminClearAuditLogs,
-        adminFeedback,
-        generatedLicense,
-        clearGeneratedLicense,
-        connectToDedicatedServer,
-        resetToMainServer,
-        currentServerHost,
-        isDedicatedServer: Boolean(localStorage.getItem('dc_dedicated_server_host')),
-
-        // Store & User Licenses
-        storeSettings,
-        myLicenses,
-        fetchMyLicenses,
-        storePurchaseLicense,
-        storeExtendLicense,
-
-        // Soundboard, Radio & Activities
-        playSoundboard,
-        activeSoundboardEffect,
-        radioBotState,
-        syncRadioState,
-        updateUserActivity,
-
-        // Reactions, Pinned & Polls
-        addReaction,
-        togglePinMessage,
-        createPoll,
-        votePoll,
-
-        // Diagnostics & Network Telemetry
-        ping,
-        messagesMap,
-        socketId: socket?.id || null,
-        language,
-        setLanguage,
-        jitter,
-        packetLoss,
-        pingHistory,
-        measurePing,
-        isDiagnosticsOpen,
-        setIsDiagnosticsOpen,
-        openDiagnostics,
-
-        // Per-User Audio Controls
-        userVolumes,
-        setUserVolume,
-        userLocalMutes,
-        toggleUserLocalMute,
-
-        // Voice Room Recorder
-        isVoiceRecording,
-        voiceRecordingSeconds,
-        startVoiceRecording,
-        stopVoiceRecording,
-
-        // Webcam, Blur & Priority Speaker
-        isWebcamActive,
-        toggleWebcam,
-        webcamStream,
-        webcamBlurEnabled,
-        toggleWebcamBlur,
-        remoteWebcamUserIds,
-        isPrioritySpeakerActive,
-        prioritySpeakerUsername,
-        togglePrioritySpeaker,
-        notificationPrefs,
-        setTargetNotificationPref,
-
-        // 3D Spatial Audio & Panning
-        userPans,
-        setUserPan,
-
-        // Watch Together
-        watchTogetherState,
-        startWatchTogether,
-        sendWatchTogetherAction,
-        stopWatchTogether,
-
-        // Mini Games
-        miniGameState,
-        startMiniGame,
-        joinMiniGame,
-        sendMiniGameMove,
-        resetMiniGame,
-        stopMiniGame,
-
-        // TeamSpeak Sound Events & Push Notifications
-        tsSoundEffectsEnabled,
-        setTsSoundEffectsEnabled,
-        soundPack,
-        setSoundPack,
-        pttBeepEnabled,
-        setPttBeepEnabled,
-        desktopNotificationsEnabled,
-        setDesktopNotificationsEnabled,
-        sendThreadMessage,
-        clearChannelMessages,
-        createServerEvent,
-        rsvpServerEvent,
-        deleteServerEvent,
-
-        // TeamSpeak Whisper
-        activeWhisperFrom,
-        sendWhisper,
-
-        // Server Leaderboard
-        leaderboardData,
-        fetchLeaderboard,
-
-        // Server Analytics & Statistics
-        serverAnalyticsData,
-        fetchServerAnalytics,
-
-        // Channel Sticky Notices & Topics
-        updateChannelNotice,
-
-        // Voice Channel Security & Password Protection
-        voicePasswordError,
-        clearVoicePasswordError,
-        unlockedChannelIds,
-        unlockChannel,
-
-        // Message Edit/Delete, Typing & Unread Badges
-        editMessage,
-        deleteMessage,
-        typingUsers,
-        sendTyping,
-        unreadCounts,
-        mentionCounts,
-
-        // Account Security, Block, Timeout, Invites & UI Themes
-        changePassword,
-        blockUser,
-        unblockUser,
-        timeoutMember,
-        createServerInvite,
-        previewServerInvite,
-        joinServerByInvite,
-        reorderChannel,
-        uiTheme,
-        setUiTheme,
-        customTheme,
-        setCustomTheme,
-        hasMoreMessages,
-        isLoadingOlderMessages,
-        requestOlderMessages,
-        chatFontSize,
-        setChatFontSize,
-        glassIntensity,
-        setGlassIntensity,
-        messageDensity,
-        setMessageDensity,
-        cornerStyle,
-        setCornerStyle,
-        bgPattern,
-        setBgPattern,
-        reduceMotion,
-        setReduceMotion,
-        overlayCorner,
-        setOverlayCorner,
-        overlayOpacity,
-        setOverlayOpacity,
-        ringtonePack,
-        setRingtonePack,
-        showLinkPreviews,
-        setShowLinkPreviews,
-        customSoundboard,
-        addCustomSound,
-        removeCustomSound,
-        userNotes,
-        setUserNote,
-        bookmarkedMessages,
-        toggleBookmarkMessage,
-        reminders,
-        addReminder,
-        removeReminder,
-        connectionState,
-        voiceTransportMode,
-        newIpAlert,
-        dismissNewIpAlert,
-        dmReadReceipts,
-        markDmRead,
-        shouldAutoOpenExplore,
-        consumeAutoOpenExplore,
-        fetchDiscoverableServers,
-        joinPublicServer,
-        leaveServer,
-      }}
-    >
+    <SocketContext.Provider value={contextValue}>
       {children}
     </SocketContext.Provider>
   );

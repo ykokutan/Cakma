@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { useDirectCallQuality } from '../context/PresenceStore';
 import type {
   RemoteAssistAnnotationStroke,
   RemoteAssistPermissions,
@@ -52,9 +53,10 @@ const ANNOTATION_COLORS = ['#f43f5e', '#38bdf8', '#facc15', '#34d399'] as const;
 export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, onClose }) => {
   const {
     directCall,
-    directCallQuality,
     remoteScreenStreams,
     remoteAssist,
+    remoteAssistSafeMode,
+    setRemoteAssistSafeMode,
     requestRemoteAssist,
     stopRemoteAssist,
     pauseRemoteAssist,
@@ -70,6 +72,7 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
     sendFileToDirectPartner,
     sendScreenshotToDirectPartner,
   } = useSocket();
+  const directCallQuality = useDirectCallQuality();
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -654,6 +657,32 @@ export const RemoteAssistModal: React.FC<RemoteAssistModalProps> = ({ isOpen, on
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+            {remoteAssist.status === 'controlling' && (
+              <span
+                className={`px-2 py-0.5 rounded-full border text-[10px] font-bold flex items-center gap-1 ${
+                  remoteAssistSafeMode
+                    ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300'
+                    : 'bg-amber-500/15 border-amber-400/35 text-amber-300'
+                }`}
+                title="Uzak sistem kısayol koruması durumu"
+              >
+                {remoteAssistSafeMode ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                <span>{remoteAssistSafeMode ? 'Güvenli Mod Açık' : 'Tam Kısayol'}</span>
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setRemoteAssistSafeMode(!remoteAssistSafeMode)}
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1 transition ${
+                remoteAssistSafeMode
+                  ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-400/30 text-emerald-200'
+                  : 'bg-amber-500/15 hover:bg-amber-500/25 border-amber-400/30 text-amber-200'
+              }`}
+              title="Alt+F4, Win+R/X/L/E, Ctrl+Shift+Esc gibi kritik OS kısayollarını yerel tarafta engelle"
+            >
+              {remoteAssistSafeMode ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+              <span className="hidden xl:inline">{remoteAssistSafeMode ? 'Kısayol Koruması' : 'Kısayol Açık'}</span>
+            </button>
             {/* Monitor switcher if multi-monitor host */}
             {remoteAssist.hostMonitors.length > 1 && (
               <select

@@ -39,6 +39,7 @@ export interface FriendUser {
 
 export interface User {
   id: string;
+  accountId?: string;
   username: string;
   email?: string;
   role: UserRole;

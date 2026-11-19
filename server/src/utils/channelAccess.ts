@@ -93,7 +93,7 @@ export function findServerByChannelId(
 
 /** Check whether a user is authorized to read/post/search inside a given channel. */
 export function canUserAccessChannel(
-  user: { id?: string; username: string; role?: string },
+  user: { id?: string; accountId?: string; username: string; role?: string },
   channelId: string,
   servers: Server[],
   serverId?: string,
