@@ -1034,6 +1034,12 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
             </button>
           </div>
 
+          {fields.sysRequireEmailVerif && !fields.sysMailRelayUrl.trim() && !fields.sysSmtpHost.trim() && (
+            <div className="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-200 text-xs">
+              ⚠️ E-posta doğrulaması açık ancak ne <b>SMTP Host</b> ne de <b>HTTPS Mail Relay URL</b> girilmiş. Kayıt sırasında OTP gönderilebilmesi için ikisinden birini doldurup kaydedin.
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <input
               type="text"
@@ -1139,7 +1145,7 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
                 fields.setSysSmtpFrom(e.target.value);
                 setIsSystemDirty(true);
               }}
-              placeholder="Gönderen (örn: Çakma <mail@adresiniz.com>)"
+              placeholder="Gönderen E-Posta (örn: noreply@yahyakemalokutan.com)"
               className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white outline-none focus:border-cyan-400"
             />
             <input

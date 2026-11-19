@@ -11,7 +11,7 @@ interface AuthModalProps {
 const AVATAR_OPTIONS = ['🛡️', '🚀', '🎮', '⚡', '🎧', '👾', '🐱', '🐺', '🔥', '💻'];
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false }) => {
-  const { login, verify2faLogin, register, requestRegisterChallenge, sendRegisterEmailCode, currentServerHost, isDedicatedServer, resetToMainServer, language } = useSocket();
+  const { login, verify2faLogin, register, requestRegisterChallenge, sendRegisterEmailCode, currentServerHost, isDedicatedServer, resetToMainServer, language, connectionState } = useSocket();
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -67,10 +67,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   };
 
   useEffect(() => {
-    if (isRegister) {
+    if (isRegister && connectionState === 'connected') {
       loadChallenge();
     }
-  }, [isRegister]);
+  }, [isRegister, connectionState]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,7 +296,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       type="email"
                       required
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        setEmailCodeFeedback(null);
+                      }}
                       placeholder="ahmet@example.com"
                       className="flex-1 bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-white/20"
                     />
@@ -321,15 +324,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                     </div>
                   )}
                   {requireEmailVerif && (
-                    <input
-                      type="text"
-                      required
-                      maxLength={6}
-                      value={emailCode}
-                      onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
-                      placeholder="E-postaya gelen 6 haneli doğrulama kodu"
-                      className="w-full bg-white/5 border border-emerald-500/30 text-white font-mono text-xs tracking-widest rounded-xl px-3.5 py-2 outline-none focus:ring-2 focus:ring-emerald-400 placeholder:text-white/25 placeholder:tracking-normal"
-                    />
+                    <>
+                      <input
+                        type="text"
+                        required
+                        maxLength={6}
+                        value={emailCode}
+                        onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                        placeholder="E-postaya gelen 6 haneli doğrulama kodu"
+                        className="w-full bg-white/5 border border-emerald-500/30 text-white font-mono text-xs tracking-widest rounded-xl px-3.5 py-2 outline-none focus:ring-2 focus:ring-emerald-400 placeholder:text-white/25 placeholder:tracking-normal"
+                      />
+                      {!emailCodeFeedback && (
+                        <div className="text-[11px] text-white/45">
+                          Önce <b>Kod Gönder</b> butonuna basın. Mail görünmezse Spam / Gereksiz klasörünü kontrol edin.
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}

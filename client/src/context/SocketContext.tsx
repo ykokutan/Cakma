@@ -4525,41 +4525,53 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     requireEmailVerification: boolean;
   } | null> => {
     return new Promise((resolve) => {
-      if (!socket) return resolve(null);
+      if (!socket || !socket.connected) return resolve(null);
       let done = false;
-      const timer = setTimeout(() => {
-        if (!done) {
-          done = true;
-          resolve(null);
-        }
-      }, 4000);
-      socket.emit('get_register_challenge');
-      socket.once('register_challenge', (payload: { token: string; question: string; inviteOnly: boolean; requireStrongPasswords: boolean; requireEmailVerification: boolean }) => {
+      const onChallenge = (payload: {
+        token: string;
+        question: string;
+        inviteOnly: boolean;
+        requireStrongPasswords: boolean;
+        requireEmailVerification: boolean;
+      }) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         resolve(payload);
-      });
+      };
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          socket.off('register_challenge', onChallenge);
+          resolve(null);
+        }
+      }, 5000);
+      socket.once('register_challenge', onChallenge);
+      socket.emit('get_register_challenge');
     });
   }, [socket]);
 
   const sendRegisterEmailCode = useCallback((email: string): Promise<{ success: boolean; message?: string; error?: string }> => {
     return new Promise((resolve) => {
-      if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
+      if (!socket || !socket.connected) {
+        return resolve({ success: false, error: 'Sunucu bağlantısı henüz kurulmadı, lütfen birkaç saniye sonra tekrar deneyin.' });
+      }
       let done = false;
-      const timer = setTimeout(() => {
-        if (!done) {
-          done = true;
-          resolve({ success: false, error: 'Sunucu yanıt vermedi.' });
-        }
-      }, 12000);
-      socket.emit('send_register_email_code', { email });
-      socket.once('register_email_code_result', (res: { success: boolean; message?: string; error?: string }) => {
+      const onResult = (res: { success: boolean; message?: string; error?: string }) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         resolve(res);
-      });
+      };
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          socket.off('register_email_code_result', onResult);
+          resolve({ success: false, error: 'Doğrulama maili isteği zaman aşımına uğradı (20 sn). Lütfen tekrar deneyin.' });
+        }
+      }, 20000);
+      socket.once('register_email_code_result', onResult);
+      socket.emit('send_register_email_code', { email });
     });
   }, [socket]);
 
@@ -4726,21 +4738,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   ): Promise<{ ok: boolean; message: string }> => {
     return new Promise((resolve) => {
-      if (!socket) return resolve({ ok: false, message: 'Sunucuya bağlı değil.' });
+      if (!socket || !socket.connected) {
+        return resolve({ ok: false, message: 'Sunucuya bağlı değil.' });
+      }
       let done = false;
-      const timer = setTimeout(() => {
-        if (!done) {
-          done = true;
-          resolve({ ok: false, message: 'SMTP sunucusu yanıt vermedi (zaman aşımı). Port/SSL ayarını kontrol edin.' });
-        }
-      }, 13000);
-      socket.emit('admin_test_smtp', { toEmail, smtpConfig });
-      socket.once('admin_smtp_test_result', (res: { ok: boolean; message: string }) => {
+      const onResult = (res: { ok: boolean; message: string }) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         resolve(res);
-      });
+      };
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          socket.off('admin_smtp_test_result', onResult);
+          resolve({ ok: false, message: 'SMTP/Relay sunucusu yanıt vermedi (20 sn zaman aşımı). Port/SSL/Relay ayarını kontrol edin.' });
+        }
+      }, 20000);
+      socket.once('admin_smtp_test_result', onResult);
+      socket.emit('admin_test_smtp', { toEmail, smtpConfig });
     });
   };
 

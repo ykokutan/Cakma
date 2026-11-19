@@ -10,8 +10,14 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import cors from 'cors';
 import crypto from 'crypto';
-import nodemailer from 'nodemailer';
 import path from 'path';
+import {
+  deliverEmail,
+  extractBareEmail,
+  maskEmail,
+  type MailConfigInput,
+  type MailSendResult,
+} from './utils/mailDelivery.js';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
 import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
@@ -1359,88 +1365,9 @@ export async function sendSmtpEmail(
   subject: string,
   text: string,
   html?: string,
-  overrideCfg?: {
-    smtpHost?: string;
-    smtpPort?: number;
-    smtpSecure?: boolean;
-    smtpUser?: string;
-    smtpPass?: string;
-    smtpFrom?: string;
-    mailRelayUrl?: string;
-    mailRelaySecret?: string;
-  }
-): Promise<{ ok: boolean; error?: string }> {
-  const relayUrl = (overrideCfg?.mailRelayUrl ?? systemConfig.mailRelayUrl ?? process.env.MAIL_RELAY_URL ?? '').trim();
-  const relaySecret = (overrideCfg?.mailRelaySecret ?? systemConfig.mailRelaySecret ?? process.env.MAIL_RELAY_SECRET ?? '').trim();
-  const user = (overrideCfg?.smtpUser ?? systemConfig.smtpUser ?? process.env.SMTP_USER ?? '').trim();
-  const rawFrom = (overrideCfg?.smtpFrom ?? systemConfig.smtpFrom ?? process.env.SMTP_FROM ?? '').trim();
-  const from = rawFrom.includes('@') ? rawFrom : (user || 'noreply@cakma.local');
-
-  if (relayUrl) {
-    if (!relayUrl.startsWith('https://') && !relayUrl.startsWith('http://')) {
-      return { ok: false, error: 'Mail Relay URL geçerli bir http/https adresi olmalıdır.' };
-    }
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(relayUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(relaySecret ? { 'X-Relay-Secret': relaySecret } : {}),
-        },
-        body: JSON.stringify({
-          to,
-          subject,
-          text,
-          html: html || `<p>${text}</p>`,
-          from,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const rawText = await res.text();
-      let parsed: any = null;
-      try { parsed = JSON.parse(rawText); } catch {}
-      if (!res.ok || (parsed && parsed.ok === false)) {
-        return { ok: false, error: parsed?.error || `Relay HTTP ${res.status}: ${rawText.slice(0, 140)}` };
-      }
-      return { ok: true };
-    } catch (err: any) {
-      return { ok: false, error: err?.message || 'Mail Relay bağlantısı başarısız.' };
-    }
-  }
-
-  const host = (overrideCfg?.smtpHost ?? systemConfig.smtpHost ?? process.env.SMTP_HOST ?? '').trim();
-  const port = Number(overrideCfg?.smtpPort ?? systemConfig.smtpPort ?? process.env.SMTP_PORT ?? 587);
-  const secure = overrideCfg?.smtpSecure ?? systemConfig.smtpSecure ?? (process.env.SMTP_SECURE === 'true' || port === 465);
-  const pass = (overrideCfg?.smtpPass ?? systemConfig.smtpPass ?? process.env.SMTP_PASS ?? '').trim();
-
-  if (!host || !user || !pass) {
-    return { ok: false, error: 'SMTP veya Mail Relay ayarları eksik.' };
-  }
-
-  try {
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      tls: { rejectUnauthorized: false },
-    });
-    await transporter.sendMail({
-      from,
-      to,
-      subject,
-      text,
-      html: html || `<p>${text}</p>`,
-    });
-    return { ok: true };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'E-posta gönderilemedi.' };
-  }
+  overrideCfg?: MailConfigInput
+): Promise<MailSendResult> {
+  return deliverEmail(to, subject, text, html, systemConfig, overrideCfg);
 }
 
 export function generateRegisterChallenge(): { token: string; question: string } {
@@ -1933,7 +1860,7 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    const code = String(crypto.randomInt(100000, 999999));
+    const code = String(crypto.randomInt(100000, 1000000));
     pendingEmailOtps.set(cleanEmail, {
       code,
       expiresAt: Date.now() + 10 * 60_000,
@@ -1953,17 +1880,22 @@ io.on('connection', (socket: Socket) => {
       </div>`
     );
 
+    const maskedTarget = maskEmail(cleanEmail);
     if (!mailRes.ok) {
       pendingEmailOtps.delete(cleanEmail);
+      const errDetail = mailRes.error || 'Bilinmeyen gönderim hatası.';
+      console.warn(`⚠️ [OTP] ${maskedTarget} için doğrulama kodu gönderilemedi (${mailRes.transport || 'mail'}): ${errDetail}`);
+      addAuditLog('OTP_MAIL_HATASI', `${maskedTarget} için kayıt OTP maili gönderilemedi: ${errDetail}`, 'warn');
       return socket.emit('register_email_code_result', {
         success: false,
-        error: `Doğrulama e-postası gönderilemedi: ${mailRes.error}`,
+        error: `Doğrulama e-postası gönderilemedi: ${errDetail}`,
       });
     }
 
+    console.log(`✉️ [OTP] ${maskedTarget} adresine doğrulama kodu gönderildi (${mailRes.transport || 'mail'}).`);
     socket.emit('register_email_code_result', {
       success: true,
-      message: `${cleanEmail} adresine 6 haneli doğrulama kodu gönderildi.`,
+      message: `${cleanEmail} adresine 6 haneli doğrulama kodu gönderildi. Gelmezse Spam / Gereksiz klasörünü kontrol edin.`,
     });
   });
 
@@ -5904,20 +5836,17 @@ io.on('connection', (socket: Socket) => {
     smtpConfig,
   }: {
     toEmail?: string;
-    smtpConfig?: {
-      smtpHost?: string;
-      smtpPort?: number;
-      smtpSecure?: boolean;
-      smtpUser?: string;
-      smtpPass?: string;
-      smtpFrom?: string;
-      mailRelayUrl?: string;
-      mailRelaySecret?: string;
-    };
+    smtpConfig?: MailConfigInput;
   }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
-    const target = (toEmail || smtpConfig?.smtpUser || systemConfig.smtpUser || '').trim();
+    const target = (
+      toEmail ||
+      smtpConfig?.smtpUser ||
+      systemConfig.smtpUser ||
+      extractBareEmail(smtpConfig?.smtpFrom || systemConfig.smtpFrom) ||
+      ''
+    ).trim();
     if (!target || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(target)) {
       const msg = 'Test için geçerli bir alıcı e-posta girin.';
       socket.emit('admin_feedback', { type: 'error', message: msg });
@@ -5931,12 +5860,14 @@ io.on('connection', (socket: Socket) => {
       undefined,
       smtpConfig
     );
+    const viaLabel = res.transport === 'relay' ? 'HTTPS Relay' : 'SMTP';
     if (res.ok) {
-      const msg = `Test e-postası ${target} adresine gönderildi (Spam klasörünü de kontrol edin).`;
+      const msg = `Test e-postası (${viaLabel}) ${target} adresine gönderildi (Spam klasörünü de kontrol edin).`;
       socket.emit('admin_feedback', { type: 'success', message: msg });
       socket.emit('admin_smtp_test_result', { ok: true, message: msg });
     } else {
-      const msg = `SMTP Test Hatası: ${res.error}`;
+      const msg = `${viaLabel} Test Hatası: ${res.error}`;
+      console.warn(`⚠️ [${viaLabel} Test] ${maskEmail(target)} gönderimi başarısız: ${res.error}`);
       socket.emit('admin_feedback', { type: 'error', message: msg });
       socket.emit('admin_smtp_test_result', { ok: false, message: msg });
     }
