@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Radio, Play, Pause, Volume2, VolumeX, Disc3, Youtube, Tv, ExternalLink } from 'lucide-react';
 import { RadioBotState } from '../context/SocketContext';
+import { appToast } from '../utils/appDialogs';
 
 declare global {
   interface Window {
@@ -414,7 +415,7 @@ export const VoiceRadioWidget: React.FC<VoiceRadioWidgetProps> = ({
     e.preventDefault();
     const id = extractYouTubeId(youtubeInput);
     if (!id) {
-      alert('Lütfen geçerli bir YouTube video linki (örn: https://youtu.be/... veya 11 karakterli ID) girin.');
+      appToast('Lütfen geçerli bir YouTube video linki (örn: https://youtu.be/... veya 11 karakterli ID) girin.', 'warning');
       return;
     }
 

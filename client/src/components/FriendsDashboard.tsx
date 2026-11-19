@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { AvatarView } from './AvatarView';
+import { appConfirm } from '../utils/appDialogs';
 import { FriendUser, User } from '../types';
 import {
   Users,
@@ -502,8 +503,8 @@ export const FriendsDashboard: React.FC<FriendsDashboardProps> = ({
                       </button>
 
                       <button
-                        onClick={() => {
-                          if (confirm(`${friend.username} adlı kullanıcıyı arkadaş listenizden çıkarmak istediğinize emin misiniz?`)) {
+                        onClick={async () => {
+                          if (await appConfirm({ title: 'Arkadaşlıktan Çıkar', message: `${friend.username} adlı kullanıcıyı arkadaş listenizden çıkarmak istediğinize emin misiniz?`, danger: true, confirmLabel: 'Çıkar' })) {
                             removeFriend(friend.username);
                           }
                         }}

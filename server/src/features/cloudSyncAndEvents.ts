@@ -1,9 +1,11 @@
 import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import { Server as SocketIOServer } from 'socket.io';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { getPersistentDir, getStorageEngineInfo } from '../storage.js';
 import { collectReferencedMediaUrls, scanAndCleanOrphanUploads } from '../utils/uploadCleaner.js';
+import { validateAttachmentSafety } from '../utils/security.js';
 import {
   AuthenticatedRequest,
   createAuthMiddlewares,
@@ -24,12 +26,14 @@ export interface ServerEventItem {
 
 const DATA_DIR = getPersistentDir();
 const SOUNDS_DIR = path.join(DATA_DIR, 'sounds');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const PREFS_FILE = path.join(DATA_DIR, 'user-prefs.json');
 const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
 
 function ensureDirs() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(SOUNDS_DIR)) fs.mkdirSync(SOUNDS_DIR, { recursive: true });
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 function readJson<T>(filePath: string, fallback: T): T {
@@ -76,6 +80,7 @@ export interface CloudSyncContext extends OrphanCleanupContext {
   getAccount?: (usernameLower: string) => RegisteredAccount | undefined;
   getEffectiveLiveKitConfig?: () => EffectiveLiveKitConfigSnapshot;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
+  getMaxUploadSizeMb?: () => number;
 }
 
 export function registerCloudSyncAndEvents(
@@ -517,5 +522,95 @@ export function registerCloudSyncAndEvents(
         message: turnMessage,
       },
     });
+  });
+
+  // 7. Authenticated Disk File Upload & Safe Static Retrieval
+  const SAFE_UPLOAD_EXTS = new Set([
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif',
+    'mp3', 'wav', 'ogg', 'webm', 'mp4',
+    'pdf', 'txt', 'csv', 'json', 'zip', 'rar', '7z',
+    'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'md',
+  ]);
+  const INLINE_MEDIA_MIME: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.avif': 'image/avif',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.webm': 'audio/webm',
+    '.mp4': 'video/mp4',
+  };
+
+  app.post('/api/upload', requireAuth, express.json({ limit: '35mb' }), (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
+    const { name, type, dataUrl } = req.body || {};
+    if (typeof name !== 'string' || typeof dataUrl !== 'string' || !name.trim() || !dataUrl) {
+      return res.status(400).json({ ok: false, error: 'Geçersiz dosya yükleme isteği.' });
+    }
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      return res.status(400).json({ ok: false, error: 'Desteklenmeyen veri formatı (Base64 bekleniyor).' });
+    }
+
+    const mimeType = typeof type === 'string' && type.trim() ? type.trim() : match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    const maxMb = context?.getMaxUploadSizeMb ? context.getMaxUploadSizeMb() : 5;
+    const safety = validateAttachmentSafety(
+      { name: name.trim(), size: buffer.length, type: mimeType },
+      maxMb
+    );
+    if (!safety.ok) {
+      return res.status(400).json({ ok: false, error: safety.error || 'Dosya güvenlik kontrolünden geçemedi.' });
+    }
+
+    const rawExt = path.extname(name.trim()).toLowerCase().replace(/^\./, '');
+    const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
+    const storedName = `upl-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    ensureDirs();
+    fs.writeFileSync(path.join(UPLOADS_DIR, storedName), buffer);
+
+    context?.addAuditLog?.(
+      'DOSYA_YUKLENDI',
+      `${authUser.username} diske dosya yükledi: ${name.trim()} (${buffer.length} B)`,
+      'info'
+    );
+
+    return res.json({
+      ok: true,
+      attachment: {
+        id: `att-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        name: name.trim().slice(0, 140),
+        size: buffer.length,
+        type: mimeType.slice(0, 120),
+        url: `/uploads/${storedName}`,
+      },
+    });
+  });
+
+  app.get('/uploads/:filename', (req, res) => {
+    const safeName = path.basename(String(req.params.filename || ''));
+    if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
+      return res.status(400).json({ error: 'Geçersiz dosya adı' });
+    }
+    const filePath = path.join(UPLOADS_DIR, safeName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Dosya bulunamadı' });
+    }
+    const ext = path.extname(safeName).toLowerCase();
+    const inlineMime = INLINE_MEDIA_MIME[ext];
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    if (inlineMime) {
+      res.setHeader('Content-Type', inlineMime);
+      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+    } else {
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    }
+    res.sendFile(filePath);
   });
 }

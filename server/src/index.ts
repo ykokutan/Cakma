@@ -17,6 +17,12 @@ import { initialServers, initialMessages, getDefaultRoles } from './mockData.js'
 import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
 import {
+  buildPersistentDmChannelId,
+  isUserParticipantInDm,
+  findServerByChannelId,
+  canUserAccessChannel,
+} from './utils/channelAccess.js';
+import {
   RemoteAssistManager,
   RemoteAssistPermissions,
   DirectCallLogStatus,
@@ -584,14 +590,53 @@ function emitServersUpdatedForAll() {
   }
 }
 
-function getInitialMessagesForServers(userServers: Server[], _username: string) {
+function emitToAdmins(event: string, payload: unknown) {
+  for (const [sId, u] of activeUsers.entries()) {
+    if (u.role === 'admin') {
+      io.to(sId).emit(event, payload);
+    }
+  }
+}
+
+function emitToChannelAudience(
+  channelId: string,
+  serverId: string | undefined,
+  event: string,
+  payload: unknown,
+  excludeSocketId?: string
+) {
+  if (!channelId) return;
+  if (channelId.startsWith('dm-') || serverId === 'direct-messages') {
+    const channelMsgs = messages[channelId];
+    for (const [sId, u] of activeUsers.entries()) {
+      if (excludeSocketId && sId === excludeSocketId) continue;
+      if (isUserParticipantInDm(u, channelId, channelMsgs)) {
+        io.to(sId).emit(event, payload);
+      }
+    }
+    return;
+  }
+  const srv = findServerByChannelId(servers, channelId, serverId);
+  if (!srv) return;
+  for (const [sId, u] of activeUsers.entries()) {
+    if (excludeSocketId && sId === excludeSocketId) continue;
+    if (isUserMemberOfServer(u, srv)) {
+      io.to(sId).emit(event, payload);
+    }
+  }
+}
+
+function getInitialMessagesForServers(userServers: Server[], username: string, userId?: string) {
   const { initialMessages, hasMoreMessages } = getInitialMessagesSlice(messages, 60);
   const allowedChannelIds = new Set<string>();
   userServers.forEach((s) => s.channels.forEach((c) => allowedChannelIds.add(c.id)));
   const scopedMessages: Record<string, Message[]> = {};
   const scopedHasMore: Record<string, boolean> = {};
   for (const [chId, msgs] of Object.entries(initialMessages)) {
-    if (allowedChannelIds.has(chId) || chId.startsWith('dm-')) {
+    const isAllowedServerCh = allowedChannelIds.has(chId);
+    const isAllowedDmCh =
+      chId.startsWith('dm-') && isUserParticipantInDm({ id: userId, username }, chId, msgs);
+    if (isAllowedServerCh || isAllowedDmCh) {
       scopedMessages[chId] = msgs;
       if (hasMoreMessages[chId]) scopedHasMore[chId] = true;
     }
@@ -1875,7 +1920,7 @@ function persistAndEmitDirectCallLog(
   reason?: string
 ) {
   if (!userA || !userB) return;
-  const dmChannelId = `dm-${[userA.id, userB.id].sort().join('-')}`;
+  const dmChannelId = buildPersistentDmChannelId(userA.username, userB.username);
   const content = buildDirectCallLogContent(status, durationSeconds, reason);
   const logMsg: Message = {
     id: `call-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1941,7 +1986,7 @@ function hasDangerousAttachment(attachments?: MessageAttachment[]): boolean {
 
 function emitInitData(targetSocket: Socket, currentUser: User) {
   const userServers = filterServersForUser(servers, currentUser);
-  const { initialMessages, hasMoreMessages } = getInitialMessagesForServers(userServers, currentUser.username);
+  const { initialMessages, hasMoreMessages } = getInitialMessagesForServers(userServers, currentUser.username, currentUser.id);
   targetSocket.emit('init_data', {
     currentUser,
     servers: userServers,
@@ -1974,6 +2019,7 @@ io.on('connection', (socket: Socket) => {
   socket.on('request_older_messages', ({ channelId, beforeId, limit }: { channelId: string; beforeId?: string; limit?: number }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || !channelId) return;
+    if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) return;
     const page = getChannelMessagesPage(messages[channelId], beforeId, limit || 50);
     socket.emit('older_messages_loaded', {
       channelId,
@@ -1987,6 +2033,9 @@ io.on('connection', (socket: Socket) => {
     if (!requester || typeof query !== 'string') return;
     const allowedChannels = new Set<string>();
     if (channelId) {
+      if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) {
+        return socket.emit('server_search_results', { query, results: [] });
+      }
       allowedChannels.add(channelId);
     } else {
       for (const s of servers) {
@@ -1995,7 +2044,7 @@ io.on('connection', (socket: Socket) => {
         }
       }
       for (const key of Object.keys(messages)) {
-        if (key.startsWith(`dm-${requester.username.toLowerCase()}-`) || key.endsWith(`-${requester.username.toLowerCase()}`)) {
+        if (key.startsWith('dm-') && isUserParticipantInDm(requester, key, messages[key])) {
           allowedChannels.add(key);
         }
       }
@@ -2754,7 +2803,13 @@ io.on('connection', (socket: Socket) => {
   socket.on('send_message', ({ serverId, channelId, content, attachments, poll, replyTo }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[]; poll?: any; replyTo?: { id: string; username: string; content: string } }) => {
     const sender = activeUsers.get(socket.id);
     const rawContent = (content || '').trim();
-    if (!sender || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
+    if (!sender || !channelId || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
+
+    if (!canUserAccessChannel(sender, channelId, servers, serverId, messages[channelId])) {
+      return socket.emit('server_action_error', {
+        message: 'Bu kanala mesaj gönderme yetkiniz yok.'
+      });
+    }
 
     // 0. Server Timeout Check
     const targetSrv = servers.find(s => s.id === serverId);
@@ -2856,7 +2911,7 @@ io.on('connection', (socket: Socket) => {
     saveChannelMessages(channelId, messages[channelId]);
     indexChannelMessage(channelId, newMessage);
 
-    io.emit('new_message', newMessage);
+    emitToChannelAudience(channelId, serverId, 'new_message', newMessage);
 
     // 1. Leveling & XP System (+20 XP per message)
     const userAcc = registeredAccounts.get(sender.username.toLowerCase());
@@ -2899,8 +2954,9 @@ io.on('connection', (socket: Socket) => {
 
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(aiMessage);
-        saveMessages(messages);
-        io.emit('new_message', aiMessage);
+        saveChannelMessages(channelId, messages[channelId]);
+        indexChannelMessage(channelId, aiMessage);
+        emitToChannelAudience(channelId, serverId, 'new_message', aiMessage);
       }, 600);
     }
 
@@ -2920,8 +2976,9 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(rollMsg);
-        saveMessages(messages);
-        io.emit('new_message', rollMsg);
+        saveChannelMessages(channelId, messages[channelId]);
+        indexChannelMessage(channelId, rollMsg);
+        emitToChannelAudience(channelId, serverId, 'new_message', rollMsg);
       }, 300);
     } else if (lowerContent === '/yazitura' || lowerContent === '/coinflip' || lowerContent === '/yazi-tura') {
       setTimeout(() => {
@@ -2938,8 +2995,9 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(coinMsg);
-        saveMessages(messages);
-        io.emit('new_message', coinMsg);
+        saveChannelMessages(channelId, messages[channelId]);
+        indexChannelMessage(channelId, coinMsg);
+        emitToChannelAudience(channelId, serverId, 'new_message', coinMsg);
       }, 300);
     } else if (lowerContent.startsWith('/8ball')) {
       setTimeout(() => {
@@ -2967,8 +3025,9 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(ballMsg);
-        saveMessages(messages);
-        io.emit('new_message', ballMsg);
+        saveChannelMessages(channelId, messages[channelId]);
+        indexChannelMessage(channelId, ballMsg);
+        emitToChannelAudience(channelId, serverId, 'new_message', ballMsg);
       }, 300);
     } else if (lowerContent === '/rank' || lowerContent === '/seviye') {
       setTimeout(() => {
@@ -2994,8 +3053,9 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(rankMsg);
-        saveMessages(messages);
-        io.emit('new_message', rankMsg);
+        saveChannelMessages(channelId, messages[channelId]);
+        indexChannelMessage(channelId, rankMsg);
+        emitToChannelAudience(channelId, serverId, 'new_message', rankMsg);
       }, 300);
     } else if (lowerContent === '/liderlik' || lowerContent === '/top') {
       setTimeout(() => {
@@ -3022,8 +3082,9 @@ io.on('connection', (socket: Socket) => {
         };
         if (!messages[channelId]) messages[channelId] = [];
         messages[channelId].push(leadMsg);
-        saveMessages(messages);
-        io.emit('new_message', leadMsg);
+        saveChannelMessages(channelId, messages[channelId]);
+        indexChannelMessage(channelId, leadMsg);
+        emitToChannelAudience(channelId, serverId, 'new_message', leadMsg);
       }, 300);
     }
   });
@@ -3034,6 +3095,7 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
     const msg = channelMsgs.find(m => m.id === messageId);
     if (!msg) return;
 
@@ -3050,8 +3112,8 @@ io.on('connection', (socket: Socket) => {
       msg.reactions[emoji].push(user.username);
     }
 
-    saveMessages(messages);
-    io.emit('message_reaction_updated', { channelId, messageId, reactions: msg.reactions });
+    saveChannelMessages(channelId, channelMsgs);
+    emitToChannelAudience(channelId, msg.serverId, 'message_reaction_updated', { channelId, messageId, reactions: msg.reactions });
   });
 
   // Pin / Unpin Message (Requires manage_messages permission)
@@ -3060,6 +3122,7 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
     const msg = channelMsgs.find(m => m.id === messageId);
     if (!msg) return;
 
@@ -3069,8 +3132,9 @@ io.on('connection', (socket: Socket) => {
     }
 
     msg.isPinned = !msg.isPinned;
-    saveMessages(messages);
-    io.emit('message_pin_updated', { channelId, messageId, isPinned: msg.isPinned });
+    saveChannelMessages(channelId, channelMsgs);
+    indexChannelMessage(channelId, msg);
+    emitToChannelAudience(channelId, msg.serverId, 'message_pin_updated', { channelId, messageId, isPinned: msg.isPinned });
   });
 
   // Edit Message (Only message author)
@@ -3079,6 +3143,7 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
     const msg = channelMsgs.find(m => m.id === messageId);
     if (!msg) return;
     if (msg.author.username.toLowerCase() !== user.username.toLowerCase()) return;
@@ -3089,7 +3154,7 @@ io.on('connection', (socket: Socket) => {
     msg.isEdited = true;
     saveChannelMessages(channelId, channelMsgs);
     indexChannelMessage(channelId, msg);
-    io.emit('message_edited', { channelId, messageId, content: msg.content, isEdited: true });
+    emitToChannelAudience(channelId, msg.serverId, 'message_edited', { channelId, messageId, content: msg.content, isEdited: true });
   });
 
   // Delete Message (Author or moderator/admin)
@@ -3098,6 +3163,7 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
     const idx = channelMsgs.findIndex(m => m.id === messageId);
     if (idx === -1) return;
     const msg = channelMsgs[idx];
@@ -3112,20 +3178,22 @@ io.on('connection', (socket: Socket) => {
     channelMsgs.splice(idx, 1);
     saveChannelMessages(channelId, channelMsgs);
     removeIndexedMessage(messageId);
-    io.emit('message_deleted', { channelId, messageId });
+    emitToChannelAudience(channelId, msg.serverId, 'message_deleted', { channelId, messageId });
   });
 
   // Typing Indicator
   socket.on('typing_start', ({ channelId }: { channelId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user || !channelId) return;
-    socket.broadcast.emit('user_typing', { channelId, username: user.username, isTyping: true });
+    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId])) return;
+    emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: true }, socket.id);
   });
 
   socket.on('typing_stop', ({ channelId }: { channelId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user || !channelId) return;
-    socket.broadcast.emit('user_typing', { channelId, username: user.username, isTyping: false });
+    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId])) return;
+    emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: false }, socket.id);
   });
 
   // Change Password (Self-Service)
@@ -3367,6 +3435,7 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
     const msg = channelMsgs.find(m => m.id === messageId);
     if (!msg || !msg.poll || msg.poll.closed) return;
 
@@ -3389,8 +3458,8 @@ io.on('connection', (socket: Socket) => {
     msg.poll.options.forEach(o => total += o.votes.length);
     msg.poll.totalVotes = total;
 
-    saveMessages(messages);
-    io.emit('poll_updated', { channelId, messageId, poll: msg.poll });
+    saveChannelMessages(channelId, channelMsgs);
+    emitToChannelAudience(channelId, msg.serverId, 'poll_updated', { channelId, messageId, poll: msg.poll });
   });
 
   // Soundboard in Voice Channel (Scoped to active room & 2s anti-spam cooldown)
@@ -3786,7 +3855,7 @@ io.on('connection', (socket: Socket) => {
 
       if (decliner && callerUser) {
         if (cleanReply) {
-          const dmChannelId = `dm-${[callerUser.id, decliner.id].sort().join('-')}`;
+          const dmChannelId = buildPersistentDmChannelId(callerUser.username, decliner.username);
           const quickDm: Message = {
             id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             serverId: 'direct-messages',
@@ -4362,7 +4431,7 @@ io.on('connection', (socket: Socket) => {
     targetServer.channels.push(newChannel);
     saveServers(servers);
     addAuditLog('KANAL_OLUSTURULDU', `${targetServer.name} sunucusunda #${newChannel.name} (${type}${newChannel.password ? ' - Şifreli' : ''}) oluşturuldu.`);
-    io.emit('channel_created', { serverId, channel: newChannel });
+    emitToServerMembers(targetServer, 'channel_created', { serverId, channel: newChannel });
     emitServersUpdatedForAll();
   });
 
@@ -4419,7 +4488,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     saveServers(servers);
-    io.emit('channel_updated', { serverId, channel: ch });
+    emitToServerMembers(targetServer, 'channel_updated', { serverId, channel: ch });
     emitServersUpdatedForAll();
   });
 
@@ -4962,6 +5031,7 @@ io.on('connection', (socket: Socket) => {
 
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
     const parent = channelMsgs.find(m => m.id === parentMessageId);
     if (!parent) return;
 
@@ -4977,8 +5047,8 @@ io.on('connection', (socket: Socket) => {
       timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
     };
     parent.threadMessages.push(threadMsg);
-    saveMessages(messages);
-    io.emit('thread_message_added', { channelId, parentMessageId, threadMessage: threadMsg });
+    saveChannelMessages(channelId, channelMsgs);
+    emitToChannelAudience(channelId, parent.serverId, 'thread_message_added', { channelId, parentMessageId, threadMessage: threadMsg });
   });
 
   // Clear last N messages in a channel (Slash Command /temizle)
@@ -4993,8 +5063,8 @@ io.on('connection', (socket: Socket) => {
     const list = messages[channelId] || [];
     if (list.length === 0) return;
     messages[channelId] = list.slice(0, Math.max(0, list.length - safeCount));
-    saveMessages(messages);
-    io.emit('channel_messages_cleared', { channelId, messages: messages[channelId] });
+    saveChannelMessages(channelId, messages[channelId]);
+    emitToChannelAudience(channelId, serverId, 'channel_messages_cleared', { channelId, messages: messages[channelId] });
   });
 
   // Server Events (Etkinlik Takvimi)
@@ -5064,10 +5134,18 @@ io.on('connection', (socket: Socket) => {
     }
 
     const sName = s.name;
+    const recipientSocketIds = new Set<string>();
+    for (const [sId, u] of activeUsers.entries()) {
+      if (u.role === 'admin' || isUserMemberOfServer(u, s)) {
+        recipientSocketIds.add(sId);
+      }
+    }
     servers.splice(sIdx, 1);
     saveServers(servers);
     addAuditLog('SUNUCU_SILINDI', `${sName} sunucusu silindi (Silen: ${user.username})`, 'warn');
-    io.emit('server_deleted', { serverId });
+    for (const sId of recipientSocketIds) {
+      io.to(sId).emit('server_deleted', { serverId });
+    }
   });
 
   function cleanupTemporaryChannels() {
@@ -5971,7 +6049,7 @@ io.on('connection', (socket: Socket) => {
     addAuditLog('SISTEM_AYARLARI_GUNCELLENDI', `${requester.username} sistem yapılandırmasını güncelledi.${systemConfig.maintenanceMode ? ' [BAKIM MODU AKTİF]' : ''}`, systemConfig.maintenanceMode ? 'warn' : 'info');
     socket.emit('admin_feedback', { type: 'success', message: 'Sistem yapılandırması başarıyla kaydedildi.' });
     socket.emit('admin_action_success', 'Sistem yapılandırması başarıyla kaydedildi.');
-    io.emit('audit_log_added', auditLogs[0]);
+    emitToAdmins('audit_log_added', auditLogs[0]);
   });
 
   // Admin: Create / Delete Registration Invite Codes
@@ -6314,7 +6392,8 @@ io.on('connection', (socket: Socket) => {
     }
     const deletedCount = totalBefore - messages[channelId].length;
     saveChannelMessages(channelId, messages[channelId]);
-    io.emit('channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
+    emitToChannelAudience(channelId, undefined, 'channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
+    socket.emit('channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
     addAuditLog('MESAJ_TEMIZLENDI', `${requester.username}, #${channelId} kanalından ${deletedCount} mesaj temizledi.`, 'warn');
     socket.emit('admin_action_success', `${deletedCount} mesaj başarıyla temizlendi.`);
   });
@@ -6380,9 +6459,18 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('admin_action_error', 'Sunucu bulunamadı.');
     }
 
+    const targetServerObj = servers[idx];
+    const recipientSocketIds = new Set<string>([socket.id]);
+    for (const [sId, u] of activeUsers.entries()) {
+      if (u.role === 'admin' || isUserMemberOfServer(u, targetServerObj)) {
+        recipientSocketIds.add(sId);
+      }
+    }
     const [removed] = servers.splice(idx, 1);
     saveServers(servers);
-    io.emit('server_deleted', { serverId });
+    for (const sId of recipientSocketIds) {
+      io.to(sId).emit('server_deleted', { serverId });
+    }
     addAuditLog('SUNUCU_SILINDI', `${requester.username}, "${removed.name}" sunucusunu sildi.`, 'warn');
     socket.emit('admin_action_success', `"${removed.name}" sunucusu silindi.`);
   });
@@ -6443,7 +6531,8 @@ io.on('connection', (socket: Socket) => {
       const removedCh = targetServer.channels.splice(chIndex, 1)[0];
       saveServers(servers);
       addAuditLog('KANAL_SILINDI', `${targetServer.name} sunucusundan #${removedCh.name} kanali silindi.`, 'warn');
-      io.emit('channel_deleted', { serverId, channelId });
+      emitToServerMembers(targetServer, 'channel_deleted', { serverId, channelId });
+      emitServerUpdatedToMembers(targetServer);
       socket.emit('admin_action_success', 'Kanal başarıyla silindi.');
     }
   });
@@ -7195,6 +7284,7 @@ registerCloudSyncAndEvents(app, io, activeUsers, {
     turnCredential: (systemConfig?.turnCredential || process.env.TURN_CREDENTIAL || '').trim(),
   }),
   addAuditLog,
+  getMaxUploadSizeMb: () => systemConfig.maxUploadSizeMb || 5,
 });
 
 // Desktop Installer & Updater Manifest Serving (kept outside client/dist so Tauri never bundles it recursively)
@@ -7238,7 +7328,7 @@ for (const cand of clientDistCandidates) {
 if (activeStaticDir) {
   app.use(express.static(activeStaticDir));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path.startsWith('/downloads')) return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path.startsWith('/downloads') || req.path.startsWith('/uploads')) return next();
     res.sendFile(path.join(activeStaticDir!, 'index.html'));
   });
   console.log(`🌐 [Web Arayüzü] Statik React arayüzü tek port üzerinden yayında: ${activeStaticDir}`);

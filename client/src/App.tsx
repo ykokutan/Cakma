@@ -10,6 +10,7 @@ import { AutoUpdater } from './components/AutoUpdater';
 import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { MiniScreenSharePiP } from './components/MiniScreenSharePiP';
 import { WindowTitleBar } from './components/WindowTitleBar';
+import { AppDialogHost } from './components/AppDialogHost';
 
 const DirectCallModal = lazy(() => import('./components/DirectCallModal').then((m) => ({ default: m.DirectCallModal })));
 const UserProfileModal = lazy(() => import('./components/UserProfileModal').then((m) => ({ default: m.UserProfileModal })));
@@ -484,6 +485,7 @@ export function App() {
     <SocketProvider>
       <MainLayout />
       <AutoUpdater />
+      <AppDialogHost />
     </SocketProvider>
   );
 }

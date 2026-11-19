@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
+import { appConfirm } from '../utils/appDialogs';
 import { User, Channel } from '../types';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
 import {
@@ -1451,11 +1452,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 {currentUser?.role === 'admin' && (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (window.confirm(`"${channelMenu.channel.name}" kanalını silmek istediğinize emin misiniz?`)) {
-                        adminDeleteChannel(activeServer.id, channelMenu.channel.id);
-                      }
+                    onClick={async () => {
+                      const target = channelMenu.channel;
                       setChannelMenu(null);
+                      if (await appConfirm({ title: 'Kanalı Sil', message: `"${target.name}" kanalını silmek istediğinize emin misiniz?`, danger: true, confirmLabel: 'Sil' })) {
+                        adminDeleteChannel(activeServer.id, target.id);
+                      }
                     }}
                     className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-rose-500/20 text-rose-400 transition text-left mt-0.5 border-t border-white/10 pt-2"
                   >

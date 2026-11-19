@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { AvatarView } from './AvatarView';
+import { appPrompt } from '../utils/appDialogs';
 import { User } from '../types';
 import {
   Volume2,
@@ -315,8 +316,13 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
         {currentUser?.role === 'admin' && !isMe && (
           <button
             type="button"
-            onClick={() => {
-              const reason = prompt(`${target.username} kullanıcısını sunucudan atma sebebi:`, 'Yönetici kararı');
+            onClick={async () => {
+              const reason = await appPrompt({
+                title: 'Kullanıcıyı At',
+                message: `${target.username} kullanıcısını sunucudan atma sebebi:`,
+                defaultValue: 'Yönetici kararı',
+                confirmLabel: 'At (Kick)',
+              });
               if (reason !== null) adminKickUser(target.id, reason || 'Yönetici kararı');
               onClose();
             }}

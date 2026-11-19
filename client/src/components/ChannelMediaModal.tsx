@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { X, Image, FileText, Music, Download } from 'lucide-react';
 import { Message, MessageAttachment } from '../types';
+import { useSocket } from '../context/SocketContext';
+import { resolveMediaUrl } from '../utils/authFetch';
 
 interface ChannelMediaModalProps {
   channelName: string;
@@ -16,6 +18,7 @@ interface MediaItem {
 }
 
 export const ChannelMediaModal: React.FC<ChannelMediaModalProps> = ({ channelName, messages, onClose }) => {
+  const { currentServerHost } = useSocket();
   const [filterType, setFilterType] = useState<'all' | 'image' | 'audio' | 'file'>('all');
   const [selectedPreview, setSelectedPreview] = useState<string | null>(null);
 
@@ -130,6 +133,7 @@ export const ChannelMediaModal: React.FC<ChannelMediaModalProps> = ({ channelNam
               {filtered.map((item) => {
                 const isImg = item.attachment.type.startsWith('image/');
                 const isAud = item.attachment.type.startsWith('audio/');
+                const resolvedUrl = resolveMediaUrl(item.attachment.url, currentServerHost);
 
                 return (
                   <div
@@ -138,11 +142,11 @@ export const ChannelMediaModal: React.FC<ChannelMediaModalProps> = ({ channelNam
                   >
                     {isImg ? (
                       <div
-                        onClick={() => setSelectedPreview(item.attachment.url)}
+                        onClick={() => setSelectedPreview(resolvedUrl)}
                         className="w-full aspect-square bg-black/40 overflow-hidden cursor-pointer"
                       >
                         <img
-                          src={item.attachment.url}
+                          src={resolvedUrl}
                           alt={item.attachment.name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
@@ -153,7 +157,7 @@ export const ChannelMediaModal: React.FC<ChannelMediaModalProps> = ({ channelNam
                         <span className="text-[10px] text-white/70 truncate w-full px-2">
                           {item.attachment.name}
                         </span>
-                        <audio src={item.attachment.url} controls className="w-full mt-2 h-7" />
+                        <audio src={resolvedUrl} controls className="w-full mt-2 h-7" />
                       </div>
                     ) : (
                       <div className="w-full aspect-square bg-purple-500/10 flex flex-col items-center justify-center p-3 text-center">
@@ -171,7 +175,7 @@ export const ChannelMediaModal: React.FC<ChannelMediaModalProps> = ({ channelNam
                         <span>{item.timestamp}</span>
                       </div>
                       <a
-                        href={item.attachment.url}
+                        href={resolvedUrl}
                         download={item.attachment.name}
                         target="_blank"
                         rel="noreferrer"

@@ -13,7 +13,9 @@ import { parseDeepLinkUrl } from '../utils/deepLink';
 import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
 import { authFetch } from '../utils/authFetch';
 import { getDirectScreenShareConstraints, pruneExpiredAnnotations } from '../utils/remoteAssistHelpers';
-import { compressImageToWebP } from '../utils/imageCompress';
+import { buildPersistentDmChannelId } from '../utils/dmChannel';
+import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
+import { appToast } from '../utils/appDialogs';
 
 export interface UserAudioEq {
   bass: number;
@@ -1186,6 +1188,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [pinnedBanner, setPinnedBanner] = useState<{ message: string; sender: string; updatedAt: string } | null>(null);
   const [maintenanceStatus, setMaintenanceStatus] = useState<{ active: boolean; message: string }>({ active: false, message: '' });
   const [currentServerHost, setCurrentServerHost] = useState<string>('localhost:4000');
+  const currentServerHostRef = useRef<string>(currentServerHost);
+  useEffect(() => {
+    currentServerHostRef.current = currentServerHost;
+  }, [currentServerHost]);
 
   // Admin Dashboard State
   const [adminData, setAdminData] = useState<{
@@ -1953,7 +1959,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setVoiceRecordingSeconds((prev) => prev + 1);
       }, 1000);
     } catch (err: any) {
-      alert('Ses kaydı başlatılamadı: ' + (err?.message || err));
+      appToast('Ses kaydı başlatılamadı: ' + (err?.message || err), 'error');
     }
   }, []);
 
@@ -2042,7 +2048,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           replaceOutboundWebcamTrack(videoTrack, outStream);
         }
       } catch {
-        alert('Kamera açılamadı. Lütfen kamera erişim izinlerinizi kontrol edin.');
+        appToast('Kamera açılamadı. Lütfen kamera erişim izinlerinizi kontrol edin.', 'error');
       }
     }
   }, [isWebcamActive, socket, replaceOutboundWebcamTrack]);
@@ -2189,7 +2195,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (val) {
       const granted = await requestDesktopNotificationPermission();
       if (!granted) {
-        alert('Tarayıcı bildirim izni verilmedi. Lütfen tarayıcı ayarlarından bildirimlere izin verin.');
+        appToast('Tarayıcı bildirim izni verilmedi. Lütfen tarayıcı ayarlarından bildirimlere izin verin.', 'warning');
         return;
       }
     }
@@ -2222,7 +2228,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Derived state (supports virtual Direct Messages server)
   const isDMMode = activeServerId === 'direct-messages';
   const dmChannelId = (activeDMUser && currentUser)
-    ? `dm-${[currentUser.id, activeDMUser.id].sort().join('-')}`
+    ? buildPersistentDmChannelId(currentUser.username, activeDMUser.username)
     : 'dm-general';
 
   const virtualDMServer: Server | null = isDMMode ? {
@@ -2309,7 +2315,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      alert('Mikrofon erişimi için güvenli bağlantı (HTTPS veya localhost) gereklidir. Tarayıcınız HTTP üzerinden mikrofon iznine izin vermiyor.');
+      appToast('Mikrofon erişimi için güvenli bağlantı (HTTPS veya localhost) gereklidir. Tarayıcınız HTTP üzerinden mikrofon iznine izin vermiyor.', 'error');
       return null;
     }
 
@@ -2752,7 +2758,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.warn('Socket bağlantı hatası:', err?.message);
       const errMsg = err?.message || '';
       if (errMsg.includes('LİSANS_İPTAL') || errMsg.includes('LISANS_IPTAL') || errMsg.includes('YETKISIZ') || errMsg.includes('YETKİSİZ')) {
-        alert(`⛔ Bağlantı Reddedildi:\n\n${errMsg}\n\nÖzel sunucunun lisansı iptal edildiği için ana sunucuya (localhost:4000) yönlendiriliyorsunuz.`);
+        appToast(`⛔ Bağlantı Reddedildi: ${errMsg}. Özel sunucunun lisansı iptal edildiği için ana sunucuya yönlendiriliyorsunuz.`, 'error');
         resetToMainServer();
       }
     });
@@ -2838,7 +2844,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsAuthenticated(false);
         setCurrentUser(null);
       } else if (res.error && (res.error.includes('LİSANS') || res.error.includes('LISANS'))) {
-        alert(`⛔ Giriş Engellendi:\n\n${res.error}\n\nAna sunucuya yönlendiriliyorsunuz.`);
+        appToast(`⛔ Giriş Engellendi: ${res.error}. Ana sunucuya yönlendiriliyorsunuz.`, 'error');
         resetToMainServer();
       }
     });
@@ -2976,7 +2982,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsAuthenticated(false);
       setCurrentUser(null);
       if (payload?.reason) {
-        alert(payload.reason);
+        appToast(payload.reason, 'error');
       }
     });
 
@@ -3308,15 +3314,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('server_action_error', ({ message }: { message: string }) => {
-      alert(message);
+      appToast(message, 'error');
     });
 
     newSocket.on('chat_flood_error', ({ message }: { message: string }) => {
-      alert(`⚠️ ${message}`);
+      appToast(`⚠️ ${message}`, 'warning');
     });
 
     newSocket.on('file_security_error', ({ message }: { message: string }) => {
-      alert(`🛡️ ${message}`);
+      appToast(`🛡️ ${message}`, 'error');
     });
 
     newSocket.on('user_connected', (newUser: User) => {
@@ -3489,7 +3495,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('dedicated_server_terminated', (data: { title: string; reason: string }) => {
-      alert(`⚠️ ${data.title || 'Sunucu Lisansı İptal Edildi'}\n\n${data.reason}\n\nÖzel sunucu kapatıldığı için ana sunucuya yönlendiriliyorsunuz.`);
+      appToast(`⚠️ ${data.title || 'Sunucu Lisansı İptal Edildi'} — ${data.reason}`, 'error');
       resetToMainServer();
     });
 
@@ -3570,7 +3576,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('kicked_by_admin', ({ reason }) => {
-      alert(`Sunucudan atıldınız!\nSebep: ${reason}`);
+      appToast(`Sunucudan atıldınız! Sebep: ${reason}`, 'error');
       localStorage.removeItem('dc_clone_auth');
       setIsAuthenticated(false);
       window.location.reload();
@@ -4990,7 +4996,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return next;
     });
     if (currentUser) {
-      const dmId = `dm-${[currentUser.id, user.id].sort().join('-')}`;
+      const dmId = buildPersistentDmChannelId(currentUser.username, user.username);
       setActiveChannelId(dmId);
       setUnreadCounts(prev => {
         if (!prev[dmId]) return prev;
@@ -5343,55 +5349,42 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const partner = directCallRef.current?.partner;
     if (!socket || !me || !partner) return;
     try {
-      const optimized = await compressImageToWebP(file);
-      if (optimized.size > 5 * 1024 * 1024) {
-        pushDirectCallToast(`"${file.name}" 5MB sınırını aşıyor.`, 'error');
-        return;
-      }
-      const dmChannelId = `dm-${[me.id, partner.id].sort().join('-')}`;
-      const attachment: MessageAttachment = {
-        id: `ra-att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: optimized.name,
-        size: optimized.size,
-        type: optimized.type,
-        url: optimized.dataUrl,
-      };
+      const attachment = await uploadAttachmentFile(currentServerHostRef.current, file);
+      const dmChannelId = buildPersistentDmChannelId(me.username, partner.username);
       socket.emit('send_message', {
         serverId: 'direct-messages',
         channelId: dmChannelId,
-        content: `📎 Uzaktan yardım dosya transferi: ${optimized.name}`,
+        content: `📎 Uzaktan yardım dosya transferi: ${attachment.name}`,
         attachments: [attachment],
       });
-      pushDirectCallToast(`"${optimized.name}" DM üzerinden gönderildi.`, 'success');
-    } catch {
-      pushDirectCallToast(`"${file.name}" okunamadı.`, 'error');
+      pushDirectCallToast(`"${attachment.name}" DM üzerinden gönderildi.`, 'success');
+    } catch (err: any) {
+      pushDirectCallToast(err?.message || `"${file.name}" okunamadı.`, 'error');
     }
   }, [socket, pushDirectCallToast]);
 
-  const sendScreenshotToDirectPartner = useCallback((dataUrl: string) => {
+  const sendScreenshotToDirectPartner = useCallback(async (dataUrl: string) => {
     const me = currentUserRef.current;
     const partner = directCallRef.current?.partner;
     if (!socket || !me || !partner || !dataUrl) return;
-    const approxSize = Math.round((dataUrl.length * 3) / 4);
-    if (approxSize > 5 * 1024 * 1024) {
-      pushDirectCallToast('Ekran görüntüsü boyutu 5MB sınırını aşıyor.', 'error');
-      return;
+    try {
+      const name = `uzaktan-yardim-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.png`;
+      const attachment = await uploadDataUrlAttachment(currentServerHostRef.current, {
+        name,
+        type: 'image/png',
+        dataUrl,
+      });
+      const dmChannelId = buildPersistentDmChannelId(me.username, partner.username);
+      socket.emit('send_message', {
+        serverId: 'direct-messages',
+        channelId: dmChannelId,
+        content: '📸 Uzaktan yardım anlık ekran görüntüsü',
+        attachments: [attachment],
+      });
+      pushDirectCallToast('Ekran görüntüsü DM sohbetine gönderildi.', 'success');
+    } catch (err: any) {
+      pushDirectCallToast(err?.message || 'Ekran görüntüsü gönderilemedi.', 'error');
     }
-    const dmChannelId = `dm-${[me.id, partner.id].sort().join('-')}`;
-    const attachment: MessageAttachment = {
-      id: `ra-ss-${Date.now()}`,
-      name: `uzaktan-yardim-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.png`,
-      size: approxSize,
-      type: 'image/png',
-      url: dataUrl,
-    };
-    socket.emit('send_message', {
-      serverId: 'direct-messages',
-      channelId: dmChannelId,
-      content: '📸 Uzaktan yardım anlık ekran görüntüsü',
-      attachments: [attachment],
-    });
-    pushDirectCallToast('Ekran görüntüsü DM sohbetine gönderildi.', 'success');
   }, [socket, pushDirectCallToast]);
 
   const toggleDirectCamera = useCallback(async () => {
@@ -5811,7 +5804,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toggleMute = () => {
     if (currentUserRef.current?.isServerMuted && isMuted) {
-      alert('Moderatör tarafından sunucudan susturuldunuz.');
+      appToast('Moderatör tarafından sunucudan susturuldunuz.', 'warning');
       return;
     }
     const nextMuted = !isMuted;
@@ -5832,7 +5825,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toggleDeafen = () => {
     if (currentUserRef.current?.isServerDeafened && isDeafened) {
-      alert('Moderatör tarafından sunucudan sağırlaştırıldınız.');
+      appToast('Moderatör tarafından sunucudan sağırlaştırıldınız.', 'warning');
       return;
     }
     const nextDeafened = !isDeafened;
@@ -5857,7 +5850,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const startScreenShare = async (settings?: ScreenShareSettings, preCapturedStream?: MediaStream | null) => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
-      alert('Ekran paylaşımı için güvenli bağlantı (HTTPS veya localhost) gereklidir.');
+      appToast('Ekran paylaşımı için güvenli bağlantı (HTTPS veya localhost) gereklidir.', 'error');
       return;
     }
     try {

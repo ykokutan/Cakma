@@ -9,6 +9,7 @@ import {
 } from '../utils/statusExpiry';
 import { User } from '../types';
 import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
+import { appConfirm, appToast } from '../utils/appDialogs';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import {
   X,
@@ -564,8 +565,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                 {/* Friend Status Button */}
                 {isFriend ? (
                   <button
-                    onClick={() => {
-                      if (confirm(`${user.username} adlı kullanıcıyı arkadaş listenizden çıkarmak istediğinize emin misiniz?`)) {
+                    onClick={async () => {
+                      if (await appConfirm({ title: 'Arkadaşlıktan Çıkar', message: `${user.username} adlı kullanıcıyı arkadaş listenizden çıkarmak istediğinize emin misiniz?`, danger: true, confirmLabel: 'Çıkar' })) {
                         removeFriend(user.username);
                       }
                     }}
@@ -596,7 +597,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                   <button
                     onClick={async () => {
                       const res = await sendFriendRequest(user.username);
-                      alert(res.message || res.error);
+                      appToast(res.message || res.error || 'İşlem tamamlandı.', res.error ? 'error' : 'success');
                     }}
                     className="px-3 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 hover:border-emerald-400 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
                     title="Arkadaş Ekle"

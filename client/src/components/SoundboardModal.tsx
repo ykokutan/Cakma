@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Volume2, Sparkles, X, Flame, Laugh, Bell, Upload, Trash2 } from 'lucide-react';
 import { SOUNDBOARD_PRESETS, SoundboardItem, playSynthesizedSound } from '../utils/soundEffects';
 import { useSocket } from '../context/SocketContext';
+import { appToast } from '../utils/appDialogs';
 
 interface SoundboardModalProps {
   isOpen: boolean;
@@ -77,7 +78,7 @@ export const SoundboardModal: React.FC<SoundboardModalProps> = ({
     if (!file) return;
 
     if (file.size > 2 * 1024 * 1024) {
-      alert('Ses dosyası 2MB\'dan küçük olmalıdır.');
+      appToast('Ses dosyası 2MB\'dan küçük olmalıdır.', 'warning');
       return;
     }
 

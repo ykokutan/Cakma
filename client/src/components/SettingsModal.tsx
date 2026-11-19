@@ -6,6 +6,7 @@ import { DEFAULT_CUSTOM_THEME } from '../utils/themeBuilder';
 import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import { authFetch, resolveBackendBaseUrl } from '../utils/authFetch';
+import { appToast } from '../utils/appDialogs';
 import {
   X,
   Mic,
@@ -237,7 +238,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.5.1');
+  const [appVersion, setAppVersion] = useState<string>('0.6.0');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -489,7 +490,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         if (cameraVideoRef.current) cameraVideoRef.current.srcObject = stream;
       }, 50);
     } catch {
-      alert('Kamera erişimi reddedildi veya kamera bulunamadı.');
+      appToast('Kamera erişimi reddedildi veya kamera bulunamadı.', 'error');
     }
   };
 
@@ -1076,7 +1077,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
                         if (file.size > 500 * 1024) {
-                          alert('Özel ses dosyası 500 KB boyutunu geçmemelidir.');
+                          appToast('Özel ses dosyası 500 KB boyutunu geçmemelidir.', 'warning');
                           e.target.value = '';
                           return;
                         }
@@ -3545,12 +3546,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.5.1 - Latest */}
+                  {/* v0.6.0 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.5.1 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.6.0 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Sunucuları Keşfet &amp; İsteğe Bağlı Üyelik:</strong> Yeni kayıt olan kullanıcılar artık sunuculara otomatik eklenmez; kategoriler, canlı çevrimiçi/ses sayıları, davet önizlemesi ve aranabilir platform rehberi sunan yenilenmiş Keşfet merkezinden gönüllü katılır.</li>
+                      <li><strong className="text-white">1-e-1 Görüşme &amp; Pro Uzaktan Yardım:</strong> <code className="text-cyan-300">RTCDataChannel</code> üzerinden düşük gecikmeli kontrol, Windows <code className="text-cyan-300">SendInput</code> Unicode (Türkçe tam destek) ve çoklu monitör seçimi, <code className="text-cyan-300">Ctrl+Alt+Esc / Pause</code> acil durdurma, host ekranı üst kontrol HUD&apos;ı, canlı çizim/lazer, Zoom &amp; Pan, dosya/pano transferi ve kalıcı DM arama kayıtları eklendi.</li>
+                      <li><strong className="text-white">Gizlilik İzolasyonu, Kalıcı DM &amp; Disk Yükleme:</strong> DM ve kanal olayları yalnızca yetkili üyelere kapsamlandı; oturumdan bağımsız kalıcı DM kanal kimlikleri, <code className="text-cyan-300">/api/upload</code> disk tabanlı dosya/görsel barındırma ve yerel tarayıcı kutularının yerini alan uygulama içi toast/onay modalları eklendi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.5.1 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.5.1 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Yönetim Paneli &amp; REST API Güvenliği:</strong> Tüm <code className="text-cyan-300">/api/admin/*</code>, <code className="text-cyan-300">/api/sessions/*</code>, <code className="text-cyan-300">/api/user-prefs/*</code>, etkinlik ve ses yükleme uç noktalarına oturum/admin yetki doğrulaması ve Webhook SSRF koruması eklendi.</li>
                       <li><strong className="text-white">Modern Uygulama İçi Modallar &amp; Çekmece:</strong> Tarayıcı <code className="text-cyan-300">prompt/confirm/alert</code> kutuları kaldırılarak süre seçenekli yasaklama, şifre üreteci, cüzdan düzenleme, kanal temizleme ve birleşik Kullanıcı Detay Çekmecesi (aktif oturum iptali, IP, lisans, log) eklendi.</li>

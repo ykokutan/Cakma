@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { Server, ServerCategory, ServerRole, ServerPermission } from '../types';
 import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
+import { appConfirm, appPrompt, appToast } from '../utils/appDialogs';
 import {
   X,
   Settings,
@@ -271,20 +272,20 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
         if (!json || typeof json !== 'object') {
-          alert('Geçersiz yedek dosyası!');
+          appToast('Geçersiz yedek dosyası!', 'error');
           return;
         }
-        if (confirm(`"${json.name || 'Bilinmeyen'}" adlı sunucu şablonu/yedeği uygulansın mı? Mevcut kanallar ve ayarlar güncellenecektir.`)) {
+        if (await appConfirm({ title: 'Sunucu Yedeğini Uygula', message: `"${json.name || 'Bilinmeyen'}" adlı sunucu şablonu/yedeği uygulansın mı? Mevcut kanallar ve ayarlar güncellenecektir.`, confirmLabel: 'Uygula' })) {
           restoreServerBackup(server.id, json);
           setSaveSuccess(true);
           setTimeout(() => setSaveSuccess(false), 3000);
         }
       } catch (err) {
-        alert('Yedek dosyası okunamadı veya JSON formatı hatalı.');
+        appToast('Yedek dosyası okunamadı veya JSON formatı hatalı.', 'error');
       }
     };
     reader.readAsText(file);
@@ -313,8 +314,8 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     setTimeout(() => setSaveSuccess(false), 2000);
   };
 
-  const handleDeleteRole = (rId: string) => {
-    if (confirm('Bu rolü silmek istediğinize emin misiniz?')) {
+  const handleDeleteRole = async (rId: string) => {
+    if (await appConfirm({ title: 'Rolü Sil', message: 'Bu rolü silmek istediğinize emin misiniz?', danger: true, confirmLabel: 'Sil' })) {
       deleteServerRole(server.id, rId);
       const remaining = server.roles.filter((r) => r.id !== rId);
       if (remaining.length > 0) {
@@ -331,15 +332,18 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     }
   };
 
-  const handleDeleteServerConfirm = () => {
-    const confirmName = prompt(
-      `DİKKAT: Sunucuyu tamamen silmek üzeresiniz!\nOnaylamak için lütfen sunucu adını ("${server.name}") birebir yazın:`
-    );
+  const handleDeleteServerConfirm = async () => {
+    const confirmName = await appPrompt({
+      title: 'Sunucuyu Sil',
+      message: `DİKKAT: Sunucuyu tamamen silmek üzeresiniz!\nOnaylamak için lütfen sunucu adını ("${server.name}") birebir yazın:`,
+      placeholder: server.name,
+      confirmLabel: 'Kalıcı Olarak Sil',
+    });
     if (confirmName === server.name) {
       deleteServer(server.id);
       onClose();
     } else if (confirmName !== null) {
-      alert('Sunucu adı eşleşmedi, silme işlemi iptal edildi.');
+      appToast('Sunucu adı eşleşmedi, silme işlemi iptal edildi.', 'warning');
     }
   };
 
@@ -860,7 +864,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                         const file = e.target.files?.[0];
                         if (!file) return;
                         if (file.size > 350 * 1024) {
-                          alert('Emoji boyutu 350KB altında olmalıdır.');
+                          appToast('Emoji boyutu 350KB altında olmalıdır.', 'warning');
                           return;
                         }
                         const reader = new FileReader();
@@ -1414,8 +1418,8 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                         {canKick && !m.isOwner && m.userId !== currentUser?.id && (
                           <button
                             type="button"
-                            onClick={() => {
-                              if (confirm(`${m.username} adlı üyeyi sunucudan atmak istediğinize emin misiniz?`)) {
+                            onClick={async () => {
+                              if (await appConfirm({ title: 'Üyeyi Sunucudan At', message: `${m.username} adlı üyeyi sunucudan atmak istediğinize emin misiniz?`, danger: true, confirmLabel: 'At (Kick)' })) {
                                 kickServerMember(server.id, m.userId);
                               }
                             }}

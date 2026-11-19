@@ -26,6 +26,25 @@ export function resolveBackendBaseUrl(host: string): string {
   return `https://${cleaned}`;
 }
 
+/** Resolve relative `/uploads/...` or `/api/sounds/...` media URLs against the active server host. */
+export function resolveMediaUrl(rawUrl: string | undefined | null, host: string): string {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return '';
+  if (
+    raw.startsWith('data:') ||
+    raw.startsWith('blob:') ||
+    raw.startsWith('http://') ||
+    raw.startsWith('https://')
+  ) {
+    return raw;
+  }
+  if (raw.startsWith('/')) {
+    const base = resolveBackendBaseUrl(host);
+    return base ? `${base}${raw}` : raw;
+  }
+  return raw;
+}
+
 export function getStoredAuthToken(): string | null {
   try {
     if (typeof localStorage === 'undefined') return null;

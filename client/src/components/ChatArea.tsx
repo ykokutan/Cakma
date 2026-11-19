@@ -5,7 +5,9 @@ import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
-import { compressImageToWebP } from '../utils/imageCompress';
+import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
+import { resolveMediaUrl } from '../utils/authFetch';
+import { appConfirm, appToast } from '../utils/appDialogs';
 import { ChatLightbox } from './ChatLightbox';
 import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
 import { computeVirtualWindow } from '../utils/virtualWindow';
@@ -190,6 +192,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     messages,
     sendMessage,
     currentUser,
+    currentServerHost,
     activeDMUser,
     startDirectCall,
     directCall,
@@ -463,7 +466,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         setVoiceRecordSeconds((prev) => prev + 1);
       }, 1000);
     } catch (err) {
-      alert('Mikrofon erişimi sağlanamadı.');
+      appToast('Mikrofon erişimi sağlanamadı.', 'error');
     }
   };
 
@@ -485,16 +488,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     mediaRecorderRef.current.onstop = () => {
       const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const base64 = reader.result as string;
-        const newAtt: MessageAttachment = {
-          id: `att-voice-${Date.now()}`,
-          name: `Sesli Mesaj (${duration}s).webm`,
-          size: blob.size,
-          type: 'audio/webm',
-          url: base64,
-        };
-        sendMessage('🎙️ Sesli Mesaj', [newAtt]);
+        try {
+          const uploaded = await uploadDataUrlAttachment(currentServerHost, {
+            name: `sesli-mesaj-${duration}s.webm`,
+            type: 'audio/webm',
+            dataUrl: base64,
+          });
+          const newAtt: MessageAttachment = {
+            ...uploaded,
+            name: `Sesli Mesaj (${duration}s).webm`,
+            size: blob.size,
+          };
+          sendMessage('🎙️ Sesli Mesaj', [newAtt]);
+        } catch (err: any) {
+          appToast(err?.message || 'Sesli mesaj gönderilemedi.', 'error');
+        }
       };
       reader.readAsDataURL(blob);
       setIsVoiceRecording(false);
@@ -724,7 +734,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         const text = args.slice(1).join(' ').trim();
         const match = timeToken.match(/^(\d+)(sn|s|dk|d|m|sa|h)$/);
         if (!match || !text) {
-          alert('Kullanım: /hatirlat <süre> <mesaj> (Örn: /hatirlat 10dk Toplantı var)');
+          appToast('Kullanım: /hatirlat <süre> <mesaj> (Örn: /hatirlat 10dk Toplantı var)', 'warning');
           return;
         }
         const amount = parseInt(match[1], 10);
@@ -788,20 +798,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         const useWebp = webpUrl.startsWith('data:image/webp');
         const dataUrl = useWebp ? webpUrl : canvas.toDataURL('image/png');
         const ext = useWebp ? 'webp' : 'png';
-        setPendingAttachments((prev) => [
-          ...prev,
-          {
-            id: `ss-${Date.now()}`,
-            name: `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.${ext}`,
-            type: useWebp ? 'image/webp' : 'image/png',
-            url: dataUrl,
-            size: Math.round((dataUrl.length * 3) / 4),
-          },
-        ]);
+        const uploaded = await uploadDataUrlAttachment(currentServerHost, {
+          name: `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.${ext}`,
+          type: useWebp ? 'image/webp' : 'image/png',
+          dataUrl,
+        });
+        setPendingAttachments((prev) => [...prev, uploaded]);
       }
       stream.getTracks().forEach((t) => t.stop());
-    } catch {
-      // User cancelled capture
+    } catch (err: any) {
+      if (err?.message && !String(err?.name || '').includes('NotAllowed')) {
+        appToast(err.message, 'error');
+      }
     } finally {
       setIsCapturingScreenshot(false);
     }
@@ -810,21 +818,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const processFiles = (files: FileList | File[]) => {
     Array.from(files).forEach(async (file) => {
       try {
-        const optimized = await compressImageToWebP(file);
-        if (optimized.size > 5 * 1024 * 1024) {
-          alert(`"${file.name}" çok büyük! Lütfen 5MB'dan küçük dosyalar yükleyin.`);
-          return;
-        }
-        const newAtt: MessageAttachment = {
-          id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          name: optimized.name,
-          size: optimized.size,
-          type: optimized.type,
-          url: optimized.dataUrl,
-        };
+        const newAtt = await uploadAttachmentFile(currentServerHost, file);
         setPendingAttachments((prev) => [...prev, newAtt]);
-      } catch {
-        alert(`"${file.name}" okunamadı.`);
+      } catch (err: any) {
+        appToast(err?.message || `"${file.name}" okunamadı.`, 'error');
       }
     });
   };
@@ -1711,8 +1708,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </button>
               {activeChannel.stickyNotice && (
                 <button
-                  onClick={() => {
-                    if (confirm('Sabit duyuruyu kaldırmak istediğinize emin misiniz?')) {
+                  onClick={async () => {
+                    if (await appConfirm({ title: 'Duyuruyu Kaldır', message: 'Sabit duyuruyu kaldırmak istediğinize emin misiniz?', danger: true, confirmLabel: 'Kaldır' })) {
                       updateChannelNotice(activeServer.id, activeChannel.id, null);
                     }
                   }}
@@ -2150,12 +2147,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className="space-y-2 pt-1">
                       {msg.attachments.map((att) => {
+                        const resolvedUrl = resolveMediaUrl(att.url, currentServerHost);
                         // Voice Note / Audio
                         if (att.type.startsWith('audio/')) {
                           return (
                             <div key={att.id} className="pt-1">
                               <VoiceNotePlayer
-                                url={att.url}
+                                url={resolvedUrl}
                                 authorName={msg.author.username}
                               />
                             </div>
@@ -2167,14 +2165,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           return (
                             <div key={att.id} className="relative group/att overflow-hidden rounded-xl">
                               <img
-                                src={att.url}
+                                src={resolvedUrl}
                                 alt={att.name}
-                                onClick={() => setLightboxImage(att.url)}
+                                onClick={() => setLightboxImage(resolvedUrl)}
                                 className="max-h-64 max-w-full rounded-xl cursor-pointer hover:opacity-95 transition object-cover shadow-lg"
                               />
                               <div className="absolute top-2 right-2 opacity-0 group/att:opacity-100 transition flex items-center gap-1.5">
                                 <a
-                                  href={att.url}
+                                  href={resolvedUrl}
                                   download={att.name}
                                   className="p-1.5 rounded-lg bg-black/60 hover:bg-black text-white text-xs backdrop-blur-md shadow"
                                   title="İndir"
@@ -2207,7 +2205,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             </div>
 
                             <a
-                              href={att.url}
+                              href={resolvedUrl}
                               download={att.name}
                               className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
                               title="Dosyayı İndir"
@@ -2278,7 +2276,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             >
               {att.type.startsWith('image/') ? (
                 <img
-                  src={att.url}
+                  src={resolveMediaUrl(att.url, currentServerHost)}
                   alt={att.name}
                   className="w-6 h-6 rounded object-cover shrink-0"
                 />
@@ -2764,7 +2762,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         const gallery = filteredMessages.flatMap((m) =>
           (m.attachments || [])
             .filter((att) => att.type.startsWith('image/'))
-            .map((att) => ({ url: att.url, name: att.name, author: m.author.username }))
+            .map((att) => ({ url: resolveMediaUrl(att.url, currentServerHost), name: att.name, author: m.author.username }))
         );
         const foundIdx = gallery.findIndex((g) => g.url === lightboxImage);
         const safeGallery = foundIdx === -1 ? [{ url: lightboxImage, name: 'Önizleme' }] : gallery;

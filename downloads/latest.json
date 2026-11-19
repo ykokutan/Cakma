@@ -1,11 +1,11 @@
 {
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUUh6WnBnYXJlMldLQ2NjcGtFQzcrTVVwKzFXWU9EM1VFcmR2R2xrV2NKZm5SdzAwN21yOVR6a1A2U2FKQ04vaUkvam9YSUlwRGlLN2JRZFQ2WWJhWkUrakUyT2NGOGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1MDcyOTQwCWZpbGU6w4dha21hXzAuNS4xX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjUuMQpBWGkyVVVOdmhaeW01dkNPTE0zSDRJd2U3elZaTElicHFXejhROGt5ZVB0SDZERDJHdFlBOGxXL0Q5Q2dJQ09TZmRGWjQ4a2xVSVpSZ1YrR2FGYmZCZz09Cg==",
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUUh6WnBnYXJlMlovQklGdkVzWGtxZTJ1Sk9peE5mWHpEdjBVV3A4a3B5MkdMeVJCVFRBQzlLc0NGVWdEOGFyVFNzcCtYWVphN1FrN1I2RnlEQ244YSs1aHZ5REFyOGc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1MDc3ODU4CWZpbGU6w4dha21hXzAuNi4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjYuMAp1elVjYncyN3BSRGg1SUpNd3JqQ2dReE91Mk9qMUFXcVdQckdLYThQNUlyV1NUYm5jNHpXcTJ4VDVsMjhGc0hZL3dNZjRnSDcwK0RIRE1CTWJ1WitDQT09Cg==",
                                              "url":  "https://ses.yahyakemalokutan.com/downloads/Cakma-Setup.exe"
                                          }
                   },
-    "pub_date":  "2026-11-19T07:22:21Z",
-    "version":  "0.5.1",
-    "notes":  "Çakma v0.5.1 güncellemesi"
+    "pub_date":  "2026-11-19T08:44:19Z",
+    "version":  "0.6.0",
+    "notes":  "Çakma v0.6.0 güncellemesi"
 }
