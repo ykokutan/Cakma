@@ -5,6 +5,7 @@ import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } fro
 import { DEFAULT_CUSTOM_THEME } from '../utils/themeBuilder';
 import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
+import { authFetch, resolveBackendBaseUrl } from '../utils/authFetch';
 import {
   X,
   Mic,
@@ -236,7 +237,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.5.0');
+  const [appVersion, setAppVersion] = useState<string>('0.5.1');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -1084,14 +1085,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         reader.onload = async () => {
                           if (typeof reader.result === 'string') {
                             try {
-                              const res = await fetch(`${currentServerHost}/api/sounds/upload`, {
+                              const res = await authFetch(currentServerHost, '/api/sounds/upload', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ name: soundName, dataUrl: reader.result }),
                               });
                               const data = await res.json();
                               if (data?.ok && data?.url) {
-                                addCustomSound(soundName, `${currentServerHost}${data.url}`);
+                                addCustomSound(soundName, `${resolveBackendBaseUrl(currentServerHost)}${data.url}`);
                                 return;
                               }
                             } catch {}
@@ -3544,12 +3545,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.5.0 - Latest */}
+                  {/* v0.5.1 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.5.0 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.5.1 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Yönetim Paneli &amp; REST API Güvenliği:</strong> Tüm <code className="text-cyan-300">/api/admin/*</code>, <code className="text-cyan-300">/api/sessions/*</code>, <code className="text-cyan-300">/api/user-prefs/*</code>, etkinlik ve ses yükleme uç noktalarına oturum/admin yetki doğrulaması ve Webhook SSRF koruması eklendi.</li>
+                      <li><strong className="text-white">Modern Uygulama İçi Modallar &amp; Çekmece:</strong> Tarayıcı <code className="text-cyan-300">prompt/confirm/alert</code> kutuları kaldırılarak süre seçenekli yasaklama, şifre üreteci, cüzdan düzenleme, kanal temizleme ve birleşik Kullanıcı Detay Çekmecesi (aktif oturum iptali, IP, lisans, log) eklendi.</li>
+                      <li><strong className="text-white">Canlı Metrik Grafiği &amp; LiveKit/TURN Testi:</strong> Genel Bakış sekmesine <code className="text-cyan-300">/api/metrics</code> canlı RAM/kullanıcı SVG sparkline grafikleri, gerçek oda adı + hızlı Sustur/At butonları; Sistem Ayarlarına alt sekmeler, yapışkan kaydet çubuğu ve canlı LiveKit/TURN bağlantı testi eklendi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.5.0 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.5.0 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Doğal Masaüstü Yetenekleri (Tauri / Rust):</strong> Tek pencere kilidi (<code className="text-cyan-300">single-instance</code>), oyun içi global <strong>Bas-Konuş (PTT)</strong>, pencere boyut/konum hatırlama, kapatma tuşunda tepsi/çıkış tercihi, <code className="text-cyan-300">cakma://invite</code> derin bağlantı ve zengin sistem tepsisi menüsü (Sağırlaştır, Odadan Ayrıl, Durum Değiştir).</li>
                       <li><strong className="text-white">Sohbet UX &amp; Performans:</strong> Kanal/DM taslak kaydı, boş kutuda <code className="text-cyan-300">↑</code> ile son mesajı düzenleme, <code className="text-cyan-300">Alt + ↑/↓</code> kanal gezintisi, zoom/galerili <strong>Lightbox</strong>, 80+ mesajda sanallaştırılmış liste ve modal lazy-loading.</li>

@@ -44,6 +44,7 @@ import {
 } from './storage.js';
 import { normalizeLiveKitHttpUrl, shouldRoomUseSfu, buildIceServers } from './utils/sfuLogic.js';
 import { validateAttachmentSafety } from './utils/security.js';
+import { validateExternalWebhookUrl } from './utils/adminAuth.js';
 import {
   hashPassword,
   verifyPassword,
@@ -697,9 +698,12 @@ async function sendAdminWebhook(
     const enabled = systemConfig.webhookEvents?.[eventType];
     if (!enabled) return false;
   }
+  const validation = await validateExternalWebhookUrl(url);
+  if (!validation.ok || !validation.normalizedUrl) return false;
   try {
-    const res = await fetch(url, {
+    const res = await fetch(validation.normalizedUrl, {
       method: 'POST',
+      redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(5000),
       body: JSON.stringify({
@@ -5380,6 +5384,7 @@ io.on('connection', (socket: Socket) => {
       systemConfig,
       bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
       storageStats: getStorageStats(),
+      storageEngine: getStorageEngineInfo().engine,
       pinnedBanner: systemConfig.pinnedBanner || null,
       activeSessions: Array.from(activeSessions.values()),
       scheduledBackups: listScheduledBackups(),
@@ -6622,6 +6627,15 @@ registerCloudSyncAndEvents(app, io, activeUsers, {
   getMessagesMap: () => messages,
   getAccounts: () => registeredAccounts,
   getServers: () => servers,
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  getEffectiveLiveKitConfig: () => ({
+    ...getEffectiveLiveKitConfig(),
+    turnUrl: (systemConfig?.turnUrl || process.env.TURN_URL || '').trim(),
+    turnUsername: (systemConfig?.turnUsername || process.env.TURN_USERNAME || '').trim(),
+    turnCredential: (systemConfig?.turnCredential || process.env.TURN_CREDENTIAL || '').trim(),
+  }),
+  addAuditLog,
 });
 
 // Desktop Installer & Updater Manifest Serving (kept outside client/dist so Tauri never bundles it recursively)

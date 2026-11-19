@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Calendar, Plus, Trash2, Users, X, Check } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
+import { authFetch } from '../utils/authFetch';
 
 interface ServerEventItem {
   id: string;
@@ -28,7 +29,7 @@ export const ServerEventsModal: React.FC<ServerEventsModalProps> = ({ isOpen = t
   const loadEvents = async () => {
     if (!activeServer) return;
     try {
-      const res = await fetch(`${currentServerHost}/api/events/${encodeURIComponent(activeServer.id)}`);
+      const res = await authFetch(currentServerHost, `/api/events/${encodeURIComponent(activeServer.id)}`);
       const data = await res.json();
       if (data?.ok && Array.isArray(data.events)) {
         setEvents(data.events);
@@ -48,7 +49,7 @@ export const ServerEventsModal: React.FC<ServerEventsModalProps> = ({ isOpen = t
     e.preventDefault();
     if (!title.trim() || !scheduledAt) return;
     try {
-      const res = await fetch(`${currentServerHost}/api/events/${encodeURIComponent(activeServer.id)}`, {
+      const res = await authFetch(currentServerHost, `/api/events/${encodeURIComponent(activeServer.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -72,8 +73,9 @@ export const ServerEventsModal: React.FC<ServerEventsModalProps> = ({ isOpen = t
   const handleRsvp = async (eventId: string) => {
     if (!currentUser?.username) return;
     try {
-      const res = await fetch(
-        `${currentServerHost}/api/events/${encodeURIComponent(activeServer.id)}/${encodeURIComponent(eventId)}/rsvp`,
+      const res = await authFetch(
+        currentServerHost,
+        `/api/events/${encodeURIComponent(activeServer.id)}/${encodeURIComponent(eventId)}/rsvp`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -89,8 +91,9 @@ export const ServerEventsModal: React.FC<ServerEventsModalProps> = ({ isOpen = t
 
   const handleDelete = async (eventId: string) => {
     try {
-      const res = await fetch(
-        `${currentServerHost}/api/events/${encodeURIComponent(activeServer.id)}/${encodeURIComponent(eventId)}`,
+      const res = await authFetch(
+        currentServerHost,
+        `/api/events/${encodeURIComponent(activeServer.id)}/${encodeURIComponent(eventId)}`,
         { method: 'DELETE' }
       );
       const data = await res.json();

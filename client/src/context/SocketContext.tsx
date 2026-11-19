@@ -11,6 +11,7 @@ import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } fr
 import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, shouldShowUnreadForChannel } from '../utils/notificationPrefs';
 import { parseDeepLinkUrl } from '../utils/deepLink';
 import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
+import { authFetch } from '../utils/authFetch';
 
 export interface UserAudioEq {
   bass: number;
@@ -365,6 +366,7 @@ interface SocketContextType {
       totalBytes: number;
       files: { name: string; bytes: number }[];
     };
+    storageEngine?: string;
     pinnedBanner?: { message: string; sender: string; updatedAt: string } | null;
     activeSessions?: {
       socketId: string;
@@ -5810,7 +5812,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!uname || !isAuthenticated) return;
     if (cloudSyncLoadedUserRef.current === uname) return;
     cloudSyncLoadedUserRef.current = uname;
-    fetch(`${currentServerHost}/api/user-prefs/${encodeURIComponent(uname)}`)
+    authFetch(currentServerHost, `/api/user-prefs/${encodeURIComponent(uname)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
         const prefs = res?.prefs;
@@ -5848,7 +5850,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const uname = currentUser?.username?.trim();
     if (!uname || !isAuthenticated || cloudSyncLoadedUserRef.current !== uname) return;
     const timer = window.setTimeout(() => {
-      fetch(`${currentServerHost}/api/user-prefs/${encodeURIComponent(uname)}`, {
+      authFetch(currentServerHost, `/api/user-prefs/${encodeURIComponent(uname)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

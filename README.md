@@ -1,6 +1,6 @@
-# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.5.0`)
+# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.5.1`)
 
-![Version](https://img.shields.io/badge/version-0.5.0-red?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.1-red?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20TypeScript%20%7C%20Tauri%20v2%20%7C%20Node.js%20%7C%20WebRTC%20%7C%20LiveKit%20SFU-indigo?style=flat-square)
 ![Languages](https://img.shields.io/badge/i18n-TR%20%7C%20EN%20%7C%20DE%20%7C%20RU-emerald?style=flat-square)
 

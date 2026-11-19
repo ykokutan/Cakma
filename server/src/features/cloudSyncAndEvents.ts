@@ -1,9 +1,14 @@
-import express, { Express } from 'express';
+import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import { Server as SocketIOServer } from 'socket.io';
 import path from 'path';
 import fs from 'fs';
 import { getPersistentDir, getStorageEngineInfo } from '../storage.js';
 import { collectReferencedMediaUrls, scanAndCleanOrphanUploads } from '../utils/uploadCleaner.js';
+import {
+  AuthenticatedRequest,
+  createAuthMiddlewares,
+  validateExternalWebhookUrl,
+} from '../utils/adminAuth.js';
 import type { Message, RegisteredAccount, Server } from '../types.js';
 
 export interface ServerEventItem {
@@ -41,26 +46,70 @@ function writeJson(filePath: string, data: unknown) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
+function toHttpUrlFromLiveKit(raw: string): string {
+  const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  if (trimmed.startsWith('wss://')) return `https://${trimmed.slice(6)}`;
+  if (trimmed.startsWith('ws://')) return `http://${trimmed.slice(5)}`;
+  return trimmed;
+}
+
 export interface OrphanCleanupContext {
   getMessagesMap: () => Record<string, Message[]>;
   getAccounts: () => Map<string, RegisteredAccount>;
   getServers: () => Server[];
 }
 
+export interface EffectiveLiveKitConfigSnapshot {
+  enabled: boolean;
+  threshold?: number;
+  url: string;
+  apiKey: string;
+  apiSecret: string;
+  turnUrl?: string;
+  turnUsername?: string;
+  turnCredential?: string;
+}
+
+export interface CloudSyncContext extends OrphanCleanupContext {
+  verifySessionTokenWithMeta?: (token: string) => { username: string; iat: number } | null;
+  getAccount?: (usernameLower: string) => RegisteredAccount | undefined;
+  getEffectiveLiveKitConfig?: () => EffectiveLiveKitConfigSnapshot;
+  addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
+}
+
 export function registerCloudSyncAndEvents(
   app: Express,
   io: SocketIOServer,
   activeUsers: Map<string, { username: string }>,
-  orphanContext?: OrphanCleanupContext
+  context?: CloudSyncContext
 ) {
   ensureDirs();
+
+  const failClosed: RequestHandler = (_req: Request, res: Response, _next: NextFunction) => {
+    res.status(500).json({ ok: false, error: 'Kimlik doğrulama bağlamı yapılandırılmadı.' });
+  };
+
+  const authMiddlewares =
+    context?.verifySessionTokenWithMeta && context?.getAccount
+      ? createAuthMiddlewares({
+          verifySessionTokenWithMeta: context.verifySessionTokenWithMeta,
+          getAccount: context.getAccount,
+        })
+      : {
+          requireAuth: failClosed,
+          requireAdmin: failClosed,
+          requireSelfOrAdmin: () => failClosed,
+        };
+
+  const { requireAuth, requireAdmin, requireSelfOrAdmin } = authMiddlewares;
 
   const runOrphanScan = (dryRun: boolean, minAgeMs: number) => {
     const referencedUrls = collectReferencedMediaUrls({
       dataDir: DATA_DIR,
-      messagesMap: orphanContext?.getMessagesMap?.(),
-      accounts: orphanContext?.getAccounts?.(),
-      servers: orphanContext?.getServers?.(),
+      messagesMap: context?.getMessagesMap?.(),
+      accounts: context?.getAccounts?.(),
+      servers: context?.getServers?.(),
     });
     return scanAndCleanOrphanUploads({
       dataDir: DATA_DIR,
@@ -70,7 +119,7 @@ export function registerCloudSyncAndEvents(
     });
   };
 
-  if (orphanContext) {
+  if (context) {
     const gcTimer = setInterval(() => {
       try {
         const res = runOrphanScan(false, 24 * 3600 * 1000);
@@ -82,15 +131,15 @@ export function registerCloudSyncAndEvents(
     gcTimer.unref?.();
   }
 
-  // 1. Cloud User Preferences Sync
-  app.get('/api/user-prefs/:username', (req, res) => {
+  // 1. Cloud User Preferences Sync (authenticated self or admin only)
+  app.get('/api/user-prefs/:username', requireSelfOrAdmin('username'), (req, res) => {
     const uname = String(req.params.username || '').trim().toLowerCase();
     if (!uname) return res.status(400).json({ error: 'Username required' });
     const all = readJson<Record<string, any>>(PREFS_FILE, {});
     res.json({ ok: true, prefs: all[uname] || null });
   });
 
-  app.post('/api/user-prefs/:username', express.json({ limit: '1mb' }), (req, res) => {
+  app.post('/api/user-prefs/:username', requireSelfOrAdmin('username'), express.json({ limit: '1mb' }), (req, res) => {
     const uname = String(req.params.username || '').trim().toLowerCase();
     if (!uname) return res.status(400).json({ error: 'Username required' });
     const all = readJson<Record<string, any>>(PREFS_FILE, {});
@@ -104,18 +153,24 @@ export function registerCloudSyncAndEvents(
   });
 
   // 2. Server Events (Etkinlikler)
-  app.get('/api/events/:serverId', (req, res) => {
+  app.get('/api/events/:serverId', requireAuth, (req, res) => {
     const serverId = String(req.params.serverId || '').trim();
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
     res.json({ ok: true, events: all[serverId] || [] });
   });
 
-  app.post('/api/events/:serverId', express.json({ limit: '256kb' }), (req, res) => {
+  app.post('/api/events/:serverId', requireAuth, express.json({ limit: '256kb' }), (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
     const serverId = String(req.params.serverId || '').trim();
     const { title, description, scheduledAt, createdBy } = req.body || {};
     if (!serverId || !title || !scheduledAt) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    const creator =
+      authUser.role === 'admin' && typeof createdBy === 'string' && createdBy.trim()
+        ? String(createdBy).trim().slice(0, 48)
+        : authUser.username;
+
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
     const item: ServerEventItem = {
       id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -123,8 +178,8 @@ export function registerCloudSyncAndEvents(
       title: String(title).slice(0, 80),
       description: String(description || '').slice(0, 400),
       scheduledAt: String(scheduledAt),
-      createdBy: String(createdBy || 'Üye'),
-      attendees: createdBy ? [String(createdBy)] : [],
+      createdBy: creator,
+      attendees: creator ? [creator] : [],
       createdAt: new Date().toISOString(),
     };
     all[serverId] = [item, ...(all[serverId] || [])].slice(0, 50);
@@ -133,10 +188,11 @@ export function registerCloudSyncAndEvents(
     res.json({ ok: true, event: item, events: all[serverId] });
   });
 
-  app.post('/api/events/:serverId/:eventId/rsvp', express.json({ limit: '64kb' }), (req, res) => {
+  app.post('/api/events/:serverId/:eventId/rsvp', requireAuth, express.json({ limit: '64kb' }), (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
     const { serverId, eventId } = req.params;
-    const username = String(req.body?.username || '').trim();
-    if (!username) return res.status(400).json({ error: 'Username required' });
+    const requestedName = String(req.body?.username || '').trim();
+    const username = authUser.role === 'admin' && requestedName ? requestedName : authUser.username;
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
     const list = all[serverId] || [];
     const target = list.find((e) => e.id === eventId);
@@ -151,17 +207,30 @@ export function registerCloudSyncAndEvents(
     res.json({ ok: true, events: list });
   });
 
-  app.delete('/api/events/:serverId/:eventId', (req, res) => {
+  app.delete('/api/events/:serverId/:eventId', requireAuth, (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
     const { serverId, eventId } = req.params;
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
-    all[serverId] = (all[serverId] || []).filter((e) => e.id !== eventId);
+    const list = all[serverId] || [];
+    const target = list.find((e) => e.id === eventId);
+    if (!target) {
+      return res.status(404).json({ ok: false, error: 'Etkinlik bulunamadı.' });
+    }
+    const targetServer = context?.getServers?.()?.find((s) => s.id === serverId);
+    const isServerOwner = Boolean(targetServer && targetServer.ownerId === authUser.account.id);
+    const isCreator = target.createdBy.toLowerCase() === authUser.username.toLowerCase();
+    if (authUser.role !== 'admin' && !isCreator && !isServerOwner) {
+      return res.status(403).json({ ok: false, error: 'Bu etkinliği silme yetkiniz yok.' });
+    }
+
+    all[serverId] = list.filter((e) => e.id !== eventId);
     writeJson(EVENTS_FILE, all);
     io.emit('server_events_updated', { serverId, events: all[serverId] });
     res.json({ ok: true, events: all[serverId] });
   });
 
-  // 3. Server-side Custom Soundboard Upload & Serving
-  app.post('/api/sounds/upload', express.json({ limit: '2mb' }), (req, res) => {
+  // 3. Server-side Custom Soundboard Upload (authenticated) & Public Audio Tag Serving
+  app.post('/api/sounds/upload', requireAuth, express.json({ limit: '2mb' }), (req, res) => {
     const { name, dataUrl } = req.body || {};
     if (!name || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:audio/')) {
       return res.status(400).json({ error: 'Geçersiz ses verisi' });
@@ -184,6 +253,7 @@ export function registerCloudSyncAndEvents(
     });
   });
 
+  // Keep GET /api/sounds/:filename readable for <audio src="/api/sounds/..."> elements
   app.get('/api/sounds/:filename', (req, res) => {
     const safeName = path.basename(String(req.params.filename || ''));
     const fullPath = path.join(SOUNDS_DIR, safeName);
@@ -191,8 +261,8 @@ export function registerCloudSyncAndEvents(
     res.sendFile(fullPath);
   });
 
-  // 4. Active Sessions & Remote Logout
-  app.get('/api/sessions/:username', (req, res) => {
+  // 4. Active Sessions & Remote Logout (authenticated self or admin)
+  app.get('/api/sessions/:username', requireSelfOrAdmin('username'), (req, res) => {
     const uname = String(req.params.username || '').trim().toLowerCase();
     const sessions: Array<{ id: string; ip: string; userAgent: string; connectedAt: string }> = [];
     for (const [id, sock] of io.sockets.sockets) {
@@ -209,7 +279,7 @@ export function registerCloudSyncAndEvents(
     res.json({ ok: true, sessions });
   });
 
-  app.post('/api/sessions/:username/revoke-others', express.json({ limit: '32kb' }), (req, res) => {
+  app.post('/api/sessions/:username/revoke-others', requireSelfOrAdmin('username'), express.json({ limit: '32kb' }), (req, res) => {
     const uname = String(req.params.username || '').trim().toLowerCase();
     const keepSocketId = String(req.body?.keepSocketId || '');
     let revoked = 0;
@@ -224,8 +294,8 @@ export function registerCloudSyncAndEvents(
     res.json({ ok: true, revoked });
   });
 
-  // 5. Admin Panel Utilities: Disk Usage, Uploaded Sounds Management, All Events, Webhook Test & Force Logout
-  app.get('/api/admin/disk-usage', (_req, res) => {
+  // 5. Admin Panel Utilities (strictly requireAdmin)
+  app.get('/api/admin/disk-usage', requireAdmin, (_req, res) => {
     ensureDirs();
     const getDirStats = (dir: string) => {
       let totalBytes = 0;
@@ -255,7 +325,7 @@ export function registerCloudSyncAndEvents(
 
     const dataStats = getDirStats(DATA_DIR);
     const soundsStats = getDirStats(SOUNDS_DIR);
-    const orphanStats = orphanContext ? runOrphanScan(true, 0) : null;
+    const orphanStats = context ? runOrphanScan(true, 0) : null;
     res.json({
       ok: true,
       storageEngine: getStorageEngineInfo(),
@@ -272,21 +342,29 @@ export function registerCloudSyncAndEvents(
     });
   });
 
-  app.post('/api/admin/cleanup-orphans', express.json({ limit: '16kb' }), (req, res) => {
+  app.post('/api/admin/cleanup-orphans', requireAdmin, express.json({ limit: '16kb' }), (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
     const minAgeMs = Math.max(0, Number(req.body?.minAgeMs ?? 0) || 0);
     const result = runOrphanScan(false, minAgeMs);
+    context?.addAuditLog?.(
+      'ARTIK_DOSYA_TEMIZLIGI',
+      `${authUser.username}, ${result.deletedFiles} artık dosyayı temizledi (${result.freedBytes} bayt).`,
+      'info'
+    );
     res.json({ ok: true, result });
   });
 
-  app.delete('/api/admin/sounds/:filename', (req, res) => {
+  app.delete('/api/admin/sounds/:filename', requireAdmin, (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
     const safeName = path.basename(String(req.params.filename || ''));
     const fullPath = path.join(SOUNDS_DIR, safeName);
     if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'Dosya bulunamadı' });
     fs.unlinkSync(fullPath);
+    context?.addAuditLog?.('SOUNDBOARD_SILINDI', `${authUser.username}, "${safeName}" ses dosyasını sildi.`, 'info');
     res.json({ ok: true });
   });
 
-  app.get('/api/admin/all-events', (_req, res) => {
+  app.get('/api/admin/all-events', requireAdmin, (_req, res) => {
     const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
     const flat: ServerEventItem[] = [];
     for (const list of Object.values(all)) {
@@ -295,14 +373,17 @@ export function registerCloudSyncAndEvents(
     res.json({ ok: true, events: flat });
   });
 
-  app.post('/api/admin/webhook-test', express.json({ limit: '32kb' }), async (req, res) => {
+  app.post('/api/admin/webhook-test', requireAdmin, express.json({ limit: '32kb' }), async (req, res) => {
     const webhookUrl = String(req.body?.webhookUrl || '').trim();
-    if (!webhookUrl.startsWith('http://') && !webhookUrl.startsWith('https://')) {
-      return res.status(400).json({ ok: false, error: 'Geçerli bir http/https Webhook URL girin.' });
+    const validation = await validateExternalWebhookUrl(webhookUrl);
+    if (!validation.ok || !validation.normalizedUrl) {
+      return res.status(400).json({ ok: false, error: validation.error || 'Geçerli bir harici http/https Webhook URL girin.' });
     }
     try {
-      const resp = await fetch(webhookUrl, {
+      const resp = await fetch(validation.normalizedUrl, {
         method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: '✅ **Çakma Sistem Yönetim Paneli:** Webhook test bildirimi başarıyla ulaştı!',
@@ -315,7 +396,8 @@ export function registerCloudSyncAndEvents(
     }
   });
 
-  app.post('/api/admin/users/:username/force-logout', (req, res) => {
+  app.post('/api/admin/users/:username/force-logout', requireAdmin, (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
     const uname = String(req.params.username || '').trim().toLowerCase();
     let count = 0;
     for (const [id, sock] of io.sockets.sockets) {
@@ -326,6 +408,114 @@ export function registerCloudSyncAndEvents(
         count++;
       }
     }
+    context?.addAuditLog?.(
+      'ZORUNLU_CIKIS',
+      `${authUser.username}, "${req.params.username}" kullanıcısının ${count} aktif oturumunu sonlandırdı.`,
+      'auth'
+    );
     res.json({ ok: true, disconnected: count });
+  });
+
+  app.post('/api/admin/sessions/:socketId/revoke', requireAdmin, (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
+    const socketId = String(req.params.socketId || '').trim();
+    if (!socketId) {
+      return res.status(400).json({ ok: false, error: 'Geçerli socketId gereklidir.' });
+    }
+    const targetSocket = io.sockets.sockets.get(socketId);
+    if (!targetSocket) {
+      return res.json({ ok: true, revoked: false });
+    }
+    const targetUsername =
+      activeUsers.get(socketId)?.username ||
+      (targetSocket as any).data?.username ||
+      (targetSocket.handshake.auth as any)?.username ||
+      socketId;
+    targetSocket.emit('force_logout', { reason: 'Sistem yöneticisi tarafından oturumunuz sonlandırıldı.' });
+    targetSocket.disconnect(true);
+    context?.addAuditLog?.(
+      'OTURUM_IPTAL',
+      `${authUser.username}, "${targetUsername}" kullanıcısının oturumunu (${socketId}) kapattı.`,
+      'auth'
+    );
+    res.json({ ok: true, revoked: true });
+  });
+
+  app.post('/api/admin/livekit-test', requireAdmin, express.json({ limit: '32kb' }), async (req, res) => {
+    const current = context?.getEffectiveLiveKitConfig?.();
+    const rawUrl = String(req.body?.livekitUrl ?? '').trim() || current?.url || 'http://127.0.0.1:7880';
+    const livekitUrl = toHttpUrlFromLiveKit(rawUrl);
+    const livekitApiKey = String(req.body?.livekitApiKey ?? '').trim() || current?.apiKey || '';
+    const livekitApiSecret = String(req.body?.livekitApiSecret ?? '').trim() || current?.apiSecret || '';
+    const turnUrl = String(req.body?.turnUrl ?? '').trim() || current?.turnUrl || '';
+    const turnUsername = String(req.body?.turnUsername ?? '').trim() || current?.turnUsername || '';
+    const turnCredential = String(req.body?.turnCredential ?? '').trim() || current?.turnCredential || '';
+
+    const configured = Boolean(livekitApiKey && livekitApiSecret);
+    let livekitReachable = false;
+    let status = 0;
+    let latencyMs = 0;
+    let livekitMessage = '';
+
+    let parsedLk: URL | null = null;
+    try {
+      parsedLk = new URL(livekitUrl);
+    } catch {
+      parsedLk = null;
+    }
+
+    if (!parsedLk || (parsedLk.protocol !== 'http:' && parsedLk.protocol !== 'https:')) {
+      livekitMessage = 'LiveKit URL yalnızca http://, https://, ws:// veya wss:// olmalıdır.';
+    } else {
+      const started = Date.now();
+      try {
+        const resp = await fetch(parsedLk.toString(), {
+          method: 'GET',
+          signal: AbortSignal.timeout(2500),
+        });
+        latencyMs = Date.now() - started;
+        status = resp.status;
+        livekitReachable = resp.status < 500;
+        livekitMessage = livekitReachable
+          ? `Bağlantı başarılı (${latencyMs} ms)${configured ? '' : ' — Uyarı: API Key/Secret eksik'}`
+          : `LiveKit HTTP ${resp.status} hatası döndü.`;
+      } catch (err: any) {
+        latencyMs = Date.now() - started;
+        livekitMessage = `LiveKit sunucusuna ulaşılamadı: ${err?.message || 'Bağlantı zaman aşımı'}`;
+      }
+    }
+
+    let turnValid = true;
+    let turnMessage = 'Özel TURN tanımlanmamış (varsayılan STUN/LiveKit ICE kullanılacak).';
+    if (turnUrl) {
+      const turnPattern = /^(turns?|stuns?):(\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+)(:\d{1,5})?(\?.*)?$/i;
+      if (!turnPattern.test(turnUrl)) {
+        turnValid = false;
+        turnMessage = 'TURN/STUN URL formatı geçersiz (örn: turn:turn.alanadiniz.com:3478).';
+      } else if (/^turns?:/i.test(turnUrl) && (!turnUsername || !turnCredential)) {
+        turnValid = true;
+        turnMessage = 'TURN URI sözdizimi geçerli ancak kullanıcı adı veya şifre boş bırakılmış.';
+      } else {
+        turnValid = true;
+        turnMessage = 'TURN sunucu adresi ve kimlik bilgileri geçerli görünüyor.';
+      }
+    }
+
+    res.json({
+      ok: livekitReachable && turnValid,
+      livekit: {
+        url: livekitUrl,
+        configured,
+        reachable: livekitReachable,
+        status,
+        latencyMs,
+        message: livekitMessage,
+      },
+      turn: {
+        configured: Boolean(turnUrl),
+        valid: turnValid,
+        message: turnMessage,
+      },
+    });
   });
 }

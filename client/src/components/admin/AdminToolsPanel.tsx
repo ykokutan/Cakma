@@ -12,6 +12,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { IssuedLicense, AuditLog, Server } from '../../types';
+import { authFetch, resolveBackendBaseUrl } from '../../utils/authFetch';
+import { exportRowsToCsv, downloadTextFile } from '../../utils/adminHelpers';
 
 interface AdminToolsPanelProps {
   currentServerHost: string;
@@ -54,8 +56,8 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
   const loadData = async () => {
     try {
       const [dRes, eRes] = await Promise.all([
-        fetch(`${currentServerHost}/api/admin/disk-usage`).then((r) => r.json()).catch(() => null),
-        fetch(`${currentServerHost}/api/admin/all-events`).then((r) => r.json()).catch(() => null),
+        authFetch(currentServerHost, '/api/admin/disk-usage').then((r) => r.json()).catch(() => null),
+        authFetch(currentServerHost, '/api/admin/all-events').then((r) => r.json()).catch(() => null),
       ]);
       if (dRes?.ok) setDiskInfo(dRes);
       if (eRes?.ok && Array.isArray(eRes.events)) setEvents(eRes.events);
@@ -86,41 +88,42 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
     return counts;
   }, [licenses]);
 
-  const downloadFile = (filename: string, content: string, mime: string) => {
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const exportCsv = (type: 'users' | 'licenses' | 'logs') => {
     if (type === 'users') {
-      const rows = ['username,role,isOnline,isBanned', ...users.map((u) => `"${u.username}","${u.role || 'member'}",${Boolean(u.isOnline)},${Boolean(u.isBanned)}`)];
-      downloadFile('cakma-kullanicilar.csv', rows.join('\n'), 'text/csv;charset=utf-8');
+      const csv = exportRowsToCsv(
+        ['username', 'role', 'isOnline', 'isBanned'],
+        users.map((u) => [u.username, u.role || 'member', Boolean(u.isOnline), Boolean(u.isBanned)])
+      );
+      downloadTextFile('cakma-kullanicilar.csv', csv, 'text/csv;charset=utf-8');
     } else if (type === 'licenses') {
-      const rows = ['licenseKey,tier,maxSlots,status,expiresAt', ...licenses.map((l) => `"${l.licenseKey}","${l.tier}",${l.maxSlots},"${l.status}","${l.expiresAt || 'lifetime'}"`)];
-      downloadFile('cakma-lisanslar.csv', rows.join('\n'), 'text/csv;charset=utf-8');
+      const csv = exportRowsToCsv(
+        ['licenseKey', 'tier', 'maxSlots', 'status', 'expiresAt'],
+        licenses.map((l) => [l.licenseKey, l.tier, l.maxSlots, l.status, l.expiresAt || 'lifetime'])
+      );
+      downloadTextFile('cakma-lisanslar.csv', csv, 'text/csv;charset=utf-8');
     } else {
-      const rows = ['timestamp,type,action,details', ...logs.map((g) => `"${g.timestamp}","${g.type}","${g.action}","${String(g.details || '').replace(/"/g, '""')}"`)];
-      downloadFile('cakma-denetim-gunlugu.csv', rows.join('\n'), 'text/csv;charset=utf-8');
+      const csv = exportRowsToCsv(
+        ['timestamp', 'type', 'action', 'details'],
+        logs.map((g) => [g.timestamp, g.type, g.action, g.details || ''])
+      );
+      downloadTextFile('cakma-denetim-gunlugu.csv', csv, 'text/csv;charset=utf-8');
     }
   };
 
   const handleDeleteSound = async (name: string) => {
     try {
-      const res = await fetch(`${currentServerHost}/api/admin/sounds/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const res = await authFetch(currentServerHost, `/api/admin/sounds/${encodeURIComponent(name)}`, { method: 'DELETE' });
       if (res.ok) loadData();
     } catch {}
   };
 
   const handleDeleteEvent = async (serverId: string, eventId: string) => {
     try {
-      const res = await fetch(`${currentServerHost}/api/events/${encodeURIComponent(serverId)}/${encodeURIComponent(eventId)}`, {
-        method: 'DELETE',
-      });
+      const res = await authFetch(
+        currentServerHost,
+        `/api/events/${encodeURIComponent(serverId)}/${encodeURIComponent(eventId)}`,
+        { method: 'DELETE' }
+      );
       if (res.ok) loadData();
     } catch {}
   };
@@ -128,7 +131,7 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
   const handleTestWebhook = async () => {
     setWebhookStatus('Gönderiliyor...');
     try {
-      const res = await fetch(`${currentServerHost}/api/admin/webhook-test`, {
+      const res = await authFetch(currentServerHost, '/api/admin/webhook-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ webhookUrl }),
@@ -145,7 +148,7 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
     let total = 0;
     for (const uname of selectedUsers) {
       try {
-        const res = await fetch(`${currentServerHost}/api/admin/users/${encodeURIComponent(uname)}/force-logout`, {
+        const res = await authFetch(currentServerHost, `/api/admin/users/${encodeURIComponent(uname)}/force-logout`, {
           method: 'POST',
         });
         const data = await res.json();
@@ -223,7 +226,7 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
                     onClick={async () => {
                       setCleaningOrphans(true);
                       try {
-                        const res = await fetch(`${currentServerHost}/api/admin/cleanup-orphans`, {
+                        const res = await authFetch(currentServerHost, '/api/admin/cleanup-orphans', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ minAgeMs: 0 }),
@@ -302,7 +305,7 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
           <button
             type="button"
             onClick={() =>
-              downloadFile(
+              downloadTextFile(
                 'cakma-sistem-raporu.json',
                 JSON.stringify({ users, licenses, logs, serversCount: servers.length }, null, 2),
                 'application/json'
@@ -434,7 +437,7 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => new Audio(`${currentServerHost}${s.url}`).play().catch(() => {})}
+                      onClick={() => new Audio(`${resolveBackendBaseUrl(currentServerHost)}${s.url}`).play().catch(() => {})}
                       className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
                       title="Dinle"
                     >
