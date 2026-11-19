@@ -6,6 +6,7 @@ import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
+import { LinkPreviewCard } from './chat/LinkPreviewCard';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
@@ -82,7 +83,6 @@ import {
   VideoOff,
   Bookmark,
   Camera,
-  ExternalLink,
   Inbox,
   Calendar,
   Lock,
@@ -163,6 +163,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     addReminder,
     dmReadReceipts,
     markDmRead,
+    markChannelRead,
     unreadCounts,
     language,
     hasMoreMessages,
@@ -209,6 +210,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       markDmRead(activeDMUser.username);
     }
   }, [activeServer?.id, activeDMUser?.username, messages.length, markDmRead]);
+
+  useEffect(() => {
+    if (activeChannel?.id && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg?.id) {
+        markChannelRead(activeChannel.id, lastMsg.id);
+      }
+    }
+  }, [activeChannel?.id, messages, markChannelRead]);
 
   const lastMyMessageId = React.useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1988,37 +1998,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         {isSameAuthorAsPrev && msg.isEdited && (
                           <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
                         )}
-                        {showLinkPreviews && (() => {
-                          const urlMatch = msg.content.match(/https?:\/\/[^\s<>()]+/i);
-                          if (!urlMatch) return null;
-                          const rawUrl = urlMatch[0];
-                          const ytMatch = rawUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-                          let host = rawUrl;
-                          try { host = new URL(rawUrl).hostname; } catch {}
-                          return (
-                            <a
-                              href={rawUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-2 block max-w-sm rounded-xl bg-black/35 border border-white/10 hover:border-cyan-400/40 overflow-hidden transition group/link"
-                            >
-                              {ytMatch && (
-                                <img
-                                  src={`https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`}
-                                  alt="YouTube Önizleme"
-                                  className="w-full h-36 object-cover border-b border-white/10"
-                                />
-                              )}
-                              <div className="px-3 py-2 flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <div className="text-[11px] font-bold text-cyan-300 truncate">{host}</div>
-                                  <div className="text-[10px] text-white/50 truncate">{rawUrl}</div>
-                                </div>
-                                <ExternalLink className="w-3.5 h-3.5 text-white/40 group-hover/link:text-cyan-300 shrink-0" />
-                              </div>
-                            </a>
-                          );
-                        })()}
+                        {showLinkPreviews &&
+                          !isE2eeCiphertext(msg.content) &&
+                          (!msg.attachments || msg.attachments.length === 0) && (
+                            <LinkPreviewCard
+                              text={msg.content}
+                              host={currentServerHost}
+                              enabled={showLinkPreviews}
+                            />
+                          )}
                       </div>
                     )}
                   </>

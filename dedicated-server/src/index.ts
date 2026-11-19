@@ -12,6 +12,13 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { verifyLicenseKey, OFFICIAL_CLIENT_SIGNATURE, type LicenseData } from './licenseValidator.js';
+import {
+  loadDedicatedState,
+  scheduleDedicatedStateSave,
+  flushDedicatedStateSync,
+  type DedicatedStoredAccount,
+  type DedicatedStoredChannel,
+} from './storage.js';
 
 function hashPasswordScrypt(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -283,40 +290,35 @@ function getDedicatedBadges(role: string, username: string): DedicatedUserBadge[
   return badges;
 }
 
-const registeredAccounts = new Map<string, Account>([
-  [
-    'admin',
-    {
-      username: 'admin',
-      email: 'admin@dedicated.local',
-      password: hashPasswordScrypt('admin123'),
-      avatar: '🛡️',
-      role: 'admin',
-      statusMessage: '👑 Dedicated Sunucu Aktif',
-      bannerColor: 'from-indigo-600 via-purple-600 to-pink-600',
-      bio: 'Bu bağımsız lisanslı Dedicated ses sunucusunun sahibi ve yöneticisi.',
-      badges: getDedicatedBadges('admin', 'admin'),
-      friends: ['ahmet']
-    }
-  ],
-  [
-    'ahmet',
-    {
-      username: 'ahmet',
-      email: 'ahmet@dedicated.local',
-      password: hashPasswordScrypt('123456'),
-      avatar: '🎮',
-      role: 'user',
-      statusMessage: '🎧 Müzik Dinliyor (Lo-Fi)',
-      bannerColor: 'from-blue-600 via-cyan-600 to-teal-500',
-      bio: 'Dedicated sunucuda oyun ve sohbet ediyor.',
-      badges: getDedicatedBadges('user', 'ahmet'),
-      friends: ['admin']
-    }
-  ]
-]);
+const defaultDedicatedChannels: DedicatedStoredChannel[] = (config.defaultChannels || [
+  { name: 'genel-sohbet', type: 'text' },
+  { name: 'Lobi Ses', type: 'voice' },
+]).map((c: any, idx: number) => ({
+  id: `ch-${c.type}-${idx + 1}`,
+  name: String(c.name || `kanal-${idx + 1}`),
+  type: c.type === 'voice' ? 'voice' : 'text',
+  serverId: 'dedicated-server-root',
+}));
 
-const pendingDedicatedFriendRequests = new Map<string, any>();
+const initialDedicatedState = loadDedicatedState({
+  defaultChannels: defaultDedicatedChannels,
+  hashPasswordScrypt,
+  getBadges: getDedicatedBadges,
+});
+
+const registeredAccounts = initialDedicatedState.accounts;
+const pendingDedicatedFriendRequests = initialDedicatedState.friendRequests;
+const serverChannels = initialDedicatedState.channels;
+const messages: Record<string, any[]> = initialDedicatedState.messages;
+
+function persistDedicatedState() {
+  scheduleDedicatedStateSave(
+    registeredAccounts,
+    serverChannels,
+    messages,
+    pendingDedicatedFriendRequests
+  );
+}
 
 function getDedicatedFriendsData(username: string) {
   const account = registeredAccounts.get(username.toLowerCase());
@@ -360,17 +362,6 @@ function getDedicatedFriendsData(username: string) {
 }
 
 const connectedUsers = new Map<string, DedicatedUser>();
-const serverChannels = (config.defaultChannels || [
-  { name: 'genel-sohbet', type: 'text' },
-  { name: 'Lobi Ses', type: 'voice' },
-]).map((c: any, idx: number) => ({
-  id: `ch-${c.type}-${idx + 1}`,
-  name: c.name,
-  type: c.type,
-  serverId: 'dedicated-server-root'
-}));
-
-const messages: Record<string, any[]> = {};
 
 let isLicenseRevoked = false;
 let isShuttingDown = false;
@@ -513,6 +504,7 @@ io.on('connection', (socket: Socket) => {
     }
     if (!foundAccount.password.startsWith('scrypt$')) {
       foundAccount.password = hashPasswordScrypt(password);
+      persistDedicatedState();
     }
 
     user.username = foundAccount.username;
@@ -562,6 +554,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     registeredAccounts.set(cleanUsername.toLowerCase(), newAcc);
+    persistDedicatedState();
     user.username = newAcc.username;
     user.email = newAcc.email;
     user.role = newAcc.role;
@@ -608,6 +601,7 @@ io.on('connection', (socket: Socket) => {
 
     if (!messages[channelId]) messages[channelId] = [];
     messages[channelId].push(msg);
+    persistDedicatedState();
 
     io.emit('new_message', msg);
   });
@@ -625,6 +619,7 @@ io.on('connection', (socket: Socket) => {
       if (bio !== undefined) acc.bio = bio;
       if (bannerColor !== undefined) acc.bannerColor = bannerColor;
       if (avatar !== undefined) acc.avatar = avatar;
+      persistDedicatedState();
     }
 
     io.emit('user_updated', user);
@@ -714,6 +709,7 @@ io.on('connection', (socket: Socket) => {
         senderAccount.friends.push(targetAccount.username.toLowerCase());
         targetAccount.friends.push(user.username.toLowerCase());
         pendingDedicatedFriendRequests.delete(req.id);
+        persistDedicatedState();
 
         socket.emit('friend_request_response', { success: true, message: `${targetAccount.username} ile arkadaş oldunuz!` });
         socket.emit('friends_data', getDedicatedFriendsData(user.username));
@@ -739,6 +735,7 @@ io.on('connection', (socket: Socket) => {
     };
 
     pendingDedicatedFriendRequests.set(newReq.id, newReq);
+    persistDedicatedState();
     socket.emit('friend_request_response', { success: true, message: `${targetAccount.username} adlı kullanıcıya arkadaşlık isteği gönderildi!` });
     socket.emit('friends_data', getDedicatedFriendsData(user.username));
 
@@ -769,6 +766,7 @@ io.on('connection', (socket: Socket) => {
       }
 
       pendingDedicatedFriendRequests.delete(requestId);
+      persistDedicatedState();
       socket.emit('friends_data', getDedicatedFriendsData(user.username));
 
       for (const [sId, u] of connectedUsers.entries()) {
@@ -784,6 +782,7 @@ io.on('connection', (socket: Socket) => {
     const req = pendingDedicatedFriendRequests.get(requestId);
     if (req) {
       pendingDedicatedFriendRequests.delete(requestId);
+      persistDedicatedState();
       socket.emit('friends_data', getDedicatedFriendsData(user.username));
 
       for (const [sId, u] of connectedUsers.entries()) {
@@ -798,6 +797,7 @@ io.on('connection', (socket: Socket) => {
     const req = pendingDedicatedFriendRequests.get(requestId);
     if (req) {
       pendingDedicatedFriendRequests.delete(requestId);
+      persistDedicatedState();
       socket.emit('friends_data', getDedicatedFriendsData(user.username));
 
       for (const [sId, u] of connectedUsers.entries()) {
@@ -815,6 +815,7 @@ io.on('connection', (socket: Socket) => {
     if (userAccount && targetAccount) {
       userAccount.friends = (userAccount.friends || []).filter(f => f.toLowerCase() !== targetUsername.toLowerCase());
       targetAccount.friends = (targetAccount.friends || []).filter(f => f.toLowerCase() !== user.username.toLowerCase());
+      persistDedicatedState();
 
       socket.emit('friends_data', getDedicatedFriendsData(user.username));
 
@@ -1288,11 +1289,13 @@ async function notifyMasterShutdown() {
 
 process.on('SIGINT', async () => {
   console.log('\n🛑 Sunucu kapatılıyor...');
+  flushDedicatedStateSync();
   await notifyMasterShutdown();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
+  flushDedicatedStateSync();
   await notifyMasterShutdown();
   process.exit(0);
 });

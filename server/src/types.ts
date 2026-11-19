@@ -111,6 +111,7 @@ export interface RegisteredAccount {
   lockedUntil?: number;
   knownLoginIps?: string[];
   e2eePublicKey?: string;
+  readCursors?: Record<string, string>;
 }
 
 export interface MessageAttachment {

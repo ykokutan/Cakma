@@ -61,6 +61,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
     register,
     requestRegisterChallenge,
     sendRegisterEmailCode,
+    requestPasswordResetCode,
+    confirmPasswordReset,
     currentServerHost,
     isDedicatedServer,
     connectToDedicatedServer,
@@ -103,6 +105,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const [pending2faToken, setPending2faToken] = useState<string | null>(null);
   const [twoFaMode, setTwoFaMode] = useState<'totp' | 'backup'>('totp');
   const [totpCode, setTotpCode] = useState('');
+  const [forgotMode, setForgotMode] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [resetCodeSent, setResetCodeSent] = useState(false);
+  const [resetSending, setResetSending] = useState(false);
+  const [resetCooldown, setResetCooldown] = useState(0);
+  const [resetFeedback, setResetFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetSuccessNotice, setResetSuccessNotice] = useState('');
   const [showServerSwitch, setShowServerSwitch] = useState(false);
   const [customServerInput, setCustomServerInput] = useState('');
 
@@ -111,6 +124,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const emailValid = validateEmail(email);
   const passwordStrength = evaluatePasswordStrength(password);
   const passwordsMismatch = isRegister && confirmPassword.length > 0 && password !== confirmPassword;
+  const resetEmailValid = validateEmail(resetEmail);
+  const resetStrength = evaluatePasswordStrength(resetNewPassword);
+  const resetMismatch = resetConfirmPassword.length > 0 && resetNewPassword !== resetConfirmPassword;
   const isConnected = connectionState === 'connected';
 
   const triggerError = (msg: string) => {
@@ -143,10 +159,70 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   }, [emailCodeCooldown]);
 
   useEffect(() => {
+    if (resetCooldown <= 0) return;
+    const timer = window.setTimeout(() => setResetCooldown((c) => Math.max(0, c - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resetCooldown]);
+
+  useEffect(() => {
     if (isRegister && connectionState === 'connected') {
       loadChallenge();
     }
   }, [isRegister, connectionState]);
+
+  const openForgotMode = () => {
+    setForgotMode(true);
+    setIsRegister(false);
+    setErrorMessage('');
+    setPending2faToken(null);
+    setResetFeedback(null);
+    setResetSuccessNotice('');
+    if (!resetEmail && username.includes('@')) {
+      setResetEmail(username.trim());
+    }
+  };
+
+  const exitForgotMode = () => {
+    setForgotMode(false);
+    setErrorMessage('');
+    setResetFeedback(null);
+    setResetCode('');
+    setResetNewPassword('');
+    setResetConfirmPassword('');
+    setResetCodeSent(false);
+    setShowResetPassword(false);
+  };
+
+  const handleSendResetCode = async () => {
+    setErrorMessage('');
+    setResetFeedback(null);
+    if (!resetEmailValid) {
+      triggerError('Lütfen geçerli bir kayıtlı e-posta adresi girin.');
+      return;
+    }
+    if (resetSending || resetCooldown > 0 || !isConnected) return;
+    setResetSending(true);
+    try {
+      const res = await requestPasswordResetCode(resetEmail.trim());
+      if (res.success) {
+        setResetCodeSent(true);
+        setResetCooldown(60);
+        setResetFeedback({
+          ok: true,
+          text: res.message || 'Şifre sıfırlama kodu e-posta adresinize gönderildi.',
+        });
+      } else {
+        setResetFeedback({
+          ok: false,
+          text: res.error || 'Sıfırlama kodu gönderilemedi.',
+        });
+      }
+    } catch {
+      setResetFeedback({ ok: false, text: 'Sunucu ile bağlantı kurulamadı.' });
+    } finally {
+      setResetSending(false);
+    }
+  };
 
   const handleSendEmailCode = async () => {
     if (!emailValid || emailCodeSending || emailCodeCooldown > 0 || !isConnected) return;
@@ -181,7 +257,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
 
   const switchAuthMode = (registerMode: boolean) => {
     setIsRegister(registerMode);
+    setForgotMode(false);
     setErrorMessage('');
+    setResetFeedback(null);
+    setResetSuccessNotice('');
     setConfirmPassword('');
     setPending2faToken(null);
     setTotpCode('');
@@ -190,9 +269,52 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setResetSuccessNotice('');
 
     if (!isConnected) {
       triggerError('Sunucuya henüz bağlanılmadı. Lütfen bağlantının kurulmasını bekleyin.');
+      return;
+    }
+
+    if (forgotMode) {
+      if (!resetCodeSent) {
+        await handleSendResetCode();
+        return;
+      }
+      if (!resetEmailValid) {
+        triggerError('Lütfen geçerli bir e-posta adresi girin.');
+        return;
+      }
+      const cleanedResetCode = normalizeOtpInput(resetCode, 6);
+      if (cleanedResetCode.length !== 6) {
+        triggerError('Lütfen e-postanıza gelen 6 haneli sıfırlama kodunu eksiksiz girin.');
+        return;
+      }
+      if (!resetNewPassword) {
+        triggerError('Lütfen yeni şifrenizi girin.');
+        return;
+      }
+      if (resetNewPassword !== resetConfirmPassword) {
+        triggerError('Yeni şifre ve tekrar alanı birbiriyle eşleşmiyor.');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const res = await confirmPasswordReset(resetEmail.trim(), cleanedResetCode, resetNewPassword);
+        if (res.success) {
+          const msg = res.message || 'Şifreniz başarıyla sıfırlandı. Yeni şifrenizle giriş yapabilirsiniz.';
+          exitForgotMode();
+          setPassword('');
+          setResetSuccessNotice(msg);
+        } else {
+          triggerError(res.error || 'Şifre sıfırlanamadı.');
+        }
+      } catch {
+        triggerError('Sunucu ile bağlantı kurulamadı.');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -318,7 +440,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2 h-2 rounded-full shrink-0 ${statusDotClass}`} />
           <span className="text-white/60 truncate">
-            <span className="text-white/45 mr-1">Sunucu:</span>
+            <span className="text-white/45 mr-1">{t(language, 'serverLabel')}</span>
             <b className="text-white font-mono">{currentServerHost}</b>
           </span>
         </div>
@@ -345,7 +467,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
           className="text-[11px] font-semibold text-white/60 hover:text-white inline-flex items-center gap-1 transition"
         >
           <ArrowRightLeft className="w-3 h-3" />
-          {showServerSwitch ? 'Vazgeç' : 'Sunucu Değiştir'}
+          {showServerSwitch ? 'Vazgeç' : t(language, 'switchServer')}
         </button>
 
         {isDedicatedServer && (
@@ -353,10 +475,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
             type="button"
             onClick={resetToMainServer}
             className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] font-semibold transition inline-flex items-center gap-1"
-            title="Ana sunucuya dön"
+            title={t(language, 'returnMainServer')}
           >
             <RefreshCw className="w-3 h-3" />
-            Ana Sunucuya Dön
+            {t(language, 'returnMainServer')}
           </button>
         )}
       </div>
@@ -391,15 +513,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
 
   const heroTitle = pending2faToken
     ? 'İki Faktörlü Koruma'
+    : forgotMode
+    ? t(language, 'forgotPasswordTitle')
     : isRegister
-    ? 'Topluluğa Katıl'
-    : 'Tekrar Hoş Geldin';
+    ? t(language, 'registerTitle')
+    : t(language, 'loginTitle');
 
   const heroSubtitle = pending2faToken
     ? 'Hesap güvenliğin için tek kullanımlık doğrulama kodunu onaylayarak devam et.'
+    : forgotMode
+    ? t(language, 'forgotPasswordSubtitle')
     : isRegister
-    ? 'Saniyeler içinde hesabını oluştur; yüksek kaliteli ses odalarına ve özel görüşmelere katıl.'
-    : 'Arkadaşlarınla buluşmak için düşük gecikmeli ses odalarına ve şifreli sohbete bağlan.';
+    ? t(language, 'registerSubtitle')
+    : t(language, 'loginSubtitle');
 
   const strengthColors = [
     'bg-white/10',
@@ -448,7 +574,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-extrabold tracking-tight text-white">Çakma</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 border border-rose-500/35 text-rose-300">
-                          v0.7.0
+                          v0.7.1
                         </span>
                       </div>
                       <p className="text-[11px] text-white/50">Ses &amp; Topluluk Platformu</p>
@@ -584,6 +710,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                 <h2 className="text-lg sm:text-xl font-extrabold text-white tracking-tight">
                   {pending2faToken
                     ? 'İki Faktörlü Doğrulama (2FA)'
+                    : forgotMode
+                    ? t(language, 'forgotPasswordTitle')
                     : isRegister
                     ? t(language, 'registerTitle')
                     : t(language, 'loginTitle')}
@@ -591,9 +719,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                 <p className="text-xs text-white/50 mt-0.5">
                   {pending2faToken
                     ? 'Oturumu tamamlamak için doğrulama kodunuzu girin'
+                    : forgotMode
+                    ? t(language, 'forgotPasswordSubtitle')
                     : isRegister
-                    ? 'Hesabınızı oluşturun ve topluluğa hemen katılın'
-                    : 'Hesabınızla oturum açın veya yönetici paneline erişin'}
+                    ? t(language, 'registerSubtitle')
+                    : t(language, 'loginSubtitle')}
                 </p>
               </div>
 
@@ -606,7 +736,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
               )}
 
               {/* Segmented Switcher */}
-              {!pending2faToken && (
+              {!pending2faToken && !forgotMode && (
                 <div className="flex bg-white/5 p-1 rounded-2xl mt-4 border border-white/10">
                   <button
                     type="button"
@@ -637,6 +767,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
 
               {/* Form Body */}
               <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
+                {resetSuccessNotice && !forgotMode && (
+                  <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/35 flex items-start gap-2.5 text-emerald-300 text-xs">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{resetSuccessNotice}</span>
+                  </div>
+                )}
+
                 {errorMessage && (
                   <div
                     key={errorKey}
@@ -724,7 +861,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                         }}
                         className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white/80 transition"
                       >
-                        Geri
+                        {t(language, 'back')}
                       </button>
                       <button
                         type="submit"
@@ -732,7 +869,200 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                         className="flex-1 py-2.5 bg-gradient-to-r from-rose-500 via-red-500 to-rose-600 hover:brightness-110 text-white font-semibold text-xs rounded-xl transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
                       >
                         {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-                        {loading ? 'Doğrulanıyor...' : 'Doğrula ve Giriş Yap'}
+                        {loading ? 'Doğrulanıyor...' : t(language, 'verifyAndLogin')}
+                      </button>
+                    </div>
+                  </div>
+                ) : forgotMode ? (
+                  <div className="space-y-3.5">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-semibold text-white/50 uppercase">
+                          {t(language, 'emailLabel')}
+                        </label>
+                        {resetEmail.trim().length > 0 && (
+                          <span
+                            className={`text-[10px] font-semibold ${
+                              resetEmailValid ? 'text-emerald-300' : 'text-rose-300'
+                            }`}
+                          >
+                            {resetEmailValid ? 'Geçerli' : 'Geçersiz format'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative flex-1 min-w-0">
+                          <Mail className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            type="email"
+                            required
+                            autoComplete="email"
+                            value={resetEmail}
+                            onChange={(e) => {
+                              setResetEmail(e.target.value);
+                              setResetFeedback(null);
+                            }}
+                            placeholder="kayitli@eposta.com"
+                            className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl pl-9 pr-3.5 py-2.5 outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-white/25"
+                          />
+                        </div>
+                        {resetCodeSent && (
+                          <button
+                            type="button"
+                            onClick={handleSendResetCode}
+                            disabled={resetSending || resetCooldown > 0 || !resetEmailValid || !isConnected}
+                            className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white/85 text-[11px] font-semibold transition disabled:opacity-50 shrink-0"
+                          >
+                            {resetSending
+                              ? t(language, 'sending')
+                              : resetCooldown > 0
+                              ? `${resetCooldown} sn`
+                              : t(language, 'sendCode')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {resetFeedback && (
+                      <div
+                        className={`px-3 py-2 rounded-xl text-[11px] border ${
+                          resetFeedback.ok
+                            ? 'bg-emerald-400/10 border-emerald-500/30 text-emerald-300'
+                            : 'bg-rose-400/10 border-rose-500/30 text-rose-300'
+                        }`}
+                      >
+                        {resetFeedback.text}
+                      </div>
+                    )}
+
+                    {resetCodeSent && (
+                      <>
+                        <div className="p-3 rounded-2xl bg-white/[0.03] border border-rose-500/25 space-y-2">
+                          <div className="flex items-center justify-between text-[10px] font-semibold uppercase text-rose-300">
+                            <span>{t(language, 'resetCodeLabel')}</span>
+                            <span className="font-mono text-white/50">
+                              {normalizeOtpInput(resetCode, 6).length}/6
+                            </span>
+                          </div>
+                          <OtpCodeInput
+                            value={resetCode}
+                            onChange={setResetCode}
+                            length={6}
+                            accent="rose"
+                            disabled={loading}
+                            ariaLabel="Şifre sıfırlama kodu"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-[11px] font-semibold text-white/50 uppercase">
+                                {t(language, 'newPasswordLabel')}
+                              </label>
+                              {capsLockOn && (
+                                <span className="text-[10px] font-bold text-amber-300">Caps Lock</span>
+                              )}
+                            </div>
+                            <div className="relative">
+                              <Lock className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              <input
+                                type={showResetPassword ? 'text' : 'password'}
+                                required
+                                autoComplete="new-password"
+                                value={resetNewPassword}
+                                onChange={(e) => setResetNewPassword(e.target.value)}
+                                onKeyUp={handleKeyModifiers}
+                                onKeyDown={handleKeyModifiers}
+                                placeholder="••••••••"
+                                className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl pl-9 pr-9 py-2.5 outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-white/25"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowResetPassword((v) => !v)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/45 hover:text-white transition"
+                                aria-label={showResetPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                              >
+                                {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-[11px] font-semibold text-white/50 uppercase">
+                                {t(language, 'newPasswordConfirmLabel')}
+                              </label>
+                              {resetConfirmPassword.length > 0 && (
+                                <span
+                                  className={`text-[10px] font-semibold ${
+                                    resetMismatch ? 'text-rose-300' : 'text-emerald-300'
+                                  }`}
+                                >
+                                  {resetMismatch ? 'Eşleşmiyor' : 'Eşleşti'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="relative">
+                              <Lock className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              <input
+                                type={showResetPassword ? 'text' : 'password'}
+                                required
+                                autoComplete="new-password"
+                                value={resetConfirmPassword}
+                                onChange={(e) => setResetConfirmPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className={`w-full bg-white/5 border text-white text-xs rounded-xl pl-9 pr-3.5 py-2.5 outline-none focus:ring-2 placeholder:text-white/25 ${
+                                  resetMismatch
+                                    ? 'border-rose-500/60 focus:ring-rose-500'
+                                    : 'border-white/10 focus:ring-rose-500'
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {resetNewPassword.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 grid grid-cols-4 gap-1.5">
+                              {[1, 2, 3, 4].map((seg) => (
+                                <div
+                                  key={seg}
+                                  className={`h-1.5 rounded-full transition-all duration-300 ${
+                                    resetStrength.level >= seg ? strengthColors[resetStrength.level] : 'bg-white/10'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="text-[10px] font-bold text-white/75 shrink-0">
+                              {resetStrength.label}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={exitForgotMode}
+                        className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white/80 transition"
+                      >
+                        {t(language, 'backToLogin')}
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={loading || resetSending || !isConnected}
+                        className="flex-1 py-2.5 bg-gradient-to-r from-rose-500 via-red-500 to-rose-600 hover:brightness-110 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {(loading || resetSending) && <Loader2 className="w-4 h-4 animate-spin" />}
+                        {!isConnected
+                          ? t(language, 'connectingServer')
+                          : resetCodeSent
+                          ? t(language, 'resetPasswordSubmit')
+                          : resetSending
+                          ? t(language, 'sending')
+                          : t(language, 'resetCodeSend')}
                       </button>
                     </div>
                   </div>
@@ -783,7 +1113,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                          Kullanıcı Adı {isRegister ? '' : 'veya E-Posta'}
+                          {isRegister ? t(language, 'usernameLabel') : t(language, 'usernameOrEmailLabel')}
                         </label>
                         {isRegister && username.trim().length > 0 && (
                           <span
@@ -814,7 +1144,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                            E-Posta Adresi
+                            {t(language, 'emailLabel')}
                           </label>
                           {email.trim().length > 0 && (
                             <span
@@ -861,10 +1191,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                                 <MailCheck className="w-3.5 h-3.5" />
                               )}
                               {emailCodeSending
-                                ? 'Gönderiliyor...'
+                                ? t(language, 'sending')
                                 : emailCodeCooldown > 0
                                 ? `${emailCodeCooldown} sn`
-                                : 'Kod Gönder'}
+                                : t(language, 'sendCode')}
                             </button>
                           )}
                         </div>
@@ -913,7 +1243,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                         <div>
                           <div className="flex items-center justify-between mb-1">
                             <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                              Şifre
+                              {t(language, 'passwordLabel')}
                             </label>
                             {capsLockOn && (
                               <span className="text-[10px] font-bold text-amber-300">Caps Lock Açık</span>
@@ -947,7 +1277,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                           <div>
                             <div className="flex items-center justify-between mb-1">
                               <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                                Şifre Tekrar
+                                {t(language, 'confirmPasswordLabel')}
                               </label>
                               {confirmPassword.length > 0 && (
                                 <span
@@ -1034,9 +1364,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       )}
                     </div>
 
-                    {/* Login: Remember Username */}
+                    {/* Login: Remember Username & Forgot Password */}
                     {!isRegister && (
-                      <div className="flex items-center justify-between pt-0.5">
+                      <div className="flex items-center justify-between pt-0.5 gap-2">
                         <label className="inline-flex items-center gap-2 text-xs text-white/65 hover:text-white cursor-pointer select-none">
                           <input
                             type="checkbox"
@@ -1044,8 +1374,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                             onChange={(e) => setRememberUsername(e.target.checked)}
                             className="rounded border-white/20 bg-white/10 text-rose-500 focus:ring-rose-500"
                           />
-                          Kullanıcı adımı hatırla
+                          {t(language, 'rememberUsername')}
                         </label>
+                        <button
+                          type="button"
+                          onClick={openForgotMode}
+                          className="text-xs font-semibold text-rose-400 hover:text-rose-300 transition"
+                        >
+                          {t(language, 'forgotPasswordLink')}
+                        </button>
                       </div>
                     )}
 
@@ -1123,12 +1460,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                         <LogIn className="w-4 h-4" />
                       )}
                       {!isConnected
-                        ? 'Sunucuya Bağlanılıyor...'
+                        ? t(language, 'connectingServer')
                         : loading
                         ? 'İşleniyor...'
                         : isRegister
-                        ? 'Hesap Oluştur ve Giriş Yap'
-                        : 'Oturum Aç'}
+                        ? t(language, 'registerSubmit')
+                        : t(language, 'loginSubmit')}
                     </button>
 
                     <div className="text-center pt-1">
@@ -1139,13 +1476,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       >
                         {isRegister ? (
                           <>
-                            Zaten hesabın var mı?{' '}
-                            <span className="font-bold text-rose-400">Giriş Yap</span>
+                            {t(language, 'haveAccountLogin')}{' '}
+                            <span className="font-bold text-rose-400">{t(language, 'loginBtn')}</span>
                           </>
                         ) : (
                           <>
-                            Hesabın yok mu?{' '}
-                            <span className="font-bold text-rose-400">Kayıt Ol</span>
+                            {t(language, 'noAccountRegister')}{' '}
+                            <span className="font-bold text-rose-400">{t(language, 'registerBtn')}</span>
                           </>
                         )}
                       </button>

@@ -6,8 +6,10 @@ import { DEFAULT_CUSTOM_THEME } from '../utils/themeBuilder';
 import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import { authFetch, resolveBackendBaseUrl } from '../utils/authFetch';
+import { evaluatePasswordStrength } from '../utils/authValidation';
 import { appToast } from '../utils/appDialogs';
 import { WebPushSettingsCard } from './settings/WebPushSettingsCard';
+import { AccountSecuritySection } from './settings/AccountSecuritySection';
 import { ChangelogTab } from './settings/ChangelogTab';
 import {
   X,
@@ -94,6 +96,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     desktopNotificationsEnabled,
     setDesktopNotificationsEnabled,
     changePassword,
+    revokeSingleSession,
     unblockUser,
     uiTheme,
     setUiTheme,
@@ -1959,7 +1962,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     {activeSessions.map((sess) => (
                       <div
                         key={sess.socketId}
-                        className="flex items-center justify-between p-2.5 rounded-xl bg-black/30 border border-white/5 text-xs"
+                        className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-black/30 border border-white/5 text-xs"
                       >
                         <div className="min-w-0 pr-2">
                           <div className="font-semibold text-white flex items-center gap-2">
@@ -1972,8 +1975,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           </div>
                           <div className="text-[11px] text-white/40 truncate mt-0.5">{sess.userAgent}</div>
                         </div>
-                        <div className="text-[10px] text-white/40 shrink-0">
-                          {new Date(sess.connectedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] text-white/40">
+                            {new Date(sess.connectedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {!sess.isCurrent && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const res = await revokeSingleSession(sess.socketId);
+                                if (!res.success && res.error) {
+                                  setSessionsNotice(res.error);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 text-[10px] font-bold transition"
+                            >
+                              {t(language, 'endSessionBtn')}
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -2045,6 +2064,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
                       />
                     </div>
+                    {newPasswordInput.length > 0 && (() => {
+                      const st = evaluatePasswordStrength(newPasswordInput);
+                      const barColors = ['bg-white/10', 'bg-rose-500', 'bg-amber-400', 'bg-emerald-400', 'bg-teal-400'];
+                      return (
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <div className="flex-1 grid grid-cols-4 gap-1">
+                            {[1, 2, 3, 4].map((seg) => (
+                              <div
+                                key={seg}
+                                className={`h-1.5 rounded-full transition-all ${
+                                  st.level >= seg ? barColors[st.level] : 'bg-white/10'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                          <span className="text-[10px] font-bold text-white/70">{st.label}</span>
+                        </div>
+                      );
+                    })()}
                     {passwordStatus && (
                       <div
                         className={`text-xs px-3 py-2 rounded-xl border ${
@@ -2066,6 +2104,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </form>
                 )}
               </div>
+
+              {/* Modular Self-Service Email Change (OTP) & Permanent Account Deletion */}
+              <AccountSecuritySection />
 
               {/* Blocked Users */}
               <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">

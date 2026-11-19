@@ -15,11 +15,27 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v0.7.0 - Latest */}
+        {/* v0.7.1 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v0.7.0 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v0.7.1 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li>Sunucu PII filtrelemesi (<code className="text-emerald-200">toPublicUser</code>) ile diğer kullanıcılara yayınlanan gereksiz alanlar temizlendi.</li>
+            <li>Yüklenen medya dosyalarına (<code className="text-emerald-200">/uploads</code>) oturum/mediaToken doğrulaması ve <code className="text-emerald-200">no-referrer</code> koruması eklendi.</li>
+            <li>Şifremi Unuttum (e-posta OTP ile şifre sıfırlama), OTP doğrulamalı e-posta değişikliği, tekil oturum sonlandırma ve kalıcı hesap silme akışları eklendi.</li>
+            <li>Tüm şifre belirleme/değiştirme adımları ortak şifre politikası ve canlı güç göstergesi ile birleştirildi.</li>
+            <li>Kalıcı kanal okunma işaretçileri (<code className="text-emerald-200">readCursors</code>) ve SSRF korumalı OpenGraph bağlantı önizleme kartları eklendi.</li>
+            <li>Dedicated sunucuya atomik kalıcılık (<code className="text-emerald-200">state.json</code>) eklendi ve sabit test hesapları kaldırıldı.</li>
+            <li>PWA önbellekleme (<code className="text-emerald-200">cakma-pwa-v3</code>), bildirim tıklama derin bağlantıları ve 4 dilli (TR/EN/DE/RU) giriş &amp; ayar çevirileri tamamlandı.</li>
+          </ul>
+        </div>
+
+        {/* v0.7.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v0.7.0 — Önceki Sürüm</span>
           </div>
           <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
             <li><strong className="text-white">Kalıcı Hesap Kimliği &amp; Odaya Çekme Düzeltmesi:</strong> Sunucu sahipliği, rol yetkileri, XP/seviye kayıtları ve etkinlik silme hakları geçici <code className="text-cyan-300">socket.id</code> yerine kalıcı <code className="text-cyan-300">accountId</code> üzerine taşındı; ses odasına çekme daveti kapsam hatası giderildi ve <code className="text-cyan-300">.secrets.json</code> veri dizini hizalandı.</li>

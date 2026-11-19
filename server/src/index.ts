@@ -82,7 +82,15 @@ import {
 } from './storage.js';
 import { normalizeLiveKitHttpUrl, shouldRoomUseSfu, buildIceServers } from './utils/sfuLogic.js';
 import { validateAttachmentSafety } from './utils/security.js';
-import { validateExternalWebhookUrl } from './utils/adminAuth.js';
+import { createAuthMiddlewares, validateExternalWebhookUrl } from './utils/adminAuth.js';
+import { toPublicUser } from './utils/publicUser.js';
+import { validatePasswordAgainstPolicy } from './utils/passwordPolicy.js';
+import {
+  createAccountSecurityManager,
+  registerAccountSecuritySocketHandlers,
+  type AccountSecurityDeps,
+} from './features/accountSecurityHandlers.js';
+import { registerChatEnhancementsRoutes } from './features/chatEnhancementsRoutes.js';
 import {
   hashPassword,
   verifyPassword,
@@ -1215,7 +1223,7 @@ configureLicenseKeys({
 
 async function sendWebPushToUsername(
   username: string,
-  payload: { title: string; body: string; url?: string }
+  payload: { title: string; body: string; url?: string; channelId?: string; dmUsername?: string }
 ): Promise<void> {
   const targetLower = String(username || '').trim().toLowerCase();
   if (!targetLower) return;
@@ -1248,6 +1256,42 @@ export function generateSessionToken(username: string): string {
   })).toString('base64url');
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
+}
+
+export function generateMediaToken(username: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    p: 'media-v1',
+    u: username,
+    iat: Date.now(),
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(`media-v1:${payload}`).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+export function verifyMediaToken(token: string): string | null {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
+  const expectedSig = crypto.createHmac('sha256', SESSION_SECRET).update(`media-v1:${payload}`).digest('base64url');
+  try {
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return null;
+    }
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    if (parsed.p !== 'media-v1' || !parsed.u || !parsed.exp || parsed.exp < Date.now()) {
+      return null;
+    }
+    const acc = registeredAccounts.get(String(parsed.u).toLowerCase());
+    if (!acc || acc.isBanned) return null;
+    if (acc.minTokenIssuedAt && (parsed.iat || 0) < acc.minTokenIssuedAt) return null;
+    return acc.username;
+  } catch {
+    return null;
+  }
 }
 
 export function verifySessionTokenWithMeta(token: string): { username: string; iat: number } | null {
@@ -1337,24 +1381,6 @@ const DISPOSABLE_EMAIL_DOMAINS = new Set([
   'sharklasers.com',
   'getnada.com',
   'dispostable.com',
-]);
-
-const COMMON_WEAK_PASSWORDS = new Set([
-  '1234',
-  '12345',
-  '123456',
-  '1234567',
-  '12345678',
-  '123456789',
-  '1234567890',
-  'password',
-  'qwerty',
-  'qwerty123',
-  'admin123',
-  '11111111',
-  '00000000',
-  'letmein',
-  'abc12345',
 ]);
 
 const ipDailyRegistrations = new Map<string, { date: string; count: number }>();
@@ -1475,6 +1501,12 @@ registerDedicatedAndMasterRoutes(app, io, {
   isMasterRequest,
   addAuditLog,
 });
+
+const apiAuthMiddlewares = createAuthMiddlewares({
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+});
+registerChatEnhancementsRoutes(app, { authMiddlewares: apiAuthMiddlewares });
 
 // Intelligent AI Assistant Response Generator
 function generateAIResponse(prompt: string, senderName: string): string {
@@ -1735,17 +1767,50 @@ function hasDangerousAttachment(attachments?: MessageAttachment[]): boolean {
   });
 }
 
+function emitUserUpdated(user: User) {
+  io.to(user.id).emit('user_updated', user);
+  io.except(user.id).emit('user_updated', toPublicUser(user));
+}
+
 function emitInitData(targetSocket: Socket, currentUser: User) {
   const userServers = filterServersForUser(servers, currentUser);
   const { initialMessages, hasMoreMessages } = getInitialMessagesForServers(userServers, currentUser.username, currentUser.id);
+  const foundAcc = registeredAccounts.get(currentUser.username.toLowerCase());
   targetSocket.emit('init_data', {
     currentUser,
     servers: userServers,
-    onlineUsers: Array.from(activeUsers.values()),
+    onlineUsers: Array.from(activeUsers.values()).map((u) => (u.id === currentUser.id ? u : toPublicUser(u))),
     messages: initialMessages,
     hasMoreMessages,
+    readCursors: foundAcc?.readCursors || {},
   });
 }
+
+const accountSecurityDeps: AccountSecurityDeps = {
+  io,
+  registeredAccounts,
+  activeUsers,
+  activeSessions,
+  servers,
+  pendingFriendRequests,
+  getPushSubscriptions: () => pushSubscriptions,
+  setPushSubscriptions: (next) => {
+    pushSubscriptions = next;
+  },
+  savePushSubscriptions,
+  saveAccounts,
+  saveServers,
+  saveFriendRequests,
+  addAuditLog,
+  emitUserUpdated,
+  emitServerUpdatedToMembers,
+  sendSmtpEmail,
+  disposableEmailDomains: DISPOSABLE_EMAIL_DOMAINS,
+  getSystemConfig: () => systemConfig,
+  getClientIp,
+  isIpBanned: (ip) => Boolean(findActiveIpBan(ip)),
+};
+const accountSecurityManager = createAccountSecurityManager(accountSecurityDeps);
 
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
@@ -1758,6 +1823,8 @@ io.on('connection', (socket: Socket) => {
     socket.disconnect(true);
     return;
   }
+
+  registerAccountSecuritySocketHandlers(socket, accountSecurityManager, accountSecurityDeps);
 
   socket.emit('system_maintenance_status', {
     active: Boolean(systemConfig.maintenanceMode),
@@ -2022,28 +2089,9 @@ io.on('connection', (socket: Socket) => {
     if (!password || typeof password !== 'string') {
       return socket.emit('auth_response', { success: false, error: 'Lütfen geçerli bir şifre girin.' });
     }
-    if (password.toLowerCase() === cleanUsername.toLowerCase()) {
-      return socket.emit('auth_response', { success: false, error: 'Şifre kullanıcı adınızla aynı olamaz.' });
-    }
-    if (COMMON_WEAK_PASSWORDS.has(password.toLowerCase())) {
-      return socket.emit('auth_response', { success: false, error: 'Bu şifre çok yaygın ve güvensiz. Lütfen daha güçlü bir şifre seçin.' });
-    }
-
-    if (systemConfig.requireStrongPasswords) {
-      const hasUpper = /[A-Z]/.test(password);
-      const hasLower = /[a-z]/.test(password);
-      const hasDigit = /\d/.test(password);
-      if (password.length < 8 || !hasUpper || !hasLower || !hasDigit) {
-        return socket.emit('auth_response', {
-          success: false,
-          error: 'Güçlü şifre politikası: en az 8 karakter, 1 büyük harf, 1 küçük harf ve 1 rakam içermelidir.',
-        });
-      }
-    } else if (password.length < 4) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: 'Şifre en az 4 karakter olmalıdır.',
-      });
+    const regPassCheck = validatePasswordAgainstPolicy(password, cleanUsername, Boolean(systemConfig.requireStrongPasswords));
+    if (!regPassCheck.ok) {
+      return socket.emit('auth_response', { success: false, error: regPassCheck.error });
     }
 
     if (registeredAccounts.has(cleanUsername.toLowerCase())) {
@@ -2138,13 +2186,14 @@ io.on('connection', (socket: Socket) => {
     recordUserConnection(socket, user.username, user.role);
 
     const token = generateSessionToken(user.username);
-    socket.emit('auth_response', { success: true, user, token, isNewUser: true });
+    const mediaToken = generateMediaToken(user.username);
+    socket.emit('auth_response', { success: true, user, token, mediaToken, isNewUser: true });
     newAccount.knownLoginIps = [clientIp];
     saveAccounts(registeredAccounts);
     emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
 
-    socket.broadcast.emit('user_connected', user);
+    socket.broadcast.emit('user_connected', toPublicUser(user));
   });
 
   // 2. LOGIN (Giriş Yapma)
@@ -2306,7 +2355,8 @@ io.on('connection', (socket: Socket) => {
     recordUserConnection(socket, user.username, user.role);
 
     const token = generateSessionToken(user.username);
-    socket.emit('auth_response', { success: true, user, token });
+    const mediaToken = generateMediaToken(user.username);
+    socket.emit('auth_response', { success: true, user, token, mediaToken });
     const prevIps = Array.isArray(foundAccount.knownLoginIps) ? foundAccount.knownLoginIps : [];
     if (prevIps.length > 0 && !prevIps.includes(clientIp)) {
       addAuditLog('YENI_IP_GIRISI', `${user.username} hesabına yeni bir IP adresinden (${clientIp}) giriş yapıldı.`, 'auth');
@@ -2319,7 +2369,7 @@ io.on('connection', (socket: Socket) => {
     emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
 
-    socket.broadcast.emit('user_connected', user);
+    socket.broadcast.emit('user_connected', toPublicUser(user));
   });
 
   // 2.2 VERIFY 2FA LOGIN
@@ -2419,7 +2469,8 @@ io.on('connection', (socket: Socket) => {
     recordUserConnection(socket, user.username, user.role);
 
     const token = generateSessionToken(user.username);
-    socket.emit('auth_response', { success: true, user, token });
+    const mediaToken = generateMediaToken(user.username);
+    socket.emit('auth_response', { success: true, user, token, mediaToken });
     const prevIps = Array.isArray(foundAccount.knownLoginIps) ? foundAccount.knownLoginIps : [];
     if (prevIps.length > 0 && !prevIps.includes(clientIp)) {
       addAuditLog('YENI_IP_GIRISI', `${user.username} hesabına yeni bir IP adresinden (${clientIp}) 2FA ile giriş yapıldı.`, 'auth');
@@ -2431,7 +2482,7 @@ io.on('connection', (socket: Socket) => {
     }
     emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
-    socket.broadcast.emit('user_connected', user);
+    socket.broadcast.emit('user_connected', toPublicUser(user));
   });
 
   // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz, destekler: body token veya HttpOnly cookie)
@@ -2527,10 +2578,11 @@ io.on('connection', (socket: Socket) => {
     recordUserConnection(socket, user.username, user.role);
 
     const refreshedToken = generateSessionToken(user.username);
-    socket.emit('auth_response', { success: true, user, token: refreshedToken });
+    const mediaToken = generateMediaToken(user.username);
+    socket.emit('auth_response', { success: true, user, token: refreshedToken, mediaToken });
     emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
-    socket.broadcast.emit('user_connected', user);
+    socket.broadcast.emit('user_connected', toPublicUser(user));
   });
 
   // 3. LOGOUT (Çıkış Yapma)
@@ -2689,7 +2741,9 @@ io.on('connection', (socket: Socket) => {
           void sendWebPushToUsername(targetName, {
             title: `${sender.username} (Direkt Mesaj)`,
             body: pushBodyPreview,
-            url: '/',
+            url: `/?dm=${encodeURIComponent(sender.username)}`,
+            channelId,
+            dmUsername: sender.username,
           });
         }
       }
@@ -2712,7 +2766,8 @@ io.on('connection', (socket: Socket) => {
           void sendWebPushToUsername(acc.username, {
             title: `${sender.username} senden bahsetti`,
             body: pushBodyPreview,
-            url: '/',
+            url: `/?channel=${encodeURIComponent(channelId)}`,
+            channelId,
           });
         }
       }
@@ -2994,8 +3049,9 @@ io.on('connection', (socket: Socket) => {
     if (!(await verifyPasswordAsync(currentPassword, acc.password))) {
       return socket.emit('change_password_response', { success: false, error: 'Mevcut şifreniz hatalı.' });
     }
-    if (!newPassword || newPassword.length < 4) {
-      return socket.emit('change_password_response', { success: false, error: 'Yeni şifre en az 4 karakter olmalıdır.' });
+    const passCheck = validatePasswordAgainstPolicy(newPassword, acc.username, Boolean(systemConfig.requireStrongPasswords));
+    if (!passCheck.ok) {
+      return socket.emit('change_password_response', { success: false, error: passCheck.error });
     }
 
     acc.password = await hashPasswordAsync(newPassword);
@@ -3105,7 +3161,7 @@ io.on('connection', (socket: Socket) => {
       acc.e2eePublicKey = publicKey;
       saveAccounts(registeredAccounts);
     }
-    io.emit('user_updated', user);
+    emitUserUpdated(user);
   });
 
   // Active Sessions List & Revoke Other Sessions
@@ -3157,7 +3213,7 @@ io.on('connection', (socket: Socket) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
     user.isHandRaised = !user.isHandRaised;
-    io.emit('user_updated', user);
+    emitUserUpdated(user);
   });
 
   // Voice Activity Ping (for AFK auto-move)
@@ -3293,7 +3349,7 @@ io.on('connection', (socket: Socket) => {
       saveAccounts(registeredAccounts);
     }
 
-    io.emit('user_updated', user);
+    emitUserUpdated(user);
   });
 
   // Profile Update (Status message, bio, bannerColor, bannerImage, bannerPosition, avatarFrame, pinnedBadgeId, socialLinks, avatar, status - with XSS sanitization & size limits)
@@ -3389,7 +3445,7 @@ io.on('connection', (socket: Socket) => {
       saveAccounts(registeredAccounts);
     }
 
-    io.emit('user_updated', user);
+    emitUserUpdated(user);
     socket.emit('profile_updated', user);
     addAuditLog('PROFIL_GUNCELLE', `${user.username} profil bilgilerini güncelledi.`, 'info');
   });
@@ -3427,10 +3483,10 @@ io.on('connection', (socket: Socket) => {
     for (const u of activeUsers.values()) {
       if (u.username.toLowerCase() === senderAcc.username.toLowerCase()) {
         u.walletBalance = senderAcc.walletBalance;
-        io.emit('user_updated', u);
+        emitUserUpdated(u);
       } else if (u.username.toLowerCase() === receiverAcc.username.toLowerCase()) {
         u.walletBalance = receiverAcc.walletBalance;
-        io.emit('user_updated', u);
+        emitUserUpdated(u);
       }
     }
 
@@ -3456,6 +3512,28 @@ io.on('connection', (socket: Socket) => {
         });
       }
     }
+  });
+
+  // Persistent Channel / DM Read Cursor
+  socket.on('mark_channel_read', ({ channelId, lastMessageId }: { channelId: string; lastMessageId: string }) => {
+    const reader = activeUsers.get(socket.id);
+    if (!reader || typeof channelId !== 'string' || typeof lastMessageId !== 'string') return;
+    const cleanCh = channelId.trim().slice(0, 120);
+    const cleanMsgId = lastMessageId.trim().slice(0, 120);
+    if (!cleanCh || !cleanMsgId) return;
+    if (!canUserAccessChannel(reader, cleanCh, servers, undefined, messages[cleanCh])) return;
+
+    const acc = registeredAccounts.get(reader.username.toLowerCase());
+    if (!acc) return;
+    const cursors = acc.readCursors || {};
+    if (cursors[cleanCh] === cleanMsgId) return;
+    cursors[cleanCh] = cleanMsgId;
+    const keys = Object.keys(cursors);
+    if (keys.length > 300) {
+      delete cursors[keys[0]];
+    }
+    acc.readCursors = cursors;
+    saveAccounts(registeredAccounts);
   });
 
   // Direct 1-on-1 Voice Calling Relay (multi-session, busy/DND, 40s timeout & persisted DM logs)
@@ -3509,7 +3587,8 @@ io.on('connection', (socket: Socket) => {
         void sendWebPushToUsername(resolvedUsername, {
           title: 'Gelen Arama',
           body: `${caller.username} seni aramaya çalıştı 📞`,
-          url: '/',
+          url: `/?dm=${encodeURIComponent(caller.username)}`,
+          dmUsername: caller.username,
         });
       }
       return socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
@@ -3573,10 +3652,12 @@ io.on('connection', (socket: Socket) => {
       io.to(sId).emit('direct_call_incoming', { callerUser: caller });
     }
     if (primaryTarget?.username || resolvedUsername) {
+      const dmSender = caller.username;
       void sendWebPushToUsername(primaryTarget?.username || resolvedUsername, {
         title: 'Gelen Arama',
-        body: `${caller.username} seni 1-e-1 arıyor...`,
-        url: '/',
+        body: `${dmSender} seni 1-e-1 arıyor...`,
+        url: `/?dm=${encodeURIComponent(dmSender)}`,
+        dmUsername: dmSender,
       });
     }
   });
@@ -5571,7 +5652,7 @@ io.on('connection', (socket: Socket) => {
     if (status !== undefined) user.status = status;
     if (avatar !== undefined) user.avatar = avatar;
 
-    io.emit('user_updated', user);
+    emitUserUpdated(user);
   });
 
   // Server-enforced Voice Mute / Deafen (Moderator action)
@@ -5596,7 +5677,7 @@ io.on('connection', (socket: Socket) => {
       if (deafened) target.isDeafened = true;
     }
 
-    io.emit('user_updated', target);
+    emitUserUpdated(target);
     io.to(targetUserId).emit('server_moderation_voice', {
       isServerMuted: !!target.isServerMuted,
       isServerDeafened: !!target.isServerDeafened,
@@ -5619,7 +5700,7 @@ io.on('connection', (socket: Socket) => {
       if (u.currentVoiceChannelId === channelId && sId !== socket.id && u.role !== 'admin') {
         u.isServerMuted = muted;
         if (muted) u.isMuted = true;
-        io.emit('user_updated', u);
+        emitUserUpdated(u);
         io.to(sId).emit('server_moderation_voice', {
           isServerMuted: !!u.isServerMuted,
           isServerDeafened: !!u.isServerDeafened,
@@ -6238,7 +6319,7 @@ io.on('connection', (socket: Socket) => {
       for (const u of activeUsers.values()) {
         if (u.username.toLowerCase() === targetUsername.toLowerCase()) {
           u.role = newRole;
-          io.emit('user_updated', u);
+          emitUserUpdated(u);
           break;
         }
       }
@@ -6624,7 +6705,7 @@ io.on('connection', (socket: Socket) => {
       socket.leave(prevCh);
       user.currentVoiceChannelId = undefined;
       io.to(prevCh).emit('user_left_voice', { userId: socket.id, channelId: prevCh });
-      io.emit('user_updated', user);
+      emitUserUpdated(user);
       cleanupTemporaryChannels();
     }
 
@@ -6983,7 +7064,9 @@ registerCloudSyncAndEvents(app, io, activeUsers, {
   getMessagesMap: () => messages,
   getAccounts: () => registeredAccounts,
   getServers: () => servers,
+  verifySessionToken,
   verifySessionTokenWithMeta,
+  verifyMediaToken,
   getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
   isUserMemberOfServer: (u, srv) => isUserMemberOfServer(u, srv),
   emitToServerMembers: (srv, event, payload) => emitToServerMembers(srv, event, payload),

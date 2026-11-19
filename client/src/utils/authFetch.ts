@@ -26,6 +26,19 @@ export function resolveBackendBaseUrl(host: string): string {
   return `https://${cleaned}`;
 }
 
+export function getStoredMediaToken(): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem('dc_clone_auth');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const mt = typeof parsed?.mediaToken === 'string' ? parsed.mediaToken.trim() : '';
+    return mt || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve relative `/uploads/...` or `/api/sounds/...` media URLs against the active server host. */
 export function resolveMediaUrl(rawUrl: string | undefined | null, host: string): string {
   const raw = String(rawUrl || '').trim();
@@ -39,8 +52,16 @@ export function resolveMediaUrl(rawUrl: string | undefined | null, host: string)
     return raw;
   }
   if (raw.startsWith('/')) {
+    let targetPath = raw;
+    if (targetPath.startsWith('/uploads/') && !/[?&]mt=/.test(targetPath)) {
+      const mt = getStoredMediaToken();
+      if (mt) {
+        const sep = targetPath.includes('?') ? '&' : '?';
+        targetPath = `${targetPath}${sep}mt=${encodeURIComponent(mt)}`;
+      }
+    }
     const base = resolveBackendBaseUrl(host);
-    return base ? `${base}${raw}` : raw;
+    return base ? `${base}${targetPath}` : targetPath;
   }
   return raw;
 }

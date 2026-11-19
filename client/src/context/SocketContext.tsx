@@ -556,6 +556,14 @@ interface SocketContextType {
   mentionCounts: Record<string, number>;
 
   // Account Security, Block, Timeout, Invites & UI Themes
+  requestPasswordResetCode: (email: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  confirmPasswordReset: (email: string, code: string, newPassword: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  requestEmailChangeCode: (currentPassword: string, newEmail: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  confirmEmailChange: (code: string) => Promise<{ success: boolean; email?: string; message?: string; error?: string }>;
+  revokeSingleSession: (targetSocketId: string) => Promise<{ success: boolean; error?: string }>;
+  deleteMyAccount: (currentPassword: string, confirmText: string, totpCode?: string) => Promise<{ success: boolean; error?: string }>;
+  readCursors: Record<string, string>;
+  markChannelRead: (channelId: string, lastMessageId: string) => void;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   blockUser: (targetUsername: string) => void;
   unblockUser: (targetUsername: string) => void;
@@ -859,6 +867,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
+  const [readCursors, setReadCursors] = useState<Record<string, string>>({});
+  const readCursorsRef = useRef<Record<string, string>>({});
+  readCursorsRef.current = readCursors;
   const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState<boolean>(false);
   const [connectionState, setConnectionStateState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
@@ -2826,14 +2837,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; tokenExpired?: boolean; isNewUser?: boolean; error?: string }) => {
+    newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; mediaToken?: string; tokenExpired?: boolean; isNewUser?: boolean; error?: string }) => {
       if (res.success && res.user) {
         if (res.isNewUser) {
           setShouldAutoOpenExplore(true);
         }
-        if (res.token) {
+        if (res.token || res.mediaToken) {
           const isSameOriginWeb = !isTauriApp && typeof window !== 'undefined' && backendUrl.startsWith(window.location.origin);
-          if (isSameOriginWeb) {
+          if (isSameOriginWeb && res.token) {
             fetch(`${backendUrl}/api/auth/set-cookie`, {
               method: 'POST',
               credentials: 'include',
@@ -2842,12 +2853,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }).catch(() => {});
             localStorage.setItem('dc_clone_auth', JSON.stringify({
               cookieSession: true,
+              mediaToken: res.mediaToken,
               username: res.user.username,
               avatar: res.user.avatar
             }));
           } else {
             localStorage.setItem('dc_clone_auth', JSON.stringify({
               token: res.token,
+              mediaToken: res.mediaToken,
               username: res.user.username,
               avatar: res.user.avatar
             }));
@@ -3019,6 +3032,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       onlineUsers: User[];
       messages: Record<string, Message[]>;
       hasMoreMessages?: Record<string, boolean>;
+      readCursors?: Record<string, string>;
     }) => {
       setCurrentUser(data.currentUser);
       setIsAuthenticated(data.currentUser.role === 'admin' || !!data.currentUser.email || !!savedAuth);
@@ -3028,6 +3042,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (data.hasMoreMessages) {
         setHasMoreMessages(data.hasMoreMessages);
       }
+      const nextCursors = data.readCursors || {};
+      setReadCursors(nextCursors);
+      readCursorsRef.current = nextCursors;
+
+      const initialUnread: Record<string, number> = {};
+      const myNameLower = (data.currentUser.username || '').toLowerCase();
+      for (const [chId, list] of Object.entries(data.messages || {})) {
+        if (!Array.isArray(list) || list.length === 0) continue;
+        const cursorId = nextCursors[chId];
+        if (!cursorId) continue;
+        const idx = list.findIndex((m) => m.id === cursorId);
+        if (idx !== -1 && idx < list.length - 1) {
+          const unreadAfter = list.slice(idx + 1).filter(
+            (m) => (m.author?.username || '').toLowerCase() !== myNameLower
+          ).length;
+          if (unreadAfter > 0) initialUnread[chId] = unreadAfter;
+        }
+      }
+      setUnreadCounts(initialUnread);
 
       if (data.servers.length > 0) {
         setActiveServerId(data.servers[0].id);
@@ -3351,7 +3384,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('user_updated', (updatedUser: User) => {
       setOnlineUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
       if (updatedUser.id === newSocket.id) {
-        setCurrentUser(updatedUser);
+        setCurrentUser((prev) => (prev ? { ...prev, ...updatedUser } : updatedUser));
       }
     });
 
@@ -4470,12 +4503,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 5000);
 
       socket.emit('auth_login', { usernameOrEmail, password });
-      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; requires2fa?: boolean; pending2faToken?: string; error?: string }) => {
+      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; mediaToken?: string; requires2fa?: boolean; pending2faToken?: string; error?: string }) => {
         if (answered) return;
         answered = true;
         clearTimeout(timer);
         if (res.success && res.user) {
-          localStorage.setItem('dc_clone_auth', JSON.stringify({ token: res.token, username: res.user.username, avatar: res.user.avatar }));
+          localStorage.setItem('dc_clone_auth', JSON.stringify({
+            token: res.token,
+            mediaToken: res.mediaToken,
+            username: res.user.username,
+            avatar: res.user.avatar,
+          }));
           setCurrentUser(res.user);
           setIsAuthenticated(true);
           resolve({ success: true });
@@ -4501,12 +4539,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 5000);
 
       socket.emit('auth_2fa_verify', { pending2faToken, code });
-      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; error?: string }) => {
+      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; mediaToken?: string; error?: string }) => {
         if (answered) return;
         answered = true;
         clearTimeout(timer);
         if (res.success && res.user) {
-          localStorage.setItem('dc_clone_auth', JSON.stringify({ token: res.token, username: res.user.username, avatar: res.user.avatar }));
+          localStorage.setItem('dc_clone_auth', JSON.stringify({
+            token: res.token,
+            mediaToken: res.mediaToken,
+            username: res.user.username,
+            avatar: res.user.avatar,
+          }));
           setCurrentUser(res.user);
           setIsAuthenticated(true);
           resolve({ success: true });
@@ -4598,12 +4641,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }, 5000);
 
       socket.emit('auth_register', data);
-      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; error?: string }) => {
+      socket.once('auth_response', (res: { success: boolean; user?: User; token?: string; mediaToken?: string; error?: string }) => {
         if (answered) return;
         answered = true;
         clearTimeout(timer);
         if (res.success && res.user) {
-          localStorage.setItem('dc_clone_auth', JSON.stringify({ token: res.token, username: res.user.username, avatar: res.user.avatar }));
+          localStorage.setItem('dc_clone_auth', JSON.stringify({
+            token: res.token,
+            mediaToken: res.mediaToken,
+            username: res.user.username,
+            avatar: res.user.avatar,
+          }));
           setCurrentUser(res.user);
           setIsAuthenticated(true);
           resolve({ success: true });
@@ -6457,6 +6505,276 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, [socket]);
 
+  const requestPasswordResetCode = useCallback((email: string) => {
+    return new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      let settled = false;
+      const cleanup = (res: { success: boolean; message?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('password_reset_code_result', handler);
+        resolve(res);
+      };
+      const handler = (res: { success: boolean; message?: string; error?: string }) => cleanup(res);
+      const timer = window.setTimeout(
+        () => cleanup({ success: false, error: 'Şifre sıfırlama kodu isteği zaman aşımına uğradı.' }),
+        20000
+      );
+      socket.on('password_reset_code_result', handler);
+      socket.emit('request_password_reset_code', { email });
+    });
+  }, [socket]);
+
+  const confirmPasswordReset = useCallback((email: string, code: string, newPassword: string) => {
+    return new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      let settled = false;
+      const cleanup = (res: { success: boolean; message?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('password_reset_result', handler);
+        resolve(res);
+      };
+      const handler = (res: { success: boolean; message?: string; error?: string }) => cleanup(res);
+      const timer = window.setTimeout(
+        () => cleanup({ success: false, error: 'Şifre sıfırlama isteği zaman aşımına uğradı.' }),
+        10000
+      );
+      socket.on('password_reset_result', handler);
+      socket.emit('confirm_password_reset', { email, code, newPassword });
+    });
+  }, [socket]);
+
+  const requestEmailChangeCode = useCallback((currentPassword: string, newEmail: string) => {
+    return new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      let settled = false;
+      const cleanup = (res: { success: boolean; message?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('email_change_code_result', handler);
+        resolve(res);
+      };
+      const handler = (res: { success: boolean; message?: string; error?: string }) => cleanup(res);
+      const timer = window.setTimeout(
+        () => cleanup({ success: false, error: 'Doğrulama kodu isteği zaman aşımına uğradı.' }),
+        20000
+      );
+      socket.on('email_change_code_result', handler);
+      socket.emit('request_email_change_code', { currentPassword, newEmail });
+    });
+  }, [socket]);
+
+  const confirmEmailChange = useCallback((code: string) => {
+    return new Promise<{ success: boolean; message?: string; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      let settled = false;
+      const cleanup = (res: { success: boolean; message?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('email_change_confirm_result', handler);
+        resolve(res);
+      };
+      const handler = (res: { success: boolean; message?: string; error?: string }) => cleanup(res);
+      const timer = window.setTimeout(
+        () => cleanup({ success: false, error: 'E-posta onay isteği zaman aşımına uğradı.' }),
+        10000
+      );
+      socket.on('email_change_confirm_result', handler);
+      socket.emit('confirm_email_change', { code });
+    });
+  }, [socket]);
+
+  const revokeSingleSession = useCallback((targetSocketId: string) => {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      let settled = false;
+      const cleanup = (res: { success: boolean; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('revoke_single_session_result', handler);
+        resolve(res);
+      };
+      const handler = (res: { success: boolean; error?: string }) => cleanup(res);
+      const timer = window.setTimeout(
+        () => cleanup({ success: false, error: 'Oturum sonlandırma isteği zaman aşımına uğradı.' }),
+        8000
+      );
+      socket.on('revoke_single_session_result', handler);
+      socket.emit('revoke_single_session', { targetSocketId });
+    });
+  }, [socket]);
+
+  const deleteMyAccount = useCallback((currentPassword: string, confirmText: string, totpCode?: string) => {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      let settled = false;
+      const cleanup = (res: { success: boolean; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('delete_account_result', handler);
+        if (res.success) {
+          localStorage.removeItem('dc_clone_auth');
+          fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+          clearAllTypingUsers();
+          setDirectCallQualitySnapshot(null);
+          setIsAuthenticated(false);
+          setCurrentUser(null);
+          cleanupWebRTC();
+        }
+        resolve(res);
+      };
+      const handler = (res: { success: boolean; error?: string }) => cleanup(res);
+      const timer = window.setTimeout(
+        () => cleanup({ success: false, error: 'Hesap silme isteği zaman aşımına uğradı.' }),
+        10000
+      );
+      socket.on('delete_account_result', handler);
+      socket.emit('delete_my_account', { currentPassword, confirmText, totpCode });
+    });
+  }, [socket, cleanupWebRTC]);
+
+  const markChannelRead = useCallback((channelId: string, lastMessageId: string) => {
+    if (!channelId || !lastMessageId) return;
+    if (readCursorsRef.current[channelId] === lastMessageId) return;
+    const next = { ...readCursorsRef.current, [channelId]: lastMessageId };
+    readCursorsRef.current = next;
+    setReadCursors(next);
+    setUnreadCounts(prev => {
+      if (!prev[channelId]) return prev;
+      const copy = { ...prev };
+      delete copy[channelId];
+      return copy;
+    });
+    if (socket?.connected && currentUserRef.current) {
+      socket.emit('mark_channel_read', { channelId, lastMessageId });
+    }
+  }, [socket]);
+
+  const navigateToTarget = useCallback((target: { channelId?: string; dmUsername?: string }) => {
+    const me = currentUserRef.current;
+    if (!me) return;
+    if (target.dmUsername) {
+      const dmName = target.dmUsername.trim();
+      const dmUser = onlineUsersRef.current.find(
+        u => u.username.toLowerCase() === dmName.toLowerCase()
+      );
+      if (dmUser) {
+        openDirectMessage(dmUser);
+        return;
+      }
+      const dmChannelId = target.channelId || buildPersistentDmChannelId(me.username, dmName);
+      setActiveDMUser({
+        id: dmName.toLowerCase(),
+        username: dmName,
+        role: 'user',
+        avatar: '👤',
+        status: 'offline',
+        isMuted: false,
+        isDeafened: false,
+        isSpeaking: false,
+      });
+      setActiveServerId('direct-messages');
+      setActiveChannelId(dmChannelId);
+      setUnreadCounts(prev => {
+        if (!prev[dmChannelId]) return prev;
+        const copy = { ...prev };
+        delete copy[dmChannelId];
+        return copy;
+      });
+      setUnreadDMByUser(prev => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          if (k.toLowerCase() === dmName.toLowerCase()) delete next[k];
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (target.channelId) {
+      const srv = serversRef.current.find(s => s.channels.some(c => c.id === target.channelId));
+      if (srv) {
+        setActiveDMUser(null);
+        setActiveServerId(srv.id);
+        setActiveChannelId(target.channelId);
+        setUnreadCounts(prev => {
+          if (!prev[target.channelId!]) return prev;
+          const copy = { ...prev };
+          delete copy[target.channelId!];
+          return copy;
+        });
+      } else if (target.channelId.startsWith('dm_')) {
+        setActiveServerId('direct-messages');
+        setActiveChannelId(target.channelId);
+      }
+    }
+  }, [openDirectMessage]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onSwMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.type !== 'CAKMA_NOTIFICATION_NAVIGATE') return;
+      navigateToTarget({ channelId: data.channelId, dmUsername: data.dmUsername });
+    };
+    navigator.serviceWorker.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+  }, [navigateToTarget]);
+
+  const consumedUrlDeepLinkRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || consumedUrlDeepLinkRef.current) return;
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const dmParam = url.searchParams.get('dm') || undefined;
+    const channelParam = url.searchParams.get('channel') || undefined;
+    if (!dmParam && !channelParam) {
+      consumedUrlDeepLinkRef.current = true;
+      return;
+    }
+    if (servers.length === 0 && onlineUsers.length === 0) {
+      const fallbackTimer = window.setTimeout(() => {
+        if (consumedUrlDeepLinkRef.current) return;
+        consumedUrlDeepLinkRef.current = true;
+        navigateToTarget({ dmUsername: dmParam, channelId: channelParam });
+        url.searchParams.delete('dm');
+        url.searchParams.delete('channel');
+        window.history.replaceState(null, '', url.toString());
+      }, 450);
+      return () => window.clearTimeout(fallbackTimer);
+    }
+    consumedUrlDeepLinkRef.current = true;
+    navigateToTarget({ dmUsername: dmParam, channelId: channelParam });
+    url.searchParams.delete('dm');
+    url.searchParams.delete('channel');
+    window.history.replaceState(null, '', url.toString());
+  }, [isAuthenticated, servers.length, onlineUsers.length, navigateToTarget]);
+
   const blockUser = useCallback((targetUsername: string) => {
     if (!socket) return;
     socket.emit('block_user', { targetUsername });
@@ -7256,9 +7574,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       sendTyping,
       unreadCounts,
       mentionCounts,
+      readCursors,
+      markChannelRead,
 
       // Account Security, Block, Timeout, Invites & UI Themes
       changePassword,
+      requestPasswordResetCode,
+      confirmPasswordReset,
+      requestEmailChangeCode,
+      confirmEmailChange,
+      revokeSingleSession,
+      deleteMyAccount,
       blockUser,
       unblockUser,
       timeoutMember,
@@ -7441,6 +7767,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       newIpAlert,
       dmReadReceipts,
       shouldAutoOpenExplore,
+      readCursors,
+      requestPasswordResetCode,
+      confirmPasswordReset,
+      requestEmailChangeCode,
+      confirmEmailChange,
+      revokeSingleSession,
+      deleteMyAccount,
+      markChannelRead,
     ]
   );
 

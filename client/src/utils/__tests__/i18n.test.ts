@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { t, LANGUAGE_OPTIONS } from '../i18n';
 
 describe('i18n translations', () => {
-  it('supports all configured languages with core UI keys', () => {
+  it('supports all configured languages with core UI, auth, security, and chat keys', () => {
     const requiredKeys = [
       'settings',
       'textChannels',
@@ -11,6 +11,22 @@ describe('i18n translations', () => {
       'newMessagesDivider',
       'roomChat',
       'editProfile',
+      'loginTitle',
+      'registerTitle',
+      'forgotPasswordTitle',
+      'forgotPasswordLink',
+      'usernameOrEmailLabel',
+      'emailLabel',
+      'passwordLabel',
+      'confirmPasswordLabel',
+      'rememberUsername',
+      'sendCode',
+      'verifyAndLogin',
+      'switchServer',
+      'changeEmailTitle',
+      'deleteAccountTitle',
+      'activeSessionsTitle',
+      'linkPreviewOpen',
     ];
 
     for (const lang of LANGUAGE_OPTIONS) {

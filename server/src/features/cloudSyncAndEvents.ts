@@ -10,6 +10,7 @@ import { isServerOwner } from '../utils/serverIdentity.js';
 import {
   AuthenticatedRequest,
   createAuthMiddlewares,
+  extractSessionToken,
   validateExternalWebhookUrl,
 } from '../utils/adminAuth.js';
 import type { Message, RegisteredAccount, Server } from '../types.js';
@@ -79,7 +80,9 @@ export interface EffectiveLiveKitConfigSnapshot {
 }
 
 export interface CloudSyncContext extends OrphanCleanupContext {
+  verifySessionToken?: (token: string) => string | null;
   verifySessionTokenWithMeta?: (token: string) => { username: string; iat: number } | null;
+  verifyMediaToken?: (token: string) => string | null;
   getAccount?: (usernameLower: string) => RegisteredAccount | undefined;
   getEffectiveLiveKitConfig?: () => EffectiveLiveKitConfigSnapshot;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
@@ -707,6 +710,23 @@ export function registerCloudSyncAndEvents(
   });
 
   app.get('/uploads/:filename', (req, res) => {
+    const sessionToken = extractSessionToken(req);
+    const queryMt = typeof req.query?.mt === 'string' ? req.query.mt.trim() : '';
+    const sessionUser =
+      sessionToken && context?.verifySessionToken
+        ? context.verifySessionToken(sessionToken)
+        : sessionToken && context?.verifySessionTokenWithMeta
+        ? context.verifySessionTokenWithMeta(sessionToken)?.username || null
+        : null;
+    const mediaUser =
+      !sessionUser && queryMt && context?.verifyMediaToken
+        ? context.verifyMediaToken(queryMt)
+        : null;
+
+    if (!sessionUser && !mediaUser) {
+      return res.status(401).json({ error: 'Bu dosyayı görüntülemek için oturum açmalısınız.' });
+    }
+
     const safeName = path.basename(String(req.params.filename || ''));
     if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
       return res.status(400).json({ error: 'Geçersiz dosya adı' });
@@ -718,7 +738,8 @@ export function registerCloudSyncAndEvents(
     const ext = path.extname(safeName).toLowerCase();
     const inlineMime = INLINE_MEDIA_MIME[ext];
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
     if (inlineMime) {
       res.setHeader('Content-Type', inlineMime);
       res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
