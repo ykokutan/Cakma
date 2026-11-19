@@ -1,0 +1,11 @@
+{
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUUh6WnBnYXJlMlE1ZHY1L1haL1l4UVlCR1g3VjErQVcwUWlCV1dGaEVJSGtaTzNIRC84K1pkN0c3V1VBLzFrUFJzZTk0YW9GcmNKZ2luVVFVSkg5TjFqT0VYcjNZYkFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1MDUzODgwCWZpbGU6w4dha21hXzAuMy4xNF94NjQtc2V0dXAuZXhlCXZlcnNpb246MC4zLjE0CnBGZ1N4MVFOblI0aHRkUkRmdGRDTEhSWUpMVlZwT05hdFRGTmNhSUdCSXprM0R1K1I1ZEd5Uld3Zk1McS80blp5YndNZXZLZDBUb1NEMjBxMTdyeUJ3PT0K",
+                                             "url":  "https://ses.yahyakemalokutan.com/downloads/Cakma-Setup.exe"
+                                         }
+                  },
+    "pub_date":  "2026-11-19T02:04:40Z",
+    "version":  "0.3.14",
+    "notes":  "Çakma v0.3.14 güncellemesi"
+}

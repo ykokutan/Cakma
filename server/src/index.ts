@@ -6506,6 +6506,27 @@ setInterval(() => {
 // Register modular Cloud Sync, Events, Sound Upload, and Session Management routes
 registerCloudSyncAndEvents(app, io, activeUsers);
 
+// Desktop Installer & Updater Manifest Serving (kept outside client/dist so Tauri never bundles it recursively)
+const downloadsDirCandidates = [
+  path.resolve(__dirname, '../../downloads'),
+  path.resolve(__dirname, '../downloads'),
+  path.resolve(process.cwd(), 'downloads'),
+  path.resolve(process.cwd(), '../downloads')
+];
+
+let activeDownloadsDir: string | null = null;
+for (const cand of downloadsDirCandidates) {
+  if (fs.existsSync(cand)) {
+    activeDownloadsDir = cand;
+    break;
+  }
+}
+
+if (activeDownloadsDir) {
+  app.use('/downloads', express.static(activeDownloadsDir));
+  console.log(`📦 [İndirmeler] Masaüstü paketleri yayında: ${activeDownloadsDir}`);
+}
+
 // Production Static Client Serving (Single-Port Pelican / Docker Deployment)
 const clientDistCandidates = [
   path.resolve(__dirname, '../../client/dist'),
@@ -6526,7 +6547,7 @@ for (const cand of clientDistCandidates) {
 if (activeStaticDir) {
   app.use(express.static(activeStaticDir));
   app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path.startsWith('/downloads')) return next();
     res.sendFile(path.join(activeStaticDir!, 'index.html'));
   });
   console.log(`🌐 [Web Arayüzü] Statik React arayüzü tek port üzerinden yayında: ${activeStaticDir}`);

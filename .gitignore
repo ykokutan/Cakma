@@ -29,7 +29,12 @@ server/data/
 */data/
 *.tmp-*
 
-# Avoid duplicate installer copy in client/dist (keep only client/public/downloads/Cakma-Setup.exe)
-client/dist/downloads/*.exe
+# Build outputs (automatically rebuilt by start.sh / update.sh)
+client/dist/
+server/dist/
+dedicated-server/dist/
+
+# Never put installers inside client/public (prevents recursive Tauri bundling)
+client/public/downloads/
 bin/
 

@@ -25,9 +25,9 @@ DMG_DIR="$CLIENT_DIR/src-tauri/target/universal-apple-darwin/release/bundle/dmg"
 DMG_FILE=$(ls -t "$DMG_DIR"/*.dmg 2>/dev/null | head -n 1 || true)
 
 if [[ -n "$DMG_FILE" ]]; then
-  mkdir -p "$CLIENT_DIR/public/downloads"
-  cp "$DMG_FILE" "$CLIENT_DIR/public/downloads/Cakma-macOS-Universal.dmg"
-  echo "Ready: $CLIENT_DIR/public/downloads/Cakma-macOS-Universal.dmg"
+  mkdir -p "$ROOT_DIR/downloads"
+  cp "$DMG_FILE" "$ROOT_DIR/downloads/Cakma-macOS-Universal.dmg"
+  echo "Ready: $ROOT_DIR/downloads/Cakma-macOS-Universal.dmg"
 else
   echo "Warning: .dmg not found in $DMG_DIR"
 fi

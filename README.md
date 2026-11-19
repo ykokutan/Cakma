@@ -146,6 +146,7 @@
 
 ```text
 discord-cakma/
+├── downloads/                             # Masaüstü kurulum (.exe) & updater manifest (latest.json)
 ├── server/                                # Node.js + Express + Socket.io Backend + LiveKit Proxy
 │   └── src/
 │       ├── index.ts                       # Auth, 2FA, HttpOnly Cookie, AutoMod, LiveKit SFU, WebRTC
@@ -153,7 +154,6 @@ discord-cakma/
 │       ├── licenseGenerator.ts            # HMAC-SHA256 Lisans Üretici
 │       └── types.ts                       # Sunucu veri modelleri
 ├── client/                                # React 19 + TypeScript + Tailwind + Tauri v2
-│   ├── public/downloads/                  # Masaüstü kurulum (.exe) & updater manifest (latest.json)
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── AuthModal.tsx              # Giriş, Kayıt, E-posta OTP & 2FA doğrulama

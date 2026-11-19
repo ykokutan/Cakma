@@ -17,6 +17,12 @@ $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $keyPath -Raw).Trim()
 
 Push-Location $clientDir
 try {
+  # Remove any legacy public/downloads or dist/downloads so Tauri never recursively embeds old installers
+  $legacyPublicDownloads = Join-Path $clientDir "public\downloads"
+  $legacyDistDownloads = Join-Path $clientDir "dist\downloads"
+  if (Test-Path $legacyPublicDownloads) { Remove-Item -Recurse -Force $legacyPublicDownloads }
+  if (Test-Path $legacyDistDownloads) { Remove-Item -Recurse -Force $legacyDistDownloads }
+
   npx tauri build --bundles nsis
   if ($LASTEXITCODE -ne 0) {
     throw "tauri build failed with exit code $LASTEXITCODE"
@@ -33,7 +39,7 @@ try {
     throw "Signature file not found at $sigFilePath"
   }
 
-  $downloadsDir = Join-Path $clientDir "public\downloads"
+  $downloadsDir = Join-Path $repoRoot "downloads"
   New-Item -ItemType Directory -Force -Path $downloadsDir | Out-Null
 
   Copy-Item -Path $exeFile.FullName -Destination (Join-Path $downloadsDir "Cakma-Setup.exe") -Force
@@ -56,12 +62,7 @@ try {
   $latestJson = $latestObj | ConvertTo-Json -Depth 5
   [System.IO.File]::WriteAllText((Join-Path $downloadsDir "latest.json"), $latestJson, [System.Text.UTF8Encoding]::new($false))
 
-  npm run build
-  if ($LASTEXITCODE -ne 0) {
-    throw "npm run build failed with exit code $LASTEXITCODE"
-  }
-
-  Write-Host "Release v$version ready in client/public/downloads/ (Cakma-Setup.exe + latest.json)" -ForegroundColor Green
+  Write-Host "Release v$version ready in downloads/ (Cakma-Setup.exe + latest.json)" -ForegroundColor Green
 }
 finally {
   Pop-Location

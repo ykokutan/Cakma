@@ -7,6 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/downloads': 'http://127.0.0.1:4000',
+    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
