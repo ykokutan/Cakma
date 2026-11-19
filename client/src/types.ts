@@ -282,6 +282,29 @@ export interface ServerInvite {
   uses: number;
 }
 
+export type ServerCategory = 'gaming' | 'community' | 'tech' | 'music' | 'education' | 'other';
+
+export interface DiscoverableServerSummary {
+  id: string;
+  name: string;
+  icon: string;
+  bannerGradient?: string;
+  bannerImage?: string;
+  description: string;
+  category: ServerCategory;
+  tags: string[];
+  memberCount: number;
+  onlineCount: number;
+  voiceActiveCount: number;
+  textChannelCount: number;
+  voiceChannelCount: number;
+  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' }>;
+  bitrateKbps: number;
+  sfuMode: 'auto' | 'p2p' | 'sfu';
+  isJoined: boolean;
+  isOwner: boolean;
+}
+
 export interface Server {
   id: string;
   name: string;
@@ -289,6 +312,9 @@ export interface Server {
   bannerGradient?: string;
   bannerImage?: string;
   description?: string;
+  isPublic?: boolean;
+  category?: ServerCategory;
+  tags?: string[];
   ownerId: string;
   channels: Channel[];
   roles: ServerRole[];

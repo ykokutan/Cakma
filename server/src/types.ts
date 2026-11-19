@@ -319,6 +319,8 @@ export interface ServerInvite {
   uses: number;
 }
 
+export type ServerCategory = 'gaming' | 'community' | 'tech' | 'music' | 'education' | 'other';
+
 export interface Server {
   id: string;
   name: string;
@@ -326,6 +328,9 @@ export interface Server {
   bannerGradient?: string;
   bannerImage?: string;
   description?: string;
+  isPublic?: boolean;
+  category?: ServerCategory;
+  tags?: string[];
   ownerId: string;
   channels: Channel[];
   roles: ServerRole[];

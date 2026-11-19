@@ -71,6 +71,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   onOpenProfile,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [confirmLeaveServer, setConfirmLeaveServer] = useState(false);
   const [voiceUserMenu, setVoiceUserMenu] = useState<{ user: User; x: number; y: number } | null>(null);
   const [draggingUserId, setDraggingUserId] = useState<string | null>(null);
   const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
@@ -132,6 +133,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     updateChannelSettings,
     notificationPrefs,
     setTargetNotificationPref,
+    leaveServer,
     language,
   } = useSocket();
   const drafts = useChannelDrafts();
@@ -236,7 +238,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     <aside className="w-72 ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-hidden">
       {/* iOS Server Header Card */}
       <header
-        onClick={() => activeServer.id !== 'direct-messages' && setIsDropdownOpen(!isDropdownOpen)}
+        onClick={() => {
+          if (activeServer.id !== 'direct-messages') {
+            setIsDropdownOpen(!isDropdownOpen);
+            setConfirmLeaveServer(false);
+          }
+        }}
         className={`relative border-b border-white/[0.06] flex items-end justify-between font-semibold text-white/90 shadow-sm hover:brightness-110 cursor-pointer transition select-none overflow-hidden ${
           activeServer.id !== 'direct-messages' && activeServer.bannerImage ? 'h-24 p-3.5' : 'h-14 px-4 items-center'
         }`}
@@ -341,6 +348,52 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             </div>
             <span className="text-[10px] text-indigo-300">Paylaş</span>
           </button>
+
+          {currentUser &&
+            activeServer.ownerId !== currentUser.id &&
+            activeServer.ownerId?.toLowerCase() !== currentUser.username.toLowerCase() &&
+            !activeServer.members?.some(
+              (m) => m.isOwner && m.username.toLowerCase() === currentUser.username.toLowerCase()
+            ) && (
+              <div className="pt-1 mt-1 border-t border-white/10">
+                {confirmLeaveServer ? (
+                  <div className="flex items-center justify-between gap-1.5 px-2 py-1.5">
+                    <span className="text-[11px] text-rose-300 font-semibold">Emin misin?</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmLeaveServer(false)}
+                        className="px-2 py-1 rounded-lg bg-white/10 text-[10px] text-white/75"
+                      >
+                        İptal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setIsDropdownOpen(false);
+                          setConfirmLeaveServer(false);
+                          await leaveServer(activeServer.id);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-[10px] font-bold text-white"
+                      >
+                        Ayrıl
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmLeaveServer(true)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 transition"
+                  >
+                    <div className="flex items-center gap-2">
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sunucudan Ayrıl</span>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
         </div>
       )}
 

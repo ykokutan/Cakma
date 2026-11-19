@@ -15,16 +15,25 @@ import {
   Sparkles,
   AlertCircle,
   CheckCircle2,
+  Compass,
+  Plus,
 } from 'lucide-react';
 
 interface FriendsDashboardProps {
   onOpenProfile: (user: User) => void;
+  onOpenExplore?: () => void;
+  onOpenCreateServer?: () => void;
 }
 
 type TabType = 'online' | 'all' | 'pending' | 'add';
 
-export const FriendsDashboard: React.FC<FriendsDashboardProps> = ({ onOpenProfile }) => {
+export const FriendsDashboard: React.FC<FriendsDashboardProps> = ({
+  onOpenProfile,
+  onOpenExplore,
+  onOpenCreateServer,
+}) => {
   const {
+    servers,
     friends,
     incomingFriendRequests,
     outgoingFriendRequests,
@@ -197,7 +206,44 @@ export const FriendsDashboard: React.FC<FriendsDashboardProps> = ({ onOpenProfil
       </header>
 
       {/* Main Body */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {servers.length === 0 && (onOpenExplore || onOpenCreateServer) && (
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-cyan-500/10 to-indigo-500/10 border border-emerald-400/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/35 flex items-center justify-center text-emerald-300 shrink-0">
+                <Compass className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-white">Henüz bir sunucuya katılmadın</div>
+                <p className="text-xs text-white/65 mt-0.5 leading-relaxed">
+                  Sunucuları Keşfet ekranından ilgini çeken topluluklara katılabilir veya kendi ses sunucunu kurabilirsin.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {onOpenCreateServer && (
+                <button
+                  type="button"
+                  onClick={onOpenCreateServer}
+                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Sunucu Oluştur
+                </button>
+              )}
+              {onOpenExplore && (
+                <button
+                  type="button"
+                  onClick={onOpenExplore}
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-500/25 transition"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  Sunucuları Keşfet
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {/* ADD FRIEND TAB */}
         {activeTab === 'add' ? (
           <div className="max-w-xl space-y-6 animate-fade-in">

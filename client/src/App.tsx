@@ -53,6 +53,8 @@ const MainLayout: React.FC = () => {
     connectionState,
     newIpAlert,
     dismissNewIpAlert,
+    shouldAutoOpenExplore,
+    consumeAutoOpenExplore,
   } = useSocket();
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -127,6 +129,13 @@ const MainLayout: React.FC = () => {
   const [isExploreOpen, setIsExploreOpen] = useState(false);
   const [isDownloadOpen, setIsDownloadOpen] = useState(false);
   const [selectedProfileUser, setSelectedProfileUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    if (isAuthenticated && shouldAutoOpenExplore) {
+      setIsExploreOpen(true);
+      consumeAutoOpenExplore();
+    }
+  }, [isAuthenticated, shouldAutoOpenExplore, consumeAutoOpenExplore]);
   const [createChannelModal, setCreateChannelModal] = useState<{
     isOpen: boolean;
     type: 'text' | 'voice';
@@ -353,6 +362,8 @@ const MainLayout: React.FC = () => {
           onToggleMembers={() => setShowMembers((prev) => !prev)}
           onOpenProfile={(user) => setSelectedProfileUser(user)}
           onOpenMobileNav={() => setIsMobileNavOpen(true)}
+          onOpenExplore={() => setIsExploreOpen(true)}
+          onOpenCreateServer={() => setIsCreateServerOpen(true)}
         />
       </div>
 
@@ -411,6 +422,10 @@ const MainLayout: React.FC = () => {
         <ExploreModal
           isOpen={isExploreOpen}
           onClose={() => setIsExploreOpen(false)}
+          onOpenCreateServer={() => {
+            setIsExploreOpen(false);
+            setIsCreateServerOpen(true);
+          }}
         />
 
         <DownloadAppModal

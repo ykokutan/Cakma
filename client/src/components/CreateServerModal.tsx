@@ -30,6 +30,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
   const [serverName, setServerName] = useState('');
   const [serverIcon, setServerIcon] = useState('🎮');
   const [serverTemplate, setServerTemplate] = useState<'empty' | 'gaming' | 'friends' | 'work'>('gaming');
+  const [isPublic, setIsPublic] = useState<boolean>(true);
   const [directHost, setDirectHost] = useState('');
   const [inviteInput, setInviteInput] = useState('');
   const [inviteError, setInviteError] = useState<string | null>(null);
@@ -84,7 +85,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!serverName.trim()) return;
-    createServer(serverName.trim(), serverIcon, serverTemplate);
+    createServer(serverName.trim(), serverIcon, serverTemplate, { isPublic });
     onClose();
   };
 
@@ -216,6 +217,19 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
                 ))}
               </div>
             </div>
+
+            <label className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/[0.04] border border-white/10 cursor-pointer text-xs">
+              <div>
+                <div className="font-semibold text-white">Sunucuları Keşfet&apos;te Listele</div>
+                <div className="text-[10px] text-white/45">Açıkken herkes keşfet dizininden sunucuna katılabilir.</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={isPublic}
+                onChange={(e) => setIsPublic(e.target.checked)}
+                className="rounded border-white/25 bg-black/40 text-emerald-500"
+              />
+            </label>
 
             <div className="flex justify-between items-center pt-2">
               <button

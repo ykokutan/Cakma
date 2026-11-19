@@ -227,13 +227,26 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
         <div className="relative flex items-center justify-center w-full shrink-0">
           <button
             onClick={onOpenExplore}
-            onMouseEnter={(e) => showTooltip(e, 'Sunucuları Keşfet', 'Topluluklar & Dedicated odalar')}
+            onMouseEnter={(e) =>
+              showTooltip(
+                e,
+                'Sunucuları Keşfet',
+                servers.length === 0 ? 'Katılmak için topluluklara göz at!' : 'Topluluklar & Dedicated odalar'
+              )
+            }
             onMouseLeave={hideTooltip}
-            className="w-11 h-11 rounded-[22px] hover:rounded-[15px] transition-all duration-200 flex items-center justify-center bg-white/[0.04] hover:bg-indigo-500/20 text-white/65 hover:text-indigo-300 border border-white/[0.07] hover:border-indigo-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+            className={`w-11 h-11 rounded-[22px] hover:rounded-[15px] transition-all duration-200 flex items-center justify-center border shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] ${
+              servers.length === 0
+                ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-400/50 shadow-[0_0_16px_rgba(16,185,129,0.3)]'
+                : 'bg-white/[0.04] hover:bg-indigo-500/20 text-white/65 hover:text-indigo-300 border-white/[0.07] hover:border-indigo-400/35'
+            }`}
             aria-label="Keşfet & Dedicated Sunucular"
           >
             <Compass className="w-5 h-5" />
           </button>
+          {servers.length === 0 && (
+            <span className="pointer-events-none absolute -top-0.5 right-2.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-[#0b0d14] animate-pulse" />
+          )}
         </div>
       </div>
 

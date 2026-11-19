@@ -86,10 +86,20 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   // Group online users by highest role
   const roles = (activeServer?.roles || []).filter((r) => !r.isDefault).sort((a, b) => a.position - b.position);
 
-  // Deduplicate online users across multiple devices/sessions (by lowercase username)
+  // Deduplicate online users across multiple devices/sessions (by lowercase username),
+  // and filter to members of the active server when inside a real server
+  const isRealServer = Boolean(activeServer && activeServer.id !== 'direct-messages');
   const uniqueOnlineMap = new Map<string, User>();
   onlineUsers.forEach((u) => {
     if (u.status === 'offline') return;
+    if (isRealServer && activeServer) {
+      const uLower = u.username.toLowerCase();
+      const isMember =
+        activeServer.ownerId === u.id ||
+        activeServer.ownerId?.toLowerCase() === uLower ||
+        (activeServer.members || []).some((m) => m.userId === u.id || m.username.toLowerCase() === uLower);
+      if (!isMember) return;
+    }
     const key = u.username.toLowerCase();
     const existing = uniqueOnlineMap.get(key);
     if (!existing) {

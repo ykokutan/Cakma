@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
+import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -194,7 +194,12 @@ interface SocketContextType {
   sendScreenShareLaser: (presenterId: string, x: number, y: number) => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
-  createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => void;
+  createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work', options?: { isPublic?: boolean; category?: ServerCategory }) => void;
+  shouldAutoOpenExplore: boolean;
+  consumeAutoOpenExplore: () => void;
+  fetchDiscoverableServers: () => Promise<DiscoverableServerSummary[]>;
+  joinPublicServer: (serverId: string) => Promise<{ success: boolean; server?: Server; error?: string }>;
+  leaveServer: (serverId: string) => Promise<{ success: boolean; error?: string }>;
   createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
   updateChannelSettings: (serverId: string, channelId: string, patch: { bitrateKbps?: number; userLimit?: number; topic?: string }) => void;
   serverMuteUser: (targetUserId: string, muted?: boolean, deafened?: boolean) => void;
@@ -229,6 +234,9 @@ interface SocketContextType {
     welcomeMessage?: string;
     welcomeEnabled?: boolean;
     autoRoleId?: string | null;
+    isPublic?: boolean;
+    category?: ServerCategory;
+    tags?: string[];
   }) => void;
   restoreServerBackup: (serverId: string, backupData: any) => void;
   createServerRole: (data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => void;
@@ -811,6 +819,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [socket, isAuthenticated, currentUser]);
   const [servers, setServers] = useState<Server[]>([]);
+  const [shouldAutoOpenExplore, setShouldAutoOpenExplore] = useState<boolean>(false);
+  const consumeAutoOpenExplore = useCallback(() => setShouldAutoOpenExplore(false), []);
   const serversRef = useRef<Server[]>([]);
   useEffect(() => {
     serversRef.current = servers;
@@ -2344,8 +2354,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; tokenExpired?: boolean; error?: string }) => {
+    newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; tokenExpired?: boolean; isNewUser?: boolean; error?: string }) => {
       if (res.success && res.user) {
+        if (res.isNewUser) {
+          setShouldAutoOpenExplore(true);
+        }
         if (res.token) {
           const isSameOriginWeb = !isTauriApp && typeof window !== 'undefined' && backendUrl.startsWith(window.location.origin);
           if (isSameOriginWeb) {
@@ -2548,6 +2561,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setActiveServerId(data.servers[0].id);
         const firstTextCh = data.servers[0].channels.find(c => c.type === 'text');
         if (firstTextCh) setActiveChannelId(firstTextCh.id);
+      } else {
+        setActiveServerId('direct-messages');
+        setActiveChannelId('');
       }
     });
 
@@ -2783,7 +2799,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('server_created', (newServer: Server) => {
-      setServers(prev => [...prev, newServer]);
+      setServers(prev => (prev.some(s => s.id === newServer.id) ? prev : [...prev, newServer]));
+      setActiveDMUser(null);
+      setActiveServerId(newServer.id);
+      const firstText = newServer.channels.find(c => c.type === 'text');
+      if (firstText) setActiveChannelId(firstText.id);
     });
 
     newSocket.on('server_updated', (updatedServer: Server) => {
@@ -2795,8 +2815,34 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     });
 
-    newSocket.on('server_deleted', ({ serverId }: { serverId: string }) => {
-      setServers(prev => prev.filter(s => s.id !== serverId));
+    const handleServerRemoval = (removedId: string) => {
+      if (!removedId) return;
+      setServers(prev => {
+        const remaining = prev.filter(s => s.id !== removedId);
+        serversRef.current = remaining;
+        setActiveServerId(curr => {
+          if (curr !== removedId) return curr;
+          if (remaining.length > 0) {
+            const nextSrv = remaining[0];
+            const firstText = nextSrv.channels.find(c => c.type === 'text');
+            setActiveChannelId(firstText?.id || '');
+            return nextSrv.id;
+          }
+          setActiveChannelId('');
+          return 'direct-messages';
+        });
+        return remaining;
+      });
+    };
+
+    newSocket.on('server_deleted', (payload: { serverId: string } | string) => {
+      const removedId = typeof payload === 'string' ? payload : payload?.serverId;
+      handleServerRemoval(removedId);
+    });
+
+    newSocket.on('server_removed', (payload: { serverId: string } | string) => {
+      const removedId = typeof payload === 'string' ? payload : payload?.serverId;
+      handleServerRemoval(removedId);
     });
 
     newSocket.on('servers_updated', (updatedServers: Server[]) => {
@@ -4678,7 +4724,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setActiveDMUser(null);
     }
     setActiveServerId(serverId);
-    const server = servers.find(s => s.id === serverId);
+    const server = servers.find(s => s.id === serverId) || serversRef.current.find(s => s.id === serverId);
     if (server) {
       const firstTextCh = server.channels.find(c => c.type === 'text');
       if (firstTextCh) setActiveChannelId(firstTextCh.id);
@@ -5286,10 +5332,99 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return null;
   }, []);
 
-  const createServer = (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work') => {
+  const createServer = (
+    name: string,
+    icon?: string,
+    template?: 'empty' | 'gaming' | 'friends' | 'work',
+    options?: { isPublic?: boolean; category?: ServerCategory }
+  ) => {
     if (!socket || !name.trim()) return;
-    socket.emit('create_server', { name: name.trim(), icon, template });
+    socket.emit('create_server', {
+      name: name.trim(),
+      icon,
+      template,
+      isPublic: options?.isPublic,
+      category: options?.category,
+    });
   };
+
+  const fetchDiscoverableServers = useCallback(() => {
+    return new Promise<DiscoverableServerSummary[]>((resolve) => {
+      if (!socket) {
+        resolve([]);
+        return;
+      }
+      const handler = (list: DiscoverableServerSummary[]) => {
+        socket.off('discoverable_servers_list', handler);
+        resolve(Array.isArray(list) ? list : []);
+      };
+      socket.on('discoverable_servers_list', handler);
+      socket.emit('get_discoverable_servers');
+      setTimeout(() => {
+        socket.off('discoverable_servers_list', handler);
+        resolve([]);
+      }, 4000);
+    });
+  }, [socket]);
+
+  const joinPublicServer = useCallback((serverId: string) => {
+    return new Promise<{ success: boolean; server?: Server; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      const handler = (res: {
+        success: boolean;
+        server?: Server;
+        messages?: Record<string, Message[]>;
+        hasMoreMessages?: Record<string, boolean>;
+        error?: string;
+      }) => {
+        socket.off('join_public_server_response', handler);
+        if (res.success && res.server) {
+          const joinedSrv = res.server;
+          setServers((prev) => {
+            const exists = prev.some((s) => s.id === joinedSrv.id);
+            const next = exists ? prev.map((s) => (s.id === joinedSrv.id ? joinedSrv : s)) : [...prev, joinedSrv];
+            serversRef.current = next;
+            return next;
+          });
+          if (res.messages) {
+            setMessagesMap((prev) => ({ ...prev, ...res.messages }));
+          }
+          if (res.hasMoreMessages) {
+            setHasMoreMessages((prev) => ({ ...prev, ...res.hasMoreMessages }));
+          }
+        }
+        resolve({ success: res.success, server: res.server, error: res.error });
+      };
+      socket.on('join_public_server_response', handler);
+      socket.emit('join_public_server', { serverId });
+      setTimeout(() => {
+        socket.off('join_public_server_response', handler);
+        resolve({ success: false, error: 'İstek zaman aşımına uğradı.' });
+      }, 6000);
+    });
+  }, [socket]);
+
+  const leaveServer = useCallback((serverId: string) => {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      if (!socket) {
+        resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
+        return;
+      }
+      const handler = (res: { success: boolean; serverId?: string; error?: string }) => {
+        socket.off('leave_server_response', handler);
+        resolve({ success: Boolean(res?.success), error: res?.error });
+      };
+      socket.on('leave_server_response', handler);
+      socket.emit('leave_server', { serverId });
+      setTimeout(() => {
+        socket.off('leave_server_response', handler);
+        resolve({ success: false, error: 'İstek zaman aşımına uğradı.' });
+      }, 6000);
+    });
+  }, [socket]);
 
   const createChannel = (
     name: string,
@@ -5369,6 +5504,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     welcomeMessage?: string;
     welcomeEnabled?: boolean;
     autoRoleId?: string | null;
+    isPublic?: boolean;
+    category?: ServerCategory;
+    tags?: string[];
   }) => {
     socket?.emit('update_server_settings', data);
     if (data.bitrateKbps) {
@@ -5567,10 +5705,37 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         resolve({ success: false, error: 'Sunucuya bağlı değilsiniz.' });
         return;
       }
-      const handler = (res: { success: boolean; serverId?: string; serverName?: string; error?: string }) => {
+      const handler = (res: {
+        success: boolean;
+        serverId?: string;
+        serverName?: string;
+        server?: Server;
+        messages?: Record<string, Message[]>;
+        hasMoreMessages?: Record<string, boolean>;
+        error?: string;
+      }) => {
         socket.off('join_invite_response', handler);
         if (res.success && res.serverId) {
+          if (res.server) {
+            const joinedSrv = res.server;
+            setServers((prev) => {
+              const exists = prev.some((s) => s.id === joinedSrv.id);
+              const next = exists ? prev.map((s) => (s.id === joinedSrv.id ? joinedSrv : s)) : [...prev, joinedSrv];
+              serversRef.current = next;
+              return next;
+            });
+          }
+          if (res.messages) {
+            setMessagesMap((prev) => ({ ...prev, ...res.messages }));
+          }
+          if (res.hasMoreMessages) {
+            setHasMoreMessages((prev) => ({ ...prev, ...res.hasMoreMessages }));
+          }
+          setActiveDMUser(null);
           setActiveServerId(res.serverId);
+          const targetSrv = res.server || serversRef.current.find((s) => s.id === res.serverId);
+          const firstText = targetSrv?.channels.find((c) => c.type === 'text');
+          if (firstText) setActiveChannelId(firstText.id);
         }
         resolve(res);
       };
@@ -6258,6 +6423,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         dismissNewIpAlert,
         dmReadReceipts,
         markDmRead,
+        shouldAutoOpenExplore,
+        consumeAutoOpenExplore,
+        fetchDiscoverableServers,
+        joinPublicServer,
+        leaveServer,
       }}
     >
       {children}

@@ -75,6 +75,7 @@ import {
   Inbox,
   Calendar,
   Lock,
+  Compass,
 } from 'lucide-react';
 
 const SLASH_COMMANDS = [
@@ -92,6 +93,8 @@ interface ChatAreaProps {
   showMembers: boolean;
   onOpenProfile: (user: User) => void;
   onOpenMobileNav?: () => void;
+  onOpenExplore?: () => void;
+  onOpenCreateServer?: () => void;
 }
 
 const SpoilerText: React.FC<{ text: string }> = ({ text }) => {
@@ -169,6 +172,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   showMembers,
   onOpenProfile,
   onOpenMobileNav,
+  onOpenExplore,
+  onOpenCreateServer,
 }) => {
   const {
     activeServer,
@@ -552,15 +557,47 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   if (activeServer?.id === 'direct-messages' && !activeDMUser) {
     return (
       <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/40 text-xs">Yükleniyor...</div>}>
-        <FriendsDashboard onOpenProfile={onOpenProfile} />
+        <FriendsDashboard
+          onOpenProfile={onOpenProfile}
+          onOpenExplore={onOpenExplore}
+          onOpenCreateServer={onOpenCreateServer}
+        />
       </Suspense>
     );
   }
 
   if (!activeServer || !activeChannel) {
     return (
-      <div className="flex-1 flex items-center justify-center text-white/40 text-sm">
-        Bir kanal seçin
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center text-emerald-300">
+          <Compass className="w-6 h-6" />
+        </div>
+        <div className="text-sm font-bold text-white">Henüz bir kanal veya sunucu seçili değil</div>
+        <p className="text-xs text-white/50 max-w-sm">
+          Sunucuları Keşfet üzerinden topluluklara katılabilir veya kendi sunucunu oluşturabilirsin.
+        </p>
+        <div className="flex items-center gap-2">
+          {onOpenExplore && (
+            <button
+              type="button"
+              onClick={onOpenExplore}
+              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold flex items-center gap-1.5"
+            >
+              <Compass className="w-3.5 h-3.5" />
+              Sunucuları Keşfet
+            </button>
+          )}
+          {onOpenCreateServer && (
+            <button
+              type="button"
+              onClick={onOpenCreateServer}
+              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Sunucu Oluştur
+            </button>
+          )}
+        </div>
       </div>
     );
   }

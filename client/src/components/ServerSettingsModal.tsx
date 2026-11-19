@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { Server, ServerRole, ServerPermission } from '../types';
+import { Server, ServerCategory, ServerRole, ServerPermission } from '../types';
 import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
 import {
   X,
@@ -95,6 +95,9 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   const [bannerGradient, setBannerGradient] = useState(server.bannerGradient || BANNER_THEMES[0].class);
   const [bannerImage, setBannerImage] = useState<string>(server.bannerImage || '');
   const [description, setDescription] = useState(server.description || '');
+  const [isPublic, setIsPublic] = useState<boolean>(server.isPublic !== false);
+  const [category, setCategory] = useState<ServerCategory>(server.category || 'community');
+  const [tagsText, setTagsText] = useState<string>((server.tags || []).join(', '));
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
   const iconFileInputRef = useRef<HTMLInputElement>(null);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
@@ -190,6 +193,13 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       bannerGradient,
       bannerImage,
       description,
+      isPublic,
+      category,
+      tags: tagsText
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .slice(0, 6),
       systemChannelId: systemChannelId || null,
       defaultNotification,
       vanityCode: vanityCode.trim() || undefined,
@@ -701,6 +711,63 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                   rows={2}
                   className="w-full p-3 rounded-2xl bg-white/5 border border-white/10 focus:border-blue-500 outline-none text-xs text-white resize-none"
                 />
+              </div>
+
+              {/* Discovery Visibility, Category & Tags */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Sunucuları Keşfet&apos;te Listele</div>
+                    <div className="text-[10px] text-white/45">
+                      Açıkken bu sunucu Keşfet dizininde görünür ve kullanıcılar kendi isteğiyle katılabilir.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPublic((v) => !v)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
+                      isPublic ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        isPublic ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                      Sunucu Kategorisi
+                    </label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value as ServerCategory)}
+                      className="w-full bg-[#18191f] border border-white/15 text-white text-xs rounded-xl px-3 py-2 outline-none"
+                    >
+                      <option value="gaming">🎮 Oyun &amp; e-Spor</option>
+                      <option value="community">💬 Topluluk &amp; Sohbet</option>
+                      <option value="tech">💻 Teknoloji &amp; Yazılım</option>
+                      <option value="music">🎵 Müzik &amp; Eğlence</option>
+                      <option value="education">📚 Eğitim &amp; Çalışma</option>
+                      <option value="other">✨ Diğer</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
+                      Etiketler (virgülle ayırın, maks. 6)
+                    </label>
+                    <input
+                      type="text"
+                      value={tagsText}
+                      onChange={(e) => setTagsText(e.target.value)}
+                      placeholder="Örn: Valorant, Sohbet, 18+"
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/15 text-xs text-white outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Vanity URL / Custom Invite Link */}
