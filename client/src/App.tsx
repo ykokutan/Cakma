@@ -5,18 +5,18 @@ import { ChannelSidebar } from './components/ChannelSidebar';
 import { ChatArea } from './components/ChatArea';
 import { MemberList } from './components/MemberList';
 import { CreateChannelModal } from './components/CreateChannelModal';
-import { CreateServerModal } from './components/CreateServerModal';
 import { AuthModal } from './components/AuthModal';
-import { UserProfileModal } from './components/UserProfileModal';
-import { DirectCallModal } from './components/DirectCallModal';
-import { DownloadAppModal } from './components/DownloadAppModal';
 import { AutoUpdater } from './components/AutoUpdater';
 import { SpeakersOverlay } from './components/SpeakersOverlay';
-import { QuickSwitcherModal } from './components/QuickSwitcherModal';
-import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { MiniScreenSharePiP } from './components/MiniScreenSharePiP';
 import { WindowTitleBar } from './components/WindowTitleBar';
 
+const DirectCallModal = lazy(() => import('./components/DirectCallModal').then((m) => ({ default: m.DirectCallModal })));
+const UserProfileModal = lazy(() => import('./components/UserProfileModal').then((m) => ({ default: m.UserProfileModal })));
+const DownloadAppModal = lazy(() => import('./components/DownloadAppModal').then((m) => ({ default: m.DownloadAppModal })));
+const QuickSwitcherModal = lazy(() => import('./components/QuickSwitcherModal').then((m) => ({ default: m.QuickSwitcherModal })));
+const KeyboardShortcutsModal = lazy(() => import('./components/KeyboardShortcutsModal').then((m) => ({ default: m.KeyboardShortcutsModal })));
+const CreateServerModal = lazy(() => import('./components/CreateServerModal').then((m) => ({ default: m.CreateServerModal })));
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 const AdminDashboardModal = lazy(() => import('./components/AdminDashboardModal').then((m) => ({ default: m.AdminDashboardModal })));
 const LicenseStoreModal = lazy(() => import('./components/LicenseStoreModal').then((m) => ({ default: m.LicenseStoreModal })));
@@ -39,6 +39,9 @@ const MainLayout: React.FC = () => {
     dismissVoicePullNotice,
     currentUser,
     activeServer,
+    activeChannel,
+    selectChannel,
+    unreadCounts,
     isAuthenticated,
     currentServerHost,
     isDedicatedServer,
@@ -56,6 +59,27 @@ const MainLayout: React.FC = () => {
 
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
+      // Alt + ArrowUp / ArrowDown (and Alt + Shift for unread-only channels)
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const textChs = (activeServer?.channels || []).filter((c) => c.type === 'text');
+        if (textChs.length > 0) {
+          const candidates = e.shiftKey
+            ? textChs.filter((c) => c.id === activeChannel?.id || (unreadCounts[c.id] || 0) > 0)
+            : textChs;
+          if (candidates.length > 0) {
+            e.preventDefault();
+            const curIdx = candidates.findIndex((c) => c.id === activeChannel?.id);
+            const delta = e.key === 'ArrowDown' ? 1 : -1;
+            const nextIdx =
+              curIdx === -1
+                ? 0
+                : (curIdx + delta + candidates.length) % candidates.length;
+            selectChannel(candidates[nextIdx].id);
+            return;
+          }
+        }
+      }
+
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const key = e.key.toLowerCase();
@@ -89,7 +113,7 @@ const MainLayout: React.FC = () => {
 
     window.addEventListener('keydown', onGlobalKeyDown);
     return () => window.removeEventListener('keydown', onGlobalKeyDown);
-  }, [toggleMute, toggleDeafen]);
+  }, [toggleMute, toggleDeafen, activeServer, activeChannel, selectChannel, unreadCounts]);
   const [showMembers, setShowMembers] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
@@ -352,25 +376,22 @@ const MainLayout: React.FC = () => {
         </>
       )}
 
-      {/* 1-on-1 Direct Voice Calling Floating Widget */}
-      <DirectCallModal />
-
-      {/* User Profile Modal */}
-      {selectedProfileUser && (
-        <UserProfileModal
-          user={selectedProfileUser}
-          onClose={() => setSelectedProfileUser(null)}
-        />
-      )}
-
-      {/* Network & Voice Connection Diagnostics Modal */}
+      {/* 1-on-1 Direct Voice Calling & All Lazy Modals */}
       <Suspense fallback={null}>
+        <DirectCallModal />
+
+        {selectedProfileUser && (
+          <UserProfileModal
+            user={selectedProfileUser}
+            onClose={() => setSelectedProfileUser(null)}
+          />
+        )}
+
         <ConnectionDiagnosticsModal
           isOpen={isDiagnosticsOpen}
           onClose={() => setIsDiagnosticsOpen(false)}
         />
 
-        {/* Modallar */}
         {isSettingsOpen && (
           <SettingsModal onClose={() => setIsSettingsOpen(false)} />
         )}
@@ -407,28 +428,28 @@ const MainLayout: React.FC = () => {
             onClose={() => setIsServerSettingsOpen(false)}
           />
         )}
-      </Suspense>
 
-      {createChannelModal.isOpen && (
-        <CreateChannelModal
-          initialType={createChannelModal.type}
-          onClose={() =>
-            setCreateChannelModal({ isOpen: false, type: 'text' })
-          }
+        {createChannelModal.isOpen && (
+          <CreateChannelModal
+            initialType={createChannelModal.type}
+            onClose={() =>
+              setCreateChannelModal({ isOpen: false, type: 'text' })
+            }
+          />
+        )}
+
+        <QuickSwitcherModal
+          isOpen={isQuickSwitcherOpen}
+          onClose={() => setIsQuickSwitcherOpen(false)}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenShortcuts={() => setIsShortcutsOpen(true)}
         />
-      )}
 
-      <QuickSwitcherModal
-        isOpen={isQuickSwitcherOpen}
-        onClose={() => setIsQuickSwitcherOpen(false)}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenShortcuts={() => setIsShortcutsOpen(true)}
-      />
-
-      <KeyboardShortcutsModal
-        isOpen={isShortcutsOpen}
-        onClose={() => setIsShortcutsOpen(false)}
-      />
+        <KeyboardShortcutsModal
+          isOpen={isShortcutsOpen}
+          onClose={() => setIsShortcutsOpen(false)}
+        />
+      </Suspense>
 
       <MiniScreenSharePiP />
       </div>

@@ -1,6 +1,6 @@
-# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.4.1`)
+# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.5.0`)
 
-![Version](https://img.shields.io/badge/version-0.4.1-red?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.0-red?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20TypeScript%20%7C%20Tauri%20v2%20%7C%20Node.js%20%7C%20WebRTC%20%7C%20LiveKit%20SFU-indigo?style=flat-square)
 ![Languages](https://img.shields.io/badge/i18n-TR%20%7C%20EN%20%7C%20DE%20%7C%20RU-emerald?style=flat-square)
 
@@ -34,7 +34,7 @@
 
 ### 🖥️ Masaüstü Uygulaması, Cam Başlık Çubuğu & Oyun İçi Overlay
 - **Windows & macOS Desteği (Rust / Tauri v2):** Windows (`x64-setup.exe` / `.msi`) ve macOS (`Universal .dmg` — Apple Silicon & Intel) için yerel masaüstü derlemesi.
-- **Görev Çubuğu Rozeti & Tıklanabilir Bildirimler:** Okunmamış mesajlarda Windows görev çubuğu simgesi ve sistem tepsisi üzerinde canlı bildirim rozeti gösterilir; masaüstü bildirimlerine tıklandığında uygulama öne getirilip doğrudan ilgili kanala geçer.
+- **Görev Çubuğu Rozeti, Tek Örnek Kilidi & Doğal Masaüstü Deneyimi:** Okunmamış mesajlarda Windows görev çubuğu simgesi ve sistem tepsisi üzerinde canlı bildirim rozeti; `single-instance` tek pencere kilidi, `cakma://` davet protokolü, oyun içinde çalışan **Global Bas-Konuş (PTT)**, pencere konum/boyut hatırlama ve kapatma tercihi (tepsi/çıkış), tıklanabilir bildirimler ve zengin sistem tepsisi menüsü (Sağırlaştır / Odadan Ayrıl / Durum).
 - **Canlı Güncelleme İlerleme Çubuğu:** Ayarlar → Hakkında ekranında tek tıkla güncelleme denetimi, canlı `%` / `MB` indirme çubuğu ve imzalı OTA kurulum (`latest.json`).
 - **Özel Cam Pencere Başlık Çubuğu & Yeni Kırmızı-Beyaz Marka Kimliği:** Masaüstü, web/PWA favicon ve giriş ekranlarında yeni kırmızı-beyaz sesli sohbet ikonu; temaya uyumlu glassmorphism üst pencere çubuğunda ise aktif sunucu/kanal göstergesi, canlı ses odası (`SFU/P2P`) rozeti, `Ctrl + K` Hızlı Geçiş, renk kodlu tıklanabilir ping/ağ teşhisi düğmesi ve klavye kısayolları (`Ctrl + /`) butonu yer alır.
 - **Akıllı Kenar Çubuğu & Üye Listesi:** Sol çubukta Direkt Mesajlar için canlı okunmamış sayacı, sağ üye listesinde canlı çevrimiçi/toplam üye sayacı ve hızlı üye arama desteği.
@@ -46,10 +46,12 @@
 ### 🔊 Stüdyo Ses, Spektral Gürültü Engelleme, HDR Yayın & PiP
 - **48kHz AudioWorklet Gürültü Engelleme & Zero-Lag Sayaç:** Ana iş parçacığından bağımsız gerçek zamanlı spektral gürültü filtresi ([noise-suppressor-worklet.js](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/client/public/noise-suppressor-worklet.js)) ve 60 FPS re-render darboğazını ortadan kaldıran `VoiceMetricsContext` harici deposu.
 - **Stüdyo Ses DSP & Kişiye Özel EQ:** `48 kHz` örnekleme, `80 Hz` uğultu filtresi, Compressor DSP, `20 ms` düşük gecikmeli tampon, **64–384 kbps Opus**, kişi bazlı `%0–%200` ses, Bas/Tiz EQ, Ses Normalizasyonu ve Sunucu Susturma / Toplantı Modu.
-- **10-bit AV1/VP9 HDR Yayın, WASAPI Pencere Sesi & Mini PiP:** Yayın açarken mümkün olduğunda **yalnızca seçili pencere/oyun sesini (WASAPI)** yakalama, izleyici tarafında özel kalite (`Oto/Kaynak/1080p/720p/480p/360p`), canlı FPS/bitrate/istatistik, lazer işaretçi, çoklu yayın geçişi ve **Mini PiP**.
+- **10-bit AV1/VP9 HDR Yayın, Kamera Bulanıklaştırma & Spotlight:** Yayın açarken mümkün olduğunda **yalnızca seçili pencere/oyun sesini (WASAPI)** yakalama, izleyici tarafında özel kalite (`Oto/Kaynak/1080p/720p/480p/360p`), canlı FPS/bitrate ayarı, lazer işaretçi, çoklu yayın geçişi, **Mini PiP**, kamera arka plan bulanıklaştırma ve konuşanı büyüten **Spotlight** modu.
 - **Ses Odası İçi Yazılı Sohbet ("Oda Sohbeti"), Whisper Lists, El Kaldırma & Otomatik AFK Taşıyıcı.**
 
-### 💬 Sohbet, Parçalı Depolama, Sayfalama & WebP Optimizasyonu
+### 💬 Sohbet, Taslaklar, Sanallaştırma & Depolama Motoru
+- **Kanal/DM Taslakları, `↑` Hızlı Düzenleme & Galeri Lightbox:** Yarım kalan mesajlar kanal bazlı saklanır; boş kutuda `↑` tuşuyla son mesaj düzenlenir; `Alt + ↑/↓` ve `Alt + Shift + ↑/↓` ile kanallar arasında hızla gezilir; 80+ mesajda sanallaştırılmış liste ve zoom/galerili **Lightbox** çalışır.
+- **Asenkron Kripto, Opsiyonel SQLite (WAL + FTS5) & Artık Dosya Temizleyici:** Parola işlemleri event-loop bloklamayan asenkron `crypto.scrypt` ile çalışır; Node 22+ ortamlarda sıfır-native yerleşik `node:sqlite` (WAL + FTS5 tam metin arama) otomatik etkinleşir (Node 20'de parçalı asenkron JSON ile tam uyumlu), referanssız yüklemeler otomatik ve admin panelinden temizlenir.
 - **Parçalı Asenkron Depolama & Sayfalama:** Kanal bazlı debounced asenkron disk yazımı ([messageStore.ts](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/server/src/messageStore.ts)), başlangıçta kanal başına son 60 mesaj yükleme ve *"Sunucudan Daha Eski Mesajları Yükle (+50)"* desteği.
 - **İstemci Tarafı WebP Görsel Sıkıştırma:** Sohbete atılan büyük görseller ve ekran görüntüleri otomatik olarak hafif WebP formatına dönüştürülerek bant genişliği ve disk alanı korunur.
 - **DM Okundu Bilgisi (`✓✓ Görüldü`), E2EE DM, "Yeni Mesajlar" Çizgisi, Sesli Notlar, Threads, GIPHY & Sunucu Şablonları.**

@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData } from './types.js';
 import { ShardedMessageStore, getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages } from './messageStore.js';
+import { SqliteStore } from './sqliteStore.js';
 
 export { getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages };
 
@@ -18,6 +19,52 @@ export function getPersistentDir(): string {
 
 const DATA_DIR = getPersistentDir();
 export const messageStore = new ShardedMessageStore(DATA_DIR);
+export const sqliteStore = new SqliteStore(DATA_DIR);
+
+export async function initStorageEngine(messagesMap?: Record<string, Message[]>) {
+  const ok = await sqliteStore.init();
+  if (ok && messagesMap) {
+    const indexed = sqliteStore.syncAllMessages(messagesMap);
+    console.log(`🗄️ [Storage] SQLite WAL + FTS5 aktif (${indexed} mesaj indekslendi).`);
+  } else {
+    console.log(`💾 [Storage] Depolama motoru: ${sqliteStore.getEngineName()} (${sqliteStore.getInfo().reason})`);
+  }
+  return sqliteStore.getInfo();
+}
+
+export function getStorageEngineInfo() {
+  return sqliteStore.getInfo();
+}
+
+export function searchMessagesSmart(
+  allMessages: Record<string, Message[]>,
+  query: string,
+  allowedChannelIds?: Set<string>,
+  limit = 50
+) {
+  if (sqliteStore.isActive()) {
+    const ftsHits = sqliteStore.searchMessagesFts(query, limit * 2);
+    if (ftsHits.length > 0) {
+      const byId = new Map<string, Message>();
+      const chIds = new Set(ftsHits.map((h) => h.channelId));
+      for (const chId of chIds) {
+        if (allowedChannelIds && !allowedChannelIds.has(chId)) continue;
+        for (const msg of allMessages[chId] || []) {
+          byId.set(msg.id, msg);
+        }
+      }
+      const hydrated: Array<{ channelId: string; message: Message }> = [];
+      for (const hit of ftsHits) {
+        if (allowedChannelIds && !allowedChannelIds.has(hit.channelId)) continue;
+        const found = byId.get(hit.id);
+        if (found) hydrated.push({ channelId: hit.channelId, message: found });
+        if (hydrated.length >= limit) break;
+      }
+      if (hydrated.length > 0) return hydrated;
+    }
+  }
+  return searchAllMessages(allMessages, query, allowedChannelIds, limit);
+}
 
 const pendingWrites = new Map<string, any>();
 const pendingTimers = new Map<string, NodeJS.Timeout>();
@@ -36,6 +83,9 @@ function safeWriteJson(filename: string, data: any) {
     const tempPath = `${filePath}.tmp-${Date.now()}`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tempPath, filePath);
+    if (sqliteStore.isActive()) {
+      sqliteStore.putJsonSnapshot(filename, data);
+    }
   } catch (err) {
     console.error(`❌ [Storage] ${filename} yazılamadı:`, err);
   }
@@ -52,6 +102,9 @@ async function writeJsonAsync(filename: string, data: any) {
         const tempPath = `${filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         await fs.promises.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
         await fs.promises.rename(tempPath, filePath);
+        if (sqliteStore.isActive()) {
+          sqliteStore.putJsonSnapshot(filename, data);
+        }
       } catch (err) {
         console.error(`❌ [Storage] ${filename} asenkron yazılamadı:`, err);
       }
@@ -153,6 +206,18 @@ export function loadMessages(defaultMessages: Record<string, Message[]>): Record
 
 export function saveChannelMessages(channelId: string, channelMessages: Message[]) {
   messageStore.scheduleSaveChannel(channelId, channelMessages);
+}
+
+export function indexChannelMessage(channelId: string, msg: Message) {
+  sqliteStore.indexMessage(channelId, msg);
+}
+
+export function removeIndexedMessage(id: string) {
+  sqliteStore.removeMessage(id);
+}
+
+export function closeStorageEngine() {
+  sqliteStore.close();
 }
 
 export function saveMessages(messages: Record<string, Message[]>) {
@@ -348,6 +413,7 @@ const BACKUP_FILENAMES = [
 export function getStorageStats(): {
   dataDir: string;
   totalBytes: number;
+  engine: string;
   files: { name: string; bytes: number }[];
 } {
   ensureDataDir();
@@ -356,7 +422,7 @@ export function getStorageStats(): {
   try {
     const entries = fs.readdirSync(DATA_DIR);
     for (const name of entries) {
-      if (!name.endsWith('.json')) continue;
+      if (!name.endsWith('.json') && !name.endsWith('.sqlite')) continue;
       try {
         const st = fs.statSync(path.join(DATA_DIR, name));
         if (st.isFile()) {
@@ -367,7 +433,7 @@ export function getStorageStats(): {
     }
   } catch {}
   files.sort((a, b) => b.bytes - a.bytes);
-  return { dataDir: DATA_DIR, totalBytes, files };
+  return { dataDir: DATA_DIR, totalBytes, engine: sqliteStore.getEngineName(), files };
 }
 
 export function exportAllDataBundle(): {

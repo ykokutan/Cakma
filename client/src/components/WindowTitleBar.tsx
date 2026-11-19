@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Minus, Square, Copy, X, Search, Volume2, HelpCircle } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
+import { useNetworkPing, useNetworkConnectionState } from '../context/NetworkMetricsContext';
 
 interface WindowTitleBarProps {
   onOpenQuickSwitcher?: () => void;
@@ -14,14 +15,14 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
   const {
     activeServer,
     activeChannel,
-    ping,
     isAuthenticated,
     connectedVoiceChannelId,
     voiceTransportMode,
     setIsDiagnosticsOpen,
     servers,
-    connectionState,
   } = useSocket();
+  const ping = useNetworkPing();
+  const connectionState = useNetworkConnectionState();
   const [isMaximized, setIsMaximized] = useState(false);
 
   const activeVoiceChannelName = connectedVoiceChannelId

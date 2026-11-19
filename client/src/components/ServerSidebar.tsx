@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
-import { Plus, Compass, MessageCircle, Download } from 'lucide-react';
+import { Plus, Compass, MessageCircle, Download, Bell, BellOff } from 'lucide-react';
 import { isImageAvatar } from './AvatarView';
+import type { Server } from '../types';
+import type { NotificationLevel } from '../utils/notificationPrefs';
 
 interface ServerSidebarProps {
   onOpenCreateServer: () => void;
@@ -22,8 +24,32 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   onOpenExplore,
   onOpenDownload,
 }) => {
-  const { servers, activeServer, selectServer, unreadCounts, mentionCounts, unreadDMByUser } = useSocket();
+  const {
+    servers,
+    activeServer,
+    selectServer,
+    unreadCounts,
+    mentionCounts,
+    unreadDMByUser,
+    notificationPrefs,
+    setTargetNotificationPref,
+  } = useSocket();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const [serverMenu, setServerMenu] = useState<{ server: Server; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!serverMenu) return;
+    const handleClose = () => setServerMenu(null);
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setServerMenu(null);
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [serverMenu]);
 
   const isDMActive = activeServer?.id === 'direct-messages';
   const totalDmUnreads = Object.values(unreadDMByUser || {}).reduce(
@@ -118,11 +144,22 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
               {/* Server Tile */}
               <button
                 onClick={() => selectServer(server.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setServerMenu({
+                    server,
+                    x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
+                    y: Math.max(8, Math.min(e.clientY, window.innerHeight - 190)),
+                  });
+                }}
                 onMouseEnter={(e) =>
                   showTooltip(
                     e,
                     server.name,
-                    serverMentions > 0
+                    notificationPrefs[server.id] === 'muted'
+                      ? 'Bildirimler sessize alındı'
+                      : serverMentions > 0
                       ? `${serverMentions} yeni bahsetme`
                       : serverUnreads > 0
                       ? `${serverUnreads} okunmamış mesaj`
@@ -150,6 +187,15 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                   <span className="tracking-tight">{server.name.substring(0, 2).toUpperCase()}</span>
                 )}
               </button>
+
+              {notificationPrefs[server.id] === 'muted' && (
+                <span
+                  title="Sunucu bildirimleri sessize alındı"
+                  className="pointer-events-none absolute -top-0.5 right-2.5 w-4 h-4 rounded-full bg-slate-800/95 text-white/65 border border-white/15 flex items-center justify-center shadow"
+                >
+                  <BellOff className="w-2.5 h-2.5" />
+                </span>
+              )}
 
               {serverMentions > 0 && (
                 <span
@@ -205,6 +251,53 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
           </button>
         </div>
       )}
+
+      {/* Server Right-Click Notification Context Menu */}
+      {serverMenu &&
+        createPortal(
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ left: serverMenu.x, top: serverMenu.y }}
+            className="fixed z-[9999] w-52 rounded-2xl bg-[#13151d]/95 border border-white/15 shadow-2xl backdrop-blur-2xl p-1.5 text-xs text-white animate-fade-in"
+          >
+            <div className="px-2.5 py-1.5 border-b border-white/10 mb-1 flex items-center justify-between gap-2">
+              <span className="font-bold truncate">{serverMenu.server.name}</span>
+              <span className="text-[10px] text-white/45 shrink-0">Bildirimler</span>
+            </div>
+            {(
+              [
+                { id: 'all', label: 'Tüm Mesajlar', icon: Bell },
+                { id: 'mentions', label: 'Sadece @Bahsetmeler', icon: Bell },
+                { id: 'muted', label: 'Sunucuyu Sessize Al', icon: BellOff },
+              ] as Array<{ id: NotificationLevel; label: string; icon: any }>
+            ).map((opt) => {
+              const current = notificationPrefs[serverMenu.server.id] || 'all';
+              const Icon = opt.icon;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => {
+                    setTargetNotificationPref(serverMenu.server.id, opt.id);
+                    setServerMenu(null);
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl transition text-left ${
+                    current === opt.id
+                      ? 'bg-red-500/20 text-white font-semibold border border-red-400/30'
+                      : 'hover:bg-white/10 text-white/80'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon className="w-3.5 h-3.5 text-white/70" />
+                    <span>{opt.label}</span>
+                  </span>
+                  {current === opt.id && <span className="w-1.5 h-1.5 rounded-full bg-red-400" />}
+                </button>
+              );
+            })}
+          </div>,
+          document.body
+        )}
 
       {/* Portal Tooltip (never clipped by overflow or backdrop-filter) */}
       {tooltip &&

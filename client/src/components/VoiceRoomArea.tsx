@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useNetworkPing } from '../context/NetworkMetricsContext';
 import { t } from '../utils/i18n';
 import { ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint } from '../types';
 import { SoundboardModal } from './SoundboardModal';
@@ -41,6 +42,9 @@ import {
   MessageSquare,
   Send,
   X,
+  LayoutGrid,
+  Focus,
+  Droplet,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -385,7 +389,6 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     activeSoundboardEffect,
     radioBotState,
     syncRadioState,
-    ping,
     openDiagnostics,
     userVolumes,
     setUserVolume,
@@ -398,6 +401,8 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     isWebcamActive,
     toggleWebcam,
     webcamStream,
+    webcamBlurEnabled,
+    toggleWebcamBlur,
     isPrioritySpeakerActive,
     prioritySpeakerUsername,
     togglePrioritySpeaker,
@@ -416,6 +421,9 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     muteAllVoiceChannel,
     voiceTransportMode,
   } = useSocket();
+  const ping = useNetworkPing();
+  const [isSpotlightMode, setIsSpotlightMode] = useState(false);
+  const [spotlightUserId, setSpotlightUserId] = useState<string | null>(null);
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
   const [isWhisperListsOpen, setIsWhisperListsOpen] = useState(false);
@@ -514,6 +522,22 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
         </div>
 
         <div className="flex items-center gap-1.5 text-[11px] text-white/60 overflow-x-auto no-scrollbar py-1 max-w-[56vw] sm:max-w-[72vw] shrink-0">
+          {/* Spotlight / Grid View Switcher */}
+          {!hasAnyScreenShare && usersInRoom.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setIsSpotlightMode((p) => !p)}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
+                isSpotlightMode
+                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                  : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+              }`}
+              title={isSpotlightMode ? 'Izgara Görünümüne Geç' : 'Konuşanı Öne Çıkar (Spotlight)'}
+            >
+              {isSpotlightMode ? <LayoutGrid className="w-3.5 h-3.5" /> : <Focus className="w-3.5 h-3.5" />}
+              <span>{isSpotlightMode ? 'Izgara' : 'Spotlight'}</span>
+            </button>
+          )}
           {/* Moderator Meeting Mode: Mute / Unmute All */}
           {(currentUser?.role === 'admin' || activeServer?.ownerId === currentUser?.id) && usersInRoom.length > 1 && (
             <button
@@ -910,7 +934,79 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             </div>
             )}
           </div>
-        ) : (
+        ) : isSpotlightMode && usersInRoom.length > 0 ? (() => {
+          const focalUser =
+            (spotlightUserId ? usersInRoom.find((u) => u.id === spotlightUserId) : undefined) ||
+            usersInRoom.find((u) => (u.id === currentUser?.id ? isSpeaking : u.isSpeaking)) ||
+            usersInRoom.find((u) => u.id === currentUser?.id && isWebcamActive) ||
+            usersInRoom[0];
+          const others = usersInRoom.filter((u) => u.id !== focalUser.id);
+          const isFocalMe = focalUser.id === currentUser?.id;
+          const focalSpeaking = isFocalMe ? isSpeaking : focalUser.isSpeaking;
+          const focalMuted = isFocalMe ? isMuted : focalUser.isMuted;
+          return (
+            <div className="w-full max-w-5xl h-full min-h-0 flex flex-col gap-3 items-center justify-center">
+              <div
+                onContextMenu={(e) => handleOpenUserContextMenu(e, focalUser)}
+                className={`relative w-full max-w-2xl flex-1 min-h-[220px] max-h-[420px] rounded-3xl ios-glass-card flex flex-col items-center justify-center p-6 shadow-2xl transition-all duration-300 ${
+                  focalSpeaking ? 'border-emerald-500/60 bg-emerald-500/[0.08] shadow-emerald-500/20' : ''
+                }`}
+              >
+                <div className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/35 text-[10px] font-bold text-amber-200 flex items-center gap-1">
+                  <Focus className="w-3 h-3" />
+                  <span>Spotlight</span>
+                </div>
+                {isFocalMe && isWebcamActive && webcamStream ? (
+                  <div className="w-64 h-48 rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-black mb-3">
+                    <video
+                      ref={(el) => { if (el && el.srcObject !== webcamStream) el.srcObject = webcamStream; }}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                  </div>
+                ) : (
+                  <div className={`w-28 h-28 rounded-full bg-gradient-to-b from-white/15 to-white/5 border border-white/15 flex items-center justify-center text-5xl shadow-2xl mb-4 overflow-hidden ${focalSpeaking ? 'ios-halo scale-105' : ''}`}>
+                    <AvatarView avatar={focalUser.avatar} alt={focalUser.username} fallback="🎮" />
+                  </div>
+                )}
+                <div className="text-base font-bold text-white flex items-center gap-2">
+                  <span>{focalUser.username}</span>
+                  {isFocalMe && <span className="text-white/40 text-xs">(Sen)</span>}
+                  {focalMuted && <MicOff className="w-4 h-4 text-red-400" />}
+                </div>
+                <div className="text-xs text-white/50 mt-0.5">
+                  {focalSpeaking ? 'Konuşuyor' : focalMuted ? 'Sessize Alındı' : 'Dinliyor'}
+                </div>
+              </div>
+              {others.length > 0 && (
+                <div className="shrink-0 w-full flex items-center justify-center gap-2.5 overflow-x-auto no-scrollbar py-1">
+                  {others.map((u) => {
+                    const isMe = u.id === currentUser?.id;
+                    const spk = isMe ? isSpeaking : u.isSpeaking;
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => setSpotlightUserId(u.id)}
+                        className={`px-3 py-2 rounded-2xl ios-glass-card border flex items-center gap-2 text-xs transition shrink-0 ${
+                          spk ? 'border-emerald-400/60 bg-emerald-500/10' : 'border-white/10 hover:bg-white/10'
+                        }`}
+                        title="Spotlight odağına al"
+                      >
+                        <div className={`w-7 h-7 rounded-full overflow-hidden bg-white/10 ${spk ? 'ring-2 ring-emerald-400' : ''}`}>
+                          <AvatarView avatar={u.avatar} alt={u.username} fallback="🎮" />
+                        </div>
+                        <span className="font-semibold text-white truncate max-w-[110px]">{u.username}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })() : (
           /* Standard iOS Grid with Voice Pulsating Halo (Centered for any participant count) */
           <div className="w-full max-w-6xl flex flex-wrap items-center justify-center gap-5">
             {usersInRoom.map((user) => {
@@ -1159,6 +1255,20 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                 title={isWebcamActive ? 'Kamerayı Kapat' : 'Kamerayı Aç (Görüntülü Sohbet)'}
               >
                 {isWebcamActive ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+              </button>
+
+              {/* Camera Background Blur Toggle */}
+              <button
+                type="button"
+                onClick={toggleWebcamBlur}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
+                  webcamBlurEnabled
+                    ? 'bg-sky-500 text-white shadow-sky-500/30 ring-2 ring-sky-400'
+                    : 'bg-white/10 hover:bg-white/20 text-white/75'
+                }`}
+                title={webcamBlurEnabled ? 'Kamera Arka Plan Bulanıklığı: Açık' : 'Kamera Arka Plan Bulanıklığı: Kapalı'}
+              >
+                <Droplet className="w-5 h-5" />
               </button>
 
               {/* Priority Speaker Toggle (Admin) */}

@@ -39,7 +39,10 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
     dataFiles: number;
     soundsBytes: number;
     sounds: Array<{ name: string; sizeBytes: number; mtime: string; url: string }>;
+    storageEngine?: { engine: string; sqliteAvailable: boolean };
+    orphanStats?: { scannedFiles: number; orphanFiles: number; freedBytes: number } | null;
   } | null>(null);
+  const [cleaningOrphans, setCleaningOrphans] = useState(false);
   const [events, setEvents] = useState<
     Array<{ id: string; serverId: string; title: string; scheduledAt: string; createdBy: string; attendees: string[] }>
   >([]);
@@ -181,23 +184,68 @@ export const AdminToolsPanel: React.FC<AdminToolsPanelProps> = ({
       {/* 1. Disk & License Summary Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2">
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            <HardDrive className="w-4 h-4 text-cyan-400" />
-            <span>Sunucu Veri &amp; Medya Disk Kullanımı</span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <HardDrive className="w-4 h-4 text-cyan-400" />
+              <span>Sunucu Veri &amp; Medya Disk Kullanımı</span>
+            </div>
+            {diskInfo?.storageEngine && (
+              <span className="px-2 py-0.5 rounded-full bg-teal-500/15 border border-teal-400/30 text-[10px] font-mono text-teal-300">
+                {diskInfo.storageEngine.engine}
+              </span>
+            )}
           </div>
           {diskInfo ? (
-            <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5">
-                <div className="text-white/45">Toplam data/</div>
-                <div className="text-base font-bold text-white">{formatBytes(diskInfo.dataBytes)}</div>
-                <div className="text-[10px] text-white/40">{diskInfo.dataFiles} dosya</div>
+            <>
+              <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                <div className="p-2.5 rounded-xl bg-black/30 border border-white/5">
+                  <div className="text-white/45">Toplam data/</div>
+                  <div className="text-base font-bold text-white">{formatBytes(diskInfo.dataBytes)}</div>
+                  <div className="text-[10px] text-white/40">{diskInfo.dataFiles} dosya</div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-black/30 border border-white/5">
+                  <div className="text-white/45">Soundboard Sesleri</div>
+                  <div className="text-base font-bold text-cyan-300">{formatBytes(diskInfo.soundsBytes)}</div>
+                  <div className="text-[10px] text-white/40">{diskInfo.sounds.length} ses dosyası</div>
+                </div>
               </div>
-              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5">
-                <div className="text-white/45">Soundboard Sesleri</div>
-                <div className="text-base font-bold text-cyan-300">{formatBytes(diskInfo.soundsBytes)}</div>
-                <div className="text-[10px] text-white/40">{diskInfo.sounds.length} ses dosyası</div>
-              </div>
-            </div>
+              {diskInfo.orphanStats && (
+                <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-white/60">
+                    Artık (referanssız) dosya:{' '}
+                    <b className={diskInfo.orphanStats.orphanFiles > 0 ? 'text-amber-300' : 'text-emerald-300'}>
+                      {diskInfo.orphanStats.orphanFiles} adet ({formatBytes(diskInfo.orphanStats.freedBytes)})
+                    </b>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={cleaningOrphans || diskInfo.orphanStats.orphanFiles === 0}
+                    onClick={async () => {
+                      setCleaningOrphans(true);
+                      try {
+                        const res = await fetch(`${currentServerHost}/api/admin/cleanup-orphans`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ minAgeMs: 0 }),
+                        });
+                        const data = await res.json();
+                        if (data?.ok) {
+                          setActionNotice(
+                            `${data.result.deletedFiles} artık dosya temizlendi (${formatBytes(data.result.freedBytes)} açıldı).`
+                          );
+                          setTimeout(() => setActionNotice(null), 4000);
+                          loadData();
+                        }
+                      } catch {}
+                      setCleaningOrphans(false);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-40 border border-amber-400/30 text-amber-200 font-semibold transition shrink-0"
+                  >
+                    {cleaningOrphans ? 'Temizleniyor...' : 'Artık Dosyaları Temizle'}
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             <div className="text-xs text-white/40">Yükleniyor...</div>
           )}

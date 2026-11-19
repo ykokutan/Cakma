@@ -236,7 +236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.4.1');
+  const [appVersion, setAppVersion] = useState<string>('0.5.0');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -293,13 +293,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     }
   };
   const [autostartEnabled, setAutostartEnabled] = useState<boolean>(false);
+  const [closeToTrayEnabled, setCloseToTrayEnabled] = useState<boolean>(true);
 
   React.useEffect(() => {
     const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
     if (!isTauriEnv) return;
     import('@tauri-apps/api/core')
-      .then(({ invoke }) => invoke<boolean>('get_autostart'))
-      .then((enabled) => setAutostartEnabled(Boolean(enabled)))
+      .then(async ({ invoke }) => {
+        const [autoRes, trayRes] = await Promise.all([
+          invoke<boolean>('get_autostart').catch(() => false),
+          invoke<boolean>('get_close_to_tray').catch(() => true),
+        ]);
+        setAutostartEnabled(Boolean(autoRes));
+        setCloseToTrayEnabled(Boolean(trayRes));
+      })
       .catch(() => {});
   }, []);
 
@@ -313,6 +320,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       await invoke('set_autostart', { enabled: next });
     } catch {
       setAutostartEnabled(!next);
+    }
+  };
+
+  const handleToggleCloseToTray = async () => {
+    const next = !closeToTrayEnabled;
+    setCloseToTrayEnabled(next);
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (!isTauriEnv) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_close_to_tray', { enabled: next });
+    } catch {
+      setCloseToTrayEnabled(!next);
     }
   };
 
@@ -2422,7 +2442,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </div>
 
               {/* In-Game Overlay & Game Detection Card */}
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
+              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm font-semibold text-white">Windows Başlangıçta Otomatik Başlat</div>
@@ -2440,6 +2460,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <span
                       className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                         autostartEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="pt-3 border-t border-white/10 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Kapat (X) Tuşunda Sistem Tepsisine Küçült</div>
+                    <div className="text-xs text-white/40">
+                      Açıkken pencere kapatıldığında arka planda çalışmaya devam eder; kapatılırsa uygulamadan tamamen çıkar
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleCloseToTray}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
+                      closeToTrayEnabled ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        closeToTrayEnabled ? 'translate-x-6' : 'translate-x-1'
                       }`}
                     />
                   </button>
@@ -3502,12 +3544,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.4.1 - Latest */}
+                  {/* v0.5.0 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.4.1 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.5.0 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Doğal Masaüstü Yetenekleri (Tauri / Rust):</strong> Tek pencere kilidi (<code className="text-cyan-300">single-instance</code>), oyun içi global <strong>Bas-Konuş (PTT)</strong>, pencere boyut/konum hatırlama, kapatma tuşunda tepsi/çıkış tercihi, <code className="text-cyan-300">cakma://invite</code> derin bağlantı ve zengin sistem tepsisi menüsü (Sağırlaştır, Odadan Ayrıl, Durum Değiştir).</li>
+                      <li><strong className="text-white">Sohbet UX &amp; Performans:</strong> Kanal/DM taslak kaydı, boş kutuda <code className="text-cyan-300">↑</code> ile son mesajı düzenleme, <code className="text-cyan-300">Alt + ↑/↓</code> kanal gezintisi, zoom/galerili <strong>Lightbox</strong>, 80+ mesajda sanallaştırılmış liste ve modal lazy-loading.</li>
+                      <li><strong className="text-white">Ses, Video &amp; Bulut Ayarları:</strong> Kanal/sunucu susturma tercihleri, kişi bazlı ses/EQ bulut senkronizasyonu, ses odasında <strong>Spotlight</strong> + kamera arka plan bulanıklaştırma ve ağ kesintisinde <strong>ICE Restart</strong> / otomatik odaya dönüş.</li>
+                      <li><strong className="text-white">Sunucu Motoru &amp; Temizlik:</strong> Asenkron <code className="text-cyan-300">crypto.scrypt</code>, Node 22+ ortamlarda sıfır-native yerleşik <code className="text-cyan-300">node:sqlite</code> (WAL + FTS5) adaptörü ve referanssız artık yükleme çöp toplayıcısı eklendi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.4.1 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.4.1 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Yeni Kırmızı-Beyaz Marka Logosu &amp; İkon Seti:</strong> Windows (<code className="text-cyan-300">.ico</code>), macOS (<code className="text-cyan-300">.icns</code>), PWA/Favicon, pencere başlık çubuğu ve giriş/hakkında ekranları yeni kırmızı-beyaz sesli sohbet ikonuyla yenilendi.</li>
                       <li><strong className="text-white">Gelişmiş Pencere Başlık Çubuğu:</strong> Aktif ses odası &amp; <code className="text-cyan-300">SFU/P2P</code> rozeti, gecikmeye göre renk kodlu tıklanabilir ping/ağ teşhisi düğmesi ve klavye kısayolları (<code className="text-cyan-300">Ctrl+/</code>) butonu eklendi.</li>

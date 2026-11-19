@@ -6,6 +6,9 @@ import { AvatarView } from './AvatarView';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
 import { compressImageToWebP } from '../utils/imageCompress';
+import { ChatLightbox } from './ChatLightbox';
+import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
+import { computeVirtualWindow } from '../utils/virtualWindow';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -302,7 +305,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [remoteAssist.status]);
 
-  const [inputText, setInputText] = useState('');
+  const activeDraftKey = activeChannel?.id || (activeDMUser ? `dm:${activeDMUser.username.toLowerCase()}` : null);
+  const [inputText, setInputText] = useState(() => getDraft(activeDraftKey));
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -310,6 +314,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [scrollMetrics, setScrollMetrics] = useState<{ top: number; height: number }>({ top: 0, height: 600 });
   const [isPollModalOpen, setIsPollModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isBookmarksModalOpen, setIsBookmarksModalOpen] = useState(false);
@@ -320,7 +325,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   useEffect(() => {
     setVisibleMsgCount(80);
-  }, [activeChannel?.id]);
+    setInputText(getDraft(activeDraftKey));
+    setEditingMsgId(null);
+  }, [activeDraftKey]);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isGifModalOpen, setIsGifModalOpen] = useState(false);
@@ -357,6 +364,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     setShowScrollBottom(distFromBottom > 220);
+    setScrollMetrics({ top: el.scrollTop, height: el.clientHeight || 600 });
   };
 
   const handleJumpToMessage = (messageId: string) => {
@@ -665,6 +673,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
     sendMessage(outgoingText, pendingAttachments, replyingTo || undefined);
     setInputText('');
+    clearDraft(activeDraftKey);
     setPendingAttachments([]);
     setReplyingTo(null);
     setIsEmojiPickerOpen(false);
@@ -1445,17 +1454,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </button>
           </div>
         )}
-        {filteredMessages.slice(-visibleMsgCount).map((msg, index, displayedArr) => {
-          const isMe = msg.author.id === currentUser?.id;
-          const prevMsg = displayedArr[index - 1];
-          const isSameAuthorAsPrev =
-            prevMsg &&
-            prevMsg.author.id === msg.author.id &&
-            prevMsg.timestamp === msg.timestamp;
+        {(() => {
+          const displayedMessages = filteredMessages.slice(-visibleMsgCount);
+          const vWin = computeVirtualWindow({
+            totalCount: displayedMessages.length,
+            scrollTop: scrollMetrics.top,
+            viewportHeight: scrollMetrics.height,
+            estimatedRowHeight: 78,
+            overscan: 12,
+          });
+          const slicedMessages = vWin.virtualized
+            ? displayedMessages.slice(vWin.startIndex, vWin.endIndex)
+            : displayedMessages;
+          return (
+            <>
+              {vWin.paddingTop > 0 && <div style={{ height: vWin.paddingTop }} aria-hidden="true" />}
+              {slicedMessages.map((msg, sliceIdx) => {
+                const index = vWin.startIndex + sliceIdx;
+                const isMe = msg.author.id === currentUser?.id;
+                const prevMsg = displayedMessages[index - 1];
+                const isSameAuthorAsPrev =
+                  prevMsg &&
+                  prevMsg.author.id === msg.author.id &&
+                  prevMsg.timestamp === msg.timestamp;
 
-          const isNewMessagesStart =
-            initialUnreadDividerCount > 0 &&
-            index === Math.max(0, displayedArr.length - initialUnreadDividerCount);
+                const isNewMessagesStart =
+                  initialUnreadDividerCount > 0 &&
+                  index === Math.max(0, displayedMessages.length - initialUnreadDividerCount);
 
           return (
             <React.Fragment key={msg.id}>
@@ -1894,6 +1919,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </React.Fragment>
           );
         })}
+              {vWin.paddingBottom > 0 && <div style={{ height: vWin.paddingBottom }} aria-hidden="true" />}
+            </>
+          );
+        })()}
         <div ref={messagesEndRef} />
       </div>
 
@@ -2228,10 +2257,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         return;
                       }
                     }
+                    if (e.key === 'ArrowUp' && !inputText.trim() && lastMyMessageId) {
+                      const target = messages.find((m) => m.id === lastMyMessageId);
+                      if (target && !isE2eeCiphertext(target.content)) {
+                        e.preventDefault();
+                        setEditingMsgId(target.id);
+                        setEditingText(target.content);
+                      }
+                    }
                   }}
                   onChange={(e) => {
                     const val = e.target.value;
                     setInputText(val);
+                    setDraft(activeDraftKey, val);
                     setMentionIndex(0);
                     if (val.trim().length > 0) {
                       if (!isTypingRef.current) {
@@ -2380,28 +2418,26 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Lightbox Image Modal */}
-      {lightboxImage && (
-        <div
-          onClick={() => setLightboxImage(null)}
-          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-lg flex items-center justify-center p-4 animate-fade-in cursor-zoom-out"
-        >
-          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl">
-            <button
-              onClick={() => setLightboxImage(null)}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 hover:bg-black text-white flex items-center justify-center backdrop-blur-md transition shadow"
-              title="Kapat"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={lightboxImage}
-              alt="Önizleme"
-              className="max-h-[85vh] w-auto rounded-2xl object-contain shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
-        </div>
-      )}
+      {lightboxImage && (() => {
+        const gallery = filteredMessages.flatMap((m) =>
+          (m.attachments || [])
+            .filter((att) => att.type.startsWith('image/'))
+            .map((att) => ({ url: att.url, name: att.name, author: m.author.username }))
+        );
+        const foundIdx = gallery.findIndex((g) => g.url === lightboxImage);
+        const safeGallery = foundIdx === -1 ? [{ url: lightboxImage, name: 'Önizleme' }] : gallery;
+        return (
+          <ChatLightbox
+            images={safeGallery}
+            currentIndex={foundIdx === -1 ? 0 : foundIdx}
+            onChangeIndex={(idx) => {
+              const target = safeGallery[idx];
+              if (target) setLightboxImage(target.url);
+            }}
+            onClose={() => setLightboxImage(null)}
+          />
+        );
+      })()}
 
       <Suspense fallback={null}>
         {/* Channel Media Gallery Modal */}

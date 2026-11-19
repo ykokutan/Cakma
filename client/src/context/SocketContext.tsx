@@ -6,7 +6,11 @@ import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotification
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
 import { setVoiceMicVolume, resetVoiceMetrics } from './VoiceMetricsContext';
+import { setNetworkPing, setNetworkConnectionState } from './NetworkMetricsContext';
 import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } from '../utils/themeBuilder';
+import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, shouldShowUnreadForChannel } from '../utils/notificationPrefs';
+import { parseDeepLinkUrl } from '../utils/deepLink';
+import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
 
 export interface UserAudioEq {
   bass: number;
@@ -603,14 +607,20 @@ interface SocketContextType {
   startVoiceRecording: () => Promise<void>;
   stopVoiceRecording: () => void;
 
-  // Webcam & Priority Speaker
+  // Webcam, Blur & Priority Speaker
   isWebcamActive: boolean;
   toggleWebcam: () => Promise<void>;
   webcamStream: MediaStream | null;
+  webcamBlurEnabled: boolean;
+  toggleWebcamBlur: () => void;
   remoteWebcamUserIds: string[];
   isPrioritySpeakerActive: boolean;
   prioritySpeakerUsername: string | null;
   togglePrioritySpeaker: () => void;
+
+  // Channel / Server Notification Preferences
+  notificationPrefs: Record<string, NotificationLevel>;
+  setTargetNotificationPref: (targetId: string, level: NotificationLevel) => void;
 
   // 3D Spatial Audio & Panning
   userPans: Record<string, number>;
@@ -815,7 +825,35 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
   const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState<boolean>(false);
-  const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
+  const [connectionState, setConnectionStateState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
+  const setConnectionState = useCallback((next: 'connected' | 'reconnecting' | 'disconnected') => {
+    setConnectionStateState(next);
+    setNetworkConnectionState(next);
+  }, []);
+  const lastVoiceChannelIdRef = useRef<string | null>(null);
+  const [notificationPrefs, setNotificationPrefsState] = useState<Record<string, NotificationLevel>>(() => {
+    try {
+      const raw = localStorage.getItem('dc_notification_prefs');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const notificationPrefsRef = useRef<Record<string, NotificationLevel>>(notificationPrefs);
+  notificationPrefsRef.current = notificationPrefs;
+  const setTargetNotificationPref = useCallback((targetId: string, level: NotificationLevel) => {
+    if (!targetId) return;
+    setNotificationPrefsState((prev) => {
+      const next = { ...prev };
+      if (level === 'all') {
+        delete next[targetId];
+      } else {
+        next[targetId] = level;
+      }
+      try { localStorage.setItem('dc_notification_prefs', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
   const [voiceTransportMode, setVoiceTransportMode] = useState<'p2p' | 'sfu'>('p2p');
   const livekitRoomRef = useRef<any>(null);
   const livekitScreenTracksRef = useRef<any[]>([]);
@@ -1329,6 +1367,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         clearTimeout(timeoutId);
         const roundTrip = Math.max(1, Math.round(performance.now() - start));
         recordPacketResult(true);
+        setNetworkPing(roundTrip);
         setPing((prev) => {
           if (prev > 0) {
             const diff = Math.abs(roundTrip - prev);
@@ -1490,48 +1529,115 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsVoiceRecording(false);
   }, []);
 
-  // Webcam State
+  // Webcam & Background Blur State
   const [isWebcamActive, setIsWebcamActive] = useState<boolean>(false);
   const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
+  const rawWebcamStreamRef = useRef<MediaStream | null>(null);
+  const webcamBlurCtrlRef = useRef<BlurredWebcamController | null>(null);
+  const [webcamBlurEnabled, setWebcamBlurEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('cakma_webcam_blur') === 'true'; } catch { return false; }
+  });
+  const webcamBlurEnabledRef = useRef<boolean>(webcamBlurEnabled);
+  webcamBlurEnabledRef.current = webcamBlurEnabled;
   const [remoteWebcamUserIds, setRemoteWebcamUserIds] = useState<string[]>([]);
+
+  const replaceOutboundWebcamTrack = useCallback((nextTrack: MediaStreamTrack | null, nextStream: MediaStream) => {
+    const screenVideoTrack = screenStreamRef.current?.getVideoTracks?.()[0];
+    for (const pc of peerConnectionsRef.current.values()) {
+      const senders = pc.getSenders();
+      const camSender = senders.find((s) => s.track && s.track.kind === 'video' && s.track !== screenVideoTrack);
+      if (camSender && nextTrack) {
+        camSender.replaceTrack(nextTrack).catch(() => {});
+      } else if (!camSender && nextTrack) {
+        pc.addTrack(nextTrack, nextStream);
+      }
+    }
+  }, []);
 
   const toggleWebcam = useCallback(async () => {
     if (isWebcamActive) {
+      if (webcamBlurCtrlRef.current) {
+        webcamBlurCtrlRef.current.stop();
+        webcamBlurCtrlRef.current = null;
+      }
       if (webcamStreamRef.current) {
         webcamStreamRef.current.getTracks().forEach((t) => t.stop());
         webcamStreamRef.current = null;
+      }
+      if (rawWebcamStreamRef.current) {
+        rawWebcamStreamRef.current.getTracks().forEach((t) => t.stop());
+        rawWebcamStreamRef.current = null;
       }
       setWebcamStream(null);
       setIsWebcamActive(false);
       socket?.emit('webcam_state_update', { active: false });
 
+      const screenVideoTrack = screenStreamRef.current?.getVideoTracks?.()[0];
       for (const pc of peerConnectionsRef.current.values()) {
         const senders = pc.getSenders();
-        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video' && s.track !== screenVideoTrack);
         if (videoSender) {
           pc.removeTrack(videoSender);
         }
       }
     } else {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const rawStream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, frameRate: 24 }
         });
-        webcamStreamRef.current = stream;
-        setWebcamStream(stream);
+        rawWebcamStreamRef.current = rawStream;
+        let outStream = rawStream;
+        if (webcamBlurEnabledRef.current) {
+          const ctrl = createBlurredWebcamStream(rawStream, true);
+          webcamBlurCtrlRef.current = ctrl;
+          outStream = ctrl.stream;
+        }
+        webcamStreamRef.current = outStream;
+        setWebcamStream(outStream);
         setIsWebcamActive(true);
         socket?.emit('webcam_state_update', { active: true });
 
-        const videoTrack = stream.getVideoTracks()[0];
-        for (const pc of peerConnectionsRef.current.values()) {
-          pc.addTrack(videoTrack, stream);
+        const videoTrack = outStream.getVideoTracks()[0];
+        if (videoTrack) {
+          replaceOutboundWebcamTrack(videoTrack, outStream);
         }
-      } catch (err) {
+      } catch {
         alert('Kamera açılamadı. Lütfen kamera erişim izinlerinizi kontrol edin.');
       }
     }
-  }, [isWebcamActive, socket]);
+  }, [isWebcamActive, socket, replaceOutboundWebcamTrack]);
+
+  const toggleWebcamBlur = useCallback(() => {
+    setWebcamBlurEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('cakma_webcam_blur', next ? 'true' : 'false'); } catch {}
+      const rawStream = rawWebcamStreamRef.current;
+      if (rawStream) {
+        if (next) {
+          let ctrl = webcamBlurCtrlRef.current;
+          if (!ctrl) {
+            ctrl = createBlurredWebcamStream(rawStream, true);
+            webcamBlurCtrlRef.current = ctrl;
+          } else {
+            ctrl.setBlurred(true);
+          }
+          webcamStreamRef.current = ctrl.stream;
+          setWebcamStream(ctrl.stream);
+          replaceOutboundWebcamTrack(ctrl.stream.getVideoTracks()[0] || null, ctrl.stream);
+        } else {
+          if (webcamBlurCtrlRef.current) {
+            webcamBlurCtrlRef.current.stop();
+            webcamBlurCtrlRef.current = null;
+          }
+          webcamStreamRef.current = rawStream;
+          setWebcamStream(rawStream);
+          replaceOutboundWebcamTrack(rawStream.getVideoTracks()[0] || null, rawStream);
+        }
+      }
+      return next;
+    });
+  }, [replaceOutboundWebcamTrack]);
 
   // Priority Speaker State
   const [isPrioritySpeakerActive, setIsPrioritySpeakerActive] = useState<boolean>(false);
@@ -2262,6 +2368,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         setCurrentUser(res.user);
         setIsAuthenticated(true);
+        if (lastVoiceChannelIdRef.current) {
+          newSocket.emit('join_voice', { channelId: lastVoiceChannelIdRef.current });
+          setConnectedVoiceChannelId(lastVoiceChannelIdRef.current);
+        }
         if (pendingMessageQueueRef.current.length > 0) {
           const queued = [...pendingMessageQueueRef.current];
           pendingMessageQueueRef.current = [];
@@ -2461,23 +2571,30 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         [msg.channelId]: [...(prev[msg.channelId] || []), msg]
       }));
 
-      if (msg.channelId !== activeChannelIdRef.current && msg.author?.username !== currentUserRef.current?.username) {
+      const isMention = Boolean(
+        currentUserRef.current &&
+        msg.content &&
+        msg.content.toLowerCase().includes('@' + currentUserRef.current.username.toLowerCase())
+      );
+      const isDM = msg.channelId.startsWith('dm-');
+      const notifLevel = getTargetNotificationPref(notificationPrefsRef.current, msg.channelId, msg.serverId);
+
+      if (
+        msg.channelId !== activeChannelIdRef.current &&
+        msg.author?.username !== currentUserRef.current?.username &&
+        shouldShowUnreadForChannel({ level: notifLevel, isMention })
+      ) {
         setUnreadCounts(prev => ({
           ...prev,
           [msg.channelId]: (prev[msg.channelId] || 0) + 1
         }));
-        if (msg.channelId.startsWith('dm-') && msg.author?.username) {
+        if (isDM && msg.author?.username) {
           const uname = msg.author.username.toLowerCase();
           setUnreadDMByUser(prev => ({
             ...prev,
             [uname]: (prev[uname] || 0) + 1,
           }));
         }
-        const isMention = Boolean(
-          currentUserRef.current &&
-          msg.content &&
-          msg.content.toLowerCase().includes('@' + currentUserRef.current.username.toLowerCase())
-        );
         if (isMention) {
           setMentionCounts(prev => ({
             ...prev,
@@ -2486,10 +2603,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // Desktop Push Notification (suppressed in Do Not Disturb mode, clickable jump to channel)
-      if (desktopNotificationsRef.current && currentUserRef.current && currentUserRef.current.status !== 'dnd' && msg.author?.id !== currentUserRef.current.id) {
-        const isMention = msg.content && msg.content.includes('@' + currentUserRef.current.username);
-        const isDM = msg.channelId.startsWith('dm-');
+      // Desktop Push Notification (suppressed in Do Not Disturb mode or muted channel/server, clickable jump to channel)
+      if (
+        desktopNotificationsRef.current &&
+        currentUserRef.current &&
+        currentUserRef.current.status !== 'dnd' &&
+        msg.author?.id !== currentUserRef.current.id &&
+        shouldNotifyForMessage({ level: notifLevel, isMention, isDM })
+      ) {
         if (isMention || isDM) {
           sendDesktopNotification(
             isDM ? `Direkt Mesaj (@${msg.author.username})` : `@${msg.author.username} senden bahsetti`,
@@ -3490,12 +3611,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     // 7. Voice Password Error
     newSocket.on('voice_password_error', ({ message }: { channelId: string; channelName: string; message: string }) => {
+      lastVoiceChannelIdRef.current = null;
       setVoicePasswordError(message);
       setConnectedVoiceChannelId(null);
       cleanupWebRTC();
     });
 
+    const handleNetworkOnline = () => {
+      if (!newSocket.connected) {
+        newSocket.connect();
+      }
+    };
+    window.addEventListener('online', handleNetworkOnline);
+
     return () => {
+      window.removeEventListener('online', handleNetworkOnline);
       cleanupWebRTC();
       newSocket.disconnect();
     };
@@ -3508,6 +3638,37 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach(track => pc.addTrack(track, screenStreamRef.current!));
     }
+
+    let iceDisconnectTimer: number | null = null;
+    pc.oniceconnectionstatechange = () => {
+      if (iceDisconnectTimer !== null) {
+        window.clearTimeout(iceDisconnectTimer);
+        iceDisconnectTimer = null;
+      }
+      const state = pc.iceConnectionState;
+      const attemptIceRestart = async () => {
+        if (pc.signalingState === 'closed') return;
+        try {
+          if (typeof pc.restartIce === 'function') pc.restartIce();
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          activeSocket.emit('webrtc_signal', {
+            targetUserId: peerId,
+            signal: offer,
+            type: 'offer',
+          });
+        } catch {}
+      };
+      if (state === 'failed') {
+        void attemptIceRestart();
+      } else if (state === 'disconnected') {
+        iceDisconnectTimer = window.setTimeout(() => {
+          if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+            void attemptIceRestart();
+          }
+        }, 2000);
+      }
+    };
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -3560,46 +3721,82 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return pc;
   };
 
-  // Push-to-Talk Keybind listener
+  const isPttActiveRef = useRef(isPttActive);
+  isPttActiveRef.current = isPttActive;
+
+  // Push-to-Talk Keybind listener (Window + Tauri Windows Global Hook)
   useEffect(() => {
     const inAnyVoice = Boolean(connectedVoiceChannelId || directCall?.status === 'connected');
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+
+    const applyPttState = (pressed: boolean) => {
+      if (pressed === isPttActiveRef.current) return;
+      isPttActiveRef.current = pressed;
+      setIsPttActive(pressed);
+      if (pttBeepRef.current && tsSoundEffectsRef.current) {
+        playTeamSpeakChime(pressed ? 'ptt_on' : 'ptt_off');
+      }
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((t) => {
+          t.enabled = pressed ? !isMuted : false;
+        });
+      }
+      socket?.emit('user_speaking', { isSpeaking: pressed });
+      setIsSpeaking(pressed);
+    };
+
+    if (isTauri) {
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) =>
+          invoke('set_global_ptt', {
+            enabled: inputMode === 'ptt' && inAnyVoice,
+            key: pttKey,
+          })
+        )
+        .catch(() => {});
+    }
+
     if (inputMode !== 'ptt' || !inAnyVoice) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === pttKey && !isPttActive) {
-        setIsPttActive(true);
-        if (pttBeepRef.current && tsSoundEffectsRef.current) {
-          playTeamSpeakChime('ptt_on');
-        }
-        if (localStreamRef.current) {
-          localStreamRef.current.getAudioTracks().forEach(t => (t.enabled = !isMuted));
-        }
-        socket?.emit('user_speaking', { isSpeaking: true });
-        setIsSpeaking(true);
-      }
+      if (e.key === pttKey) applyPttState(true);
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === pttKey && isPttActive) {
-        setIsPttActive(false);
-        if (pttBeepRef.current && tsSoundEffectsRef.current) {
-          playTeamSpeakChime('ptt_off');
-        }
-        if (localStreamRef.current) {
-          localStreamRef.current.getAudioTracks().forEach(t => (t.enabled = false));
-        }
-        socket?.emit('user_speaking', { isSpeaking: false });
-        setIsSpeaking(false);
-      }
+      if (e.key === pttKey) applyPttState(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+
+    let unlistenGlobalPtt: (() => void) | null = null;
+    if (isTauri) {
+      import('@tauri-apps/api/event')
+        .then(({ listen }) =>
+          listen<boolean>('global-ptt-state', (ev) => {
+            applyPttState(Boolean(ev.payload));
+          })
+        )
+        .then((fn) => {
+          unlistenGlobalPtt = fn;
+        })
+        .catch(() => {});
+    }
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      if (unlistenGlobalPtt) unlistenGlobalPtt();
+      if (isTauri) {
+        import('@tauri-apps/api/core')
+          .then(({ invoke }) => invoke('set_global_ptt', { enabled: false, key: pttKey }))
+          .catch(() => {});
+      }
     };
-  }, [inputMode, pttKey, isPttActive, connectedVoiceChannelId, directCall?.status, isMuted, socket]);
+  }, [inputMode, pttKey, connectedVoiceChannelId, directCall?.status, isMuted, socket]);
 
   // Auth Methods
   const login = (usernameOrEmail: string, password: string): Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }> => {
@@ -4711,6 +4908,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!socket) return;
     if (connectedVoiceChannelId === channelId) return;
 
+    lastVoiceChannelIdRef.current = channelId;
     setVoicePasswordError(null);
     cleanupWebRTC();
     setConnectedVoiceChannelId(channelId);
@@ -4737,6 +4935,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const leaveVoiceChannel = () => {
+    lastVoiceChannelIdRef.current = null;
     if (!socket || !connectedVoiceChannelId) return;
     cleanupWebRTC();
     socket.emit('leave_voice');
@@ -5405,12 +5604,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [socket, connectedVoiceChannelId, isSpeaking]);
 
-  // Tauri Desktop Integrations: Tray Mute, Global Shortcuts, Game Detection, Overlay Sync
+  // Tauri Desktop Integrations: Tray Controls, Global Shortcuts, Game Detection, Deep Links, Overlay Sync
   const toggleMuteRef = useRef(toggleMute);
   const toggleDeafenRef = useRef(toggleDeafen);
+  const leaveVoiceChannelRef = useRef(leaveVoiceChannel);
+  const updateProfileDetailsRef = useRef(updateProfileDetails);
+  const joinServerByInviteRef = useRef(joinServerByInvite);
   useEffect(() => {
     toggleMuteRef.current = toggleMute;
     toggleDeafenRef.current = toggleDeafen;
+    leaveVoiceChannelRef.current = leaveVoiceChannel;
+    updateProfileDetailsRef.current = updateProfileDetails;
+    joinServerByInviteRef.current = joinServerByInvite;
   });
 
   useEffect(() => {
@@ -5421,19 +5626,41 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         window.location.protocol === 'tauri:');
     if (!isTauri) return;
 
-    let unlistenTray: (() => void) | null = null;
+    let cancelled = false;
+    const unlistenTrayFns: Array<() => void> = [];
     let gameTimer: ReturnType<typeof setInterval> | null = null;
     let lastDetectedGame: string | null = null;
 
     (async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
-        unlistenTray = await listen('tray-toggle-mute', () => {
-          toggleMuteRef.current();
-        });
+        const fns = await Promise.all([
+          listen('tray-toggle-mute', () => toggleMuteRef.current()),
+          listen('tray-toggle-deafen', () => toggleDeafenRef.current()),
+          listen('tray-leave-voice', () => leaveVoiceChannelRef.current()),
+          listen<string>('tray-set-status', (ev) => {
+            const st = ev.payload;
+            if (st === 'online' || st === 'idle' || st === 'dnd') {
+              updateProfileDetailsRef.current({ status: st });
+            }
+          }),
+          listen<string>('deep-link-url', (ev) => {
+            const parsed = parseDeepLinkUrl(ev.payload);
+            if (parsed?.type === 'invite' && isAuthenticated) {
+              joinServerByInviteRef.current(parsed.code);
+            }
+          }),
+        ]);
+        if (cancelled) {
+          fns.forEach((fn) => fn());
+        } else {
+          unlistenTrayFns.push(...fns);
+        }
       } catch {
         // ignore
       }
+
+      if (cancelled) return;
 
       try {
         const { register, unregisterAll } = await import('@tauri-apps/plugin-global-shortcut');
@@ -5460,10 +5687,22 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // ignore
       }
 
+      if (cancelled) return;
+
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         if (localStorage.getItem('dc_overlay_enabled') === 'true' && isAuthenticated) {
           invoke('set_overlay_window', { enabled: true }).catch(() => {});
+        }
+        if (isAuthenticated) {
+          invoke<string | null>('take_pending_deep_link')
+            .then((pendingUrl) => {
+              const parsed = parseDeepLinkUrl(pendingUrl);
+              if (parsed?.type === 'invite') {
+                joinServerByInviteRef.current(parsed.code);
+              }
+            })
+            .catch(() => {});
         }
         const pollGame = async () => {
           if (!socket || !isAuthenticated) return;
@@ -5486,7 +5725,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     })();
 
     return () => {
-      if (unlistenTray) unlistenTray();
+      cancelled = true;
+      unlistenTrayFns.forEach((fn) => fn());
       if (gameTimer) clearInterval(gameTimer);
       import('@tauri-apps/plugin-global-shortcut')
         .then(({ unregisterAll }) => unregisterAll())
@@ -5588,6 +5828,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setBookmarkedMessages(prefs.bookmarkedMessages);
           try { localStorage.setItem('dc_bookmarked_messages', JSON.stringify(prefs.bookmarkedMessages)); } catch {}
         }
+        if (prefs.userVolumes && typeof prefs.userVolumes === 'object') {
+          setUserVolumes(prefs.userVolumes);
+          try { localStorage.setItem('dc_user_volumes', JSON.stringify(prefs.userVolumes)); } catch {}
+        }
+        if (prefs.userAudioEq && typeof prefs.userAudioEq === 'object') {
+          setUserAudioEqState(prefs.userAudioEq);
+          try { localStorage.setItem('cakma_user_audio_eq', JSON.stringify(prefs.userAudioEq)); } catch {}
+        }
+        if (prefs.notificationPrefs && typeof prefs.notificationPrefs === 'object') {
+          setNotificationPrefsState(prefs.notificationPrefs);
+          try { localStorage.setItem('dc_notification_prefs', JSON.stringify(prefs.notificationPrefs)); } catch {}
+        }
       })
       .catch(() => {});
   }, [currentUser?.username, isAuthenticated, currentServerHost]);
@@ -5607,6 +5859,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           showLinkPreviews,
           userNotes,
           bookmarkedMessages,
+          userVolumes,
+          userAudioEq,
+          notificationPrefs,
         }),
       }).catch(() => {});
     }, 1500);
@@ -5622,6 +5877,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     showLinkPreviews,
     userNotes,
     bookmarkedMessages,
+    userVolumes,
+    userAudioEq,
+    notificationPrefs,
   ]);
 
   return (
@@ -5871,14 +6129,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         startVoiceRecording,
         stopVoiceRecording,
 
-        // Webcam & Priority Speaker
+        // Webcam, Blur & Priority Speaker
         isWebcamActive,
         toggleWebcam,
         webcamStream,
+        webcamBlurEnabled,
+        toggleWebcamBlur,
         remoteWebcamUserIds,
         isPrioritySpeakerActive,
         prioritySpeakerUsername,
         togglePrioritySpeaker,
+        notificationPrefs,
+        setTargetNotificationPref,
 
         // 3D Spatial Audio & Panning
         userPans,

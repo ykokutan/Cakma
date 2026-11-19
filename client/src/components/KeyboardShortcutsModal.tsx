@@ -12,9 +12,12 @@ const SHORTCUTS = [
   { keys: 'Ctrl + M', desc: 'Mikrofonu Aç / Kapat (Sustur)' },
   { keys: 'Ctrl + D', desc: 'Sağırlaştırmayı Aç / Kapat' },
   { keys: 'Ctrl + /', desc: 'Klavye Kısayolları penceresini aç' },
+  { keys: '↑ (Yukarı Ok)', desc: 'Mesaj kutusu boşken gönderdiğin son mesajı düzenle' },
+  { keys: 'Alt + ↑ / ↓', desc: 'Aktif sunucuda önceki veya sonraki kanala geç' },
+  { keys: 'Alt + Shift + ↑ / ↓', desc: 'Okunmamış mesajı olan kanallar arasında atla' },
   { keys: '@kullanıcı', desc: 'Sohbette kullanıcı etiketleme önerisini aç' },
   { keys: '/komut', desc: 'Hızlı slash komutlarını (/anket, /zarat, /temizle) listele' },
-  { keys: 'Sağ Tık', desc: 'Ses kullanıcısı, kanal veya sağ üye listesinde işlem menüsü' },
+  { keys: 'Sağ Tık', desc: 'Ses kullanıcısı, kanal, sunucu veya üye listesinde menü' },
   { keys: 'Sürükle & Bırak', desc: 'Ses odasındaki kullanıcıyı başka odaya taşı veya dosya gönder' },
 ];
 

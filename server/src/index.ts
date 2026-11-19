@@ -38,36 +38,20 @@ import {
   loadPushSubscriptions, savePushSubscriptions,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
+  searchMessagesSmart, initStorageEngine, getStorageEngineInfo, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
   getStorageStats, exportAllDataBundle, importAllDataBundle,
   createScheduledBackup, listScheduledBackups, readScheduledBackup, deleteScheduledBackup
 } from './storage.js';
 import { normalizeLiveKitHttpUrl, shouldRoomUseSfu, buildIceServers } from './utils/sfuLogic.js';
 import { validateAttachmentSafety } from './utils/security.js';
+import {
+  hashPassword,
+  verifyPassword,
+  hashPasswordAsync,
+  verifyPasswordAsync,
+} from './utils/authCrypto.js';
 
-// --- SECURITY & CRYPTOGRAPHIC HELPERS ---
-export function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `scrypt$${salt}$${hash}`;
-}
-
-export function verifyPassword(password: string, stored: string): boolean {
-  if (!stored) return false;
-  if (stored.startsWith('scrypt$')) {
-    const parts = stored.split('$');
-    if (parts.length !== 3) return false;
-    const salt = parts[1];
-    const originalHash = parts[2];
-    const testHash = crypto.scryptSync(password, salt, 64).toString('hex');
-    try {
-      return crypto.timingSafeEqual(Buffer.from(originalHash, 'hex'), Buffer.from(testHash, 'hex'));
-    } catch {
-      return false;
-    }
-  }
-  // Fallback for legacy plain text:
-  return password === stored;
-}
+export { hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync };
 
 export function sanitizeText(input: string): string {
   if (!input) return '';
@@ -965,6 +949,7 @@ function buildRuntimeMetrics() {
     memoryRssMb: Math.round(mem.rss / 1048576),
     memoryHeapUsedMb: Math.round(mem.heapUsed / 1048576),
     pendingStorageWrites: getPendingWriteCount(),
+    storageEngine: getStorageEngineInfo().engine,
     livekitEnabled: systemConfig.sfuEnabled !== false,
     pushSubscriptionCount: pushSubscriptions.length,
   };
@@ -1873,7 +1858,7 @@ io.on('connection', (socket: Socket) => {
         }
       }
     }
-    const results = searchAllMessages(messages, query, allowedChannels, 50);
+    const results = searchMessagesSmart(messages, query, allowedChannels, 50);
     socket.emit('server_search_results', { query, results });
   });
 
@@ -1968,7 +1953,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 1. REGISTER (Kayıt Olma)
-  socket.on('auth_register', ({
+  socket.on('auth_register', async ({
     username,
     email,
     password,
@@ -2144,8 +2129,8 @@ io.on('connection', (socket: Socket) => {
 
     const role = isFirstUser ? 'admin' : 'user';
 
-    // Hash password with cryptographically secure scrypt
-    const hashedPassword = hashPassword(password);
+    // Hash password with cryptographically secure async scrypt
+    const hashedPassword = await hashPasswordAsync(password);
     recordRegisterAttempt(clientIp);
     ipDailyRegistrations.set(clientIp, {
       date: todayKey,
@@ -2215,7 +2200,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 2. LOGIN (Giriş Yapma)
-  socket.on('auth_login', ({ usernameOrEmail, password }: any) => {
+  socket.on('auth_login', async ({ usernameOrEmail, password }: any) => {
     const clientIp = getClientIp(socket);
     const ipBan = findActiveIpBan(clientIp);
     if (ipBan) {
@@ -2286,11 +2271,11 @@ io.on('connection', (socket: Socket) => {
       });
     }
 
-    // Verify password with secure scrypt (supports legacy plain text with auto-upgrade)
-    const isPasswordValid = verifyPassword(password, foundAccount.password);
+    // Verify password with secure async scrypt (supports legacy plain text with auto-upgrade)
+    const isPasswordValid = await verifyPasswordAsync(password, foundAccount.password);
     if (isPasswordValid && !foundAccount.password.startsWith('scrypt$')) {
       // Auto-upgrade legacy plain-text password to scrypt hash on successful login!
-      foundAccount.password = hashPassword(password);
+      foundAccount.password = await hashPasswordAsync(password);
       saveAccounts(registeredAccounts);
       console.log(`[Security] Account '${foundAccount.username}' legacy password upgraded to scrypt hash.`);
     }
@@ -2389,7 +2374,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 2.2 VERIFY 2FA LOGIN
-  socket.on('auth_2fa_verify', ({ pending2faToken, code }: { pending2faToken: string; code: string }) => {
+  socket.on('auth_2fa_verify', async ({ pending2faToken, code }: { pending2faToken: string; code: string }) => {
     const clientIp = getClientIp(socket);
     const rateCheck = checkLoginRateLimit(clientIp);
     if (!rateCheck.allowed) {
@@ -2417,7 +2402,13 @@ io.on('connection', (socket: Socket) => {
 
     // Check one-time backup codes if TOTP didn't match
     if (!isValid && Array.isArray(foundAccount.twoFactorBackupCodes) && foundAccount.twoFactorBackupCodes.length > 0) {
-      const matchIdx = foundAccount.twoFactorBackupCodes.findIndex((hashed) => verifyPassword(cleanCode, hashed));
+      let matchIdx = -1;
+      for (let i = 0; i < foundAccount.twoFactorBackupCodes.length; i++) {
+        if (await verifyPasswordAsync(cleanCode, foundAccount.twoFactorBackupCodes[i])) {
+          matchIdx = i;
+          break;
+        }
+      }
       if (matchIdx !== -1) {
         isValid = true;
         foundAccount.twoFactorBackupCodes.splice(matchIdx, 1);
@@ -2721,6 +2712,7 @@ io.on('connection', (socket: Socket) => {
     }
     messages[channelId].push(newMessage);
     saveChannelMessages(channelId, messages[channelId]);
+    indexChannelMessage(channelId, newMessage);
 
     io.emit('new_message', newMessage);
 
@@ -2953,7 +2945,8 @@ io.on('connection', (socket: Socket) => {
     if (!clean) return;
     msg.content = clean;
     msg.isEdited = true;
-    saveMessages(messages);
+    saveChannelMessages(channelId, channelMsgs);
+    indexChannelMessage(channelId, msg);
     io.emit('message_edited', { channelId, messageId, content: msg.content, isEdited: true });
   });
 
@@ -2975,7 +2968,8 @@ io.on('connection', (socket: Socket) => {
     }
 
     channelMsgs.splice(idx, 1);
-    saveMessages(messages);
+    saveChannelMessages(channelId, channelMsgs);
+    removeIndexedMessage(messageId);
     io.emit('message_deleted', { channelId, messageId });
   });
 
@@ -2993,20 +2987,20 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Change Password (Self-Service)
-  socket.on('change_password', ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => {
+  socket.on('change_password', async ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
     const acc = registeredAccounts.get(user.username.toLowerCase());
     if (!acc) return socket.emit('change_password_response', { success: false, error: 'Hesap bulunamadı.' });
 
-    if (!verifyPassword(currentPassword, acc.password)) {
+    if (!(await verifyPasswordAsync(currentPassword, acc.password))) {
       return socket.emit('change_password_response', { success: false, error: 'Mevcut şifreniz hatalı.' });
     }
     if (!newPassword || newPassword.length < 4) {
       return socket.emit('change_password_response', { success: false, error: 'Yeni şifre en az 4 karakter olmalıdır.' });
     }
 
-    acc.password = hashPassword(newPassword);
+    acc.password = await hashPasswordAsync(newPassword);
     acc.minTokenIssuedAt = Date.now();
     saveAccounts(registeredAccounts);
     addAuditLog('SIFRE_DEGISTIRILDI', `${user.username} kendi şifresini güncelledi (eski oturumlar geçersiz kılındı).`, 'auth');
@@ -3030,7 +3024,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 2FA Setup Verify & Enable
-  socket.on('2fa_setup_verify', ({ code }: { code: string }) => {
+  socket.on('2fa_setup_verify', async ({ code }: { code: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
     const acc = registeredAccounts.get(user.username.toLowerCase());
@@ -3045,7 +3039,7 @@ io.on('connection', (socket: Socket) => {
     acc.twoFactorSecret = acc.pendingTwoFactorSecret;
     delete acc.pendingTwoFactorSecret;
     acc.twoFactorEnabled = true;
-    acc.twoFactorBackupCodes = backupCodes.map((c) => hashPassword(c));
+    acc.twoFactorBackupCodes = await Promise.all(backupCodes.map((c) => hashPasswordAsync(c)));
     acc.minTokenIssuedAt = Date.now();
     saveAccounts(registeredAccounts);
 
@@ -3061,19 +3055,27 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 2FA Disable
-  socket.on('2fa_disable', ({ password, code }: { password: string; code: string }) => {
+  socket.on('2fa_disable', async ({ password, code }: { password: string; code: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
     const acc = registeredAccounts.get(user.username.toLowerCase());
     if (!acc || !acc.twoFactorEnabled || !acc.twoFactorSecret) {
       return socket.emit('2fa_status_response', { success: false, error: '2FA zaten devre dışı.' });
     }
-    if (!verifyPassword(password || '', acc.password)) {
+    if (!(await verifyPasswordAsync(password || '', acc.password))) {
       return socket.emit('2fa_status_response', { success: false, error: 'Mevcut şifreniz hatalı.' });
     }
     const cleanCode = (code || '').trim().toUpperCase();
     const isTotpValid = verifyTotpCode(acc.twoFactorSecret, cleanCode);
-    const isBackupValid = Array.isArray(acc.twoFactorBackupCodes) && acc.twoFactorBackupCodes.some((h) => verifyPassword(cleanCode, h));
+    let isBackupValid = false;
+    if (!isTotpValid && Array.isArray(acc.twoFactorBackupCodes)) {
+      for (const h of acc.twoFactorBackupCodes) {
+        if (await verifyPasswordAsync(cleanCode, h)) {
+          isBackupValid = true;
+          break;
+        }
+      }
+    }
     if (!isTotpValid && !isBackupValid) {
       return socket.emit('2fa_status_response', { success: false, error: '2FA doğrulama kodu geçersiz.' });
     }
@@ -5859,7 +5861,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Admin: Reset user password
-  socket.on('admin_reset_user_password', ({ targetUsername, newPassword }: { targetUsername: string; newPassword: string }) => {
+  socket.on('admin_reset_user_password', async ({ targetUsername, newPassword }: { targetUsername: string; newPassword: string }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || requester.role !== 'admin') return;
 
@@ -5871,7 +5873,7 @@ io.on('connection', (socket: Socket) => {
       return socket.emit('admin_action_error', 'Yeni şifre en az 6 karakter olmalıdır.');
     }
 
-    acc.password = hashPassword(newPassword);
+    acc.password = await hashPasswordAsync(newPassword);
     saveAccounts(registeredAccounts);
 
     addAuditLog('SIFRE_SIFIRLANDI', `${requester.username}, "${acc.username}" kullanıcısının şifresini sıfırladı.`, 'auth');
@@ -6616,7 +6618,11 @@ setInterval(() => {
 }, 30_000);
 
 // Register modular Cloud Sync, Events, Sound Upload, and Session Management routes
-registerCloudSyncAndEvents(app, io, activeUsers);
+registerCloudSyncAndEvents(app, io, activeUsers, {
+  getMessagesMap: () => messages,
+  getAccounts: () => registeredAccounts,
+  getServers: () => servers,
+});
 
 // Desktop Installer & Updater Manifest Serving (kept outside client/dist so Tauri never bundles it recursively)
 const downloadsDirCandidates = [
@@ -6685,12 +6691,14 @@ if (activeStaticDir) {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 [Backend Server] Discord/TeamSpeak Clone running on http://127.0.0.1:${PORT}`);
+  void initStorageEngine(messages);
 });
 
 function handleGracefulShutdown(signal: string) {
   console.log(`🛑 [Shutdown] ${signal} alındı, bekleyen veriler diske yazılıyor...`);
   try {
     flushPendingWritesSync();
+    closeStorageEngine();
   } catch (err) {
     console.error('Shutdown flush error:', err);
   }

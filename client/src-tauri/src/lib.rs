@@ -1,8 +1,123 @@
+use std::sync::{
+  atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+  Mutex, OnceLock,
+};
 use tauri::{
   menu::{Menu, MenuItem},
   tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
   Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+
+static GLOBAL_PTT_ENABLED: AtomicBool = AtomicBool::new(false);
+static GLOBAL_PTT_VK: AtomicU8 = AtomicU8::new(0x11);
+static GLOBAL_PTT_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
+static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
+static LAST_WIN_SAVE_MS: AtomicU64 = AtomicU64::new(0);
+static PENDING_DEEP_LINK: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn pending_deep_link_store() -> &'static Mutex<Option<String>> {
+  PENDING_DEEP_LINK.get_or_init(|| Mutex::new(None))
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct WindowState {
+  x: Option<i32>,
+  y: Option<i32>,
+  width: u32,
+  height: u32,
+  maximized: bool,
+  close_to_tray: bool,
+}
+
+impl Default for WindowState {
+  fn default() -> Self {
+    Self {
+      x: None,
+      y: None,
+      width: 1280,
+      height: 780,
+      maximized: false,
+      close_to_tray: true,
+    }
+  }
+}
+
+fn window_state_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+  app.path().app_data_dir().ok().map(|dir| {
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("window-state.json")
+  })
+}
+
+fn load_window_state(app: &tauri::AppHandle) -> WindowState {
+  if let Some(p) = window_state_path(app) {
+    if let Ok(raw) = std::fs::read_to_string(&p) {
+      if let Ok(parsed) = serde_json::from_str::<WindowState>(&raw) {
+        return parsed;
+      }
+    }
+  }
+  WindowState::default()
+}
+
+fn save_window_state(app: &tauri::AppHandle, state: &WindowState) {
+  if let Some(p) = window_state_path(app) {
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+      let _ = std::fs::write(p, json);
+    }
+  }
+}
+
+fn capture_and_persist_window_state(win: &tauri::WebviewWindow) {
+  let app = win.app_handle();
+  let mut st = load_window_state(app);
+  st.close_to_tray = CLOSE_TO_TRAY.load(Ordering::Relaxed);
+  if let Ok(maximized) = win.is_maximized() {
+    st.maximized = maximized;
+    if !maximized {
+      if let Ok(size) = win.inner_size() {
+        if size.width >= 940 && size.height >= 500 {
+          st.width = size.width;
+          st.height = size.height;
+        }
+      }
+      if let Ok(pos) = win.outer_position() {
+        if (-3200..=6400).contains(&pos.x) && (-1600..=3600).contains(&pos.y) {
+          st.x = Some(pos.x);
+          st.y = Some(pos.y);
+        }
+      }
+    }
+  }
+  save_window_state(app, &st);
+}
+
+fn extract_deep_link_from_args<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
+  args
+    .into_iter()
+    .find(|a| a.to_ascii_lowercase().starts_with("cakma://"))
+}
+
+#[cfg(target_os = "windows")]
+fn register_cakma_protocol_windows() {
+  use std::os::windows::process::CommandExt;
+  const CREATE_NO_WINDOW: u32 = 0x08000000;
+  if let Ok(exe) = std::env::current_exe() {
+    let cmd_val = format!("\"{}\" \"%1\"", exe.display());
+    let _ = std::process::Command::new("reg")
+      .args(["add", "HKCU\\Software\\Classes\\cakma", "/ve", "/t", "REG_SZ", "/d", "URL:Cakma Protocol", "/f"])
+      .creation_flags(CREATE_NO_WINDOW)
+      .output();
+    let _ = std::process::Command::new("reg")
+      .args(["add", "HKCU\\Software\\Classes\\cakma", "/v", "URL Protocol", "/t", "REG_SZ", "/d", "", "/f"])
+      .creation_flags(CREATE_NO_WINDOW)
+      .output();
+    let _ = std::process::Command::new("reg")
+      .args(["add", "HKCU\\Software\\Classes\\cakma\\shell\\open\\command", "/ve", "/t", "REG_SZ", "/d", &cmd_val, "/f"])
+      .creation_flags(CREATE_NO_WINDOW)
+      .output();
+  }
+}
 
 #[tauri::command]
 fn detect_running_game() -> Option<String> {
@@ -219,6 +334,7 @@ mod win_input {
     pub fn mouse_event(dwFlags: u32, dx: i32, dy: i32, dwData: i32, dwExtraInfo: usize);
     pub fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
     pub fn VkKeyScanW(ch: u16) -> i16;
+    pub fn GetAsyncKeyState(vKey: i32) -> i16;
   }
 
   pub const SM_CXSCREEN: i32 = 0;
@@ -245,13 +361,13 @@ fn map_web_key_to_vk(key: &str, code: &str) -> Option<u8> {
     "Backspace" => Some(0x08),
     "Tab" => Some(0x09),
     "Enter" | "NumpadEnter" => Some(0x0D),
-    "ShiftLeft" | "ShiftRight" => Some(0x10),
-    "ControlLeft" | "ControlRight" => Some(0x11),
-    "AltLeft" | "AltRight" => Some(0x12),
+    "Shift" | "ShiftLeft" | "ShiftRight" => Some(0x10),
+    "Control" | "ControlLeft" | "ControlRight" => Some(0x11),
+    "Alt" | "AltLeft" | "AltRight" | "AltGraph" => Some(0x12),
     "Pause" => Some(0x13),
     "CapsLock" => Some(0x14),
     "Escape" => Some(0x1B),
-    "Space" => Some(0x20),
+    " " | "Space" | "Spacebar" => Some(0x20),
     "PageUp" => Some(0x21),
     "PageDown" => Some(0x22),
     "End" => Some(0x23),
@@ -262,7 +378,8 @@ fn map_web_key_to_vk(key: &str, code: &str) -> Option<u8> {
     "ArrowDown" => Some(0x28),
     "Insert" => Some(0x2D),
     "Delete" => Some(0x2E),
-    "MetaLeft" | "MetaRight" => Some(0x5B),
+    "Meta" | "MetaLeft" | "MetaRight" => Some(0x5B),
+    "Backquote" | "`" | "~" => Some(0xC0),
     "F1" => Some(0x70),
     "F2" => Some(0x71),
     "F3" => Some(0x72),
@@ -281,6 +398,10 @@ fn map_web_key_to_vk(key: &str, code: &str) -> Option<u8> {
           let vk = unsafe { win_input::VkKeyScanW(ch as u16) };
           if vk != -1 {
             return Some((vk & 0xFF) as u8);
+          }
+          let upper = ch.to_ascii_uppercase();
+          if upper.is_ascii_alphanumeric() {
+            return Some(upper as u8);
           }
         }
       }
@@ -556,9 +677,99 @@ fn set_taskbar_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
   Ok(())
 }
 
+#[tauri::command]
+fn set_global_ptt(app: tauri::AppHandle, enabled: bool, key: String) -> Result<bool, String> {
+  #[cfg(target_os = "windows")]
+  {
+    if let Some(vk) = map_web_key_to_vk(&key, &key) {
+      GLOBAL_PTT_VK.store(vk, Ordering::Relaxed);
+    }
+    GLOBAL_PTT_ENABLED.store(enabled, Ordering::Relaxed);
+    if !enabled {
+      let _ = app.emit("global-ptt-state", false);
+    }
+    if !GLOBAL_PTT_THREAD_STARTED.swap(true, Ordering::SeqCst) {
+      let handle = app.clone();
+      std::thread::spawn(move || {
+        let mut was_down = false;
+        loop {
+          if !GLOBAL_PTT_ENABLED.load(Ordering::Relaxed) {
+            if was_down {
+              was_down = false;
+              let _ = handle.emit("global-ptt-state", false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(220));
+            continue;
+          }
+          let vk = GLOBAL_PTT_VK.load(Ordering::Relaxed) as i32;
+          let is_down = unsafe { (win_input::GetAsyncKeyState(vk) as u16) & 0x8000 != 0 };
+          if is_down != was_down {
+            was_down = is_down;
+            let _ = handle.emit("global-ptt-state", is_down);
+          }
+          std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+      });
+    }
+    return Ok(enabled);
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = (app, enabled, key);
+    Ok(false)
+  }
+}
+
+#[tauri::command]
+fn get_close_to_tray() -> bool {
+  CLOSE_TO_TRAY.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_close_to_tray(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+  CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
+  let mut st = load_window_state(&app);
+  st.close_to_tray = enabled;
+  save_window_state(&app, &st);
+  Ok(enabled)
+}
+
+#[tauri::command]
+fn take_pending_deep_link() -> Option<String> {
+  pending_deep_link_store().lock().ok().and_then(|mut g| g.take())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let mut builder = tauri::Builder::default()
+  if let Some(url) = extract_deep_link_from_args(std::env::args()) {
+    if let Ok(mut g) = pending_deep_link_store().lock() {
+      *g = Some(url);
+    }
+  }
+
+  let mut builder = tauri::Builder::default();
+
+  #[cfg(desktop)]
+  {
+    builder = builder
+      .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        if let Some(win) = app.get_webview_window("main") {
+          let _ = win.unminimize();
+          let _ = win.show();
+          let _ = win.set_focus();
+        }
+        if let Some(url) = extract_deep_link_from_args(argv) {
+          if let Ok(mut g) = pending_deep_link_store().lock() {
+            *g = Some(url.clone());
+          }
+          let _ = app.emit("deep-link-url", url);
+        }
+      }))
+      .plugin(tauri_plugin_updater::Builder::new().build())
+      .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+  }
+
+  builder = builder
     .plugin(tauri_plugin_process::init())
     .invoke_handler(tauri::generate_handler![
       detect_running_game,
@@ -573,15 +784,12 @@ pub fn run() {
       set_overlay_ignore_cursor,
       resize_overlay_window,
       focus_main_window,
-      set_taskbar_badge
+      set_taskbar_badge,
+      set_global_ptt,
+      get_close_to_tray,
+      set_close_to_tray,
+      take_pending_deep_link
     ]);
-
-  #[cfg(desktop)]
-  {
-    builder = builder
-      .plugin(tauri_plugin_updater::Builder::new().build())
-      .plugin(tauri_plugin_global_shortcut::Builder::new().build());
-  }
 
   builder
     .setup(|app| {
@@ -593,12 +801,48 @@ pub fn run() {
         )?;
       }
 
+      #[cfg(target_os = "windows")]
+      register_cakma_protocol_windows();
+
+      let saved_state = load_window_state(app.handle());
+      CLOSE_TO_TRAY.store(saved_state.close_to_tray, Ordering::Relaxed);
+      if let Some(win) = app.get_webview_window("main") {
+        let w = saved_state.width.clamp(940, 7680);
+        let h = saved_state.height.clamp(500, 4320);
+        let _ = win.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(w, h)));
+        if let (Some(x), Some(y)) = (saved_state.x, saved_state.y) {
+          if (-3200..=6400).contains(&x) && (-1600..=3600).contains(&y) {
+            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+          }
+        }
+        if saved_state.maximized {
+          let _ = win.maximize();
+        }
+      }
+
       #[cfg(desktop)]
       {
         let show_item = MenuItem::with_id(app, "show", "Çakma'yı Göster", true, None::<&str>)?;
         let mute_item = MenuItem::with_id(app, "toggle_mute", "Mikrofonu Kapat / Aç", true, None::<&str>)?;
+        let deafen_item = MenuItem::with_id(app, "toggle_deafen", "Kulaklığı Sağırlaştır / Aç", true, None::<&str>)?;
+        let leave_voice_item = MenuItem::with_id(app, "leave_voice", "Ses Odasından Ayrıl", true, None::<&str>)?;
+        let status_online_item = MenuItem::with_id(app, "status_online", "Durum: Çevrimiçi", true, None::<&str>)?;
+        let status_idle_item = MenuItem::with_id(app, "status_idle", "Durum: Boşta", true, None::<&str>)?;
+        let status_dnd_item = MenuItem::with_id(app, "status_dnd", "Durum: Rahatsız Etme", true, None::<&str>)?;
         let quit_item = MenuItem::with_id(app, "quit", "Tamamen Kapat", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&show_item, &mute_item, &quit_item])?;
+        let menu = Menu::with_items(
+          app,
+          &[
+            &show_item,
+            &mute_item,
+            &deafen_item,
+            &leave_voice_item,
+            &status_online_item,
+            &status_idle_item,
+            &status_dnd_item,
+            &quit_item,
+          ],
+        )?;
 
         let mut tray_builder = TrayIconBuilder::with_id("main-tray")
           .menu(&menu)
@@ -606,12 +850,28 @@ pub fn run() {
           .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
               if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
                 let _ = win.show();
                 let _ = win.set_focus();
               }
             }
             "toggle_mute" => {
               let _ = app.emit("tray-toggle-mute", ());
+            }
+            "toggle_deafen" => {
+              let _ = app.emit("tray-toggle-deafen", ());
+            }
+            "leave_voice" => {
+              let _ = app.emit("tray-leave-voice", ());
+            }
+            "status_online" => {
+              let _ = app.emit("tray-set-status", "online");
+            }
+            "status_idle" => {
+              let _ = app.emit("tray-set-status", "idle");
+            }
+            "status_dnd" => {
+              let _ = app.emit("tray-set-status", "dnd");
             }
             "quit" => {
               app.exit(0);
@@ -627,6 +887,7 @@ pub fn run() {
             {
               let app = tray.app_handle();
               if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
                 let _ = win.show();
                 let _ = win.set_focus();
               }
@@ -644,9 +905,34 @@ pub fn run() {
     })
     .on_window_event(|window, event| {
       if window.label() == "main" {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-          api.prevent_close();
-          let _ = window.hide();
+        match event {
+          WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
+            if let Some(win) = window.app_handle().get_webview_window("main") {
+              if !win.is_minimized().unwrap_or(false) {
+                let now_ms = std::time::SystemTime::now()
+                  .duration_since(std::time::UNIX_EPOCH)
+                  .map(|d| d.as_millis() as u64)
+                  .unwrap_or(0);
+                let prev_ms = LAST_WIN_SAVE_MS.load(Ordering::Relaxed);
+                if now_ms.saturating_sub(prev_ms) >= 350 {
+                  LAST_WIN_SAVE_MS.store(now_ms, Ordering::Relaxed);
+                  capture_and_persist_window_state(&win);
+                }
+              }
+            }
+          }
+          WindowEvent::CloseRequested { api, .. } => {
+            if let Some(win) = window.app_handle().get_webview_window("main") {
+              capture_and_persist_window_state(&win);
+            }
+            if CLOSE_TO_TRAY.load(Ordering::Relaxed) {
+              api.prevent_close();
+              let _ = window.hide();
+            } else {
+              window.app_handle().exit(0);
+            }
+          }
+          _ => {}
         }
       }
     })

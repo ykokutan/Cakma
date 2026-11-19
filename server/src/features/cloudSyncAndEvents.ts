@@ -2,6 +2,9 @@ import express, { Express } from 'express';
 import { Server as SocketIOServer } from 'socket.io';
 import path from 'path';
 import fs from 'fs';
+import { getPersistentDir, getStorageEngineInfo } from '../storage.js';
+import { collectReferencedMediaUrls, scanAndCleanOrphanUploads } from '../utils/uploadCleaner.js';
+import type { Message, RegisteredAccount, Server } from '../types.js';
 
 export interface ServerEventItem {
   id: string;
@@ -14,7 +17,7 @@ export interface ServerEventItem {
   createdAt: string;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = getPersistentDir();
 const SOUNDS_DIR = path.join(DATA_DIR, 'sounds');
 const PREFS_FILE = path.join(DATA_DIR, 'user-prefs.json');
 const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
@@ -38,12 +41,46 @@ function writeJson(filePath: string, data: unknown) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
+export interface OrphanCleanupContext {
+  getMessagesMap: () => Record<string, Message[]>;
+  getAccounts: () => Map<string, RegisteredAccount>;
+  getServers: () => Server[];
+}
+
 export function registerCloudSyncAndEvents(
   app: Express,
   io: SocketIOServer,
-  activeUsers: Map<string, { username: string }>
+  activeUsers: Map<string, { username: string }>,
+  orphanContext?: OrphanCleanupContext
 ) {
   ensureDirs();
+
+  const runOrphanScan = (dryRun: boolean, minAgeMs: number) => {
+    const referencedUrls = collectReferencedMediaUrls({
+      dataDir: DATA_DIR,
+      messagesMap: orphanContext?.getMessagesMap?.(),
+      accounts: orphanContext?.getAccounts?.(),
+      servers: orphanContext?.getServers?.(),
+    });
+    return scanAndCleanOrphanUploads({
+      dataDir: DATA_DIR,
+      referencedUrls,
+      minAgeMs,
+      dryRun,
+    });
+  };
+
+  if (orphanContext) {
+    const gcTimer = setInterval(() => {
+      try {
+        const res = runOrphanScan(false, 24 * 3600 * 1000);
+        if (res.deletedFiles > 0) {
+          console.log(`🧹 [GarbageCollector] ${res.deletedFiles} artık dosya temizlendi (${res.freedBytes} bayt).`);
+        }
+      } catch {}
+    }, 6 * 3600 * 1000);
+    gcTimer.unref?.();
+  }
 
   // 1. Cloud User Preferences Sync
   app.get('/api/user-prefs/:username', (req, res) => {
@@ -218,8 +255,11 @@ export function registerCloudSyncAndEvents(
 
     const dataStats = getDirStats(DATA_DIR);
     const soundsStats = getDirStats(SOUNDS_DIR);
+    const orphanStats = orphanContext ? runOrphanScan(true, 0) : null;
     res.json({
       ok: true,
+      storageEngine: getStorageEngineInfo(),
+      orphanStats,
       dataBytes: dataStats.totalBytes,
       dataFiles: dataStats.fileCount,
       soundsBytes: soundsStats.totalBytes,
@@ -230,6 +270,12 @@ export function registerCloudSyncAndEvents(
         url: `/api/sounds/${f.name}`,
       })),
     });
+  });
+
+  app.post('/api/admin/cleanup-orphans', express.json({ limit: '16kb' }), (req, res) => {
+    const minAgeMs = Math.max(0, Number(req.body?.minAgeMs ?? 0) || 0);
+    const result = runOrphanScan(false, minAgeMs);
+    res.json({ ok: true, result });
   });
 
   app.delete('/api/admin/sounds/:filename', (req, res) => {

@@ -36,7 +36,12 @@ import {
   X,
   Calendar,
   Trash2,
+  Pencil,
+  Bell,
+  BellOff,
 } from 'lucide-react';
+import { useChannelDrafts } from '../utils/channelDrafts';
+import type { NotificationLevel } from '../utils/notificationPrefs';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
@@ -125,8 +130,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     adminDeleteChannel,
     updateProfileDetails,
     updateChannelSettings,
+    notificationPrefs,
+    setTargetNotificationPref,
     language,
   } = useSocket();
+  const drafts = useChannelDrafts();
 
   const canManageChannels = Boolean(
     activeServer &&
@@ -406,6 +414,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
+                      {Boolean(drafts[`dm:${user.username.toLowerCase()}`]) && (
+                        <span title="Kaydedilmiş taslak" className="text-amber-300/85">
+                          <Pencil className="w-3 h-3" />
+                        </span>
+                      )}
                       {(() => {
                         const dmUnread = unreadDMByUser[user.username.toLowerCase()] || 0;
                         return dmUnread > 0 ? (
@@ -565,11 +578,23 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                       onClick={() => selectChannel(channel.id)}
                       className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
                     >
-                      <Hash className="w-4 h-4 opacity-70 shrink-0" />
-                      <span className="truncate">{channel.name}</span>
+                      <Hash className={`w-4 h-4 shrink-0 ${notificationPrefs[channel.id] === 'muted' ? 'opacity-40' : 'opacity-70'}`} />
+                      <span className={`truncate ${notificationPrefs[channel.id] === 'muted' ? 'opacity-55' : ''}`}>
+                        {channel.name}
+                      </span>
                     </button>
 
                     <div className="flex items-center gap-1 shrink-0">
+                      {notificationPrefs[channel.id] === 'muted' && (
+                        <span title="Kanal bildirimleri sessize alındı" className="text-white/40 shrink-0">
+                          <BellOff className="w-3 h-3" />
+                        </span>
+                      )}
+                      {Boolean(drafts[channel.id]) && (
+                        <span title="Kaydedilmiş mesaj taslağı" className="text-amber-300/85 shrink-0">
+                          <Pencil className="w-3 h-3" />
+                        </span>
+                      )}
                       {canManageChannels && activeServer && textChannels.length > 1 && (
                         <div className="hidden group-hover:flex items-center gap-0.5 mr-0.5">
                           {idx > 0 && (
@@ -1291,6 +1316,41 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               <Copy className="w-3.5 h-3.5 text-white/60" />
               <span>Kanal Adını Kopyala</span>
             </button>
+
+            <div className="my-1 border-t border-white/10 pt-1">
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                Bildirim Tercihi
+              </div>
+              {(
+                [
+                  { id: 'all', label: 'Tüm Mesajlar', icon: Bell },
+                  { id: 'mentions', label: 'Sadece @Bahsetmeler', icon: Bell },
+                  { id: 'muted', label: 'Kanalı Sessize Al', icon: BellOff },
+                ] as Array<{ id: NotificationLevel; label: string; icon: any }>
+              ).map((opt) => {
+                const current = notificationPrefs[channelMenu.channel.id] || 'all';
+                const Icon = opt.icon;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => {
+                      setTargetNotificationPref(channelMenu.channel.id, opt.id);
+                      setChannelMenu(null);
+                    }}
+                    className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl transition text-left ${
+                      current === opt.id ? 'bg-red-500/20 text-white font-semibold' : 'hover:bg-white/10 text-white/75'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon className="w-3.5 h-3.5 text-white/60" />
+                      <span>{opt.label}</span>
+                    </span>
+                    {current === opt.id && <span className="w-1.5 h-1.5 rounded-full bg-red-400" />}
+                  </button>
+                );
+              })}
+            </div>
 
             {canManageChannels && activeServer && (
               <>
