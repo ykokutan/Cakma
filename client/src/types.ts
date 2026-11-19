@@ -431,4 +431,5 @@ export interface ScreenShareSettings {
   viewerLimit: number;
   connectionMode: ScreenShareConnectionMode;
   hdrEnabled?: boolean;
+  appAudioOnly?: boolean;
 }

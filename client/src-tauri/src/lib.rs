@@ -485,6 +485,77 @@ async fn resize_overlay_window(app: tauri::AppHandle, width: f64, height: f64) -
   Ok(())
 }
 
+#[tauri::command]
+fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+  }
+  Ok(())
+}
+
+#[tauri::command]
+fn set_taskbar_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
+  if let Some(tray) = app.tray_by_id("main-tray") {
+    let tip = if count > 0 {
+      format!("Çakma ({} okunmamış)", count)
+    } else {
+      "Çakma".to_string()
+    };
+    let _ = tray.set_tooltip(Some(tip));
+  }
+
+  if let Some(win) = app.get_webview_window("main") {
+    #[cfg(target_os = "windows")]
+    {
+      if count > 0 {
+        let size: usize = 16;
+        let mut rgba = vec![0u8; size * size * 4];
+        let cx = 7.5_f32;
+        let cy = 7.5_f32;
+        for y in 0..size {
+          for x in 0..size {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * size + x) * 4;
+            if dist <= 7.2 {
+              // Crisp crimson notification dot with subtle white border & center dot
+              if dist >= 6.0 {
+                rgba[idx] = 255;
+                rgba[idx + 1] = 255;
+                rgba[idx + 2] = 255;
+                rgba[idx + 3] = 240;
+              } else if dist <= 2.4 {
+                rgba[idx] = 255;
+                rgba[idx + 1] = 255;
+                rgba[idx + 2] = 255;
+                rgba[idx + 3] = 255;
+              } else {
+                rgba[idx] = 239;
+                rgba[idx + 1] = 68;
+                rgba[idx + 2] = 68;
+                rgba[idx + 3] = 255;
+              }
+            }
+          }
+        }
+        let img = tauri::image::Image::new_owned(rgba, size as u32, size as u32);
+        let _ = win.set_overlay_icon(Some(img));
+      } else {
+        let _ = win.set_overlay_icon(None);
+      }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+      let _ = win.set_badge_count(if count > 0 { Some(count as i64) } else { None });
+    }
+  }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default()
@@ -500,7 +571,9 @@ pub fn run() {
       set_autostart,
       position_overlay_window,
       set_overlay_ignore_cursor,
-      resize_overlay_window
+      resize_overlay_window,
+      focus_main_window,
+      set_taskbar_badge
     ]);
 
   #[cfg(desktop)]
@@ -527,7 +600,7 @@ pub fn run() {
         let quit_item = MenuItem::with_id(app, "quit", "Tamamen Kapat", true, None::<&str>)?;
         let menu = Menu::with_items(app, &[&show_item, &mute_item, &quit_item])?;
 
-        let mut tray_builder = TrayIconBuilder::new()
+        let mut tray_builder = TrayIconBuilder::with_id("main-tray")
           .menu(&menu)
           .tooltip("Çakma")
           .on_menu_event(|app, event| match event.id.as_ref() {

@@ -1,6 +1,6 @@
-# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.3.14`)
+# Çakma — Discord & TeamSpeak Hibrit Platformu (`v0.4.0`)
 
-![Version](https://img.shields.io/badge/version-0.3.14-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.4.0-blue?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-React%2019%20%7C%20TypeScript%20%7C%20Tauri%20v2%20%7C%20Node.js%20%7C%20WebRTC%20%7C%20LiveKit%20SFU-indigo?style=flat-square)
 ![Languages](https://img.shields.io/badge/i18n-TR%20%7C%20EN%20%7C%20DE%20%7C%20RU-emerald?style=flat-square)
 
@@ -28,57 +28,46 @@
 ## ✨ Güncel Özellikler
 
 ### 🎙️ Hibrit Ses & Yayın Mimarisi (P2P Mesh ↔ LiveKit SFU)
-- **Akıllı Hibrit Geçiş:** Küçük odalar düşük gecikmeli **P2P Mesh** üzerinden akarken, kalabalık odalar belirlenen katılımcı eşiğine (varsayılan `6` kişi) ulaştığında otomatik olarak merkezi **LiveKit SFU** sunucusuna geçer.
-- **Sunucu Bazlı Mimari Seçimi ([ServerSettingsModal](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/client/src/components/ServerSettingsModal.tsx)):** Her sunucu için **Otomatik (Hibrit)**, **Her Zaman P2P Mesh** veya **Her Zaman LiveKit SFU** seçilebilir.
-- **Sistem Yönetimi & Canlı Durum ([AdminDashboardModal](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/client/src/components/AdminDashboardModal.tsx)):** LiveKit SFU açma/kapama, geçiş eşiği (`2–30`), opsiyonel harici URL / API Key / Secret ve canlı **`● Aktif & Erişilebilir`** durum göstergesi.
-- **Otomatik Linux/Pelican Kurulumu ([start.sh](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/start.sh)):** Başlangıçta en güncel `livekit-server` sürümünü otomatik indirir, `data/.livekit-secrets` ve `data/livekit.yaml` dosyalarını oluşturup başlatır ve `/livekit` WebSocket proxy'si üzerinden tek porttan sunar.
+- **Tam LiveKit SFU & Ekran Paylaşımı:** Küçük odalar düşük gecikmeli **P2P Mesh** üzerinden akarken, kalabalık odalar otomatik **LiveKit SFU**'ya geçer. SFU modunda hem mikrofon sesi hem de **Simulcast ekran paylaşımı**, kişi bazlı ses seviyesi, Bas/Tiz EQ, çıktı cihazı (`setSinkId`) ve `ActiveSpeakersChanged` konuşma halosu eksiksiz çalışır.
+- **Sunucu Bazlı Mimari Seçimi & Özel TURN:** Her sunucu için **Otomatik (Hibrit) / P2P Mesh / LiveKit SFU** seçilebilir; Sistem Yönetim Paneli'nden **LiveKit SFU** ayarlarının yanında CGNAT / farklı ağ bağlantıları için **özel TURN sunucusu** da yapılandırılabilir.
+- **Otomatik Linux/Pelican Kurulumu ([start.sh](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/start.sh)):** Başlangıçta en güncel `livekit-server` sürümünü otomatik indirir, `data/.livekit-secrets` ve `data/livekit.yaml` (`use_external_ip`, `node_ip`, `udp_port` destekli) dosyalarını oluşturup başlatır ve `/livekit` proxy'si üzerinden sunar.
 
 ### 🖥️ Masaüstü Uygulaması, Cam Başlık Çubuğu & Oyun İçi Overlay
 - **Windows & macOS Desteği (Rust / Tauri v2):** Windows (`x64-setup.exe` / `.msi`) ve macOS (`Universal .dmg` — Apple Silicon & Intel) için yerel masaüstü derlemesi.
+- **Görev Çubuğu Rozeti & Tıklanabilir Bildirimler:** Okunmamış mesajlarda Windows görev çubuğu simgesi ve sistem tepsisi üzerinde canlı bildirim rozeti gösterilir; masaüstü bildirimlerine tıklandığında uygulama öne getirilip doğrudan ilgili kanala geçer.
+- **Canlı Güncelleme İlerleme Çubuğu:** Ayarlar → Hakkında ekranında tek tıkla güncelleme denetimi, canlı `%` / `MB` indirme çubuğu ve imzalı OTA kurulum (`latest.json`).
 - **Özel Cam Pencere Başlık Çubuğu:** Temaya uyumlu glassmorphism üst pencere çubuğu, aktif sunucu/kanal göstergesi, `Ctrl + K` Hızlı Geçiş ve canlı ping rozeti.
 - **Gelişmiş Oyun İçi Konuşanlar Overlay'i:**
   - Çerçevesiz, gerçek cam saydamlıklı (`%20–%100`) ve anti-cheat güvenli (DLL enjeksiyonu olmadan ayrı pencere tabanlı) konuşanlar penceresi.
-  - **Köşe Konumu** (Sol Üst / Sağ Üst / Sol Alt / Sağ Alt), **Boyut** (Kompakt / Standart / Geniş), **Yalnızca Konuşanları Göster**, **Hızlı Kontrol Çubuğu**, **Canlı Ping (ms)** ve canlı önizlemeli ayrı Overlay ayar sekmesi.
-  - `Ctrl + Shift + O` ile **Tıklama Geçirgenliği (Click-Through / Kilit)** açılıp kapatılabilir.
-- **Genişletilmiş Otomatik Oyun Algılama (Rich Presence):** VALORANT, CS2, LoL, GTA V, FiveM, Minecraft, Fortnite, Marvel Rivals, Path of Exile 2, WoW, CoD, Battlefield, Forza, Valheim, DayZ ve 40+ popüler oyun otomatik algılanır.
-- **Sistem Tepsisi & Global Kısayollar:** Pencere kapatıldığında tepsiye küçülür; oyun içindeyken `Ctrl + Shift + M` (Mikrofon) ve `Ctrl + Shift + D` (Kulaklık) kısayolları çalışır.
-- **İmzalı Otomatik Güncelleme:** Açılışta `latest.json` üzerinden yeni sürüm kontrolü ve tek tıkla güncelleme desteği.
+  - **Köşe Konumu**, **Boyut** (Kompakt / Standart / Geniş), **Yalnızca Konuşanları Göster**, **Hızlı Kontrol Çubuğu**, **Canlı Ping (ms)** ve `Ctrl + Shift + O` ile **Tıklama Geçirgenliği (Kilit)**.
+- **Genişletilmiş Otomatik Oyun Algılama & Global Kısayollar:** 40+ popüler oyun otomatik algılanır; oyun içindeyken `Ctrl + Shift + M` ve `Ctrl + Shift + D` çalışır.
 
-### 🔊 Stüdyo Ses, Kişiye Özel EQ, HDR Yayın & PiP
-- **Stüdyo Ses DSP Zinciri:** `48 kHz` örnekleme, `80 Hz` uğultu filtresi (high-pass), Compressor DSP, `20 ms` düşük gecikmeli tampon, **64–384 kbps Opus** kanal/sunucu bazlı bitrate ve kişi limiti.
-- **Kişiye Özel EQ & Normalize:** Ses odasındaki kullanıcıların sağ tık menüsünde kişi bazlı ses seviyesi (`%0–%200`), **Bas/Tiz EQ**, **Ses Normalizasyonu** ve yerel susturma.
-- **Sunucu Susturma & Toplantı Modu:** Yetkililer odadaki tüm katılımcıları tek tıkla susturup açabilir.
-- **10-bit AV1/VP9 HDR Yayın & İzleyici Kontrolü:** Yayın öncesi çözünürlük (`360p – Source`), FPS (`5 / 30 / 60`), HDR modu, gizlilik ve izleyici limiti seçimi; izleyici tarafında özel kalite (`Oto/Kaynak/1080p/720p/480p/360p`), canlı FPS/bitrate/istatistik kartı ve lazer işaretçi.
-- **Çoklu Yayın Geçişi & Mini PiP:** Aynı odada birden fazla yayın arasında anlık geçiş ve başka kanala geçildiğinde sağ altta yüzen **Mini PiP (Picture-in-Picture)** penceresi (*Odaya Dön*, *Küçült*, *Kapat*).
-- **Ses Odası İçi Yazılı Sohbet ("Oda Sohbeti"):** Ses odasından çıkmadan sağdan açılan yan çekmece üzerinden odaya özel mesajlaşma.
-- **Whisper Lists (Fısıltı Listeleri), El Kaldırma & Otomatik AFK Taşıyıcı.**
+### 🔊 Stüdyo Ses, Spektral Gürültü Engelleme, HDR Yayın & PiP
+- **48kHz AudioWorklet Gürültü Engelleme & Zero-Lag Sayaç:** Ana iş parçacığından bağımsız gerçek zamanlı spektral gürültü filtresi ([noise-suppressor-worklet.js](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/client/public/noise-suppressor-worklet.js)) ve 60 FPS re-render darboğazını ortadan kaldıran `VoiceMetricsContext` harici deposu.
+- **Stüdyo Ses DSP & Kişiye Özel EQ:** `48 kHz` örnekleme, `80 Hz` uğultu filtresi, Compressor DSP, `20 ms` düşük gecikmeli tampon, **64–384 kbps Opus**, kişi bazlı `%0–%200` ses, Bas/Tiz EQ, Ses Normalizasyonu ve Sunucu Susturma / Toplantı Modu.
+- **10-bit AV1/VP9 HDR Yayın, WASAPI Pencere Sesi & Mini PiP:** Yayın açarken mümkün olduğunda **yalnızca seçili pencere/oyun sesini (WASAPI)** yakalama, izleyici tarafında özel kalite (`Oto/Kaynak/1080p/720p/480p/360p`), canlı FPS/bitrate/istatistik, lazer işaretçi, çoklu yayın geçişi ve **Mini PiP**.
+- **Ses Odası İçi Yazılı Sohbet ("Oda Sohbeti"), Whisper Lists, El Kaldırma & Otomatik AFK Taşıyıcı.**
 
-### 🎵 Müzik Botu, Audio Ducking & Ortak Etkinlikler
-- **Radyo & YouTube Botu:** Resmi YouTube IFrame API ve canlı SomaFM radyo istasyonlarıyla senkronize müzik dinleme.
-- **Audio Ducking (`%10–%70`):** Odadaki katılımcılardan biri konuştuğunda Radyo/YouTube ses seviyesi otomatik olarak kısılır; konuşma bitince eski haline döner.
-- **Birlikte İzle (Watch Together), Ortak Çizim (Whiteboard) & Mini Oyunlar.**
-
-### 💬 Sohbet, DM Okundu Bilgisi & Topluluk
-- **DM Okundu Bilgisi (`✓✓ Görüldü`) & E2EE DM:** Direkt mesajlarda canlı okundu bilgisi ve uçtan uca şifreli DM desteği.
-- **"Yeni Mesajlar" Ayırıcı Çizgisi & Çevrimdışı Kuyruk:** Okunmamış mesaj çizgisi ve bağlantı kesintisinde otomatik yeniden gönderim kuyruğu.
-- **Zengin Mesajlaşma:** Yanıtlama, alt konular (Threads), **Sesli Notlar** (`1x / 1.5x / 2x` hız + dalga formu), kod blokları, görsel lightbox, anketler, yer imleri, hatırlatıcılar, **GIPHY API / yerleşik GIF galerisi** ve sabitlenmiş mesajlar.
-- **Sunucu Şablonları:** **🎮 Oyun Topluluğu**, **☕ Arkadaş Grubu**, **💼 Çalışma / Ekip** veya **📄 Boş Sunucu** şablonlarıyla tek tıkla kurulum.
+### 💬 Sohbet, Parçalı Depolama, Sayfalama & WebP Optimizasyonu
+- **Parçalı Asenkron Depolama & Sayfalama:** Kanal bazlı debounced asenkron disk yazımı ([messageStore.ts](file:///c:/Users/ykoku/Documents/discord%20%C3%A7akma/server/src/messageStore.ts)), başlangıçta kanal başına son 60 mesaj yükleme ve *"Sunucudan Daha Eski Mesajları Yükle (+50)"* desteği.
+- **İstemci Tarafı WebP Görsel Sıkıştırma:** Sohbete atılan büyük görseller ve ekran görüntüleri otomatik olarak hafif WebP formatına dönüştürülerek bant genişliği ve disk alanı korunur.
+- **DM Okundu Bilgisi (`✓✓ Görüldü`), E2EE DM, "Yeni Mesajlar" Çizgisi, Sesli Notlar, Threads, GIPHY & Sunucu Şablonları.**
 
 ### 📞 1-e-1 Direkt Görüşme & Uzaktan Yardım
 - **1-e-1 Görüşme Sahnesi:** Daraltılıp genişletilebilen çağrı sahnesi, çoklu oturum zil sesi ve ekran paylaşımı.
 - **Uzaktan Masaüstü Kontrolü (TeamViewer Tarzı):** İzinli fare/klavye kontrolü, hızlı sistem kısayol çubuğu ve Türkçe Q ekran klavyesi.
 
-### 🎨 12 Arayüz Teması (8 Koyu + 4 Açık), Profil & Çoklu Dil (i18n)
-- **8 Koyu Tema:** Vision Dark, Midnight Blue, Cyber Emerald, Amber Gold, Crimson Rose, Royal Violet, Nordic Frost, OLED Siyah.
-- **4 Açık Renkli Tema:** **İnci Beyazı**, **Gündüz Mavisi**, **Sıcak Kum**, **Nane Esintisi** — uyarlanabilir açık cam yüzeyi ve yüksek kontrastlı metin desteğiyle.
-- **Ayarlar İçi Hızlı Arama & Varlık Yönetimi:** DND bildirim susturma, 10 dk otomatik Boşta (Idle) modu, özel durum süresi (*Süresiz / 30 Dakika / 1 Saat / 4 Saat / Bugün Sonu*) ve tıklanabilir rozet açıklamaları.
+### 🎨 12 Arayüz Teması + Özel Tema Oluşturucu, Profil & Çoklu Dil (i18n)
+- **8 Koyu + 4 Açık Tema:** Vision Dark, Midnight Blue, Cyber Emerald, Amber Gold, Crimson Rose, Royal Violet, Nordic Frost, OLED Siyah + **İnci Beyazı**, **Gündüz Mavisi**, **Sıcak Kum**, **Nane Esintisi**.
+- **Özel Tema Oluşturucu (CSS Değişkenleri):** Koyu/Açık kontrast modu, zemin rengi ve vurgu parlaması seçilerek anlık kişisel tema oluşturulabilir.
+- **Ayarlar İçi Hızlı Arama, PWA Web Push & Varlık Yönetimi:** DND bildirim susturma, 10 dk otomatik Boşta (Idle) modu, özel durum süresi, Service Worker Web Push bildirimleri ve tıklanabilir rozet açıklamaları.
 - **Çoklu Dil (i18n):** Anlık **Türkçe (TR)**, **English (EN)**, **Deutsch (DE)** ve **Русский (RU)** desteği.
 
-### 🔒 Güvenlik, Moderasyon, Şifreli Yedekler & Ağ Teşhisi
-- **Güçlendirilmiş Kimlik & Oturum Güvenliği:** Web için `HttpOnly` cookie oturumu, sıkılaştırılmış CSP, davet kodlu kayıt, anti-bot doğrulaması, 6 haneli **E-posta OTP**, isteğe bağlı **2FA (TOTP)**, yeni IP giriş uyarısı ve aktif oturum yönetimi.
-- **Şifreli Sunucu Yedekleri & Güvenlik Denetimi:** Rastgele kalıcı sunucu anahtarları, **AES-256-GCM** şifreli otomatik yedekleme ve Yönetim Paneli içinde canlı **Güvenlik Denetimi Skoru**.
-- **Gelişmiş AutoMod, Rol İzin Matrisi & Audit Logs:** Link/kelime filtresi, zaman aşımı (timeout), IP/hesap ban ve denetim kayıtları.
-- **Anlık Ağ Teşhisi & Dedicated Server:** 1 saniyelik canlı RTT (Ping), Jitter, Paket Kaybı (%) grafiği ve lisans korumalı bağımsız sunucu paketi (`dedicated-server/`).
+### 🔒 Güvenlik, Moderasyon, Şifreli Yedekler, Metrikler & Ağ Teşhisi
+- **Güçlendirilmiş Kimlik & Oturum Güvenliği:** `HttpOnly` cookie oturumu, sıkılaştırılmış CSP, davet kodlu kayıt, anti-bot doğrulaması, 6 haneli **E-posta OTP**, **2FA (TOTP)**, yeni IP giriş uyarısı ve aktif oturum yönetimi.
+- **Şifreli Sunucu Yedekleri & Güvenlik Denetimi:** Rastgele kalıcı sunucu anahtarları, **AES-256-GCM** şifreli otomatik yedekleme ve canlı **Güvenlik Denetimi Skoru**.
+- **Gözlemlenebilirlik & Testler:** `/api/health` + `/api/metrics` (JSON ve Prometheus formatı) ve sunucu (`node:test`) + istemci (`vitest`) birim test paketi.
+- **Gelişmiş AutoMod, Rol İzin Matrisi, Audit Logs, Anlık Ağ Teşhisi & Dedicated Server.**
 
 ---
 
@@ -99,9 +88,9 @@
 - Masaüstü derlemesi için: **Rust (`rustup` + `cargo`)** ve Windows WebView2
 
 ### Komutlar
-- **Sunucu Derleme (`tsc`):**
+- **Sunucu Derleme & Test (`tsc` + `node:test`):**
   ```bash
-  npm --prefix server run build
+  npm --prefix server test
   ```
 - **İstemci Testleri (Vitest):**
   ```bash

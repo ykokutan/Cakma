@@ -3,9 +3,12 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData } from './types.js';
+import { ShardedMessageStore, getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages } from './messageStore.js';
+
+export { getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages };
 
 // Resolve persistent data directory
-function getPersistentDir(): string {
+export function getPersistentDir(): string {
   const cwd = process.cwd();
   if (path.basename(cwd) === 'server' && fs.existsSync(path.resolve(cwd, '..', 'package.json'))) {
     return path.resolve(cwd, '..', 'data');
@@ -14,6 +17,11 @@ function getPersistentDir(): string {
 }
 
 const DATA_DIR = getPersistentDir();
+export const messageStore = new ShardedMessageStore(DATA_DIR);
+
+const pendingWrites = new Map<string, any>();
+const pendingTimers = new Map<string, NodeJS.Timeout>();
+const inFlightWrites = new Map<string, Promise<void>>();
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -31,6 +39,63 @@ function safeWriteJson(filename: string, data: any) {
   } catch (err) {
     console.error(`❌ [Storage] ${filename} yazılamadı:`, err);
   }
+}
+
+async function writeJsonAsync(filename: string, data: any) {
+  const prev = inFlightWrites.get(filename) || Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(async () => {
+      try {
+        await fs.promises.mkdir(DATA_DIR, { recursive: true });
+        const filePath = path.join(DATA_DIR, filename);
+        const tempPath = `${filePath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        await fs.promises.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+        await fs.promises.rename(tempPath, filePath);
+      } catch (err) {
+        console.error(`❌ [Storage] ${filename} asenkron yazılamadı:`, err);
+      }
+    });
+  inFlightWrites.set(filename, next);
+  try {
+    await next;
+  } finally {
+    if (inFlightWrites.get(filename) === next) {
+      inFlightWrites.delete(filename);
+    }
+  }
+}
+
+export function scheduleWriteJson(filename: string, data: any, delayMs = 250) {
+  pendingWrites.set(filename, data);
+  const existing = pendingTimers.get(filename);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    pendingTimers.delete(filename);
+    const snapshot = pendingWrites.get(filename);
+    if (snapshot !== undefined) {
+      pendingWrites.delete(filename);
+      void writeJsonAsync(filename, snapshot);
+    }
+  }, delayMs);
+  timer.unref?.();
+  pendingTimers.set(filename, timer);
+}
+
+export function flushPendingWritesSync() {
+  for (const [filename, timer] of pendingTimers.entries()) {
+    clearTimeout(timer);
+    pendingTimers.delete(filename);
+  }
+  for (const [filename, data] of pendingWrites.entries()) {
+    pendingWrites.delete(filename);
+    safeWriteJson(filename, data);
+  }
+  messageStore.flushSync();
+}
+
+export function getPendingWriteCount(): number {
+  return pendingWrites.size + inFlightWrites.size + messageStore.getPendingCount();
 }
 
 function safeReadJson<T>(filename: string, defaultValue: T): T {
@@ -62,7 +127,7 @@ export function loadAccounts(): Map<string, RegisteredAccount> {
 
 export function saveAccounts(accounts: Map<string, RegisteredAccount>) {
   const list = Array.from(accounts.values());
-  safeWriteJson('users.json', list);
+  scheduleWriteJson('users.json', list);
 }
 
 // 2. SERVERS (Sunucular & Roller & Kanallar)
@@ -78,18 +143,24 @@ export function loadServers(defaultServers: Server[]): Server[] {
 }
 
 export function saveServers(servers: Server[]) {
-  safeWriteJson('servers.json', servers);
+  scheduleWriteJson('servers.json', servers);
 }
 
-// 3. MESSAGES (Kanal Mesajları)
+// 3. MESSAGES (Kanal Mesajları — Parçalı Asenkron Depolama)
 export function loadMessages(defaultMessages: Record<string, Message[]>): Record<string, Message[]> {
-  const loaded = safeReadJson<Record<string, Message[]>>('messages.json', defaultMessages);
-  console.log(`💾 [Storage] Mesaj geçmişi yüklendi.`);
-  return loaded;
+  return messageStore.loadAll(defaultMessages);
+}
+
+export function saveChannelMessages(channelId: string, channelMessages: Message[]) {
+  messageStore.scheduleSaveChannel(channelId, channelMessages);
 }
 
 export function saveMessages(messages: Record<string, Message[]>) {
-  safeWriteJson('messages.json', messages);
+  for (const [chId, list] of Object.entries(messages)) {
+    if (Array.isArray(list)) {
+      messageStore.scheduleSaveChannel(chId, list);
+    }
+  }
 }
 
 // 4. LICENSES (Dedicated Lisansları)
@@ -126,7 +197,7 @@ export function loadAuditLogs(defaultLogs: AuditLog[]): AuditLog[] {
 export function saveAuditLogs(logs: AuditLog[]) {
   // Keep last 500 logs max
   const trimmed = logs.slice(0, 500);
-  safeWriteJson('audit.json', trimmed);
+  scheduleWriteJson('audit.json', trimmed);
 }
 
 // 7. FRIEND REQUESTS (Arkadaşlık İstekleri)
@@ -143,7 +214,7 @@ export function loadFriendRequests(): Map<string, FriendRequest> {
 
 export function saveFriendRequests(requests: Map<string, FriendRequest>) {
   const list = Array.from(requests.values());
-  safeWriteJson('friend_requests.json', list);
+  scheduleWriteJson('friend_requests.json', list);
 }
 
 // 8. CONNECTION & IP LOGS (Kullanıcı IP ve Bağlantı Kayıtları)
@@ -154,7 +225,7 @@ export function loadConnectionLogs(): UserConnectionRecord[] {
 export function saveConnectionLogs(logs: UserConnectionRecord[]) {
   // Keep last 300 logs max
   const trimmed = logs.slice(0, 300);
-  safeWriteJson('connection_logs.json', trimmed);
+  scheduleWriteJson('connection_logs.json', trimmed);
 }
 
 // 9. SERVER LEVELS & XP (Kullanıcı XP ve Seviyeleri)
@@ -163,7 +234,7 @@ export function loadServerLevels(): Record<string, Record<string, MemberLevelDat
 }
 
 export function saveServerLevels(levels: Record<string, Record<string, MemberLevelData>>) {
-  safeWriteJson('server_levels.json', levels);
+  scheduleWriteJson('server_levels.json', levels);
 }
 
 // 10. SYSTEM CONFIGURATION (Sistem Yapılandırması)
@@ -220,6 +291,9 @@ export interface SystemConfig {
   livekitUrl?: string;
   livekitApiKey?: string;
   livekitApiSecret?: string;
+  turnUrl?: string;
+  turnUsername?: string;
+  turnCredential?: string;
   webhookEvents?: {
     security?: boolean;
     bans?: boolean;
@@ -465,4 +539,20 @@ export function deleteScheduledBackup(filename: string): boolean {
     return true;
   }
   return false;
+}
+
+// 14. WEB PUSH SUBSCRIPTIONS
+export interface PushSubscriptionRecord {
+  username: string;
+  endpoint: string;
+  subscription: Record<string, any>;
+  updatedAt: string;
+}
+
+export function loadPushSubscriptions(): PushSubscriptionRecord[] {
+  return safeReadJson<PushSubscriptionRecord[]>('push_subscriptions.json', []);
+}
+
+export function savePushSubscriptions(records: PushSubscriptionRecord[]) {
+  scheduleWriteJson('push_subscriptions.json', records);
 }

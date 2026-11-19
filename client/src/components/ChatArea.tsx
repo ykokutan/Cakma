@@ -5,6 +5,7 @@ import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
+import { compressImageToWebP } from '../utils/imageCompress';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -216,6 +217,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     markDmRead,
     unreadCounts,
     language,
+    hasMoreMessages,
+    isLoadingOlderMessages,
+    requestOlderMessages,
   } = useSocket();
 
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
@@ -685,13 +689,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/png');
+        const webpUrl = canvas.toDataURL('image/webp', 0.86);
+        const useWebp = webpUrl.startsWith('data:image/webp');
+        const dataUrl = useWebp ? webpUrl : canvas.toDataURL('image/png');
+        const ext = useWebp ? 'webp' : 'png';
         setPendingAttachments((prev) => [
           ...prev,
           {
             id: `ss-${Date.now()}`,
-            name: `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.png`,
-            type: 'image/png',
+            name: `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.${ext}`,
+            type: useWebp ? 'image/webp' : 'image/png',
             url: dataUrl,
             size: Math.round((dataUrl.length * 3) / 4),
           },
@@ -706,27 +713,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const processFiles = (files: FileList | File[]) => {
-    Array.from(files).forEach((file) => {
-      // 5MB limit
-      if (file.size > 5 * 1024 * 1024) {
-        alert(`"${file.name}" çok büyük! Lütfen 5MB'dan küçük dosyalar yükleyin.`);
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          const newAtt: MessageAttachment = {
-            id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-            name: file.name,
-            size: file.size,
-            type: file.type || 'application/octet-stream',
-            url: reader.result,
-          };
-          setPendingAttachments((prev) => [...prev, newAtt]);
+    Array.from(files).forEach(async (file) => {
+      try {
+        const optimized = await compressImageToWebP(file);
+        if (optimized.size > 5 * 1024 * 1024) {
+          alert(`"${file.name}" çok büyük! Lütfen 5MB'dan küçük dosyalar yükleyin.`);
+          return;
         }
-      };
-      reader.readAsDataURL(file);
+        const newAtt: MessageAttachment = {
+          id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          name: optimized.name,
+          size: optimized.size,
+          type: optimized.type,
+          url: optimized.dataUrl,
+        };
+        setPendingAttachments((prev) => [...prev, newAtt]);
+      } catch {
+        alert(`"${file.name}" okunamadı.`);
+      }
     });
   };
 
@@ -1418,6 +1422,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         {/* Message Items - iOS Messages Bubble Design */}
+        {activeChannel?.id && hasMoreMessages[activeChannel.id] && filteredMessages.length <= visibleMsgCount && (
+          <div className="flex justify-center py-2">
+            <button
+              type="button"
+              disabled={isLoadingOlderMessages}
+              onClick={() => requestOlderMessages(activeChannel.id)}
+              className="px-4 py-1.5 rounded-full bg-indigo-500/20 hover:bg-indigo-500/30 disabled:opacity-50 text-xs font-semibold text-indigo-200 transition border border-indigo-400/30"
+            >
+              {isLoadingOlderMessages ? 'Eski mesajlar yükleniyor...' : 'Sunucudan Daha Eski Mesajları Yükle (+50)'}
+            </button>
+          </div>
+        )}
         {filteredMessages.length > visibleMsgCount && (
           <div className="flex justify-center py-2">
             <button

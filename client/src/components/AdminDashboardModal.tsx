@@ -140,6 +140,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
   const [sysLivekitUrl, setSysLivekitUrl] = useState<string>('');
   const [sysLivekitApiKey, setSysLivekitApiKey] = useState<string>('');
   const [sysLivekitApiSecret, setSysLivekitApiSecret] = useState<string>('');
+  const [sysTurnUrl, setSysTurnUrl] = useState<string>('');
+  const [sysTurnUsername, setSysTurnUsername] = useState<string>('');
+  const [sysTurnCredential, setSysTurnCredential] = useState<string>('');
   const [showGiphyKey, setShowGiphyKey] = useState<boolean>(false);
   const [sysRequireEmailVerif, setSysRequireEmailVerif] = useState<boolean>(false);
   const [sysSmtpHost, setSysSmtpHost] = useState<string>('');
@@ -205,6 +208,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
       setSysLivekitUrl(adminData.systemConfig.livekitUrl || '');
       setSysLivekitApiKey(adminData.systemConfig.livekitApiKey || '');
       setSysLivekitApiSecret(adminData.systemConfig.livekitApiSecret || '');
+      setSysTurnUrl(adminData.systemConfig.turnUrl || '');
+      setSysTurnUsername(adminData.systemConfig.turnUsername || '');
+      setSysTurnCredential(adminData.systemConfig.turnCredential || '');
       setSysRequireEmailVerif(Boolean(adminData.systemConfig.requireEmailVerification));
       setSysSmtpHost(adminData.systemConfig.smtpHost || '');
       setSysSmtpPort(adminData.systemConfig.smtpPort ?? 587);
@@ -1273,6 +1279,34 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                           className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-emerald-400"
                         />
                       </div>
+                      <div className="sm:col-span-2 pt-2 border-t border-white/10">
+                        <div className="text-[11px] font-semibold text-cyan-300 uppercase tracking-wider mb-2">
+                          Özel TURN Sunucusu (CGNAT / Dış Ağ Geçişi — İsteğe Bağlı)
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <input
+                            type="text"
+                            value={sysTurnUrl}
+                            onChange={(e) => { setSysTurnUrl(e.target.value); setIsSystemDirty(true); }}
+                            placeholder="turn:turn.alanadiniz.com:3478"
+                            className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                          />
+                          <input
+                            type="text"
+                            value={sysTurnUsername}
+                            onChange={(e) => { setSysTurnUsername(e.target.value); setIsSystemDirty(true); }}
+                            placeholder="TURN Kullanıcı Adı"
+                            className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                          />
+                          <input
+                            type="password"
+                            value={sysTurnCredential}
+                            onChange={(e) => { setSysTurnCredential(e.target.value); setIsSystemDirty(true); }}
+                            placeholder="TURN Şifre / Secret"
+                            className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1516,6 +1550,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                         livekitUrl: sysLivekitUrl,
                         livekitApiKey: sysLivekitApiKey,
                         livekitApiSecret: sysLivekitApiSecret,
+                        turnUrl: sysTurnUrl,
+                        turnUsername: sysTurnUsername,
+                        turnCredential: sysTurnCredential,
                         requireEmailVerification: sysRequireEmailVerif,
                         smtpHost: sysSmtpHost,
                         smtpPort: sysSmtpPort,

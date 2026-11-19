@@ -78,6 +78,7 @@ if [ "${ENABLE_LIVEKIT:-1}" = "1" ]; then
     export LIVEKIT_API_KEY
     export LIVEKIT_API_SECRET
     LK_CFG="$ROOT_DIR/data/livekit.yaml"
+    LK_EXT_IP="${LIVEKIT_USE_EXTERNAL_IP:-false}"
     cat > "$LK_CFG" <<EOF
 port: 7880
 bind_addresses:
@@ -86,7 +87,15 @@ rtc:
   tcp_port: 7881
   port_range_start: 50000
   port_range_end: 50100
-  use_external_ip: false
+  use_external_ip: ${LK_EXT_IP}
+EOF
+    if [ -n "${LIVEKIT_NODE_IP:-}" ]; then
+      printf '  node_ip: "%s"\n' "$LIVEKIT_NODE_IP" >> "$LK_CFG"
+    fi
+    if [ -n "${LIVEKIT_UDP_PORT:-}" ]; then
+      printf '  udp_port: %s\n' "$LIVEKIT_UDP_PORT" >> "$LK_CFG"
+    fi
+    cat >> "$LK_CFG" <<EOF
 keys:
   ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
 EOF

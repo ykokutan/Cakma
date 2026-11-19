@@ -26,7 +26,7 @@ import {
 import {
   loadAccounts, saveAccounts,
   loadServers, saveServers,
-  loadMessages, saveMessages,
+  loadMessages, saveMessages, saveChannelMessages,
   loadLicenses, saveLicenses,
   loadStoreSettings, saveStoreSettings,
   loadAuditLogs, saveAuditLogs,
@@ -35,9 +35,14 @@ import {
   loadServerLevels, saveServerLevels,
   loadSystemConfig, saveSystemConfig, SystemConfig,
   loadBannedIps, saveBannedIps, BannedIpRecord,
+  loadPushSubscriptions, savePushSubscriptions,
+  flushPendingWritesSync, getPendingWriteCount,
+  getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   getStorageStats, exportAllDataBundle, importAllDataBundle,
   createScheduledBackup, listScheduledBackups, readScheduledBackup, deleteScheduledBackup
 } from './storage.js';
+import { normalizeLiveKitHttpUrl, shouldRoomUseSfu, buildIceServers } from './utils/sfuLogic.js';
+import { validateAttachmentSafety } from './utils/security.js';
 
 // --- SECURITY & CRYPTOGRAPHIC HELPERS ---
 export function hashPassword(password: string): string {
@@ -253,20 +258,23 @@ const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
 const SFU_THRESHOLD = Math.max(2, Number(process.env.SFU_THRESHOLD) || 6);
 
 let livekitHealthyCache: { ok: boolean; checkedAt: number; reason?: string } = { ok: false, checkedAt: 0 };
-function normalizeLiveKitHttpUrl(rawUrl: string): string {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return LIVEKIT_URL;
-  return trimmed.replace(/^ws(s?):\/\//i, 'http$1://');
-}
 
 function getEffectiveLiveKitConfig() {
   return {
     enabled: systemConfig?.sfuEnabled !== false,
     threshold: Math.max(2, Number(systemConfig?.sfuThreshold) || SFU_THRESHOLD),
-    url: normalizeLiveKitHttpUrl(systemConfig?.livekitUrl || LIVEKIT_URL),
+    url: normalizeLiveKitHttpUrl(systemConfig?.livekitUrl || '', LIVEKIT_URL),
     apiKey: (systemConfig?.livekitApiKey || '').trim() || LIVEKIT_API_KEY,
     apiSecret: (systemConfig?.livekitApiSecret || '').trim() || LIVEKIT_API_SECRET,
   };
+}
+
+function getEffectiveIceServers() {
+  return buildIceServers({
+    turnUrl: (systemConfig?.turnUrl || process.env.TURN_URL || '').trim(),
+    turnUsername: (systemConfig?.turnUsername || process.env.TURN_USERNAME || '').trim(),
+    turnCredential: (systemConfig?.turnCredential || process.env.TURN_CREDENTIAL || '').trim(),
+  });
 }
 
 async function getLiveKitDiagnostics(): Promise<{
@@ -681,6 +689,9 @@ const defaultSystemConfig: SystemConfig = {
   livekitUrl: '',
   livekitApiKey: '',
   livekitApiSecret: '',
+  turnUrl: '',
+  turnUsername: '',
+  turnCredential: '',
   webhookEvents: {
     security: true,
     bans: true,
@@ -938,13 +949,101 @@ function getSystemStats(): SystemStats {
 }
 
 // REST Endpoints
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
+let pushSubscriptions = loadPushSubscriptions();
+
+function buildRuntimeMetrics() {
+  const mem = process.memoryUsage();
+  const activeVoiceRooms = new Set<string>();
+  activeUsers.forEach((u) => {
+    if (u.currentVoiceChannelId) activeVoiceRooms.add(u.currentVoiceChannelId);
+  });
+  return {
+    uptimeSeconds: Math.floor(process.uptime()),
     onlineUsers: activeUsers.size,
     serverCount: servers.length,
+    activeVoiceRooms: activeVoiceRooms.size,
+    memoryRssMb: Math.round(mem.rss / 1048576),
+    memoryHeapUsedMb: Math.round(mem.heapUsed / 1048576),
+    pendingStorageWrites: getPendingWriteCount(),
+    livekitEnabled: systemConfig.sfuEnabled !== false,
+    pushSubscriptionCount: pushSubscriptions.length,
+  };
+}
+
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    ...buildRuntimeMetrics(),
     stats: getSystemStats()
   });
+});
+
+app.get('/api/metrics', (req, res) => {
+  const m = buildRuntimeMetrics();
+  if (req.query.format === 'prometheus') {
+    const lines = [
+      '# HELP cakma_uptime_seconds Backend process uptime in seconds',
+      '# TYPE cakma_uptime_seconds gauge',
+      `cakma_uptime_seconds ${m.uptimeSeconds}`,
+      '# HELP cakma_online_users Number of online users',
+      '# TYPE cakma_online_users gauge',
+      `cakma_online_users ${m.onlineUsers}`,
+      '# HELP cakma_active_voice_rooms Active voice rooms count',
+      '# TYPE cakma_active_voice_rooms gauge',
+      `cakma_active_voice_rooms ${m.activeVoiceRooms}`,
+      '# HELP cakma_memory_rss_mb Resident set size in MiB',
+      '# TYPE cakma_memory_rss_mb gauge',
+      `cakma_memory_rss_mb ${m.memoryRssMb}`,
+      '# HELP cakma_memory_heap_used_mb V8 heap used in MiB',
+      '# TYPE cakma_memory_heap_used_mb gauge',
+      `cakma_memory_heap_used_mb ${m.memoryHeapUsedMb}`,
+      '# HELP cakma_pending_storage_writes Pending async disk write count',
+      '# TYPE cakma_pending_storage_writes gauge',
+      `cakma_pending_storage_writes ${m.pendingStorageWrites}`,
+    ];
+    return res.type('text/plain').send(`${lines.join('\n')}\n`);
+  }
+  return res.json(m);
+});
+
+app.get('/api/push/status', (_req, res) => {
+  res.json({ enabled: true, subscriptionCount: pushSubscriptions.length });
+});
+
+app.post('/api/push/subscribe', (req, res) => {
+  const cookieToken = parseCookieValue(req.headers.cookie, 'cakma_session');
+  const token = (cookieToken || req.body?.token || '').toString().trim();
+  const username = token ? verifySessionToken(token) : null;
+  if (!username) {
+    return res.status(401).json({ success: false, error: 'Oturum doğrulanamadı.' });
+  }
+  const subscription = req.body?.subscription;
+  const endpoint = (subscription?.endpoint || '').toString().trim();
+  if (!subscription || !endpoint) {
+    return res.status(400).json({ success: false, error: 'Geçersiz abonelik nesnesi.' });
+  }
+  pushSubscriptions = pushSubscriptions.filter((s) => s.endpoint !== endpoint);
+  pushSubscriptions.push({
+    username,
+    endpoint,
+    subscription,
+    updatedAt: new Date().toISOString(),
+  });
+  if (pushSubscriptions.length > 500) {
+    pushSubscriptions = pushSubscriptions.slice(-500);
+  }
+  savePushSubscriptions(pushSubscriptions);
+  return res.json({ success: true, count: pushSubscriptions.length });
+});
+
+app.delete('/api/push/unsubscribe', (req, res) => {
+  const endpoint = (req.body?.endpoint || '').toString().trim();
+  if (!endpoint) {
+    return res.status(400).json({ success: false, error: 'endpoint gerekli.' });
+  }
+  pushSubscriptions = pushSubscriptions.filter((s) => s.endpoint !== endpoint);
+  savePushSubscriptions(pushSubscriptions);
+  return res.json({ success: true });
 });
 
 // GIPHY Proxy Endpoint with 5-minute in-memory cache
@@ -1699,24 +1798,29 @@ function isMessageFlooding(userId: string): boolean {
   return false;
 }
 
-const DANGEROUS_EXTENSIONS = [
-  '.exe', '.bat', '.cmd', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
-  '.ps1', '.ps2', '.scr', '.msi', '.msp', '.com', '.pif', '.reg', '.hta',
-  '.jar', '.sh', '.bash', '.app', '.dmg', '.pkg', '.apk'
-];
-
 function hasDangerousAttachment(attachments?: MessageAttachment[]): boolean {
   if (!attachments || attachments.length === 0) return false;
   return attachments.some(att => {
-    const lowerName = (att.name || '').toLowerCase();
+    const check = validateAttachmentSafety(att, systemConfig.maxUploadSizeMb || 5);
+    if (!check.ok && (check.error || '').includes('Çalıştırılabilir')) return true;
     const lowerType = (att.type || '').toLowerCase();
-    const isDangerousExt = DANGEROUS_EXTENSIONS.some(ext => lowerName.endsWith(ext));
-    const isDangerousMime =
+    return (
       lowerType.includes('executable') ||
       lowerType.includes('x-msdownload') ||
       lowerType.includes('x-sh') ||
-      lowerType.includes('x-bat');
-    return isDangerousExt || isDangerousMime;
+      lowerType.includes('x-bat')
+    );
+  });
+}
+
+function emitInitData(targetSocket: Socket, currentUser: User) {
+  const { initialMessages, hasMoreMessages } = getInitialMessagesSlice(messages, 60);
+  targetSocket.emit('init_data', {
+    currentUser,
+    servers,
+    onlineUsers: Array.from(activeUsers.values()),
+    messages: initialMessages,
+    hasMoreMessages,
   });
 }
 
@@ -1738,18 +1842,40 @@ io.on('connection', (socket: Socket) => {
   });
   socket.emit('pinned_banner_updated', systemConfig.pinnedBanner || null);
   socket.emit('store_settings_response', storeSettings);
+  socket.emit('ice_servers', getEffectiveIceServers());
 
-  if (process.env.TURN_URL) {
-    socket.emit('ice_servers', [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: process.env.TURN_URL,
-        ...(process.env.TURN_USERNAME ? { username: process.env.TURN_USERNAME } : {}),
-        ...(process.env.TURN_CREDENTIAL ? { credential: process.env.TURN_CREDENTIAL } : {}),
+  socket.on('request_older_messages', ({ channelId, beforeId, limit }: { channelId: string; beforeId?: string; limit?: number }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || !channelId) return;
+    const page = getChannelMessagesPage(messages[channelId], beforeId, limit || 50);
+    socket.emit('older_messages_loaded', {
+      channelId,
+      messages: page.messages,
+      hasMore: page.hasMore,
+    });
+  });
+
+  socket.on('search_messages_server', ({ query, channelId }: { query: string; channelId?: string }) => {
+    const requester = activeUsers.get(socket.id);
+    if (!requester || typeof query !== 'string') return;
+    const allowedChannels = new Set<string>();
+    if (channelId) {
+      allowedChannels.add(channelId);
+    } else {
+      for (const s of servers) {
+        if (requester.role === 'admin' || !s.members || s.members.some(m => m.userId.toLowerCase() === requester.username.toLowerCase())) {
+          s.channels.forEach(c => allowedChannels.add(c.id));
+        }
       }
-    ]);
-  }
+      for (const key of Object.keys(messages)) {
+        if (key.startsWith(`dm-${requester.username.toLowerCase()}-`) || key.endsWith(`-${requester.username.toLowerCase()}`)) {
+          allowedChannels.add(key);
+        }
+      }
+    }
+    const results = searchAllMessages(messages, query, allowedChannels, 50);
+    socket.emit('server_search_results', { query, results });
+  });
 
   // Real-time Ping & Network Measurement Check
   socket.on('ping_check', (_ts: number, callback: any) => {
@@ -2082,12 +2208,7 @@ io.on('connection', (socket: Socket) => {
     socket.emit('auth_response', { success: true, user, token });
     newAccount.knownLoginIps = [clientIp];
     saveAccounts(registeredAccounts);
-    socket.emit('init_data', {
-      currentUser: user,
-      servers,
-      onlineUsers: Array.from(activeUsers.values()),
-      messages
-    });
+    emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
 
     socket.broadcast.emit('user_connected', user);
@@ -2261,12 +2382,7 @@ io.on('connection', (socket: Socket) => {
       foundAccount.knownLoginIps = [...prevIps.slice(-19), clientIp];
       saveAccounts(registeredAccounts);
     }
-    socket.emit('init_data', {
-      currentUser: user,
-      servers,
-      onlineUsers: Array.from(activeUsers.values()),
-      messages
-    });
+    emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
 
     socket.broadcast.emit('user_connected', user);
@@ -2372,12 +2488,7 @@ io.on('connection', (socket: Socket) => {
       foundAccount.knownLoginIps = [...prevIps.slice(-19), clientIp];
       saveAccounts(registeredAccounts);
     }
-    socket.emit('init_data', {
-      currentUser: user,
-      servers,
-      onlineUsers: Array.from(activeUsers.values()),
-      messages
-    });
+    emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
     socket.broadcast.emit('user_connected', user);
   });
@@ -2475,12 +2586,7 @@ io.on('connection', (socket: Socket) => {
 
     const refreshedToken = generateSessionToken(user.username);
     socket.emit('auth_response', { success: true, user, token: refreshedToken });
-    socket.emit('init_data', {
-      currentUser: user,
-      servers,
-      onlineUsers: Array.from(activeUsers.values()),
-      messages
-    });
+    emitInitData(socket, user);
     socket.emit('friends_data', getFriendsData(user.username));
     socket.broadcast.emit('user_connected', user);
   });
@@ -2614,7 +2720,7 @@ io.on('connection', (socket: Socket) => {
       messages[channelId] = [];
     }
     messages[channelId].push(newMessage);
-    saveMessages(messages);
+    saveChannelMessages(channelId, messages[channelId]);
 
     io.emit('new_message', newMessage);
 
@@ -4623,10 +4729,12 @@ io.on('connection', (socket: Socket) => {
     const lkCfg = getEffectiveLiveKitConfig();
     const roomServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
     const srvSfuMode = roomServer?.sfuMode || 'auto';
-    const shouldUseSfu =
-      lkCfg.enabled &&
-      srvSfuMode !== 'p2p' &&
-      (srvSfuMode === 'sfu' || peersInRoom.length + 1 >= lkCfg.threshold);
+    const shouldUseSfu = shouldRoomUseSfu({
+      sfuEnabled: lkCfg.enabled,
+      serverMode: srvSfuMode,
+      participantCount: peersInRoom.length + 1,
+      threshold: lkCfg.threshold,
+    });
 
     if (shouldUseSfu) {
       getLiveKitDiagnostics().then(async (diag) => {
@@ -5380,7 +5488,11 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.livekitUrl === 'string') systemConfig.livekitUrl = nextCfg.livekitUrl.trim().slice(0, 240);
     if (typeof nextCfg.livekitApiKey === 'string') systemConfig.livekitApiKey = nextCfg.livekitApiKey.trim().slice(0, 120);
     if (typeof nextCfg.livekitApiSecret === 'string') systemConfig.livekitApiSecret = nextCfg.livekitApiSecret.trim().slice(0, 200);
+    if (typeof nextCfg.turnUrl === 'string') systemConfig.turnUrl = nextCfg.turnUrl.trim().slice(0, 240);
+    if (typeof nextCfg.turnUsername === 'string') systemConfig.turnUsername = nextCfg.turnUsername.trim().slice(0, 120);
+    if (typeof nextCfg.turnCredential === 'string') systemConfig.turnCredential = nextCfg.turnCredential.trim().slice(0, 200);
     livekitHealthyCache.checkedAt = 0;
+    io.emit('ice_servers', getEffectiveIceServers());
     if (nextCfg.webhookEvents && typeof nextCfg.webhookEvents === 'object') {
       systemConfig.webhookEvents = {
         security: Boolean(nextCfg.webhookEvents.security),
@@ -5740,7 +5852,7 @@ io.on('connection', (socket: Socket) => {
       messages[channelId] = messages[channelId].slice(0, Math.max(0, totalBefore - n));
     }
     const deletedCount = totalBefore - messages[channelId].length;
-    saveMessages(messages);
+    saveChannelMessages(channelId, messages[channelId]);
     io.emit('channel_messages_purged', { channelId, remainingMessages: messages[channelId] });
     addAuditLog('MESAJ_TEMIZLENDI', `${requester.username}, #${channelId} kanalından ${deletedCount} mesaj temizledi.`, 'warn');
     socket.emit('admin_action_success', `${deletedCount} mesaj başarıyla temizlendi.`);
@@ -6573,4 +6685,24 @@ if (activeStaticDir) {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 [Backend Server] Discord/TeamSpeak Clone running on http://127.0.0.1:${PORT}`);
+});
+
+function handleGracefulShutdown(signal: string) {
+  console.log(`🛑 [Shutdown] ${signal} alındı, bekleyen veriler diske yazılıyor...`);
+  try {
+    flushPendingWritesSync();
+  } catch (err) {
+    console.error('Shutdown flush error:', err);
+  }
+  if (signal !== 'beforeExit') {
+    process.exit(0);
+  }
+}
+
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+process.on('beforeExit', () => {
+  try {
+    flushPendingWritesSync();
+  } catch {}
 });

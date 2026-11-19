@@ -228,13 +228,37 @@ export async function requestDesktopNotificationPermission(): Promise<boolean> {
   return false;
 }
 
-export function sendDesktopNotification(title: string, body: string, _icon = '💬') {
+export function sendDesktopNotification(
+  title: string,
+  body: string,
+  _icon = '💬',
+  onClick?: () => void
+) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   try {
-    new Notification(title, {
+    const notif = new Notification(title, {
       body,
       icon: '/favicon.ico',
       tag: 'discord-ts-notification',
     });
+    notif.onclick = () => {
+      try {
+        window.focus();
+      } catch {}
+      const isTauri =
+        typeof window !== 'undefined' &&
+        ('__TAURI_INTERNALS__' in window ||
+          window.location.hostname === 'tauri.localhost' ||
+          window.location.protocol === 'tauri:');
+      if (isTauri) {
+        import('@tauri-apps/api/core')
+          .then(({ invoke }) => invoke('focus_main_window'))
+          .catch(() => {});
+      }
+      try {
+        onClick?.();
+      } catch {}
+      notif.close();
+    };
   } catch {}
 }

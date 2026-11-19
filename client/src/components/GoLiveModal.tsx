@@ -42,6 +42,7 @@ const DEFAULT_SETTINGS: ScreenShareSettings = {
   viewerLimit: 0,
   connectionMode: 'p2p',
   hdrEnabled: false,
+  appAudioOnly: true,
 };
 
 const PRESET_MAP: Record<
@@ -160,8 +161,21 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
 
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: videoConstraint,
-        audio: settings.audioEnabled,
-      });
+        audio: settings.audioEnabled
+          ? ({
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            } as MediaTrackConstraints)
+          : false,
+        ...(settings.audioEnabled
+          ? {
+              systemAudio: settings.appAudioOnly ? 'exclude' : 'include',
+              windowAudio: settings.appAudioOnly ? 'window' : 'system',
+              selfBrowserSurface: 'exclude',
+            }
+          : {}),
+      } as any);
 
       if (previewStream) {
         previewStream.getTracks().forEach((t) => t.stop());
@@ -382,8 +396,29 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                     />
                   </div>
                 </div>
+                <div className="flex items-center justify-between pt-2 border-t border-white/10">
+                  <div>
+                    <div className="text-xs font-semibold text-white">Yalnızca Seçili Pencere/Oyun Sesi (WASAPI)</div>
+                    <div className="text-[11px] text-slate-400">
+                      Sistem genelindeki sesler yerine mümkün olduğunda yalnızca seçili pencerenin sesini yakalar.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ appAudioOnly: !settings.appAudioOnly })}
+                    className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${
+                      settings.appAudioOnly ? 'bg-emerald-500' : 'bg-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                        settings.appAudioOnly ? 'left-4' : 'left-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Tarayıcı/WebView2 güvenlik politikası gereği sistem veya sekme sesi tek akış olarak yakalanır ve Ana Ses Seviyesi ile dengelenir.
+                  Ses ekosu/gürültü filtresi kapalı olarak ham stüdyo kalitesinde aktarılır ve Ana Ses Seviyesi ile dengelenir.
                 </p>
               </div>
             </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useMicVolumeLevel } from '../context/VoiceMetricsContext';
 import {
   X,
   Activity,
@@ -31,12 +32,12 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
     measurePing,
     currentServerHost,
     isDedicatedServer,
-    micVolumeLevel,
     isSpeaking,
     isMuted,
     connectedVoiceChannelId,
     activeServer,
   } = useSocket();
+  const micVolumeLevel = useMicVolumeLevel();
 
   const connectedVoiceChannel = activeServer?.channels.find(
     (c) => c.id === connectedVoiceChannelId

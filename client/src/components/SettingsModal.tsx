@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useMicVolumeLevel } from '../context/VoiceMetricsContext';
 import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } from '../utils/tsSoundEffects';
+import { DEFAULT_CUSTOM_THEME } from '../utils/themeBuilder';
 import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import {
@@ -64,6 +66,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setAutoGainControl,
     studioAudioDsp,
     setStudioAudioDsp,
+    aiNoiseSuppression,
+    setAiNoiseSuppression,
     lowLatencyAudio,
     setLowLatencyAudio,
     inputSensitivity,
@@ -74,7 +78,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setOutputVolume,
     isMicTesting,
     toggleMicTest,
-    micVolumeLevel,
     refreshAudioDevices,
     logout,
     isAuthenticated,
@@ -90,6 +93,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     unblockUser,
     uiTheme,
     setUiTheme,
+    customTheme,
+    setCustomTheme,
     chatFontSize,
     setChatFontSize,
     glassIntensity,
@@ -126,6 +131,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setLanguage,
     updateProfileDetails,
   } = useSocket();
+  const micVolumeLevel = useMicVolumeLevel();
 
   const [username, setUsername] = useState(currentUser?.username || '');
   const [avatar, setAvatar] = useState(currentUser?.avatar || '🎮');
@@ -230,7 +236,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.3.14');
+  const [appVersion, setAppVersion] = useState<string>('0.4.0');
+  const [updateProgress, setUpdateProgress] = useState<{
+    percent: number;
+    downloadedMb: string;
+    totalMb: string;
+  } | null>(null);
+  const [pushRegStatus, setPushRegStatus] = useState<string | null>(null);
   const [overlayConfig, setOverlayConfig] = useState<{
     onlySpeaking: boolean;
     showControls: boolean;
@@ -463,6 +475,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const handleManualUpdateCheck = async () => {
     setIsCheckingUpdate(true);
     setUpdateStatusMsg(null);
+    setUpdateProgress(null);
     try {
       const isTauri =
         typeof window !== 'undefined' &&
@@ -476,8 +489,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       const { check } = await import('@tauri-apps/plugin-updater');
       const update = await check();
       if (update) {
-        setUpdateStatusMsg(`Yeni sürüm bulundu: v${update.version}. Otomatik indiriliyor...`);
-        await update.downloadAndInstall();
+        setUpdateStatusMsg(`Yeni sürüm bulundu: v${update.version}. İndiriliyor...`);
+        let totalBytes = 0;
+        let downloadedBytes = 0;
+        await update.downloadAndInstall((event: any) => {
+          if (event.event === 'Started') {
+            totalBytes = Number(event.data?.contentLength || 0);
+            setUpdateProgress({
+              percent: 0,
+              downloadedMb: '0.0',
+              totalMb: totalBytes > 0 ? (totalBytes / 1048576).toFixed(1) : '?',
+            });
+          } else if (event.event === 'Progress') {
+            downloadedBytes += Number(event.data?.chunkLength || 0);
+            const pct = totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 50;
+            setUpdateProgress({
+              percent: pct,
+              downloadedMb: (downloadedBytes / 1048576).toFixed(1),
+              totalMb: totalBytes > 0 ? (totalBytes / 1048576).toFixed(1) : '?',
+            });
+          } else if (event.event === 'Finished') {
+            setUpdateProgress((prev) => ({
+              percent: 100,
+              downloadedMb: prev?.totalMb && prev.totalMb !== '?' ? prev.totalMb : prev?.downloadedMb || '0',
+              totalMb: prev?.totalMb || '0',
+            }));
+          }
+        });
         const { relaunch } = await import('@tauri-apps/plugin-process');
         await relaunch();
       } else {
@@ -487,6 +525,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       setUpdateStatusMsg('Güncelleme sunucusuna şu anda ulaşılamadı.');
     } finally {
       setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleRegisterWebPush = async () => {
+    setPushRegStatus(null);
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+      setPushRegStatus('Bu tarayıcı/ortam Service Worker (PWA Push) desteklemiyor.');
+      return;
+    }
+    try {
+      if ('Notification' in window && Notification.permission !== 'granted') {
+        const perm = await Notification.requestPermission();
+        setNotifPermission(perm);
+        if (perm !== 'granted') {
+          setPushRegStatus('Bildirim izni verilmediği için Web Push etkinleştirilemedi.');
+          return;
+        }
+      }
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await reg.update().catch(() => {});
+      setPushRegStatus(`PWA Service Worker aktif (${reg.scope}). Arka plan bildirimleri hazır.`);
+    } catch (err: any) {
+      setPushRegStatus(`Service Worker kaydı başarısız: ${err?.message || 'Bilinmeyen hata'}`);
     }
   };
   const [currentPasswordInput, setCurrentPasswordInput] = useState('');
@@ -1203,6 +1264,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div
                       className="ios-toggle-dot"
                       style={{ transform: studioAudioDsp ? 'translateX(20px)' : 'translateX(0)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Real-Time Spectral AI Noise Suppression (AudioWorklet) */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-white flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                      Yapay Zekâ / Spektral Gürültü Engelleme (AudioWorklet 48kHz)
+                    </div>
+                    <div className="text-[11px] text-white/40">
+                      Klavye tıklaması, kasa fanı ve sabit oda gürültüsünü ana iş parçacığını yormadan temizler (Stüdyo DSP açıkken aktiftir).
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => setAiNoiseSuppression(!aiNoiseSuppression)}
+                    className={`ios-toggle ${aiNoiseSuppression ? 'bg-emerald-500' : 'bg-white/20'}`}
+                  >
+                    <div
+                      className="ios-toggle-dot"
+                      style={{ transform: aiNoiseSuppression ? 'translateX(20px)' : 'translateX(0)' }}
                     />
                   </div>
                 </div>
@@ -2081,6 +2164,95 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </div>
                 </div>
 
+                {/* Custom Theme Builder (CSS Variables) */}
+                <div className="p-4 rounded-2xl bg-black/25 border border-white/10 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <Palette className="w-3.5 h-3.5 text-indigo-400" />
+                        Özel Tema Oluşturucu (CSS Değişkenleri)
+                      </div>
+                      <div className="text-[11px] text-white/50">
+                        Kendi zemin renginizi, vurgu renginizi ve açık/koyu kontrast modunuzu oluşturun.
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setUiTheme('custom')}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition ${
+                          uiTheme === 'custom'
+                            ? 'bg-indigo-500 border-indigo-400 text-white shadow'
+                            : 'bg-white/5 border-white/10 text-white/75 hover:bg-white/10'
+                        }`}
+                      >
+                        {uiTheme === 'custom' ? '✓ Özel Tema Aktif' : 'Özel Temayı Uygula'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCustomTheme(DEFAULT_CUSTOM_THEME)}
+                        className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/60"
+                      >
+                        Sıfırla
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">Kontrast Modu</label>
+                      <div className="flex gap-1.5">
+                        {(['dark', 'light'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => {
+                              setCustomTheme({ mode: m, bgColor: m === 'light' && customTheme.bgColor === '#111827' ? '#f3f6fb' : m === 'dark' && customTheme.bgColor === '#f3f6fb' ? '#111827' : customTheme.bgColor });
+                              setUiTheme('custom');
+                            }}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                              customTheme.mode === m
+                                ? 'bg-blue-500/20 border-blue-400 text-blue-300'
+                                : 'bg-black/25 border-white/10 text-white/60'
+                            }`}
+                          >
+                            {m === 'dark' ? '🌙 Koyu' : '☀️ Açık'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">Zemin Rengi</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={customTheme.bgColor}
+                          onChange={(e) => {
+                            setCustomTheme({ bgColor: e.target.value });
+                            setUiTheme('custom');
+                          }}
+                          className="w-9 h-8 rounded-lg bg-transparent border border-white/15 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-white/75">{customTheme.bgColor}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">Vurgu Parlaması</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={customTheme.accentColor}
+                          onChange={(e) => {
+                            setCustomTheme({ accentColor: e.target.value });
+                            setUiTheme('custom');
+                          }}
+                          className="w-9 h-8 rounded-lg bg-transparent border border-white/15 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-white/75">{customTheme.accentColor}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Live Mini Preview */}
                 <div className="p-3.5 rounded-xl ios-glass border border-white/10 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -2304,19 +2476,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              {/* PWA Standalone Install Card */}
+              {/* PWA Standalone Install & Web Push Card */}
               <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-900/30 to-indigo-900/30 border border-purple-500/30 space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
-                    <Smartphone className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-white">PWA / Bağımsız Uygulama Olarak Yükle</div>
-                    <div className="text-xs text-purple-200/70">
-                      Chrome, Edge veya Safari&apos;de adres çubuğundaki &ldquo;Uygulamayı Yükle&rdquo; ikonuna tıklayarak doğrudan masaüstü uygulaması yapabilirsiniz.
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                      <Smartphone className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-white">PWA &amp; Web Push Arka Plan Bildirimleri</div>
+                      <div className="text-xs text-purple-200/70">
+                        Service Worker kaydederek tarayıcı sekmesi arka plandayken bile bildirim ve PWA kurulumu sağlayın.
+                      </div>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleRegisterWebPush}
+                    className="px-3.5 py-1.5 rounded-xl bg-purple-500/25 hover:bg-purple-500/35 border border-purple-400/40 text-purple-200 text-xs font-semibold transition shrink-0"
+                  >
+                    Service Worker / Push Etkinleştir
+                  </button>
                 </div>
+                {pushRegStatus && (
+                  <div className="text-xs px-3 py-2 rounded-xl bg-black/30 border border-purple-400/30 text-purple-200">
+                    {pushRegStatus}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -3268,8 +3454,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 {updateStatusMsg && (
-                  <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 px-4 py-2.5 text-xs text-blue-200">
-                    {updateStatusMsg}
+                  <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 px-4 py-2.5 text-xs text-blue-200 space-y-2">
+                    <div>{updateStatusMsg}</div>
+                    {updateProgress && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-mono text-blue-200">
+                          <span>İndiriliyor... %{updateProgress.percent}</span>
+                          <span>{updateProgress.downloadedMb} / {updateProgress.totalMb} MB</span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-black/40 overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-blue-400 to-emerald-400 transition-all duration-150"
+                            style={{ width: `${updateProgress.percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3280,7 +3480,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </div>
                   <div className="bg-black/30 rounded-xl p-3 border border-white/5">
                     <div className="text-white/40 mb-1">Ses & Video Motoru</div>
-                    <div className="font-mono text-emerald-400">WebRTC Mesh + Opus / {advSettings.preferredCodec.toUpperCase()}</div>
+                    <div className="font-mono text-emerald-400">WebRTC + LiveKit SFU / {advSettings.preferredCodec.toUpperCase()}</div>
                   </div>
                 </div>
               </div>
@@ -3294,12 +3494,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
 
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* v0.3.14 - Latest */}
+                  {/* v0.4.0 - Latest */}
                   <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-300">v0.3.14 — Son Sürüm</span>
+                      <span className="text-xs font-bold text-emerald-300">v0.4.0 — Son Sürüm</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
                     </div>
+                    <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
+                      <li><strong className="text-white">Tam LiveKit SFU &amp; TURN Desteği:</strong> SFU modunda ekran paylaşımı (Simulcast), kişi bazlı ses/EQ/cihaz kontrolü, <code className="text-cyan-300">ActiveSpeakers</code> konuşma halosu, yönetim panelinde özel TURN sunucusu ayarları ve pencereye özel WASAPI ses yakalama eklendi.</li>
+                      <li><strong className="text-white">Spektral Gürültü Engelleme &amp; Zero-Lag Sayaç:</strong> 48kHz <code className="text-cyan-300">AudioWorklet</code> gürültü temizleyici ve <code className="text-cyan-300">VoiceMetricsContext</code> harici deposuyla 60 FPS mikrofonda gereksiz arayüz yeniden çizimleri kaldırıldı.</li>
+                      <li><strong className="text-white">Parçalı Asenkron Depolama &amp; Sayfalama:</strong> Kanal bazlı parçalı mesaj kaydı, başlangıçta son 60 mesaj + sunucudan eski mesaj yükleme, <code className="text-cyan-300">/api/metrics</code> ve istemci WebP görsel sıkıştırma eklendi.</li>
+                      <li><strong className="text-white">Masaüstü &amp; Tema Geliştirmeleri:</strong> Windows görev çubuğu okunmamış rozeti, tıklanınca kanala odaklanan bildirimler, canlı yüzde/MB güncelleme çubuğu, Web Push PWA ve Özel Tema Oluşturucu eklendi.</li>
+                    </ul>
+                  </div>
+
+                  {/* v0.3.14 */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+                    <div className="text-xs font-bold text-cyan-300">v0.3.14 — Önceki Sürüm</div>
                     <ul className="space-y-1 text-xs text-white/75 list-disc pl-4">
                       <li><strong className="text-white">Açık Renkli Temalar (4 Yeni Tema):</strong> İnci Beyazı, Gündüz Mavisi, Sıcak Kum ve Nane Esintisi açık temaları, uyarlanabilir cam yüzeyi ve yüksek kontrastlı metin desteğiyle eklendi.</li>
                       <li><strong className="text-white">LiveKit SFU Yönetimi &amp; Hibrit Mimari:</strong> Sistem Yönetim Paneli&apos;ne LiveKit SFU açma/kapama, geçiş eşiği, URL/Key/Secret ve canlı erişilebilirlik göstergesi; Sunucu Ayarları&apos;na ise sunucu bazlı <code className="text-cyan-300">Otomatik / P2P / LiveKit SFU</code> seçimi eklendi.</li>

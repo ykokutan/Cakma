@@ -5,6 +5,8 @@ import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
+import { setVoiceMicVolume, resetVoiceMetrics } from './VoiceMetricsContext';
+import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } from '../utils/themeBuilder';
 
 export interface UserAudioEq {
   bass: number;
@@ -33,7 +35,8 @@ export type UiThemeId =
   | 'pearl-white'
   | 'sky-daylight'
   | 'warm-sand'
-  | 'mint-breeze';
+  | 'mint-breeze'
+  | 'custom';
 
 export const LIGHT_THEMES: ReadonlySet<string> = new Set([
   'pearl-white',
@@ -335,6 +338,9 @@ interface SocketContextType {
       livekitUrl?: string;
       livekitApiKey?: string;
       livekitApiSecret?: string;
+      turnUrl?: string;
+      turnUsername?: string;
+      turnCredential?: string;
     };
     livekitStatus?: {
       enabled: boolean;
@@ -411,6 +417,9 @@ interface SocketContextType {
     livekitUrl?: string;
     livekitApiKey?: string;
     livekitApiSecret?: string;
+    turnUrl?: string;
+    turnUsername?: string;
+    turnCredential?: string;
     webhookEvents?: {
       security?: boolean;
       bans?: boolean;
@@ -530,6 +539,13 @@ interface SocketContextType {
   reorderChannel: (serverId: string, channelId: string, direction: 'up' | 'down') => void;
   uiTheme: UiThemeId;
   setUiTheme: (theme: UiThemeId) => void;
+  customTheme: CustomThemeConfig;
+  setCustomTheme: (patch: Partial<CustomThemeConfig>) => void;
+  aiNoiseSuppression: boolean;
+  setAiNoiseSuppression: (val: boolean) => void;
+  hasMoreMessages: Record<string, boolean>;
+  isLoadingOlderMessages: boolean;
+  requestOlderMessages: (channelId: string) => void;
   chatFontSize: 'sm' | 'base' | 'lg';
   setChatFontSize: (size: 'sm' | 'base' | 'lg') => void;
   glassIntensity: 'low' | 'normal' | 'high';
@@ -783,6 +799,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, [socket, isAuthenticated, currentUser]);
   const [servers, setServers] = useState<Server[]>([]);
+  const serversRef = useRef<Server[]>([]);
+  useEffect(() => {
+    serversRef.current = servers;
+  }, [servers]);
   const [activeServerId, setActiveServerId] = useState<string>('');
   const [activeChannelId, setActiveChannelId] = useState<string>('');
   const activeChannelIdRef = useRef<string>('');
@@ -793,9 +813,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [typingUsers, setTypingUsers] = useState<Record<string, string[]>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [mentionCounts, setMentionCounts] = useState<Record<string, number>>({});
+  const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState<boolean>(false);
   const [connectionState, setConnectionState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
   const [voiceTransportMode, setVoiceTransportMode] = useState<'p2p' | 'sfu'>('p2p');
   const livekitRoomRef = useRef<any>(null);
+  const livekitScreenTracksRef = useRef<any[]>([]);
   const [newIpAlert, setNewIpAlert] = useState<{ ip: string; timestamp: string } | null>(null);
   const dismissNewIpAlert = useCallback(() => setNewIpAlert(null), []);
   const [dmReadReceipts, setDmReadReceipts] = useState<Record<string, number>>({});
@@ -811,6 +834,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uiTheme, setUiThemeState] = useState<UiThemeId>(() => {
     return (localStorage.getItem('dc_ui_theme') as UiThemeId) || 'vision-dark';
+  });
+  const [customTheme, setCustomThemeState] = useState<CustomThemeConfig>(() => {
+    try {
+      const raw = localStorage.getItem('dc_custom_theme');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.mode === 'dark' || parsed.mode === 'light') && parsed.bgColor && parsed.accentColor) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return DEFAULT_CUSTOM_THEME;
   });
   const [chatFontSize, setChatFontSizeState] = useState<'sm' | 'base' | 'lg'>(() => {
     return (localStorage.getItem('dc_chat_font_size') as any) || 'base';
@@ -841,9 +876,37 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', uiTheme);
-    document.documentElement.setAttribute('data-theme-mode', LIGHT_THEMES.has(uiTheme) ? 'light' : 'dark');
+    const mode = uiTheme === 'custom' ? customTheme.mode : (LIGHT_THEMES.has(uiTheme) ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme-mode', mode);
+    applyCustomThemeVariables(document.documentElement, customTheme);
     try { localStorage.setItem('dc_ui_theme', uiTheme); } catch {}
-  }, [uiTheme]);
+  }, [uiTheme, customTheme]);
+
+  useEffect(() => {
+    const total = Object.values(unreadCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    if (typeof document !== 'undefined') {
+      document.title = total > 0 ? `(${total}) Çakma` : 'Çakma';
+    }
+    const isTauri =
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:');
+    if (isTauri) {
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('set_taskbar_badge', { count: total }))
+        .catch(() => {});
+    }
+  }, [unreadCounts]);
+
+  const setCustomTheme = (patch: Partial<CustomThemeConfig>) => {
+    setCustomThemeState((prev) => {
+      const next: CustomThemeConfig = { ...prev, ...patch };
+      try { localStorage.setItem('dc_custom_theme', JSON.stringify(next)); } catch {}
+      applyCustomThemeVariables(document.documentElement, next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-glass', glassIntensity);
@@ -1020,8 +1083,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try { localStorage.setItem('dc_chat_font_size', size); } catch {}
   };
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
+  const messagesMapRef = useRef<Record<string, Message[]>>(messagesMap);
+  useEffect(() => {
+    messagesMapRef.current = messagesMap;
+  }, [messagesMap]);
   const cloudSyncLoadedUserRef = useRef<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
+  const onlineUsersRef = useRef<User[]>([]);
+  useEffect(() => {
+    onlineUsersRef.current = onlineUsers;
+  }, [onlineUsers]);
   const [connectedVoiceChannelId, setConnectedVoiceChannelId] = useState<string | null>(null);
   const [voicePullInvite, setVoicePullInvite] = useState<{
     requestId: string;
@@ -1105,6 +1176,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_studioAudioDsp') : null;
     return val !== null ? val === 'true' : true;
   });
+  const [aiNoiseSuppression, setAiNoiseSuppressionState] = useState<boolean>(() => {
+    const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_aiNoiseSuppression') : null;
+    return val !== null ? val === 'true' : true;
+  });
+  const noiseWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const noiseWorkletLoadedCtxRef = useRef<WeakSet<AudioContext>>(new WeakSet());
   const [lowLatencyAudio, setLowLatencyAudioState] = useState<boolean>(() => {
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_lowLatencyAudio') : null;
     return val !== null ? val === 'true' : true;
@@ -1141,7 +1218,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return val !== null ? Number(val) : 100;
   });
   const [isMicTesting, setIsMicTesting] = useState<boolean>(false);
-  const [micVolumeLevel, setMicVolumeLevel] = useState<number>(0);
+  const [micVolumeLevel] = useState<number>(0);
 
   const setInputMode = (mode: 'vad' | 'ptt') => {
     setInputModeState(mode);
@@ -1290,6 +1367,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   });
   const [userLocalMutes, setUserLocalMutes] = useState<Record<string, boolean>>({});
+  const userVolumesRef = useRef<Record<string, number>>(userVolumes);
+  userVolumesRef.current = userVolumes;
+  const userLocalMutesRef = useRef<Record<string, boolean>>(userLocalMutes);
+  userLocalMutesRef.current = userLocalMutes;
+  const isDeafenedRef = useRef<boolean>(isDeafened);
+  isDeafenedRef.current = isDeafened;
+  const outputVolumeRef = useRef<number>(outputVolume);
+  outputVolumeRef.current = outputVolume;
+  const selectedOutputDeviceIdRef = useRef<string>(selectedOutputDeviceId);
+  selectedOutputDeviceIdRef.current = selectedOutputDeviceId;
 
   const setUserVolume = useCallback((userId: string, volume: number) => {
     setUserVolumes((prev) => {
@@ -1734,7 +1821,23 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
           const dest = ctx.createMediaStreamDestination();
           source.connect(highPass);
-          highPass.connect(compressor);
+          let lastStage: AudioNode = highPass;
+          if (aiNoiseSuppression && ctx.audioWorklet) {
+            try {
+              if (!noiseWorkletLoadedCtxRef.current.has(ctx)) {
+                await ctx.audioWorklet.addModule('/noise-suppressor-worklet.js');
+                noiseWorkletLoadedCtxRef.current.add(ctx);
+              }
+              const workletNode = new AudioWorkletNode(ctx, 'spectral-noise-suppressor');
+              workletNode.port.postMessage({ enabled: true });
+              noiseWorkletNodeRef.current = workletNode;
+              lastStage.connect(workletNode);
+              lastStage = workletNode;
+            } catch (workletErr) {
+              console.warn('Spectral Noise Suppressor Worklet yüklenemedi, standart DSP ile devam ediliyor:', workletErr);
+            }
+          }
+          lastStage.connect(compressor);
           compressor.connect(gainNode);
           gainNode.connect(analyser);
           gainNode.connect(dest);
@@ -1762,7 +1865,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           }
           const average = sum / dataArray.length;
           const normalizedLevel = Math.min(100, Math.round((average / 128) * 100));
-          setMicVolumeLevel(normalizedLevel);
+          setVoiceMicVolume(normalizedLevel);
 
           const speakingThreshold = inputSensitivity * 0.7;
           const speakingNow = average > speakingThreshold && !isMuted;
@@ -1840,6 +1943,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setStudioAudioDsp = async (val: boolean) => {
     setStudioAudioDspState(val);
     try { localStorage.setItem('dsp_studioAudioDsp', String(val)); } catch {}
+    if (localStreamRef.current) await getLocalAudioStream(true);
+  };
+
+  const setAiNoiseSuppression = async (val: boolean) => {
+    setAiNoiseSuppressionState(val);
+    try { localStorage.setItem('dsp_aiNoiseSuppression', String(val)); } catch {}
+    if (noiseWorkletNodeRef.current) {
+      try {
+        noiseWorkletNodeRef.current.port.postMessage({ enabled: val });
+        return;
+      } catch {}
+    }
     if (localStreamRef.current) await getLocalAudioStream(true);
   };
 
@@ -1973,11 +2088,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     peerConnectionsRef.current.clear();
 
     if (livekitRoomRef.current) {
+      for (const pub of livekitScreenTracksRef.current) {
+        try {
+          if (pub?.track) livekitRoomRef.current.localParticipant.unpublishTrack(pub.track);
+        } catch {}
+      }
+      livekitScreenTracksRef.current = [];
       try {
         livekitRoomRef.current.disconnect();
       } catch {}
       livekitRoomRef.current = null;
     }
+    noiseWorkletNodeRef.current = null;
+    resetVoiceMetrics();
     setVoiceTransportMode('p2p');
 
     audioElementsRef.current.forEach(audio => {
@@ -2158,9 +2281,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('voice_sfu_token', async ({ token, path }: { token: string; roomName: string; path?: string }) => {
       if (!token) return;
+      const resolveSfuPeerId = (identity: string): string => {
+        const lower = (identity || '').toLowerCase();
+        const found = onlineUsersRef.current.find((u) => u.username.toLowerCase() === lower);
+        return found?.id || `sfu-${identity}`;
+      };
       try {
         const { Room, RoomEvent, Track } = await import('livekit-client');
         if (livekitRoomRef.current) {
+          for (const pub of livekitScreenTracksRef.current) {
+            try { if (pub?.track) livekitRoomRef.current.localParticipant.unpublishTrack(pub.track); } catch {}
+          }
+          livekitScreenTracksRef.current = [];
           try { livekitRoomRef.current.disconnect(); } catch {}
           livekitRoomRef.current = null;
         }
@@ -2169,16 +2301,27 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
           const peerIdentity = participant?.identity || participant?.sid || 'sfu-peer';
+          const peerId = resolveSfuPeerId(peerIdentity);
           if (track.kind === Track.Kind.Audio) {
             const el = track.attach() as HTMLAudioElement;
-            el.muted = isDeafened;
-            el.volume = Math.min(1, Math.max(0, outputVolume / 100));
-            audioElementsRef.current.set(`sfu-${peerIdentity}`, el);
+            const userVol = userVolumesRef.current[peerId] ?? 100;
+            const localMute = userLocalMutesRef.current[peerId] ?? false;
+            el.muted = isDeafenedRef.current || localMute;
+            el.volume = Math.min(1, Math.max(0, (outputVolumeRef.current / 100) * (userVol / 100)));
+            const outDev = selectedOutputDeviceIdRef.current;
+            if (outDev && 'setSinkId' in el) {
+              try { void (el as any).setSinkId(outDev); } catch {}
+            }
+            audioElementsRef.current.set(peerId, el);
+            const savedEq = userAudioEqRef.current[peerId];
+            if (savedEq && (savedEq.bass !== 0 || savedEq.treble !== 0 || savedEq.normalize)) {
+              setTimeout(() => applyRemoteAudioEq(peerId, savedEq), 50);
+            }
           } else if (track.kind === Track.Kind.Video && track.mediaStreamTrack) {
             const ms = new MediaStream([track.mediaStreamTrack]);
             setRemoteScreenStreams((prev) => {
               const next = new Map(prev);
-              next.set(`sfu-${peerIdentity}`, ms);
+              next.set(peerId, ms);
               return next;
             });
           }
@@ -2186,16 +2329,38 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
         room.on(RoomEvent.TrackUnsubscribed, (track: any, _pub: any, participant: any) => {
           const peerIdentity = participant?.identity || participant?.sid || 'sfu-peer';
+          const peerId = resolveSfuPeerId(peerIdentity);
           if (track.kind === Track.Kind.Audio) {
             track.detach();
-            audioElementsRef.current.delete(`sfu-${peerIdentity}`);
+            audioElementsRef.current.get(peerId)?.remove();
+            audioElementsRef.current.delete(peerId);
+            const eqChain = remoteAudioEqChainsRef.current.get(peerId);
+            if (eqChain) {
+              try { eqChain.source.disconnect(); eqChain.ctx.close().catch(() => {}); } catch {}
+              remoteAudioEqChainsRef.current.delete(peerId);
+            }
           } else if (track.kind === Track.Kind.Video) {
             setRemoteScreenStreams((prev) => {
               const next = new Map(prev);
-              next.delete(`sfu-${peerIdentity}`);
+              next.delete(peerId);
               return next;
             });
           }
+        });
+
+        room.on(RoomEvent.ActiveSpeakersChanged, (speakers: any[]) => {
+          const activeSet = new Set(
+            (speakers || [])
+              .map((s) => (s?.identity || '').toLowerCase())
+              .filter(Boolean)
+          );
+          setOnlineUsers((prev) =>
+            prev.map((u) => {
+              if (!u.currentVoiceChannelId) return u;
+              const nextSpeaking = activeSet.has(u.username.toLowerCase());
+              return u.isSpeaking === nextSpeaking ? u : { ...u, isSpeaking: nextSpeaking };
+            })
+          );
         });
 
         await room.connect(lkWsUrl, token);
@@ -2205,7 +2370,23 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const localStream = await getLocalAudioStream();
         const audioTrack = localStream?.getAudioTracks()[0];
         if (audioTrack) {
-          await room.localParticipant.publishTrack(audioTrack);
+          audioTrack.enabled = !isMuted;
+          await room.localParticipant.publishTrack(audioTrack, {
+            source: Track.Source.Microphone,
+          });
+        }
+
+        // If user already started Screen Share before SFU upgrade, publish those tracks too
+        if (screenStreamRef.current) {
+          for (const st of screenStreamRef.current.getTracks()) {
+            try {
+              const pub = await room.localParticipant.publishTrack(st, {
+                source: st.kind === 'video' ? Track.Source.ScreenShare : Track.Source.ScreenShareAudio,
+                simulcast: st.kind === 'video',
+              });
+              livekitScreenTracksRef.current.push(pub);
+            } catch {}
+          }
         }
 
         // Close P2P mesh connections since SFU is now active
@@ -2240,18 +2421,38 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       servers: Server[];
       onlineUsers: User[];
       messages: Record<string, Message[]>;
+      hasMoreMessages?: Record<string, boolean>;
     }) => {
       setCurrentUser(data.currentUser);
       setIsAuthenticated(data.currentUser.role === 'admin' || !!data.currentUser.email || !!savedAuth);
       setServers(data.servers);
       setOnlineUsers(data.onlineUsers);
       setMessagesMap(data.messages);
+      if (data.hasMoreMessages) {
+        setHasMoreMessages(data.hasMoreMessages);
+      }
 
       if (data.servers.length > 0) {
         setActiveServerId(data.servers[0].id);
         const firstTextCh = data.servers[0].channels.find(c => c.type === 'text');
         if (firstTextCh) setActiveChannelId(firstTextCh.id);
       }
+    });
+
+    newSocket.on('older_messages_loaded', ({ channelId, messages: olderMsgs, hasMore }: { channelId: string; messages: Message[]; hasMore: boolean }) => {
+      setIsLoadingOlderMessages(false);
+      if (!channelId) return;
+      setHasMoreMessages((prev) => ({ ...prev, [channelId]: Boolean(hasMore) }));
+      if (!Array.isArray(olderMsgs) || olderMsgs.length === 0) return;
+      setMessagesMap((prev) => {
+        const existing = prev[channelId] || [];
+        const existingIds = new Set(existing.map((m) => m.id));
+        const uniqueOlder = olderMsgs.filter((m) => !existingIds.has(m.id));
+        return {
+          ...prev,
+          [channelId]: [...uniqueOlder, ...existing],
+        };
+      });
     });
 
     newSocket.on('new_message', (msg: Message) => {
@@ -2285,14 +2486,35 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // Desktop Push Notification (suppressed in Do Not Disturb mode)
+      // Desktop Push Notification (suppressed in Do Not Disturb mode, clickable jump to channel)
       if (desktopNotificationsRef.current && currentUserRef.current && currentUserRef.current.status !== 'dnd' && msg.author?.id !== currentUserRef.current.id) {
         const isMention = msg.content && msg.content.includes('@' + currentUserRef.current.username);
         const isDM = msg.channelId.startsWith('dm-');
         if (isMention || isDM) {
           sendDesktopNotification(
             isDM ? `Direkt Mesaj (@${msg.author.username})` : `@${msg.author.username} senden bahsetti`,
-            msg.content || 'Yeni bir ek veya mesaj paylaşıldı'
+            msg.content || 'Yeni bir ek veya mesaj paylaşıldı',
+            '💬',
+            () => {
+              if (isDM) {
+                const senderUser = onlineUsersRef.current.find((u) => u.id === msg.author?.id || u.username.toLowerCase() === msg.author?.username?.toLowerCase());
+                if (senderUser) setActiveDMUser(senderUser);
+                setActiveServerId('direct-messages');
+              } else {
+                const srv = serversRef.current.find((s) => s.id === msg.serverId || s.channels.some((c) => c.id === msg.channelId));
+                if (srv) {
+                  setActiveDMUser(null);
+                  setActiveServerId(srv.id);
+                }
+              }
+              setActiveChannelId(msg.channelId);
+              setUnreadCounts((prev) => {
+                if (!prev[msg.channelId]) return prev;
+                const next = { ...prev };
+                delete next[msg.channelId];
+                return next;
+              });
+            }
           );
         }
       }
@@ -3727,6 +3949,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     livekitUrl?: string;
     livekitApiKey?: string;
     livekitApiSecret?: string;
+    turnUrl?: string;
+    turnUsername?: string;
+    turnCredential?: string;
     webhookEvents?: {
       security?: boolean;
       bans?: boolean;
@@ -4298,6 +4523,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('mark_dm_read', { partnerUsername });
   }, [socket]);
 
+  const requestOlderMessages = useCallback((channelId: string) => {
+    if (!socket || !socket.connected || !channelId) return;
+    const list = messagesMapRef.current[channelId] || [];
+    const beforeId = list.length > 0 ? list[0].id : undefined;
+    setIsLoadingOlderMessages(true);
+    socket.emit('request_older_messages', { channelId, beforeId, limit: 50 });
+  }, [socket]);
+
   const toggleRaiseHand = useCallback(() => {
     if (!socket) return;
     socket.emit('toggle_raise_hand');
@@ -4585,8 +4818,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         preCapturedStream ||
         (await navigator.mediaDevices.getDisplayMedia({
           video: videoConstraint,
-          audio: settings?.audioEnabled ?? false,
-        }));
+          audio: settings?.audioEnabled
+            ? ({
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              } as MediaTrackConstraints)
+            : false,
+          ...(settings?.audioEnabled
+            ? {
+                systemAudio: settings.appAudioOnly ? 'exclude' : 'include',
+                windowAudio: settings.appAudioOnly ? 'window' : 'system',
+                selfBrowserSurface: 'exclude',
+              }
+            : {}),
+        } as any));
 
       const videoTrack = rawStream.getVideoTracks()[0];
       if (videoTrack) {
@@ -4631,6 +4877,27 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const videoBitrateBps = (settings?.bitrateKbps ?? 10000) * 1000;
       const audioBitrateBps = (settings?.audioBitrateKbps ?? 320) * 1000;
+
+      // Publish screen share tracks to LiveKit SFU if room is currently connected via SFU
+      if (livekitRoomRef.current) {
+        try {
+          const { Track } = await import('livekit-client');
+          for (const pub of livekitScreenTracksRef.current) {
+            try { if (pub?.track) livekitRoomRef.current.localParticipant.unpublishTrack(pub.track); } catch {}
+          }
+          livekitScreenTracksRef.current = [];
+          for (const track of broadcastStream.getTracks()) {
+            const pub = await livekitRoomRef.current.localParticipant.publishTrack(track, {
+              source: track.kind === 'video' ? Track.Source.ScreenShare : Track.Source.ScreenShareAudio,
+              simulcast: track.kind === 'video',
+              videoEncoding: track.kind === 'video' ? { maxBitrate: videoBitrateBps, maxFramerate: fps } : undefined,
+            });
+            livekitScreenTracksRef.current.push(pub);
+          }
+        } catch (err) {
+          console.warn('[SFU] Ekran paylaşımı LiveKit üzerinden yayınlanamadı:', err);
+        }
+      }
 
       for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
         for (const track of broadcastStream.getTracks()) {
@@ -4691,6 +4958,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const stopScreenShare = () => {
+    if (livekitRoomRef.current && livekitScreenTracksRef.current.length > 0) {
+      for (const pub of livekitScreenTracksRef.current) {
+        try { if (pub?.track) livekitRoomRef.current.localParticipant.unpublishTrack(pub.track); } catch {}
+      }
+      livekitScreenTracksRef.current = [];
+    }
     if (screenShareAudioCtxRef.current) {
       screenShareAudioCtxRef.current.close().catch(() => {});
       screenShareAudioCtxRef.current = null;
@@ -5303,6 +5576,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const prefs = res?.prefs;
         if (!prefs) return;
         if (prefs.uiTheme) setUiTheme(prefs.uiTheme);
+        if (prefs.customTheme && typeof prefs.customTheme === 'object') setCustomTheme(prefs.customTheme);
         if (prefs.language) setLanguage(prefs.language);
         if (prefs.ringtonePack) setRingtonePack(prefs.ringtonePack);
         if (typeof prefs.showLinkPreviews === 'boolean') setShowLinkPreviews(prefs.showLinkPreviews);
@@ -5327,6 +5601,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           uiTheme,
+          customTheme,
           language,
           ringtonePack,
           showLinkPreviews,
@@ -5341,6 +5616,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     isAuthenticated,
     currentServerHost,
     uiTheme,
+    customTheme,
     language,
     ringtonePack,
     showLinkPreviews,
@@ -5491,6 +5767,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setAutoGainControl,
         studioAudioDsp,
         setStudioAudioDsp,
+        aiNoiseSuppression,
+        setAiNoiseSuppression,
         lowLatencyAudio,
         setLowLatencyAudio,
         userAudioEq,
@@ -5675,6 +5953,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         reorderChannel,
         uiTheme,
         setUiTheme,
+        customTheme,
+        setCustomTheme,
+        hasMoreMessages,
+        isLoadingOlderMessages,
+        requestOlderMessages,
         chatFontSize,
         setChatFontSize,
         glassIntensity,
