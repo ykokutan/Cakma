@@ -13,7 +13,7 @@ import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } fr
 import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, shouldShowUnreadForChannel } from '../utils/notificationPrefs';
 import { parseDeepLinkUrl } from '../utils/deepLink';
 import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
-import { authFetch } from '../utils/authFetch';
+import { authFetch, resolveMediaUrl } from '../utils/authFetch';
 import { getDirectScreenShareConstraints, pruneExpiredAnnotations } from '../utils/remoteAssistHelpers';
 import { buildPersistentDmChannelId, parseDmChannelParticipants } from '../utils/dmChannel';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
@@ -21,11 +21,26 @@ import { appToast } from '../utils/appDialogs';
 import type { MessageContextResponse, MessageSearchHit, OfflineQueuedMessage } from '../sharedContracts';
 import { useOfflineMessageQueue } from './hooks/useOfflineMessageQueue';
 import { useDesktopTrayAndShortcuts } from '../hooks/useDesktopTrayAndShortcuts';
+import { useServerGovernanceAndStage, type ModerationNoticeBanner } from '../hooks/useServerGovernanceAndStage';
+import { getCachedGroupSenderKey, encryptGroupDmMessage } from '../utils/groupE2ee';
 import { AuthContext } from './AuthContext';
 import { ChatContext } from './ChatContext';
 import type { ChatLayoutMode } from './ChatContext';
 export type { ChatLayoutMode };
 import { VoiceContext, type AudioWorkletTelemetry } from './VoiceContext';
+
+function playServerOrSynthSound(soundId: string, serverList: Server[], serverHost: string): void {
+  for (const srv of serverList) {
+    const clip = (srv.serverSounds || []).find((s) => s.id === soundId);
+    if (clip?.dataUrl) {
+      const audio = new Audio(resolveMediaUrl(clip.dataUrl, serverHost));
+      audio.volume = 0.8;
+      audio.play().catch(() => {});
+      return;
+    }
+  }
+  playSynthesizedSound(soundId);
+}
 export type { AudioWorkletTelemetry };
 import { SocialContext } from './SocialContext';
 
@@ -246,7 +261,7 @@ interface SocketContextType {
   fetchDiscoverableServers: () => Promise<DiscoverableServerSummary[]>;
   joinPublicServer: (serverId: string) => Promise<{ success: boolean; server?: Server; error?: string }>;
   leaveServer: (serverId: string) => Promise<{ success: boolean; error?: string }>;
-  createChannel: (name: string, type: 'text' | 'voice' | 'announcement' | 'forum', options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
+  createChannel: (name: string, type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage', options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
   createCategory: (serverId: string, name: string) => void;
   renameCategory: (serverId: string, categoryId: string, name: string) => void;
   deleteCategory: (serverId: string, categoryId: string) => void;
@@ -301,6 +316,7 @@ interface SocketContextType {
   // Auth Handlers
   login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }>;
   verify2faLogin: (pending2faToken: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithSessionToken: (token: string, mediaToken?: string) => Promise<{ success: boolean; error?: string }>;
   register: (data: {
     username: string;
     email: string;
@@ -765,6 +781,48 @@ interface SocketContextType {
   clearVoicePasswordError: () => void;
   unlockedChannelIds: string[];
   unlockChannel: (channelId: string) => void;
+
+  // v1.0.0 Desktop, Governance, Stage, Bots, Automations, Scheduled & Group E2EE
+  pttReleaseDelayMs: number;
+  setPttReleaseDelayMs: (ms: number) => void;
+  autoGameDnd: boolean;
+  setAutoGameDnd: (enabled: boolean) => void;
+  latestModerationNotice: ModerationNoticeBanner | null;
+  dismissModerationNotice: () => void;
+  groupE2eeReadyEpochs: Record<string, number>;
+  groupE2eeVersion: number;
+  enableOrRotateGroupE2ee: (groupId: string, forcedEpoch?: number) => Promise<boolean>;
+  requestGroupE2eeKeys: (groupId: string) => void;
+  updateChannelPermissions: ReturnType<typeof useServerGovernanceAndStage>['updateChannelPermissions'];
+  updateServerOnboarding: ReturnType<typeof useServerGovernanceAndStage>['updateServerOnboarding'];
+  acceptServerOnboarding: ReturnType<typeof useServerGovernanceAndStage>['acceptServerOnboarding'];
+  toggleSelfRole: ReturnType<typeof useServerGovernanceAndStage>['toggleSelfRole'];
+  addServerSound: ReturnType<typeof useServerGovernanceAndStage>['addServerSound'];
+  deleteServerSound: ReturnType<typeof useServerGovernanceAndStage>['deleteServerSound'];
+  addServerSticker: ReturnType<typeof useServerGovernanceAndStage>['addServerSticker'];
+  deleteServerSticker: ReturnType<typeof useServerGovernanceAndStage>['deleteServerSticker'];
+  stageRequestSpeak: ReturnType<typeof useServerGovernanceAndStage>['stageRequestSpeak'];
+  stageCancelSpeak: ReturnType<typeof useServerGovernanceAndStage>['stageCancelSpeak'];
+  stagePromoteSpeaker: ReturnType<typeof useServerGovernanceAndStage>['stagePromoteSpeaker'];
+  stageDemoteSpeaker: ReturnType<typeof useServerGovernanceAndStage>['stageDemoteSpeaker'];
+  stageSetTopic: ReturnType<typeof useServerGovernanceAndStage>['stageSetTopic'];
+  sendVoiceScreenAnnotation: ReturnType<typeof useServerGovernanceAndStage>['sendVoiceScreenAnnotation'];
+  subscribeVoiceScreenAnnotations: ReturnType<typeof useServerGovernanceAndStage>['subscribeVoiceScreenAnnotations'];
+  executeCustomCommand: ReturnType<typeof useServerGovernanceAndStage>['executeCustomCommand'];
+  fetchServerAuditLogs: ReturnType<typeof useServerGovernanceAndStage>['fetchServerAuditLogs'];
+  fetchServerCases: ReturnType<typeof useServerGovernanceAndStage>['fetchServerCases'];
+  createServerModCase: ReturnType<typeof useServerGovernanceAndStage>['createServerModCase'];
+  fetchScheduledMessages: ReturnType<typeof useServerGovernanceAndStage>['fetchScheduledMessages'];
+  createScheduledMessage: ReturnType<typeof useServerGovernanceAndStage>['createScheduledMessage'];
+  deleteScheduledMessage: ReturnType<typeof useServerGovernanceAndStage>['deleteScheduledMessage'];
+  fetchServerBots: ReturnType<typeof useServerGovernanceAndStage>['fetchServerBots'];
+  createServerBot: ReturnType<typeof useServerGovernanceAndStage>['createServerBot'];
+  updateServerBot: ReturnType<typeof useServerGovernanceAndStage>['updateServerBot'];
+  deleteServerBot: ReturnType<typeof useServerGovernanceAndStage>['deleteServerBot'];
+  fetchServerAutomations: ReturnType<typeof useServerGovernanceAndStage>['fetchServerAutomations'];
+  createServerAutomation: ReturnType<typeof useServerGovernanceAndStage>['createServerAutomation'];
+  updateServerAutomation: ReturnType<typeof useServerGovernanceAndStage>['updateServerAutomation'];
+  deleteServerAutomation: ReturnType<typeof useServerGovernanceAndStage>['deleteServerAutomation'];
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -1330,6 +1388,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [pttKey, setPttKeyState] = useState<string>(() => {
     return (typeof window !== 'undefined' && localStorage.getItem('dsp_pttKey')) || 'Control';
   });
+  const [pttReleaseDelayMs, setPttReleaseDelayMsState] = useState<number>(() => {
+    const raw = typeof window !== 'undefined' ? Number(localStorage.getItem('dc_ptt_release_delay_ms')) : 120;
+    return Number.isFinite(raw) ? Math.max(0, Math.min(1500, Math.round(raw))) : 120;
+  });
+  const [autoGameDnd, setAutoGameDndState] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && localStorage.getItem('dc_auto_game_dnd') === 'true';
+  });
+  const autoGameDndRef = useRef(autoGameDnd);
+  autoGameDndRef.current = autoGameDnd;
+  const preGameStatusRef = useRef<'online' | 'idle' | null>(null);
   const [isPttActive, setIsPttActive] = useState<boolean>(false);
 
   // Advanced Audio Hardware & Processing States
@@ -1435,6 +1503,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setPttKeyState(key);
     try { localStorage.setItem('dsp_pttKey', key); } catch {}
   };
+
+  const setPttReleaseDelayMs = useCallback((ms: number) => {
+    const clamped = Math.max(0, Math.min(1500, Math.round(Number(ms) || 0)));
+    setPttReleaseDelayMsState(clamped);
+    try { localStorage.setItem('dc_ptt_release_delay_ms', String(clamped)); } catch {}
+  }, []);
+
+  const setAutoGameDnd = useCallback((enabled: boolean) => {
+    setAutoGameDndState(Boolean(enabled));
+    try { localStorage.setItem('dc_auto_game_dnd', enabled ? 'true' : 'false'); } catch {}
+  }, []);
 
   const setInputSensitivity = (val: number) => {
     setInputSensitivityState(val);
@@ -2414,12 +2493,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const activeChannel = isDMMode
     ? virtualDMServer?.channels[0] || null
     : (activeServer?.channels.find(c => c.id === activeChannelId) ||
-       activeServer?.channels.find(c => c.type !== 'voice') || null);
+       activeServer?.channels.find(c => c.type !== 'voice' && c.type !== 'stage') || null);
   const activeChannelRef = useRef<Channel | null>(null);
   useEffect(() => {
     activeChannelRef.current = activeChannel;
   }, [activeChannel]);
   const messages = activeChannel ? messagesMap[activeChannel.id] || [] : [];
+
+  const governance = useServerGovernanceAndStage({
+    socket,
+    currentUser,
+    currentServerHost,
+    setServers,
+    groupDms,
+    onlineUsers,
+  });
 
   // Enumerate Audio Devices
   const refreshAudioDevices = useCallback(async () => {
@@ -3236,7 +3324,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (data.servers.length > 0) {
         setActiveServerId(data.servers[0].id);
-        const firstTextCh = data.servers[0].channels.find(c => c.type !== 'voice');
+        const firstTextCh = data.servers[0].channels.find(c => c.type !== 'voice' && c.type !== 'stage');
         if (firstTextCh) setActiveChannelId(firstTextCh.id);
       } else {
         setActiveServerId('direct-messages');
@@ -3441,7 +3529,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     newSocket.on('voice_soundboard_played', ({ soundId, username }: { soundId: string; username: string }) => {
-      playSynthesizedSound(soundId);
+      playServerOrSynthSound(soundId, serversRef.current, currentServerHostRef.current);
       setActiveSoundboardEffect({ soundId, username });
       setTimeout(() => {
         setActiveSoundboardEffect(null);
@@ -4634,6 +4722,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           invoke('set_global_ptt', {
             enabled: inputMode === 'ptt' && inAnyVoice,
             key: pttKey,
+            releaseDelayMs: pttReleaseDelayMs,
           })
         )
         .catch(() => {});
@@ -4641,15 +4730,65 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     if (inputMode !== 'ptt' || !inAnyVoice) return;
 
+    let releaseTimer: number | null = null;
+    const cancelReleaseTimer = () => {
+      if (releaseTimer !== null) {
+        window.clearTimeout(releaseTimer);
+        releaseTimer = null;
+      }
+    };
+    const triggerPress = () => {
+      cancelReleaseTimer();
+      applyPttState(true);
+    };
+    const triggerRelease = () => {
+      if (pttReleaseDelayMs > 0) {
+        cancelReleaseTimer();
+        releaseTimer = window.setTimeout(() => {
+          releaseTimer = null;
+          applyPttState(false);
+        }, pttReleaseDelayMs);
+      } else {
+        applyPttState(false);
+      }
+    };
+
+    const mouseButtonMap: Record<string, number> = {
+      MouseMiddle: 1,
+      MiddleMouse: 1,
+      Mouse3: 1,
+      Mouse4: 3,
+      XButton1: 3,
+      Mouse5: 4,
+      XButton2: 4,
+    };
+    const targetMouseButton = mouseButtonMap[pttKey] ?? null;
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === pttKey) applyPttState(true);
+      if (e.key === pttKey) triggerPress();
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === pttKey) applyPttState(false);
+      if (e.key === pttKey) triggerRelease();
+    };
+    const handleMouseDown = (e: MouseEvent) => {
+      if (targetMouseButton !== null && e.button === targetMouseButton) {
+        e.preventDefault();
+        triggerPress();
+      }
+    };
+    const handleMouseUp = (e: MouseEvent) => {
+      if (targetMouseButton !== null && e.button === targetMouseButton) {
+        e.preventDefault();
+        triggerRelease();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    if (targetMouseButton !== null) {
+      window.addEventListener('mousedown', handleMouseDown);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
 
     let unlistenGlobalPtt: (() => void) | null = null;
     if (isTauri) {
@@ -4666,16 +4805,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     return () => {
+      cancelReleaseTimer();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      if (targetMouseButton !== null) {
+        window.removeEventListener('mousedown', handleMouseDown);
+        window.removeEventListener('mouseup', handleMouseUp);
+      }
       if (unlistenGlobalPtt) unlistenGlobalPtt();
       if (isTauri) {
         import('@tauri-apps/api/core')
-          .then(({ invoke }) => invoke('set_global_ptt', { enabled: false, key: pttKey }))
+          .then(({ invoke }) => invoke('set_global_ptt', { enabled: false, key: pttKey, releaseDelayMs: pttReleaseDelayMs }))
           .catch(() => {});
       }
     };
-  }, [inputMode, pttKey, connectedVoiceChannelId, directCall?.status, isMuted, socket]);
+  }, [inputMode, pttKey, pttReleaseDelayMs, connectedVoiceChannelId, directCall?.status, isMuted, socket]);
 
   // Auth Methods
   const login = (usernameOrEmail: string, password: string): Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }> => {
@@ -4747,6 +4891,48 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
     });
   };
+
+  const loginWithSessionToken = useCallback(
+    (token: string, mediaToken?: string): Promise<{ success: boolean; error?: string }> => {
+      return new Promise((resolve) => {
+        if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
+        let answered = false;
+        const timer = setTimeout(() => {
+          if (!answered) {
+            answered = true;
+            resolve({ success: false, error: 'Passkey oturum doğrulaması zaman aşımına uğradı.' });
+          }
+        }, 5000);
+
+        socket.emit('auth_token_login', { token });
+        socket.once(
+          'auth_response',
+          (res: { success: boolean; user?: User; token?: string; mediaToken?: string; error?: string }) => {
+            if (answered) return;
+            answered = true;
+            clearTimeout(timer);
+            if (res.success && res.user) {
+              localStorage.setItem(
+                'dc_clone_auth',
+                JSON.stringify({
+                  token: res.token || token,
+                  mediaToken: res.mediaToken || mediaToken,
+                  username: res.user.username,
+                  avatar: res.user.avatar,
+                })
+              );
+              setCurrentUser(res.user);
+              setIsAuthenticated(true);
+              resolve({ success: true });
+            } else {
+              resolve({ success: false, error: res.error || 'Passkey oturum doğrulaması başarısız oldu.' });
+            }
+          }
+        );
+      });
+    },
+    [socket]
+  );
 
   const requestRegisterChallenge = useCallback((): Promise<{
     token: string;
@@ -5882,7 +6068,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     options?: { forumPost?: ForumPostMeta }
   ) => {
     if (!activeServer || !activeChannel) return;
-    const payload = {
+    const basePayload = {
       serverId: activeServer.id,
       channelId: activeChannel.id,
       content,
@@ -5892,13 +6078,33 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     if (!socket || !socket.connected || !isAuthenticated) {
       if (attachments && attachments.length > 0) {
-        pendingMessageQueueRef.current.push(payload);
+        pendingMessageQueueRef.current.push(basePayload);
       } else if (content.trim()) {
         enqueueOfflineMessage(activeServer.id, activeChannel.id, content, replyTo);
       }
       return;
     }
-    socket.emit('send_message', payload);
+
+    if (
+      activeChannel.id.startsWith('gdm-') &&
+      activeGroupDm?.e2eeEnabled &&
+      content.trim()
+    ) {
+      const epoch = activeGroupDm.e2eeEpoch || 1;
+      const groupKey = getCachedGroupSenderKey(activeGroupDm.id, epoch);
+      if (groupKey) {
+        void encryptGroupDmMessage(content, epoch, groupKey).then((cipher) => {
+          socket.emit('send_message', {
+            ...basePayload,
+            content: cipher || content,
+          });
+        });
+        return;
+      }
+      governance.requestGroupE2eeKeys(activeGroupDm.id);
+    }
+
+    socket.emit('send_message', basePayload);
   };
 
   const forwardMessage = useCallback((
@@ -6135,10 +6341,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const playSoundboard = useCallback((soundId: string) => {
     if (!socket || !connectedVoiceChannelId) {
-      playSynthesizedSound(soundId);
+      playServerOrSynthSound(soundId, serversRef.current, currentServerHostRef.current);
       return;
     }
-    playSynthesizedSound(soundId);
+    playServerOrSynthSound(soundId, serversRef.current, currentServerHostRef.current);
     socket.emit('voice_soundboard_play', { channelId: connectedVoiceChannelId, soundId });
   }, [socket, connectedVoiceChannelId]);
 
@@ -6699,7 +6905,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const createChannel = (
     name: string,
-    type: 'text' | 'voice' | 'announcement' | 'forum',
+    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage',
     options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }
   ) => {
     if (!socket || !activeServer || !name.trim()) return;
@@ -7452,6 +7658,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             if (game !== lastDetectedGame) {
               lastDetectedGame = game;
               socket.emit('user_update_activity', { activity: game ? { type: 'playing', name: game } : null });
+              if (autoGameDndRef.current) {
+                const currSt = currentUserRef.current?.status;
+                if (game && (currSt === 'online' || currSt === 'idle')) {
+                  preGameStatusRef.current = currSt;
+                  updateProfileDetailsRef.current({ status: 'dnd' });
+                } else if (!game && preGameStatusRef.current) {
+                  const restoreTo = preGameStatusRef.current;
+                  preGameStatusRef.current = null;
+                  updateProfileDetailsRef.current({ status: restoreTo });
+                }
+              }
             }
           } catch {
             // ignore
@@ -7808,6 +8025,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Auth
       login,
       verify2faLogin,
+      loginWithSessionToken,
       register,
       requestRegisterChallenge,
       sendRegisterEmailCode,
@@ -8085,6 +8303,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       fetchDiscoverableServers,
       joinPublicServer,
       leaveServer,
+      pttReleaseDelayMs,
+      setPttReleaseDelayMs,
+      autoGameDnd,
+      setAutoGameDnd,
+      ...governance,
     }),
     [
       socket,
@@ -8255,6 +8478,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       jumpToMessage,
       retryQueuedMessage,
       cancelQueuedMessage,
+      loginWithSessionToken,
+      pttReleaseDelayMs,
+      setPttReleaseDelayMs,
+      autoGameDnd,
+      setAutoGameDnd,
+      governance,
     ]
   );
 
@@ -8272,6 +8501,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       maintenanceStatus,
       login,
       verify2faLogin,
+      loginWithSessionToken,
       register,
       requestRegisterChallenge,
       sendRegisterEmailCode,
@@ -8298,6 +8528,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       maintenanceStatus,
       login,
       verify2faLogin,
+      loginWithSessionToken,
       register,
       requestRegisterChallenge,
       sendRegisterEmailCode,
@@ -8362,6 +8593,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       sendThreadMessage,
       chatLayout,
       setChatLayout,
+      executeCustomCommand: governance.executeCustomCommand,
+      groupE2eeReadyEpochs: governance.groupE2eeReadyEpochs,
+      groupE2eeVersion: governance.groupE2eeVersion,
+      enableOrRotateGroupE2ee: governance.enableOrRotateGroupE2ee,
+      requestGroupE2eeKeys: governance.requestGroupE2eeKeys,
     }),
     [
       servers,
@@ -8407,6 +8643,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       sendThreadMessage,
       chatLayout,
       setChatLayout,
+      governance.executeCustomCommand,
+      governance.groupE2eeReadyEpochs,
+      governance.groupE2eeVersion,
+      governance.enableOrRotateGroupE2ee,
+      governance.requestGroupE2eeKeys,
     ]
   );
 
@@ -8449,9 +8690,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       stopScreenShare,
       setInputMode,
       setPttKey,
+      pttReleaseDelayMs,
+      setPttReleaseDelayMs,
+      autoGameDnd,
+      setAutoGameDnd,
       toggleRaiseHand,
       toggleWebcam,
       togglePrioritySpeaker,
+      stageRequestSpeak: governance.stageRequestSpeak,
+      stageCancelSpeak: governance.stageCancelSpeak,
+      stagePromoteSpeaker: governance.stagePromoteSpeaker,
+      stageDemoteSpeaker: governance.stageDemoteSpeaker,
+      stageSetTopic: governance.stageSetTopic,
+      sendVoiceScreenAnnotation: governance.sendVoiceScreenAnnotation,
+      subscribeVoiceScreenAnnotations: governance.subscribeVoiceScreenAnnotations,
     }),
     [
       connectedVoiceChannelId,
@@ -8483,9 +8735,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       soundboardShortcut,
       setSoundboardShortcut,
       joinGroupDmVoice,
+      pttReleaseDelayMs,
+      setPttReleaseDelayMs,
+      autoGameDnd,
+      setAutoGameDnd,
       toggleRaiseHand,
       toggleWebcam,
       togglePrioritySpeaker,
+      governance.stageRequestSpeak,
+      governance.stageCancelSpeak,
+      governance.stagePromoteSpeaker,
+      governance.stageDemoteSpeaker,
+      governance.stageSetTopic,
+      governance.sendVoiceScreenAnnotation,
+      governance.subscribeVoiceScreenAnnotations,
     ]
   );
 

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
-import { X, Hash, Volume2, Lock, Tag, Megaphone, MessagesSquare, Folder } from 'lucide-react';
+import { X, Hash, Volume2, Lock, Tag, Megaphone, MessagesSquare, Folder, Radio } from 'lucide-react';
 
-type CreatableChannelType = 'text' | 'voice' | 'announcement' | 'forum';
+type CreatableChannelType = 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
 
 interface CreateChannelModalProps {
   initialType: CreatableChannelType;
@@ -39,8 +39,12 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
       topic: topic.trim() || undefined,
       isLocked,
       password: isLocked ? password.trim() : undefined,
-      ...(channelType === 'voice'
-        ? { bitrateKbps, userLimit, isTempCreatorChannel }
+      ...(channelType === 'voice' || channelType === 'stage'
+        ? {
+            bitrateKbps,
+            userLimit,
+            ...(channelType === 'voice' ? { isTempCreatorChannel } : {}),
+          }
         : {}),
     });
     onClose();
@@ -75,6 +79,12 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
       label: t(language, 'channelTypeVoice'),
       desc: 'Canlı konuşma ve ekran yayını',
       icon: <Volume2 className="w-4 h-4 text-emerald-400" />,
+    },
+    {
+      id: 'stage',
+      label: t(language, 'channelTypeStage'),
+      desc: 'Konuşmacılar, dinleyiciler ve söz isteme sahnesi',
+      icon: <Radio className="w-4 h-4 text-purple-400" />,
     },
   ];
 
@@ -162,6 +172,8 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
               <span className="absolute left-3 text-white/40 text-xs">
                 {channelType === 'voice'
                   ? '🔊'
+                  : channelType === 'stage'
+                  ? '🎙️'
                   : channelType === 'announcement'
                   ? '📣'
                   : channelType === 'forum'
@@ -193,40 +205,44 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
             />
           </div>
 
-          {channelType === 'voice' && (
+          {(channelType === 'voice' || channelType === 'stage') && (
             <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={isLocked}
-                    onChange={(e) => setIsLocked(e.target.checked)}
-                    className="w-4 h-4 rounded text-amber-500 bg-black/40 border-white/20 focus:ring-amber-400"
-                  />
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
-                    <Lock className="w-3.5 h-3.5" />
-                    <span>Şifreli &amp; Kilitli Özel Oda</span>
+              {channelType === 'voice' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isLocked}
+                        onChange={(e) => setIsLocked(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-500 bg-black/40 border-white/20 focus:ring-amber-400"
+                      />
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Şifreli &amp; Kilitli Özel Oda</span>
+                      </div>
+                    </label>
                   </div>
-                </label>
-              </div>
 
-              {isLocked && (
-                <div className="pt-1">
-                  <input
-                    type="password"
-                    required={isLocked}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Oda giriş şifresini belirleyin..."
-                    className="w-full bg-black/40 border border-amber-500/40 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-white/30"
-                  />
-                  <p className="text-[10px] text-amber-300/70 mt-1">
-                    Bu odaya yalnızca şifreyi bilen üyeler veya yöneticiler katılabilir.
-                  </p>
-                </div>
+                  {isLocked && (
+                    <div className="pt-1">
+                      <input
+                        type="password"
+                        required={isLocked}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Oda giriş şifresini belirleyin..."
+                        className="w-full bg-black/40 border border-amber-500/40 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500 placeholder:text-white/30"
+                      />
+                      <p className="text-[10px] text-amber-300/70 mt-1">
+                        Bu odaya yalnızca şifreyi bilen üyeler veya yöneticiler katılabilir.
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
 
-              <div className="pt-2 border-t border-white/10 grid grid-cols-2 gap-2.5">
+              <div className={`${channelType === 'voice' ? 'pt-2 border-t border-white/10 ' : ''}grid grid-cols-2 gap-2.5`}>
                 <div>
                   <label className="block text-[10px] font-semibold text-white/50 uppercase mb-1">
                     Ses Kalitesi (Bitrate)
@@ -259,17 +275,19 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
                 </div>
               </div>
 
-              <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={isTempCreatorChannel}
-                  onChange={(e) => setIsTempCreatorChannel(e.target.checked)}
-                  className="w-4 h-4 rounded text-emerald-500 bg-black/40 border-white/20"
-                />
-                <span className="text-[11px] font-semibold text-emerald-300">
-                  ➕ Oda Kur Kanalı (Girenlere otomatik geçici oda aç)
-                </span>
-              </label>
+              {channelType === 'voice' && (
+                <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isTempCreatorChannel}
+                    onChange={(e) => setIsTempCreatorChannel(e.target.checked)}
+                    className="w-4 h-4 rounded text-emerald-500 bg-black/40 border-white/20"
+                  />
+                  <span className="text-[11px] font-semibold text-emerald-300">
+                    ➕ Oda Kur Kanalı (Girenlere otomatik geçici oda aç)
+                  </span>
+                </label>
+              )}
             </div>
           )}
 

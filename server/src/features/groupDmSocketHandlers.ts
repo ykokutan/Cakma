@@ -143,6 +143,16 @@ export function registerGroupDmSocketHandlers(socket: Socket, deps: GroupDmHandl
     }
 
     room.members.push(canonical);
+    if (room.e2eeEnabled) {
+      room.e2eeEpoch = (room.e2eeEpoch || 1) + 1;
+      for (const m of room.members) {
+        emitToUserSockets(m, 'group_e2ee_rotation_required', {
+          groupId: room.id,
+          epoch: room.e2eeEpoch,
+          reason: 'member_added',
+        });
+      }
+    }
     saveGroupDms(groupDms);
     notifyMembers(room.members);
   });
@@ -170,6 +180,19 @@ export function registerGroupDmSocketHandlers(socket: Socket, deps: GroupDmHandl
 
     const removedTarget = room.members.find((m) => m.toLowerCase() === targetLower) || username;
     room.members = room.members.filter((m) => m.toLowerCase() !== targetLower);
+    if (room.e2eeEnabled) {
+      room.e2eeEpoch = (room.e2eeEpoch || 1) + 1;
+      room.e2eeKeyEnvelopes = (room.e2eeKeyEnvelopes || []).filter(
+        (e) => e.targetUsername.toLowerCase() !== targetLower
+      );
+      for (const m of room.members) {
+        emitToUserSockets(m, 'group_e2ee_rotation_required', {
+          groupId: room.id,
+          epoch: room.e2eeEpoch,
+          reason: 'member_removed',
+        });
+      }
+    }
     saveGroupDms(groupDms);
     notifyMembers([...room.members, removedTarget]);
   });
@@ -188,8 +211,23 @@ export function registerGroupDmSocketHandlers(socket: Socket, deps: GroupDmHandl
     room.members = room.members.filter((m) => m.toLowerCase() !== actorLower);
     if (room.members.length === 0) {
       groupDms.splice(roomIdx, 1);
-    } else if (room.ownerUsername.toLowerCase() === actorLower) {
-      room.ownerUsername = room.members[0];
+    } else {
+      if (room.ownerUsername.toLowerCase() === actorLower) {
+        room.ownerUsername = room.members[0];
+      }
+      if (room.e2eeEnabled) {
+        room.e2eeEpoch = (room.e2eeEpoch || 1) + 1;
+        room.e2eeKeyEnvelopes = (room.e2eeKeyEnvelopes || []).filter(
+          (e) => e.targetUsername.toLowerCase() !== actorLower
+        );
+        for (const m of room.members) {
+          emitToUserSockets(m, 'group_e2ee_rotation_required', {
+            groupId: room.id,
+            epoch: room.e2eeEpoch,
+            reason: 'member_left',
+          });
+        }
+      }
     }
     saveGroupDms(groupDms);
     notifyMembers([...room.members, actor.username]);

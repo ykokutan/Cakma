@@ -112,6 +112,7 @@ export interface RegisteredAccount {
   knownLoginIps?: string[];
   e2eePublicKey?: string;
   readCursors?: Record<string, string>;
+  passkeys?: PasskeyCredential[];
 }
 
 export interface EncryptedAttachmentMeta {
@@ -281,6 +282,153 @@ export interface ServerMember {
   roleIds: string[];
   joinedAt: string;
   isOwner?: boolean;
+  rulesAcceptedAt?: string;
+}
+
+export type ChannelOverridePerm =
+  | 'view_channel'
+  | 'send_messages'
+  | 'attach_files'
+  | 'connect_voice'
+  | 'speak_voice';
+
+export interface ChannelPermissionOverride {
+  targetType: 'role' | 'user';
+  targetId: string;
+  allow: ChannelOverridePerm[];
+  deny: ChannelOverridePerm[];
+}
+
+export interface StageChannelState {
+  topic?: string;
+  speakerUsernames: string[];
+  raisedHands: string[];
+}
+
+export interface ServerAuditEntry {
+  id: string;
+  serverId: string;
+  actorUsername: string;
+  action: string;
+  targetLabel?: string;
+  details: string;
+  timestamp: string;
+}
+
+export type ModerationCaseAction = 'warn' | 'timeout' | 'kick' | 'ban' | 'untimeout';
+
+export interface ServerModerationCase {
+  id: string;
+  serverId: string;
+  targetUsername: string;
+  moderatorUsername: string;
+  action: ModerationCaseAction;
+  reason: string;
+  durationMinutes?: number;
+  createdAt: string;
+}
+
+export interface ServerOnboardingConfig {
+  enabled: boolean;
+  welcomePrompt?: string;
+  requireRulesAccept?: boolean;
+  selfAssignableRoleIds: string[];
+}
+
+export interface ScheduledMessage {
+  id: string;
+  serverId: string;
+  channelId: string;
+  authorUsername: string;
+  authorAvatar: string;
+  content: string;
+  scheduledFor: string;
+  repeatIntervalMinutes?: number;
+  status: 'pending' | 'sent' | 'cancelled';
+  createdAt: string;
+  lastSentAt?: string;
+}
+
+export interface ServerSoundClip {
+  id: string;
+  name: string;
+  emoji: string;
+  dataUrl: string;
+  uploadedBy: string;
+  createdAt: string;
+}
+
+export interface ServerSticker {
+  id: string;
+  name: string;
+  imageUrl: string;
+  tags?: string[];
+  uploadedBy: string;
+  createdAt: string;
+}
+
+export type BotEventType = 'message_create' | 'member_join' | 'reaction_add';
+
+export interface BotSlashCommand {
+  name: string;
+  description: string;
+  responseTemplate?: string;
+}
+
+export interface ServerBot {
+  id: string;
+  serverId: string;
+  name: string;
+  avatar: string;
+  tokenHash: string;
+  tokenPrefix: string;
+  webhookUrl?: string;
+  events: BotEventType[];
+  slashCommands: BotSlashCommand[];
+  enabled: boolean;
+  createdBy: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export type AutomationTriggerType = 'message_contains' | 'spam_burst' | 'member_join' | 'link_posted';
+export type AutomationActionType = 'delete_message' | 'timeout_user' | 'assign_role' | 'send_channel_notice' | 'warn_member';
+
+export interface ServerAutomationRule {
+  id: string;
+  serverId: string;
+  name: string;
+  enabled: boolean;
+  triggerType: AutomationTriggerType;
+  keywords?: string[];
+  spamCount?: number;
+  spamWindowSeconds?: number;
+  actionType: AutomationActionType;
+  timeoutMinutes?: number;
+  roleId?: string;
+  noticeChannelId?: string;
+  noticeTemplate?: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface PasskeyCredential {
+  id: string;
+  publicKeySpkiBase64: string;
+  counter: number;
+  label: string;
+  transports?: string[];
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface GroupE2eeKeyEnvelope {
+  targetUsername: string;
+  senderUsername: string;
+  wrappedKeyBase64: string;
+  ivBase64: string;
+  epoch: number;
+  updatedAt: string;
 }
 
 export interface PollOption {
@@ -323,6 +471,9 @@ export interface GroupDmRoom {
   members: string[];
   createdAt: string;
   voiceChannelId?: string;
+  e2eeEnabled?: boolean;
+  e2eeEpoch?: number;
+  e2eeKeyEnvelopes?: GroupE2eeKeyEnvelope[];
 }
 
 export interface ForwardedFromMeta {
@@ -359,11 +510,14 @@ export interface ChannelStickyNotice {
 export interface Channel {
   id: string;
   name: string;
-  type: 'text' | 'voice' | 'announcement' | 'forum';
+  type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
   serverId: string;
   categoryId?: string | null;
   position?: number;
   allowedRoleIds?: string[];
+  isPrivate?: boolean;
+  permissionOverrides?: ChannelPermissionOverride[];
+  stageState?: StageChannelState;
   slowmodeSeconds?: number;
   isTemporary?: boolean;
   isTempCreatorChannel?: boolean;
@@ -423,6 +577,9 @@ export interface Server {
   customEmojis?: { id: string; name: string; url: string }[];
   autoModConfig?: { blockLinks?: boolean; antiSpam?: boolean; bannedWords?: string[] };
   events?: ServerEvent[];
+  onboarding?: ServerOnboardingConfig;
+  serverSounds?: ServerSoundClip[];
+  stickers?: ServerSticker[];
 }
 
 export interface ServerEvent {

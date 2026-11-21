@@ -141,6 +141,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     language,
     setLanguage,
     updateProfileDetails,
+    pttReleaseDelayMs,
+    setPttReleaseDelayMs,
+    autoGameDnd,
+    setAutoGameDnd,
   } = useSocket();
   const {
     globalMuteShortcut,
@@ -296,7 +300,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.9.0');
+  const [appVersion, setAppVersion] = useState<string>('1.0.0');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -1054,6 +1058,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   >
                     {recordingKey ? 'Bir tuşa basın...' : `Tuş: [${pttKey}]`}
                   </button>
+                </div>
+              )}
+
+              {inputMode === 'ptt' && (
+                <div className="bg-white/[0.04] p-3.5 rounded-2xl border border-white/10 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-white/80">Hızlı Fare Yan Tuşu Ataması</span>
+                    <div className="flex items-center gap-1.5">
+                      {(['Mouse4', 'Mouse5', 'MouseMiddle'] as const).map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setPttKey(preset)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border transition ${
+                            pttKey === preset
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/30 text-white/65 border-white/10 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-white/75 mb-1">
+                      <span>{t(language, 'pttReleaseDelay')}</span>
+                      <span className="font-mono font-bold text-blue-300">{pttReleaseDelayMs} ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1500}
+                      step={50}
+                      value={pttReleaseDelayMs}
+                      onChange={(e) => setPttReleaseDelayMs(Number(e.target.value))}
+                      className="w-full accent-blue-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
+                    />
+                  </div>
                 </div>
               )}
 
@@ -2564,6 +2607,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <span>Şimdi Tara</span>
                   </button>
                 </div>
+                <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-white">{t(language, 'autoGameDnd')}</div>
+                    <div className="text-[11px] text-white/45">
+                      Oyun algılandığında durumunuzu otomatik olarak &quot;Rahatsız Etmeyin&quot; moduna alır.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoGameDnd}
+                    onClick={() => setAutoGameDnd(!autoGameDnd)}
+                    className={`w-11 h-6 rounded-full transition relative shrink-0 ${
+                      autoGameDnd ? 'bg-blue-500' : 'bg-white/20'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                        autoGameDnd ? 'translate-x-5' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
 
               {/* Live Mini Overlay Preview */}
@@ -2988,6 +3054,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   >
                     {recordingKey ? 'Tuşa Basın...' : pttKey}
                   </button>
+                </div>
+                <div className="pt-3 border-t border-white/10 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-white/60">Fare Yan Tuşları</span>
+                    <div className="flex items-center gap-1.5">
+                      {(['Mouse4', 'Mouse5', 'MouseMiddle'] as const).map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setPttKey(preset)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border transition ${
+                            pttKey === preset
+                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              : 'bg-black/30 text-white/65 border-white/10 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-white/70 mb-1">
+                      <span>{t(language, 'pttReleaseDelay')}</span>
+                      <span className="font-mono font-bold text-blue-300">{pttReleaseDelayMs} ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1500}
+                      step={50}
+                      value={pttReleaseDelayMs}
+                      onChange={(e) => setPttReleaseDelayMs(Number(e.target.value))}
+                      className="w-full accent-blue-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
+                    />
+                  </div>
                 </div>
 
                 {(

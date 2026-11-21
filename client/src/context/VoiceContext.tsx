@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { GroupDmRoom, ScreenShareSettings } from '../types';
+import type { GroupDmRoom, IncomingVoiceScreenAnnotation, ScreenShareSettings, VoiceScreenAnnotationStroke } from '../types';
 
 export interface AudioWorkletTelemetry {
   db: number;
@@ -46,9 +46,20 @@ export interface VoiceContextValue {
   stopScreenShare: () => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
+  pttReleaseDelayMs: number;
+  setPttReleaseDelayMs: (ms: number) => void;
+  autoGameDnd: boolean;
+  setAutoGameDnd: (enabled: boolean) => void;
   toggleRaiseHand: () => void;
   toggleWebcam: () => Promise<void>;
   togglePrioritySpeaker: () => void;
+  stageRequestSpeak: (serverId: string, channelId: string) => void;
+  stageCancelSpeak: (serverId: string, channelId: string) => void;
+  stagePromoteSpeaker: (serverId: string, channelId: string, targetUsername: string) => void;
+  stageDemoteSpeaker: (serverId: string, channelId: string, targetUsername: string) => void;
+  stageSetTopic: (serverId: string, channelId: string, topic: string) => void;
+  sendVoiceScreenAnnotation: (channelId: string, targetSharerId: string, stroke: VoiceScreenAnnotationStroke) => void;
+  subscribeVoiceScreenAnnotations: (cb: (ev: IncomingVoiceScreenAnnotation) => void) => () => void;
 }
 
 export const VoiceContext = createContext<VoiceContextValue | undefined>(undefined);

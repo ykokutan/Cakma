@@ -15,7 +15,7 @@ export interface DiscoverableServerSummary {
   voiceActiveCount: number;
   textChannelCount: number;
   voiceChannelCount: number;
-  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' }>;
+  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' }>;
   bitrateKbps: number;
   sfuMode: 'auto' | 'p2p' | 'sfu';
   isJoined: boolean;
@@ -67,7 +67,7 @@ export function buildDiscoverableServerSummaries(
     .map((srv) => {
       const channels = srv.channels || [];
       const voiceChannelIds = new Set(
-        channels.filter((c) => c.type === 'voice').map((c) => c.id)
+        channels.filter((c) => c.type === 'voice' || c.type === 'stage').map((c) => c.id)
       );
 
       let onlineCount = 0;
@@ -81,8 +81,8 @@ export function buildDiscoverableServerSummaries(
         }
       }
 
-      const textChannels = channels.filter((c) => c.type !== 'voice');
-      const voiceChannels = channels.filter((c) => c.type === 'voice' && !c.isTempCreatorChannel);
+      const textChannels = channels.filter((c) => c.type !== 'voice' && c.type !== 'stage');
+      const voiceChannels = channels.filter((c) => (c.type === 'voice' || c.type === 'stage') && !c.isTempCreatorChannel);
 
       const channelPreview = [
         ...textChannels.slice(0, 2),
@@ -109,7 +109,7 @@ export function buildDiscoverableServerSummaries(
         onlineCount,
         voiceActiveCount,
         textChannelCount: textChannels.length,
-        voiceChannelCount: channels.filter((c) => c.type === 'voice').length,
+        voiceChannelCount: channels.filter((c) => c.type === 'voice' || c.type === 'stage').length,
         channelPreview,
         bitrateKbps: srv.bitrateKbps || 128,
         sfuMode: srv.sfuMode || 'auto',

@@ -6,6 +6,7 @@ import { t } from '../../utils/i18n';
 import { normalizeOtpInput, validateEmail } from '../../utils/authValidation';
 import { exportEncryptedE2eeBackup, importEncryptedE2eeBackup } from '../../utils/e2ee';
 import { OtpCodeInput } from '../auth/OtpCodeInput';
+import { PasskeySettingsCard } from './PasskeySettingsCard';
 
 export const AccountSecuritySection: React.FC = () => {
   const { socket } = useSocket();
@@ -388,6 +389,8 @@ export const AccountSecuritySection: React.FC = () => {
           </div>
         )}
       </div>
+
+      <PasskeySettingsCard />
     </div>
   );
 };

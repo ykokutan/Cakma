@@ -26,7 +26,7 @@ const ServerSettingsModal = lazy(() => import('./components/ServerSettingsModal'
 const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDiagnosticsModal').then((m) => ({ default: m.ConnectionDiagnosticsModal })));
 const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
 import { User } from './types';
-import { X, Volume2, Check } from 'lucide-react';
+import { X, Volume2, Check, ShieldAlert } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const {
@@ -57,6 +57,8 @@ const MainLayout: React.FC = () => {
     dismissNewIpAlert,
     shouldAutoOpenExplore,
     consumeAutoOpenExplore,
+    latestModerationNotice,
+    dismissModerationNotice,
   } = useSocket();
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -65,7 +67,7 @@ const MainLayout: React.FC = () => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
       // Alt + ArrowUp / ArrowDown (and Alt + Shift for unread-only channels)
       if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        const textChs = (activeServer?.channels || []).filter((c) => c.type !== 'voice');
+        const textChs = (activeServer?.channels || []).filter((c) => c.type !== 'voice' && c.type !== 'stage');
         if (textChs.length > 0) {
           const candidates = e.shiftKey
             ? textChs.filter((c) => c.id === activeChannel?.id || (unreadCounts[c.id] || 0) > 0)
@@ -156,7 +158,7 @@ const MainLayout: React.FC = () => {
   }, [isAuthenticated, shouldAutoOpenExplore, consumeAutoOpenExplore]);
   const [createChannelModal, setCreateChannelModal] = useState<{
     isOpen: boolean;
-    type: 'text' | 'voice' | 'announcement' | 'forum';
+    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
     categoryId?: string | null;
   }>({ isOpen: false, type: 'text', categoryId: null });
 
@@ -255,6 +257,32 @@ const MainLayout: React.FC = () => {
             <button
               type="button"
               onClick={dismissVoicePullNotice}
+              className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition shrink-0"
+              title="Kapat"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {latestModerationNotice && (
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[81] max-w-md w-[92vw] px-4 animate-fade-in">
+          <div className="px-3.5 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-xl flex items-center justify-between gap-3 text-xs font-medium bg-amber-950/90 border-amber-500/40 text-amber-100">
+            <div className="flex items-start gap-2 min-w-0">
+              <ShieldAlert className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <div className="font-bold text-amber-200 truncate">
+                  {latestModerationNotice.serverName} · {latestModerationNotice.caseItem.action.toUpperCase()}
+                </div>
+                <div className="text-[11px] text-amber-100/85 break-words">
+                  {latestModerationNotice.caseItem.reason}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={dismissModerationNotice}
               className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition shrink-0"
               title="Kapat"
             >

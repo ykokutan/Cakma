@@ -1,4 +1,5 @@
 import type { GroupDmRoom, Message, Server } from '../types.js';
+import { resolveChannelPermissions } from './channelPermissions.js';
 import { isUserMemberOfServer } from './serverDiscovery.js';
 
 /** Encode a username segment into a reversible, separator-safe token for DM IDs. */
@@ -124,5 +125,9 @@ export function canUserAccessChannel(
   }
   const srv = findServerByChannelId(servers, channelId, serverId);
   if (!srv) return false;
+  const ch = srv.channels?.find((c) => c.id === channelId);
+  if (ch) {
+    return resolveChannelPermissions(user, srv, ch).view_channel;
+  }
   return user.role === 'admin' || isUserMemberOfServer(user, srv);
 }

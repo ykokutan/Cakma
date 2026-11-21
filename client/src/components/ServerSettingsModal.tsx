@@ -29,8 +29,27 @@ import {
   Webhook,
 } from 'lucide-react';
 
+import {
+  CalendarClock as ScheduledClockIcon,
+  ClipboardList as AuditClipboardIcon,
+  Sparkles as OnboardingSparklesIcon,
+  Workflow as AutomationWorkflowIcon,
+} from 'lucide-react';
+
 const WebhooksTab = lazy(() =>
   import('./server/WebhooksTab').then((m) => ({ default: m.WebhooksTab }))
+);
+const ServerAuditAndModTab = lazy(() =>
+  import('./server/ServerAuditAndModTab').then((m) => ({ default: m.ServerAuditAndModTab }))
+);
+const ServerOnboardingTab = lazy(() =>
+  import('./server/ServerOnboardingTab').then((m) => ({ default: m.ServerOnboardingTab }))
+);
+const ScheduledMessagesTab = lazy(() =>
+  import('./server/ScheduledMessagesTab').then((m) => ({ default: m.ScheduledMessagesTab }))
+);
+const AutomationAndBotsTab = lazy(() =>
+  import('./server/AutomationAndBotsTab').then((m) => ({ default: m.AutomationAndBotsTab }))
 );
 
 interface ServerSettingsModalProps {
@@ -97,7 +116,21 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     language,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'welcome' | 'webhooks' | 'backup' | 'danger'>('overview');
+  const [activeTab, setActiveTab] = useState<
+    | 'overview'
+    | 'voice'
+    | 'security'
+    | 'roles'
+    | 'members'
+    | 'welcome'
+    | 'webhooks'
+    | 'onboarding'
+    | 'scheduled'
+    | 'automation'
+    | 'audit_mod'
+    | 'backup'
+    | 'danger'
+  >('overview');
 
   // Overview Form State
   const [name, setName] = useState(server.name);
@@ -408,7 +441,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
             </div>
 
             {/* Navigation Tabs */}
-            <nav className="space-y-1">
+            <nav className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
               <button
                 type="button"
                 onClick={() => setActiveTab('overview')}
@@ -436,6 +469,58 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                 <span className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
                   {bitrateKbps}k
                 </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('onboarding')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'onboarding'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <OnboardingSparklesIcon className="w-4 h-4 text-indigo-400" />
+                <span className="truncate">{t(language, 'serverOnboarding')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('scheduled')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'scheduled'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <ScheduledClockIcon className="w-4 h-4 text-sky-400" />
+                <span className="truncate">{t(language, 'scheduledMessages')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('automation')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'automation'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <AutomationWorkflowIcon className="w-4 h-4 text-emerald-400" />
+                <span className="truncate">{t(language, 'automationRules')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('audit_mod')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'audit_mod'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <AuditClipboardIcon className="w-4 h-4 text-amber-400" />
+                <span className="truncate">{t(language, 'serverAuditLog')}</span>
               </button>
 
               <button
@@ -1595,6 +1680,44 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
               <WebhooksTab
                 server={server}
                 canManage={canManageServer || hasServerPermission('manage_channels')}
+              />
+            </Suspense>
+          )}
+
+          {/* 6c. ONBOARDING TAB */}
+          {activeTab === 'onboarding' && (
+            <Suspense fallback={<div className="text-xs text-white/40 py-8">Yükleniyor...</div>}>
+              <ServerOnboardingTab server={server} canManageServer={canManageServer} />
+            </Suspense>
+          )}
+
+          {/* 6d. SCHEDULED MESSAGES TAB */}
+          {activeTab === 'scheduled' && (
+            <Suspense fallback={<div className="text-xs text-white/40 py-8">Yükleniyor...</div>}>
+              <ScheduledMessagesTab
+                server={server}
+                canManage={canManageServer || hasServerPermission('manage_channels')}
+              />
+            </Suspense>
+          )}
+
+          {/* 6e. AUTOMATION & BOTS TAB */}
+          {activeTab === 'automation' && (
+            <Suspense fallback={<div className="text-xs text-white/40 py-8">Yükleniyor...</div>}>
+              <AutomationAndBotsTab server={server} canManageServer={canManageServer} />
+            </Suspense>
+          )}
+
+          {/* 6f. AUDIT LOG & MODERATION CASES TAB */}
+          {activeTab === 'audit_mod' && (
+            <Suspense fallback={<div className="text-xs text-white/40 py-8">Yükleniyor...</div>}>
+              <ServerAuditAndModTab
+                server={server}
+                canModerate={
+                  canManageServer ||
+                  hasServerPermission('kick_members') ||
+                  hasServerPermission('ban_members')
+                }
               />
             </Suspense>
           )}

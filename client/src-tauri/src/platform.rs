@@ -1,5 +1,5 @@
 #[cfg(target_os = "windows")]
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 #[cfg(target_os = "windows")]
 use tauri::Emitter;
 use tauri::Manager;
@@ -9,7 +9,53 @@ static GLOBAL_PTT_ENABLED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static GLOBAL_PTT_VK: AtomicU8 = AtomicU8::new(0x11);
 #[cfg(target_os = "windows")]
+static GLOBAL_PTT_RELEASE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "windows")]
 static GLOBAL_PTT_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn clamp_ptt_release_delay_ms(ms: Option<u64>) -> u64 {
+    ms.unwrap_or(0).min(1500)
+}
+
+pub(crate) fn map_ptt_key_to_vk(key: &str) -> Option<u8> {
+    let normalized = key.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "mouse4" | "xbutton1" | "mb4" | "button4" => Some(0x05),
+        "mouse5" | "xbutton2" | "mb5" | "button5" => Some(0x06),
+        "mousemiddle" | "middlemouse" | "mb3" | "mouse3" => Some(0x04),
+        _ => {
+            #[cfg(target_os = "windows")]
+            {
+                crate::remote_assist::map_web_key_to_vk(key, key)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                None
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn format_linux_autostart_desktop_entry(exe_path: &str) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Cakma\nComment=Cakma Ses ve Sohbet Platformu\nExec=\"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        exe_path.trim()
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_autostart_file_path() -> Option<std::path::PathBuf> {
+    let config_root = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|v| !v.is_empty())
+                .map(|h| std::path::PathBuf::from(h).join(".config"))
+        })?;
+    Some(config_root.join("autostart").join("cakma.desktop"))
+}
 
 #[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PlatformCapabilities {
@@ -27,6 +73,7 @@ pub struct PlatformCapabilities {
 pub(crate) fn current_platform_capabilities() -> PlatformCapabilities {
     let is_windows = cfg!(target_os = "windows");
     let is_macos = cfg!(target_os = "macos");
+    let is_linux = cfg!(target_os = "linux");
     let is_desktop = cfg!(desktop);
     PlatformCapabilities {
         os: std::env::consts::OS.to_string(),
@@ -35,7 +82,7 @@ pub(crate) fn current_platform_capabilities() -> PlatformCapabilities {
         global_shortcuts: is_desktop,
         game_detection: is_windows || is_macos,
         remote_assist_input: is_windows,
-        autostart: is_windows,
+        autostart: is_windows || is_linux,
         deep_link_protocol: is_windows,
         taskbar_badge: is_windows || is_macos,
     }
@@ -218,6 +265,12 @@ pub fn get_autostart() -> bool {
             return out.status.success();
         }
     }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(path) = linux_autostart_file_path() {
+            return path.exists();
+        }
+    }
     false
 }
 
@@ -263,7 +316,26 @@ pub fn set_autostart(enabled: bool) -> Result<bool, String> {
             Ok(false)
         }
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        let path = linux_autostart_file_path()
+            .ok_or_else(|| "XDG autostart dizini çözümlenemedi.".to_string())?;
+        if enabled {
+            let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let content = format_linux_autostart_desktop_entry(&exe_path.to_string_lossy());
+            std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            Ok(true)
+        } else {
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+            Ok(false)
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = enabled;
         Ok(false)
@@ -346,12 +418,21 @@ pub fn set_taskbar_badge(app: tauri::AppHandle, count: u32) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn set_global_ptt(app: tauri::AppHandle, enabled: bool, key: String) -> Result<bool, String> {
+pub fn set_global_ptt(
+    app: tauri::AppHandle,
+    enabled: bool,
+    key: String,
+    release_delay_ms: Option<u64>,
+) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        if let Some(vk) = crate::remote_assist::map_web_key_to_vk(&key, &key) {
+        if let Some(vk) = map_ptt_key_to_vk(&key) {
             GLOBAL_PTT_VK.store(vk, Ordering::Relaxed);
         }
+        GLOBAL_PTT_RELEASE_DELAY_MS.store(
+            clamp_ptt_release_delay_ms(release_delay_ms),
+            Ordering::Relaxed,
+        );
         GLOBAL_PTT_ENABLED.store(enabled, Ordering::Relaxed);
         if !enabled {
             let _ = app.emit("global-ptt-state", false);
@@ -359,11 +440,13 @@ pub fn set_global_ptt(app: tauri::AppHandle, enabled: bool, key: String) -> Resu
         if !GLOBAL_PTT_THREAD_STARTED.swap(true, Ordering::SeqCst) {
             let handle = app.clone();
             std::thread::spawn(move || {
-                let mut was_down = false;
+                let mut active_emitted = false;
+                let mut release_deadline: Option<std::time::Instant> = None;
                 loop {
                     if !GLOBAL_PTT_ENABLED.load(Ordering::Relaxed) {
-                        if was_down {
-                            was_down = false;
+                        if active_emitted {
+                            active_emitted = false;
+                            release_deadline = None;
                             let _ = handle.emit("global-ptt-state", false);
                         }
                         std::thread::sleep(std::time::Duration::from_millis(220));
@@ -373,9 +456,29 @@ pub fn set_global_ptt(app: tauri::AppHandle, enabled: bool, key: String) -> Resu
                     let is_down = unsafe {
                         (crate::remote_assist::win_input::GetAsyncKeyState(vk) as u16) & 0x8000 != 0
                     };
-                    if is_down != was_down {
-                        was_down = is_down;
-                        let _ = handle.emit("global-ptt-state", is_down);
+                    if is_down {
+                        release_deadline = None;
+                        if !active_emitted {
+                            active_emitted = true;
+                            let _ = handle.emit("global-ptt-state", true);
+                        }
+                    } else if active_emitted {
+                        let delay_ms = GLOBAL_PTT_RELEASE_DELAY_MS.load(Ordering::Relaxed);
+                        if delay_ms == 0 {
+                            active_emitted = false;
+                            release_deadline = None;
+                            let _ = handle.emit("global-ptt-state", false);
+                        } else {
+                            let now = std::time::Instant::now();
+                            let deadline = release_deadline.get_or_insert_with(|| {
+                                now + std::time::Duration::from_millis(delay_ms)
+                            });
+                            if now >= *deadline {
+                                active_emitted = false;
+                                release_deadline = None;
+                                let _ = handle.emit("global-ptt-state", false);
+                            }
+                        }
                     }
                     std::thread::sleep(std::time::Duration::from_millis(25));
                 }
@@ -385,7 +488,7 @@ pub fn set_global_ptt(app: tauri::AppHandle, enabled: bool, key: String) -> Resu
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, enabled, key);
+        let _ = (app, enabled, key, release_delay_ms);
         Ok(false)
     }
 }
@@ -508,7 +611,11 @@ pub fn update_tray_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{current_platform_capabilities, format_tray_tooltip, render_tray_badge_rgba};
+    use super::{
+        clamp_ptt_release_delay_ms, current_platform_capabilities,
+        format_linux_autostart_desktop_entry, format_tray_tooltip, map_ptt_key_to_vk,
+        render_tray_badge_rgba,
+    };
 
     #[test]
     fn reports_consistent_platform_capabilities() {
@@ -518,11 +625,36 @@ mod tests {
         assert_eq!(caps.global_ptt, cfg!(target_os = "windows"));
         assert_eq!(caps.global_shortcuts, cfg!(desktop));
         assert_eq!(caps.remote_assist_input, cfg!(target_os = "windows"));
-        assert_eq!(caps.autostart, cfg!(target_os = "windows"));
+        assert_eq!(
+            caps.autostart,
+            cfg!(target_os = "windows") || cfg!(target_os = "linux")
+        );
         assert_eq!(
             caps.game_detection,
             cfg!(target_os = "windows") || cfg!(target_os = "macos")
         );
+    }
+
+    #[test]
+    fn maps_mouse_buttons_and_clamps_ptt_release_delay() {
+        assert_eq!(map_ptt_key_to_vk("Mouse4"), Some(0x05));
+        assert_eq!(map_ptt_key_to_vk("XButton1"), Some(0x05));
+        assert_eq!(map_ptt_key_to_vk("mouse5"), Some(0x06));
+        assert_eq!(map_ptt_key_to_vk("XButton2"), Some(0x06));
+        assert_eq!(map_ptt_key_to_vk("MouseMiddle"), Some(0x04));
+
+        assert_eq!(clamp_ptt_release_delay_ms(None), 0);
+        assert_eq!(clamp_ptt_release_delay_ms(Some(250)), 250);
+        assert_eq!(clamp_ptt_release_delay_ms(Some(9000)), 1500);
+    }
+
+    #[test]
+    fn formats_linux_autostart_desktop_entry() {
+        let entry = format_linux_autostart_desktop_entry("/usr/bin/cakma");
+        assert!(entry.contains("[Desktop Entry]"));
+        assert!(entry.contains("Type=Application"));
+        assert!(entry.contains("Exec=\"/usr/bin/cakma\""));
+        assert!(entry.contains("X-GNOME-Autostart-enabled=true"));
     }
 
     #[test]

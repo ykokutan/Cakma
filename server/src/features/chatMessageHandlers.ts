@@ -20,6 +20,7 @@ import {
   isUserParticipantInDm,
   parseDmChannelParticipants,
 } from '../utils/channelAccess.js';
+import { resolveChannelPermissions } from '../utils/channelPermissions.js';
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
 import { resolveServerLevelRecord } from '../utils/serverIdentity.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
@@ -81,6 +82,24 @@ export interface ChatMessageHandlerDeps {
     payload: { title: string; body: string; url?: string; channelId?: string; dmUsername?: string }
   ) => Promise<void>;
   addAuditLog: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
+  onBeforeMessageBroadcast?: (ctx: {
+    sender: User;
+    server: Server | undefined;
+    channelId: string;
+    content: string;
+  }) => { blocked: boolean; reason?: string } | void;
+  onAfterMessageBroadcast?: (ctx: {
+    sender: User;
+    server: Server | undefined;
+    message: Message;
+  }) => void;
+  onReactionAdded?: (ctx: {
+    user: User;
+    serverId: string;
+    channelId: string;
+    messageId: string;
+    emoji: string;
+  }) => void;
 }
 
 export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHandlerDeps): void {
@@ -112,6 +131,9 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     emitToRelevantUsers,
     sendWebPushToUsername,
     addAuditLog,
+    onBeforeMessageBroadcast,
+    onAfterMessageBroadcast,
+    onReactionAdded,
   } = deps;
 
   socket.on('request_older_messages', ({ channelId, beforeId, limit }: { channelId: string; beforeId?: string; limit?: number }) => {
@@ -177,7 +199,11 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     } else {
       for (const s of servers) {
         if (requester.role === 'admin' || isUserMemberOfServer(requester, s)) {
-          s.channels.forEach((c) => allowedChannels.add(c.id));
+          s.channels.forEach((c) => {
+            if (resolveChannelPermissions(requester, s, c).view_channel) {
+              allowedChannels.add(c.id);
+            }
+          });
         }
       }
       for (const key of Object.keys(messages)) {
@@ -224,6 +250,20 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     const systemConfig = getSystemConfig();
     const targetSrv = findServerByChannelId(servers, channelId, serverId);
     const targetChannel = targetSrv?.channels.find((c) => c.id === channelId);
+
+    if (targetSrv && targetChannel) {
+      const chPerms = resolveChannelPermissions(sender, targetSrv, targetChannel);
+      if (!chPerms.send_messages) {
+        return socket.emit('server_action_error', {
+          message: 'Bu kanala mesaj gönderme yetkiniz yok.',
+        });
+      }
+      if (Array.isArray(attachments) && attachments.length > 0 && !chPerms.attach_files) {
+        return socket.emit('server_action_error', {
+          message: 'Bu kanala dosya ekleme yetkiniz yok.',
+        });
+      }
+    }
 
     if (
       targetChannel?.type === 'announcement' &&
@@ -307,6 +347,20 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     }
 
     const textContent = sanitizeText(rawContent).slice(0, systemConfig.maxMessageLength || 2000);
+
+    if (onBeforeMessageBroadcast) {
+      const gate = onBeforeMessageBroadcast({
+        sender,
+        server: targetSrv,
+        channelId,
+        content: textContent,
+      });
+      if (gate && gate.blocked) {
+        return socket.emit('chat_flood_error', {
+          message: gate.reason || 'Otomatik Kural: Mesajınız sunucu kuralı nedeniyle engellendi.',
+        });
+      }
+    }
 
     let cleanForumPost: ForumPostMeta | undefined;
     if (forumPost && typeof forumPost === 'object' && typeof forumPost.title === 'string') {
@@ -392,6 +446,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     onMessageCreated?.();
 
     emitToChannelAudience(channelId, serverId, 'new_message', newMessage);
+    onAfterMessageBroadcast?.({ sender, server: targetSrv, message: newMessage });
 
     const pushBodyPreview = textContent.startsWith('[E2EE:v1]') || textContent.startsWith('E2EE_V1:')
       ? '🔒 Şifreli bir mesaj gönderdi'
@@ -615,6 +670,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
 
     const existingIdx = msg.reactions[emoji].indexOf(user.username);
+    let added = false;
     if (existingIdx !== -1) {
       msg.reactions[emoji].splice(existingIdx, 1);
       if (msg.reactions[emoji].length === 0) {
@@ -622,6 +678,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       }
     } else {
       msg.reactions[emoji].push(user.username);
+      added = true;
     }
 
     saveChannelMessageUpsert(channelId, channelMsgs, msg);
@@ -630,6 +687,15 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       messageId,
       reactions: msg.reactions,
     });
+    if (added && msg.serverId) {
+      onReactionAdded?.({
+        user,
+        serverId: msg.serverId,
+        channelId,
+        messageId,
+        emoji,
+      });
+    }
   });
 
   socket.on('toggle_pin_message', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
@@ -734,6 +800,19 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
 
     const destServer = findServerByChannelId(servers, targetChannelId, targetServerId);
     const destChannel = destServer?.channels.find((c) => c.id === targetChannelId);
+    if (destServer && destChannel) {
+      const destPerms = resolveChannelPermissions(sender, destServer, destChannel);
+      if (!destPerms.send_messages) {
+        return socket.emit('server_action_error', {
+          message: 'Hedef kanala mesaj gönderme yetkiniz yok.',
+        });
+      }
+      if (Array.isArray(srcMsg.attachments) && srcMsg.attachments.length > 0 && !destPerms.attach_files) {
+        return socket.emit('server_action_error', {
+          message: 'Hedef kanala dosya ekleme yetkiniz yok.',
+        });
+      }
+    }
     if (
       destChannel?.type === 'announcement' &&
       destServer &&

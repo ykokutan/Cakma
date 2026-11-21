@@ -82,6 +82,76 @@ describe('dedicated-server atomic storage', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('persists v1.0.0 categories, all 5 channel types, webhooks, and scheduledMessages cleanly', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cakma-ded-v100-'));
+    try {
+      const state1 = await loadDedicatedState({
+        defaultChannels: [
+          { id: 'ch-1', name: 'genel', type: 'text', serverId: 'root', categoryId: 'cat-1', position: 0 },
+          { id: 'ch-2', name: 'duyurular', type: 'announcement', serverId: 'root', categoryId: 'cat-1', position: 1 },
+          { id: 'ch-3', name: 'tartisma', type: 'forum', serverId: 'root', categoryId: 'cat-1', position: 2 },
+          { id: 'ch-4', name: 'sohbet-ses', type: 'voice', serverId: 'root', categoryId: 'cat-1', position: 3 },
+          { id: 'ch-5', name: 'sahne', type: 'stage', serverId: 'root', categoryId: 'cat-1', position: 4 },
+        ],
+        getBadges: () => [],
+        dataDir: tmpDir,
+      });
+
+      state1.categories.push({ id: 'cat-1', name: 'Ana Bölge', position: 0 });
+      state1.webhooks.push({
+        id: 'dwh-1',
+        channelId: 'ch-1',
+        name: 'CI Hook',
+        token: 'secret-token',
+        createdBy: 'admin',
+        createdAt: '2026-11-21T00:00:00.000Z',
+      });
+      state1.scheduledMessages.push({
+        id: 'dsch-1',
+        channelId: 'ch-2',
+        authorUsername: 'admin',
+        authorAvatar: '👑',
+        content: 'Haftalık etkinlik!',
+        scheduledFor: '2026-11-22T18:00:00.000Z',
+        repeatIntervalMinutes: 1440,
+        status: 'pending',
+        createdAt: '2026-11-21T00:00:00.000Z',
+      });
+
+      scheduleDedicatedStateSave(
+        state1.accounts,
+        state1.channels,
+        state1.messages,
+        state1.friendRequests,
+        25,
+        tmpDir,
+        {
+          categories: state1.categories,
+          webhooks: state1.webhooks,
+          scheduledMessages: state1.scheduledMessages,
+        }
+      );
+      flushDedicatedStateSync();
+
+      const state2 = await loadDedicatedState({
+        defaultChannels: [],
+        getBadges: () => [],
+        dataDir: tmpDir,
+      });
+
+      assert.equal(state2.categories.length, 1);
+      assert.equal(state2.categories[0].name, 'Ana Bölge');
+      assert.deepEqual(
+        state2.channels.map((c) => c.type),
+        ['text', 'announcement', 'forum', 'voice', 'stage']
+      );
+      assert.equal(state2.webhooks[0].id, 'dwh-1');
+      assert.equal(state2.scheduledMessages[0].repeatIntervalMinutes, 1440);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('dedicated-server licenseValidator', () => {

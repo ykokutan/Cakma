@@ -32,8 +32,44 @@ export interface DedicatedStoredAccount {
 export interface DedicatedStoredChannel {
   id: string;
   name: string;
-  type: 'text' | 'voice';
+  type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
   serverId: string;
+  categoryId?: string | null;
+  position?: number;
+  topic?: string;
+  isLocked?: boolean;
+  password?: string;
+}
+
+export interface DedicatedChannelCategory {
+  id: string;
+  name: string;
+  position: number;
+  collapsedByDefault?: boolean;
+}
+
+export interface DedicatedWebhook {
+  id: string;
+  channelId: string;
+  name: string;
+  avatar?: string;
+  token: string;
+  createdBy: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface DedicatedScheduledMessage {
+  id: string;
+  channelId: string;
+  authorUsername: string;
+  authorAvatar: string;
+  content: string;
+  scheduledFor: string;
+  repeatIntervalMinutes?: number;
+  status: 'pending' | 'sent' | 'cancelled';
+  createdAt: string;
+  lastSentAt?: string;
 }
 
 export interface DedicatedPersistedState {
@@ -41,6 +77,9 @@ export interface DedicatedPersistedState {
   channels: DedicatedStoredChannel[];
   messages: Record<string, any[]>;
   friendRequests: any[];
+  categories?: DedicatedChannelCategory[];
+  webhooks?: DedicatedWebhook[];
+  scheduledMessages?: DedicatedScheduledMessage[];
 }
 
 export interface LoadDedicatedStateOptions {
@@ -72,6 +111,9 @@ export function writeDedicatedStateSync(snapshot: DedicatedPersistedState, dataD
       channels: snapshot.channels || [],
       messages: boundedMessages,
       friendRequests: snapshot.friendRequests || [],
+      ...(Array.isArray(snapshot.categories) ? { categories: snapshot.categories } : {}),
+      ...(Array.isArray(snapshot.webhooks) ? { webhooks: snapshot.webhooks } : {}),
+      ...(Array.isArray(snapshot.scheduledMessages) ? { scheduledMessages: snapshot.scheduledMessages } : {}),
     };
     const stateFile = resolveStateFile(dataDir);
     const tmpPath = `${stateFile}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
@@ -87,6 +129,9 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
   channels: DedicatedStoredChannel[];
   messages: Record<string, any[]>;
   friendRequests: Map<string, any>;
+  categories: DedicatedChannelCategory[];
+  webhooks: DedicatedWebhook[];
+  scheduledMessages: DedicatedScheduledMessage[];
 }> {
   const targetDir = opts.dataDir || DEFAULT_DATA_DIR;
   const stateFile = resolveStateFile(targetDir);
@@ -111,10 +156,13 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
           friendRequests.set(req.id, req);
         }
       }
+      const categories = Array.isArray(parsed.categories) ? parsed.categories : [];
+      const webhooks = Array.isArray(parsed.webhooks) ? parsed.webhooks : [];
+      const scheduledMessages = Array.isArray(parsed.scheduledMessages) ? parsed.scheduledMessages : [];
       console.log(
-        `💾 [Dedicated Storage] ${accounts.size} hesap, ${channels.length} kanal, ${Object.keys(messages).length} kanal mesajı yüklendi.`
+        `💾 [Dedicated Storage] ${accounts.size} hesap, ${channels.length} kanal, ${categories.length} kategori, ${Object.keys(messages).length} kanal mesajı yüklendi.`
       );
-      return { accounts, channels, messages, friendRequests };
+      return { accounts, channels, messages, friendRequests, categories, webhooks, scheduledMessages };
     } catch (err) {
       console.warn('⚠️ [Dedicated Storage] state.json okunamadı, temiz başlatılıyor:', err);
     }
@@ -142,6 +190,9 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
   const channels = [...opts.defaultChannels];
   const messages: Record<string, any[]> = {};
   const friendRequests = new Map<string, any>();
+  const categories: DedicatedChannelCategory[] = [];
+  const webhooks: DedicatedWebhook[] = [];
+  const scheduledMessages: DedicatedScheduledMessage[] = [];
 
   writeDedicatedStateSync(
     {
@@ -149,6 +200,9 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
       channels,
       messages,
       friendRequests: [],
+      categories,
+      webhooks,
+      scheduledMessages,
     },
     targetDir
   );
@@ -163,7 +217,7 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
     console.log('============================================================');
   }
 
-  return { accounts, channels, messages, friendRequests };
+  return { accounts, channels, messages, friendRequests, categories, webhooks, scheduledMessages };
 }
 
 export function scheduleDedicatedStateSave(
@@ -172,7 +226,12 @@ export function scheduleDedicatedStateSave(
   messages: Record<string, any[]>,
   friendRequests: Map<string, any>,
   delayMs = 250,
-  dataDir = DEFAULT_DATA_DIR
+  dataDir = DEFAULT_DATA_DIR,
+  extra?: {
+    categories?: DedicatedChannelCategory[];
+    webhooks?: DedicatedWebhook[];
+    scheduledMessages?: DedicatedScheduledMessage[];
+  }
 ) {
   pendingSnapshot = {
     stateFile: dataDir,
@@ -181,6 +240,9 @@ export function scheduleDedicatedStateSave(
       channels: [...channels],
       messages,
       friendRequests: Array.from(friendRequests.values()),
+      ...(extra?.categories ? { categories: [...extra.categories] } : {}),
+      ...(extra?.webhooks ? { webhooks: [...extra.webhooks] } : {}),
+      ...(extra?.scheduledMessages ? { scheduledMessages: [...extra.scheduledMessages] } : {}),
     },
   };
   if (saveTimer) clearTimeout(saveTimer);

@@ -21,6 +21,7 @@ export interface AuthContextValue {
     password: string
   ) => Promise<{ success: boolean; requires2fa?: boolean; pending2faToken?: string; error?: string }>;
   verify2faLogin: (pending2faToken: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithSessionToken: (token: string, mediaToken?: string) => Promise<{ success: boolean; error?: string }>;
   register: (data: {
     username: string;
     email: string;

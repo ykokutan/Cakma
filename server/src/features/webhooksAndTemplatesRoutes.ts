@@ -25,7 +25,7 @@ export interface ServerTemplateDefinition {
   categories: Array<{ key: string; name: string; position: number }>;
   channels: Array<{
     name: string;
-    type: 'text' | 'voice' | 'announcement' | 'forum';
+    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
     categoryKey?: string;
     topic?: string;
     isTempCreatorChannel?: boolean;
@@ -326,22 +326,24 @@ export function registerWebhooksAndTemplatesRoutes(app: Express, deps: WebhooksA
         const chName = deps.sanitizeText(String(ch.name || '')).trim().slice(0, 40);
         if (!chName) return;
         const chType: Channel['type'] =
-          ch.type === 'voice' || ch.type === 'announcement' || ch.type === 'forum' ? ch.type : 'text';
+          ch.type === 'voice' || ch.type === 'announcement' || ch.type === 'forum' || ch.type === 'stage' ? ch.type : 'text';
+        const isVoiceOrStage = chType === 'voice' || chType === 'stage';
         const mappedCat =
           (ch.categoryId && catIdMap.get(String(ch.categoryId))) ||
           (ch.categoryKey && catIdMap.get(String(ch.categoryKey))) ||
           null;
         channels.push({
           id: `ch-${chType}-${Date.now()}-${idx}`,
-          name: chType === 'voice' ? chName : chName.toLowerCase().replace(/\s+/g, '-'),
+          name: isVoiceOrStage ? chName : chName.toLowerCase().replace(/\s+/g, '-'),
           type: chType,
           serverId: newServerId,
           categoryId: mappedCat,
           position: typeof ch.position === 'number' ? ch.position : idx,
           topic: typeof ch.topic === 'string' ? deps.sanitizeText(ch.topic).trim().slice(0, 120) : undefined,
-          bitrateKbps: chType === 'voice' ? Math.min(320, Math.max(32, Number(ch.bitrateKbps) || 128)) : undefined,
-          userLimit: chType === 'voice' ? Math.min(99, Math.max(0, Number(ch.userLimit) || 0)) : undefined,
+          bitrateKbps: isVoiceOrStage ? Math.min(320, Math.max(32, Number(ch.bitrateKbps) || 128)) : undefined,
+          userLimit: isVoiceOrStage ? Math.min(99, Math.max(0, Number(ch.userLimit) || 0)) : undefined,
           isTempCreatorChannel: chType === 'voice' ? Boolean(ch.isTempCreatorChannel) : undefined,
+          ...(chType === 'stage' ? { stageState: { topic: '', speakerUsernames: [acc.username], raisedHands: [] } } : {}),
         });
       });
     }

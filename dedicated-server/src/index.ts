@@ -16,8 +16,11 @@ import {
   loadDedicatedState,
   scheduleDedicatedStateSave,
   flushDedicatedStateSync,
+  type DedicatedChannelCategory,
+  type DedicatedScheduledMessage,
   type DedicatedStoredAccount,
   type DedicatedStoredChannel,
+  type DedicatedWebhook,
 } from './storage.js';
 import { hashPasswordAsync, verifyPasswordAsync } from './authCrypto.js';
 
@@ -317,12 +320,17 @@ function getDedicatedBadges(role: string, username: string): DedicatedUserBadge[
 const defaultDedicatedChannels: DedicatedStoredChannel[] = (config.defaultChannels || [
   { name: 'genel-sohbet', type: 'text' },
   { name: 'Lobi Ses', type: 'voice' },
-]).map((c: any, idx: number) => ({
-  id: `ch-${c.type}-${idx + 1}`,
-  name: String(c.name || `kanal-${idx + 1}`),
-  type: c.type === 'voice' ? 'voice' : 'text',
-  serverId: 'dedicated-server-root',
-}));
+]).map((c: any, idx: number) => {
+  const chType: DedicatedStoredChannel['type'] =
+    c.type === 'voice' || c.type === 'announcement' || c.type === 'forum' || c.type === 'stage' ? c.type : 'text';
+  return {
+    id: `ch-${chType}-${idx + 1}`,
+    name: String(c.name || `kanal-${idx + 1}`),
+    type: chType,
+    serverId: 'dedicated-server-root',
+    position: idx,
+  };
+});
 
 const initialDedicatedState = await loadDedicatedState({
   defaultChannels: defaultDedicatedChannels,
@@ -333,6 +341,9 @@ const initialDedicatedState = await loadDedicatedState({
 const registeredAccounts = initialDedicatedState.accounts;
 const pendingDedicatedFriendRequests = initialDedicatedState.friendRequests;
 const serverChannels = initialDedicatedState.channels;
+const serverCategories: DedicatedChannelCategory[] = initialDedicatedState.categories;
+const dedicatedWebhooks: DedicatedWebhook[] = initialDedicatedState.webhooks;
+const dedicatedScheduledMessages: DedicatedScheduledMessage[] = initialDedicatedState.scheduledMessages;
 const messages: Record<string, any[]> = initialDedicatedState.messages;
 
 function persistDedicatedState() {
@@ -340,8 +351,25 @@ function persistDedicatedState() {
     registeredAccounts,
     serverChannels,
     messages,
-    pendingDedicatedFriendRequests
+    pendingDedicatedFriendRequests,
+    250,
+    undefined,
+    {
+      categories: serverCategories,
+      webhooks: dedicatedWebhooks,
+      scheduledMessages: dedicatedScheduledMessages,
+    }
   );
+}
+
+function buildDedicatedServerPayload() {
+  return {
+    id: 'dedicated-server-root',
+    name: config.serverName,
+    icon: '🛡️',
+    categories: serverCategories,
+    channels: serverChannels,
+  };
 }
 
 function getDedicatedFriendsData(username: string) {
@@ -489,14 +517,7 @@ io.on('connection', (socket: Socket) => {
   // Send Initial dedicated server info
   socket.emit('init_data', {
     currentUser: user,
-    servers: [
-      {
-        id: 'dedicated-server-root',
-        name: config.serverName,
-        icon: '🛡️',
-        channels: serverChannels
-      }
-    ],
+    servers: [buildDedicatedServerPayload()],
     onlineUsers: Array.from(connectedUsers.values()),
     messages
   });
@@ -538,14 +559,7 @@ io.on('connection', (socket: Socket) => {
     socket.emit('auth_response', { success: true, user });
     socket.emit('init_data', {
       currentUser: user,
-      servers: [
-        {
-          id: 'dedicated-server-root',
-          name: config.serverName,
-          icon: '🛡️',
-          channels: serverChannels
-        }
-      ],
+      servers: [buildDedicatedServerPayload()],
       onlineUsers: Array.from(connectedUsers.values()),
       messages
     });
@@ -586,14 +600,7 @@ io.on('connection', (socket: Socket) => {
     socket.emit('auth_response', { success: true, user });
     socket.emit('init_data', {
       currentUser: user,
-      servers: [
-        {
-          id: 'dedicated-server-root',
-          name: config.serverName,
-          icon: '🛡️',
-          channels: serverChannels
-        }
-      ],
+      servers: [buildDedicatedServerPayload()],
       onlineUsers: Array.from(connectedUsers.values()),
       messages
     });
@@ -601,10 +608,16 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_updated', user);
   });
 
-  // Messaging (Supports text & file attachments)
-  socket.on('send_message', ({ channelId, content, attachments }: any) => {
+  // Messaging (Supports text, announcement gating, forum/reply & file attachments)
+  socket.on('send_message', ({ channelId, content, attachments, forumPost, replyTo }: any) => {
     const textContent = (content || '').trim();
     if (!textContent && (!attachments || attachments.length === 0)) return;
+    const targetCh = serverChannels.find((c) => c.id === channelId);
+    if (targetCh?.type === 'announcement' && user.role !== 'admin') {
+      return socket.emit('server_action_error', {
+        message: 'Bu duyuru kanalında yalnızca yöneticiler paylaşım yapabilir.',
+      });
+    }
     const msg = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
       serverId: 'dedicated-server-root',
@@ -616,7 +629,9 @@ io.on('connection', (socket: Socket) => {
       },
       content: textContent,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      attachments: attachments || []
+      attachments: attachments || [],
+      ...(forumPost && typeof forumPost === 'object' ? { forumPost } : {}),
+      ...(replyTo && typeof replyTo === 'object' ? { replyTo } : {}),
     };
 
     if (!messages[channelId]) messages[channelId] = [];
@@ -624,6 +639,175 @@ io.on('connection', (socket: Socket) => {
     persistDedicatedState();
 
     io.emit('new_message', msg);
+  });
+
+  // Channel & Category Admin Management (Parity v1.0.0)
+  socket.on('create_channel', ({ name, type, categoryId, topic, isLocked, password }: any) => {
+    if (user.role !== 'admin') {
+      return socket.emit('server_action_error', { message: 'Kanal oluşturmak için yönetici yetkisi gerekir.' });
+    }
+    const cleanName = String(name || '').trim().slice(0, 48);
+    if (!cleanName) return;
+    const chType: DedicatedStoredChannel['type'] =
+      type === 'voice' || type === 'announcement' || type === 'forum' || type === 'stage' ? type : 'text';
+    const validCatId =
+      typeof categoryId === 'string' && serverCategories.some((c) => c.id === categoryId) ? categoryId : null;
+    const newCh: DedicatedStoredChannel = {
+      id: `ch-${chType}-${Date.now()}`,
+      name: chType === 'voice' || chType === 'stage' ? cleanName : cleanName.toLowerCase().replace(/\s+/g, '-').slice(0, 32),
+      type: chType,
+      serverId: 'dedicated-server-root',
+      categoryId: validCatId,
+      position: serverChannels.length,
+      ...(typeof topic === 'string' && topic.trim() ? { topic: topic.trim().slice(0, 100) } : {}),
+      ...(isLocked ? { isLocked: true } : {}),
+      ...(typeof password === 'string' && password.trim() ? { password: password.trim() } : {}),
+    };
+    serverChannels.push(newCh);
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('delete_channel', ({ channelId }: { channelId: string }) => {
+    if (user.role !== 'admin' || !channelId) return;
+    const idx = serverChannels.findIndex((c) => c.id === channelId);
+    if (idx === -1) return;
+    serverChannels.splice(idx, 1);
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('create_category', ({ name }: { name: string }) => {
+    if (user.role !== 'admin') return;
+    const cleanName = String(name || '').trim().slice(0, 40);
+    if (!cleanName || serverCategories.length >= 25) return;
+    serverCategories.push({
+      id: `cat-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: cleanName,
+      position: serverCategories.length,
+    });
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('rename_category', ({ categoryId, name }: { categoryId: string; name: string }) => {
+    if (user.role !== 'admin') return;
+    const cat = serverCategories.find((c) => c.id === categoryId);
+    const cleanName = String(name || '').trim().slice(0, 40);
+    if (!cat || !cleanName) return;
+    cat.name = cleanName;
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('delete_category', ({ categoryId }: { categoryId: string }) => {
+    if (user.role !== 'admin') return;
+    const idx = serverCategories.findIndex((c) => c.id === categoryId);
+    if (idx === -1) return;
+    serverCategories.splice(idx, 1);
+    serverChannels.forEach((ch) => {
+      if (ch.categoryId === categoryId) ch.categoryId = null;
+    });
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('reorder_channels', ({ updates, categoryOrder }: any) => {
+    if (user.role !== 'admin') return;
+    if (Array.isArray(updates)) {
+      const validCats = new Set(serverCategories.map((c) => c.id));
+      for (const upd of updates) {
+        if (!upd || typeof upd.channelId !== 'string') continue;
+        const ch = serverChannels.find((c) => c.id === upd.channelId);
+        if (!ch) continue;
+        if (upd.categoryId === null || upd.categoryId === '') ch.categoryId = null;
+        else if (typeof upd.categoryId === 'string' && validCats.has(upd.categoryId)) ch.categoryId = upd.categoryId;
+        if (typeof upd.position === 'number' && Number.isFinite(upd.position)) {
+          ch.position = Math.max(0, Math.floor(upd.position));
+        }
+      }
+      serverChannels.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    }
+    if (Array.isArray(categoryOrder)) {
+      const orderMap = new Map<string, number>();
+      categoryOrder.forEach((id: string, i: number) => orderMap.set(id, i));
+      serverCategories.forEach((cat) => {
+        if (orderMap.has(cat.id)) cat.position = orderMap.get(cat.id)!;
+      });
+      serverCategories.sort((a, b) => a.position - b.position);
+    }
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('dedicated_list_webhooks', () => {
+    if (user.role !== 'admin') return;
+    socket.emit('dedicated_webhooks_list', dedicatedWebhooks);
+  });
+
+  socket.on('dedicated_create_webhook', ({ channelId, name, avatar }: { channelId: string; name: string; avatar?: string }) => {
+    if (user.role !== 'admin') return;
+    const ch = serverChannels.find((c) => c.id === channelId && c.type !== 'voice' && c.type !== 'stage');
+    const cleanName = String(name || '').trim().slice(0, 48);
+    if (!ch || !cleanName || dedicatedWebhooks.length >= 25) return;
+    const wh: DedicatedWebhook = {
+      id: `dwh-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      channelId: ch.id,
+      name: cleanName,
+      avatar: avatar || '🔗',
+      token: crypto.randomBytes(20).toString('base64url'),
+      createdBy: user.username,
+      createdAt: new Date().toISOString(),
+    };
+    dedicatedWebhooks.push(wh);
+    persistDedicatedState();
+    socket.emit('dedicated_webhooks_list', dedicatedWebhooks);
+  });
+
+  socket.on('dedicated_delete_webhook', ({ webhookId }: { webhookId: string }) => {
+    if (user.role !== 'admin') return;
+    const idx = dedicatedWebhooks.findIndex((w) => w.id === webhookId);
+    if (idx === -1) return;
+    dedicatedWebhooks.splice(idx, 1);
+    persistDedicatedState();
+    socket.emit('dedicated_webhooks_list', dedicatedWebhooks);
+  });
+
+  socket.on('dedicated_list_scheduled_messages', () => {
+    if (user.role !== 'admin') return;
+    socket.emit('dedicated_scheduled_messages_list', dedicatedScheduledMessages.filter((m) => m.status !== 'cancelled'));
+  });
+
+  socket.on('dedicated_create_scheduled_message', ({ channelId, content, scheduledFor, repeatIntervalMinutes }: any) => {
+    if (user.role !== 'admin') return;
+    const ch = serverChannels.find((c) => c.id === channelId && c.type !== 'voice' && c.type !== 'stage');
+    const cleanContent = String(content || '').trim().slice(0, 2000);
+    const parsed = new Date(String(scheduledFor || ''));
+    if (!ch || !cleanContent || !Number.isFinite(parsed.getTime())) return;
+    const repeat = Number(repeatIntervalMinutes);
+    const entry: DedicatedScheduledMessage = {
+      id: `dsched-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      channelId: ch.id,
+      authorUsername: user.username,
+      authorAvatar: user.avatar || '⏰',
+      content: cleanContent,
+      scheduledFor: parsed.toISOString(),
+      ...(Number.isFinite(repeat) && repeat >= 5 ? { repeatIntervalMinutes: Math.min(43_200, Math.floor(repeat)) } : {}),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    dedicatedScheduledMessages.push(entry);
+    persistDedicatedState();
+    socket.emit('dedicated_scheduled_messages_list', dedicatedScheduledMessages.filter((m) => m.status !== 'cancelled'));
+  });
+
+  socket.on('dedicated_delete_scheduled_message', ({ id }: { id: string }) => {
+    if (user.role !== 'admin') return;
+    const item = dedicatedScheduledMessages.find((m) => m.id === id);
+    if (!item) return;
+    item.status = 'cancelled';
+    persistDedicatedState();
+    socket.emit('dedicated_scheduled_messages_list', dedicatedScheduledMessages.filter((m) => m.status !== 'cancelled'));
   });
 
   // Profile Update (Status message, bio, banner, avatar)
@@ -881,7 +1065,7 @@ io.on('connection', (socket: Socket) => {
     if (!targetUser) return;
 
     const targetChannel = serverChannels.find((c: any) => c.id === targetChannelId);
-    if (!targetChannel || targetChannel.type !== 'voice') return;
+    if (!targetChannel || (targetChannel.type !== 'voice' && targetChannel.type !== 'stage')) return;
 
     const isSelf = targetUserId === socket.id;
     const isAdmin = user.role === 'admin';
@@ -1040,14 +1224,7 @@ io.on('connection', (socket: Socket) => {
         status: Array.from(connectedUsers.values()).some(u => u.username === acc.username) ? 'online' : 'offline',
         createdAt: 'Bugün'
       })),
-      servers: [
-        {
-          id: 'dedicated-server-root',
-          name: config.serverName,
-          icon: '🛡️',
-          channels: serverChannels
-        }
-      ],
+      servers: [buildDedicatedServerPayload()],
       auditLogs: [
         {
           id: `log-${Date.now()}`,
@@ -1235,6 +1412,54 @@ function shutdownDueToLicenseRevocation(reason: string) {
   }, 400);
 }
 
+// Incoming Webhook Endpoint on Dedicated Server
+app.post('/api/webhooks/:webhookId/:token', (req, res) => {
+  const wh = dedicatedWebhooks.find((w) => w.id === req.params.webhookId);
+  const provided = String(req.params.token || '').trim();
+  if (!wh || !provided) {
+    return res.status(401).json({ success: false, error: 'Geçersiz webhook kimliği.' });
+  }
+  const providedDigest = crypto.createHash('sha256').update(provided).digest();
+  const expectedDigest = crypto.createHash('sha256').update(wh.token).digest();
+  if (!crypto.timingSafeEqual(providedDigest, expectedDigest)) {
+    return res.status(401).json({ success: false, error: 'Geçersiz webhook belirteci.' });
+  }
+
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+  let content = typeof body.content === 'string' ? body.content.trim() : '';
+  if (!content && Array.isArray(body.commits) && body.repository?.full_name) {
+    const repo = String(body.repository.full_name);
+    content = `📦 **[${repo}]** ${body.commits.length} yeni commit pushlandı.`;
+  } else if (!content && Array.isArray(body.embeds) && body.embeds[0]) {
+    const emb = body.embeds[0];
+    content = [emb.title ? `**${emb.title}**` : '', emb.description || ''].filter(Boolean).join('\n');
+  }
+  if (!content) {
+    return res.status(400).json({ success: false, error: 'Webhook içeriği boş.' });
+  }
+
+  const msg = {
+    id: `msg-wh-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+    serverId: 'dedicated-server-root',
+    channelId: wh.channelId,
+    author: {
+      id: `webhook-${wh.id}`,
+      username: typeof body.username === 'string' && body.username.trim() ? body.username.trim() : `${wh.name} [Webhook]`,
+      avatar: wh.avatar || '🔗',
+    },
+    content: content.slice(0, 2000),
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    reactions: {},
+  };
+
+  if (!messages[wh.channelId]) messages[wh.channelId] = [];
+  messages[wh.channelId].push(msg);
+  wh.lastUsedAt = new Date().toISOString();
+  persistDedicatedState();
+  io.emit('new_message', msg);
+  res.json({ success: true, messageId: msg.id });
+});
+
 // Remote revocation webhook endpoint (authenticated with the dedicated server licenseKey)
 app.post('/api/license/revoked', (req, res) => {
   const providedKey = String(req.body?.licenseKey || req.headers['x-license-key'] || '').trim();
@@ -1333,4 +1558,43 @@ server.listen(PORT, '0.0.0.0', () => {
   // Master sunucuya anlık kayıt ve 2.5 saniyede bir kalp atışı (heartbeat)
   sendMasterHeartbeat();
   setInterval(sendMasterHeartbeat, 2500);
+
+  // Dedicated zamanlanmış mesaj göndericisi (15s)
+  const schedTimer = setInterval(() => {
+    const nowMs = Date.now();
+    let dirty = false;
+    for (const item of dedicatedScheduledMessages) {
+      if (item.status !== 'pending') continue;
+      const dueMs = new Date(item.scheduledFor).getTime();
+      if (!Number.isFinite(dueMs) || dueMs > nowMs) continue;
+      const msg = {
+        id: `msg-dsched-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        serverId: 'dedicated-server-root',
+        channelId: item.channelId,
+        author: {
+          id: `scheduled-${item.id}`,
+          username: item.authorUsername,
+          avatar: item.authorAvatar || '⏰',
+        },
+        content: item.content,
+        timestamp: new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        reactions: {},
+      };
+      if (!messages[item.channelId]) messages[item.channelId] = [];
+      messages[item.channelId].push(msg);
+      io.emit('new_message', msg);
+      item.lastSentAt = new Date(nowMs).toISOString();
+      if (item.repeatIntervalMinutes && item.repeatIntervalMinutes >= 5) {
+        const step = item.repeatIntervalMinutes * 60_000;
+        let nextMs = dueMs + step;
+        while (nextMs <= nowMs) nextMs += step;
+        item.scheduledFor = new Date(nextMs).toISOString();
+      } else {
+        item.status = 'sent';
+      }
+      dirty = true;
+    }
+    if (dirty) persistDedicatedState();
+  }, 15_000);
+  schedTimer.unref?.();
 });

@@ -15,11 +15,24 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v0.9.0 - Latest */}
+        {/* v1.0.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v0.9.0 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v1.0.0 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Topluluk Yönetimi &amp; İzinler:</strong> Kanal bazlı <strong>İzin Geçersiz Kılmaları &amp; Gizli Kanallar</strong>, <strong>Sunucu Denetim Günlüğü (Audit Log)</strong>, <strong>Moderasyon Sicili (Warn/Timeout/Kick/Ban)</strong>, <strong>Karşılama (Onboarding) &amp; Seçilebilir Roller</strong>, <strong>Zamanlanmış Mesajlar</strong>, akıllı arama filtreleri (<code className="text-emerald-200">has:image</code>, <code className="text-emerald-200">is:pinned</code>, <code className="text-emerald-200">from:@</code>) ve <code className="text-emerald-200">.md/.json</code> sohbet dışa aktarımı eklendi.</li>
+            <li><strong className="text-white">Sahne, Çoklu Yayın &amp; Medya:</strong> Konuşmacı/dinleyici/söz isteme destekli <strong>Sahne Kanalları (Stage)</strong>, <strong>Çoklu Ekran Yayını Izgarası</strong>, canlı <strong>Ekran Üzeri Çizim</strong>, 60 sn <strong>Video Notları</strong>, ortak <strong>Sunucu Ses Tahtası &amp; Sticker Paketleri</strong> ve <strong>Canlı Ses Altyazıları</strong> eklendi.</li>
+            <li><strong className="text-white">Botlar, Otomasyon, Grup E2EE &amp; Passkey:</strong> <code className="text-emerald-200">/api/bot/v1/...</code> REST API &amp; özel <code className="text-emerald-200">/komutlar</code>, görsel <strong>AutoMod Otomasyon Kuralları</strong>, <strong>Grup DM AES-256-GCM E2EE (Sender Keys + Epoch Rotasyonu)</strong> ve sıfır bağımlılıklı <strong>WebAuthn Passkey (ES256 P-256)</strong> girişi eklendi.</li>
+            <li><strong className="text-white">Masaüstü (Tauri) &amp; Performans:</strong> <strong>Mouse4 / Mouse5 / Orta Tuş</strong> donanım PTT, ayarlanabilir PTT bırakma gecikmesi (<code className="text-emerald-200">0..1500 ms</code>), Linux XDG autostart, <strong>Oyun Algılandığında Otomatik DND</strong>, Dedicated Server <code className="text-emerald-200">v1.0.0</code> eşliği, güçlendirilmiş <code className="text-emerald-200">Ctrl+K</code> komut paleti ve %28 küçültülmüş ana JS paketi tamamlandı.</li>
+          </ul>
+        </div>
+
+        {/* v0.9.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v0.9.0 — Önceki Sürüm</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">Topluluk &amp; İletişim:</strong> Sürükle-bırak <strong>Kanal Kategorileri</strong>, yönetici korumalı <strong>Duyuru</strong> ve etiketli <strong>Forum</strong> kanalları, <strong>Grup DM + Grup Sesli Arama</strong> eklendi.</li>

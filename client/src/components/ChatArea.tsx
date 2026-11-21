@@ -12,6 +12,19 @@ import { OfflineQueueBanner } from './chat/OfflineQueueBanner';
 import { MessageSkeletonList } from './chat/MessageSkeletonList';
 import { extractMessageEpochMs, formatDateDividerLabel, getLocalDayKey } from '../utils/chatDateHelpers';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
+import {
+  decryptGroupDmMessage,
+  getCachedGroupSenderKey,
+  isGroupE2eeCiphertext,
+  parseGroupE2eeHeader,
+} from '../utils/groupE2ee';
+import {
+  downloadTextFile,
+  formatTranscriptJson,
+  formatTranscriptMarkdown,
+  matchesSmartSearch,
+  parseSmartSearchQuery,
+} from '../utils/chatExportAndFilters';
 import { t } from '../utils/i18n';
 import { uploadAttachmentFile, uploadDataUrlAttachment, uploadEncryptedAttachmentFile } from '../utils/uploadAttachment';
 import { resolveMediaUrl } from '../utils/authFetch';
@@ -21,6 +34,8 @@ import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
 import { computeVirtualWindow } from '../utils/virtualWindow';
 import { classifyConnectionQuality, formatCallDuration } from '../utils/remoteAssistHelpers';
 import { EncryptedAttachmentView } from './chat/EncryptedAttachmentView';
+import { SmartSearchFilterBar } from './chat/SmartSearchFilterBar';
+import { EmojiAndStickerPicker } from './chat/EmojiAndStickerPicker';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -38,6 +53,7 @@ const ServerEventsModal = lazy(() => import('./ServerEventsModal').then((m) => (
 const E2eeSafetyModal = lazy(() => import('./chat/E2eeSafetyModal').then((m) => ({ default: m.E2eeSafetyModal })));
 const ForumChannelView = lazy(() => import('./chat/ForumChannelView').then((m) => ({ default: m.ForumChannelView })));
 const ForwardMessageModal = lazy(() => import('./chat/ForwardMessageModal').then((m) => ({ default: m.ForwardMessageModal })));
+const VideoNoteRecorderModal = lazy(() => import('./chat/VideoNoteRecorderModal').then((m) => ({ default: m.VideoNoteRecorderModal })));
 import {
   DirectScreenShareOptions,
   Message,
@@ -109,6 +125,9 @@ import {
   Forward,
   UserPlus,
   LogOut,
+  RefreshCw,
+  KeyRound,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -203,6 +222,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     hasMoreMessages,
     isLoadingOlderMessages,
     requestOlderMessages,
+    groupE2eeReadyEpochs,
+    groupE2eeVersion,
+    enableOrRotateGroupE2ee,
+    requestGroupE2eeKeys,
+    executeCustomCommand,
+    addServerSticker,
+    deleteServerSticker,
   } = useSocket();
   const activeChannelTypers = useTypingUsers(activeChannel?.id);
   const directCallQuality = useDirectCallQuality();
@@ -224,6 +250,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [dmE2eeEnabled, setDmE2eeEnabled] = useState(false);
   const [isSafetyModalOpen, setIsSafetyModalOpen] = useState(false);
   const [decryptedDmMap, setDecryptedDmMap] = useState<Record<string, string>>({});
+  const [showSmartFilters, setShowSmartFilters] = useState(false);
+  const [isVideoNoteModalOpen, setIsVideoNoteModalOpen] = useState(false);
+  const exportMdRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    const handler = () => exportMdRef.current();
+    window.addEventListener('cakma-export-transcript-md', handler);
+    return () => window.removeEventListener('cakma-export-transcript-md', handler);
+  }, []);
   const dmScreenVideoRef = useRef<HTMLVideoElement | null>(null);
   const localCamVideoRef = useRef<HTMLVideoElement | null>(null);
   const partnerCamVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -293,6 +328,50 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       cancelled = true;
     };
   }, [activeServer?.id, activeDMUser, onlineUsers, currentUser?.username, messages, decryptedDmMap]);
+
+  useEffect(() => {
+    if (activeServer?.id !== 'direct-messages' || !activeGroupDm?.e2eeEnabled) return;
+    const epoch = activeGroupDm.e2eeEpoch || 1;
+    if (!getCachedGroupSenderKey(activeGroupDm.id, epoch)) {
+      requestGroupE2eeKeys(activeGroupDm.id);
+    }
+  }, [
+    activeServer?.id,
+    activeGroupDm?.id,
+    activeGroupDm?.e2eeEnabled,
+    activeGroupDm?.e2eeEpoch,
+    groupE2eeVersion,
+    requestGroupE2eeKeys,
+  ]);
+
+  useEffect(() => {
+    if (activeServer?.id !== 'direct-messages' || !activeGroupDm) return;
+    const encrypted = messages.filter((m) => isGroupE2eeCiphertext(m.content) && !decryptedDmMap[m.id]);
+    if (encrypted.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      encrypted.map(async (m) => {
+        const parsed = parseGroupE2eeHeader(m.content);
+        if (!parsed) return null;
+        const key = getCachedGroupSenderKey(activeGroupDm.id, parsed.epoch);
+        if (!key) return null;
+        const plain = await decryptGroupDmMessage(m.content, key);
+        return plain !== null ? ([m.id, plain] as const) : null;
+      })
+    ).then((results) => {
+      if (cancelled) return;
+      const updates: Record<string, string> = {};
+      for (const item of results) {
+        if (item) updates[item[0]] = item[1];
+      }
+      if (Object.keys(updates).length > 0) {
+        setDecryptedDmMap((prev) => ({ ...prev, ...updates }));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeServer?.id, activeGroupDm, messages, groupE2eeVersion, decryptedDmMap]);
 
   const dmCallPartnerStream = directCall?.partner?.id
     ? remoteScreenStreams.get(directCall.partner.id)
@@ -601,13 +680,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     return <InlineMarkdown text={content} />;
   };
 
+  const parsedSearchQuery = parseSmartSearchQuery(searchQuery);
   const filteredMessages = messages.filter((m) => {
     if (currentUser?.blockedUsers?.includes(m.author.username)) return false;
     if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    const contentMatch = m.content?.toLowerCase().includes(query);
-    const authorMatch = m.author.username.toLowerCase().includes(query);
-    return contentMatch || authorMatch;
+    return matchesSmartSearch(m, parsedSearchQuery, decryptedDmMap[m.id]);
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -733,10 +810,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     );
   }
 
-  // If this channel is a voice channel, render the iOS voice room area
-  if (activeChannel.type === 'voice') {
+  // If this channel is a voice or stage channel, render the iOS voice/stage room area
+  if (activeChannel.type === 'voice' || activeChannel.type === 'stage') {
     return (
-      <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/40 text-xs">Ses odası yükleniyor...</div>}>
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/40 text-xs">Oda yükleniyor...</div>}>
         <VoiceRoomArea onOpenMobileNav={onOpenMobileNav} />
       </Suspense>
     );
@@ -745,6 +822,38 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const isDirectSpace = activeServer.id === 'direct-messages';
   const isGroupDM = Boolean(isDirectSpace && activeGroupDm);
   const isDM = isDirectSpace && !isGroupDM;
+
+  const exportCurrentTranscript = (format: 'md' | 'json') => {
+    const channelLabel =
+      isGroupDM && activeGroupDm
+        ? activeGroupDm.name
+        : isDM && activeDMUser
+        ? `DM-${activeDMUser.username}`
+        : activeChannel.name;
+    const serverLabel = isDirectSpace ? 'Direkt Mesajlar' : activeServer?.name;
+    const text =
+      format === 'md'
+        ? formatTranscriptMarkdown({
+            channelName: channelLabel,
+            serverName: serverLabel,
+            messages,
+            decryptedMap: decryptedDmMap,
+          })
+        : formatTranscriptJson({
+            channelName: channelLabel,
+            serverName: serverLabel,
+            messages,
+            decryptedMap: decryptedDmMap,
+          });
+    const safeBase = channelLabel.replace(/[^a-zA-Z0-9_-]/g, '_') || 'sohbet';
+    downloadTextFile(
+      `${safeBase}-transcript.${format}`,
+      text,
+      format === 'md' ? 'text/markdown;charset=utf-8' : 'application/json;charset=utf-8'
+    );
+    appToast(`Sohbet geçmişi (.${format}) indirildi.`, 'success');
+  };
+  exportMdRef.current = () => exportCurrentTranscript('md');
 
   // Find partner for 1-on-1 DM
   const dmPartner = isDM
@@ -848,6 +957,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         sendMessage('⚡ **Slash Komutları:** `/zar`, `/yazitura`, `/anket`, `/hatirlat <süre> <mesaj>`, `/temizle [sayı]`, `/davet`, `/yardim`');
         setInputText('');
         return;
+      }
+      if (!isDirectSpace && activeServer && activeChannel && /^\/[a-zA-Z0-9_-]+/.test(cmd)) {
+        const builtin = ['/zar', '/yazitura', '/anket', '/hatirlat', '/temizle', '/davet', '/yardim'];
+        if (!builtin.includes(cmd)) {
+          executeCustomCommand(
+            activeServer.id,
+            activeChannel.id,
+            cmd.slice(1),
+            finalMessage.slice(cmd.length).trim()
+          );
+        }
       }
     }
 
@@ -1147,6 +1267,40 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             );
             return (
               <div className="flex items-center gap-1.5 mr-1">
+                {activeGroupDm.e2eeEnabled ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void enableOrRotateGroupE2ee(activeGroupDm.id)}
+                      className="px-2.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-[11px] font-bold flex items-center gap-1 transition"
+                      title={`${t(language, 'groupE2eeTitle')} — ${t(language, 'groupE2eeRotate')}`}
+                    >
+                      <Lock className="w-3 h-3" />
+                      <span className="hidden md:inline">E2EE · Ep.{activeGroupDm.e2eeEpoch || 1}</span>
+                      <RefreshCw className="w-3 h-3 opacity-75" />
+                    </button>
+                    {!groupE2eeReadyEpochs[activeGroupDm.id] && (
+                      <button
+                        type="button"
+                        onClick={() => requestGroupE2eeKeys(activeGroupDm.id)}
+                        className="px-2 py-1 rounded-full bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-[11px] font-bold flex items-center gap-1 transition"
+                        title="Grup E2EE Anahtarı İste"
+                      >
+                        <KeyRound className="w-3 h-3" />
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void enableOrRotateGroupE2ee(activeGroupDm.id)}
+                    className="px-2.5 py-1 rounded-full bg-white/5 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-400/40 text-white/70 hover:text-emerald-200 text-[11px] font-semibold flex items-center gap-1 transition"
+                    title={t(language, 'groupE2eeTitle')}
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span className="hidden lg:inline">E2EE Aç</span>
+                  </button>
+                )}
                 {inThisGroupVoice ? (
                   <button
                     type="button"
@@ -1492,33 +1646,81 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </button>
                   </>
                 )}
+                <div className="my-1 border-t border-white/10 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      exportCurrentTranscript('md');
+                      setIsToolsMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                  >
+                    <Download className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <span>{t(language, 'exportTranscript')} (.md)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      exportCurrentTranscript('json');
+                      setIsToolsMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                  >
+                    <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <span>{t(language, 'exportTranscript')} (.json)</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
 
-          <div className="relative hidden xl:block ml-1">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Hızlı filtrele..."
-              aria-label="Kanal mesajlarında hızlı filtrele"
-              className="bg-white/5 border border-white/10 text-xs text-white rounded-full px-3 py-1.5 pl-8 pr-7 w-36 focus:w-44 transition-all duration-200 outline-none placeholder:text-white/30"
-            />
-            <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 top-2" />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-2 text-white/40 hover:text-white"
-                aria-label="Aramayı temizle"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+          <div className="relative hidden xl:flex items-center gap-1 ml-1">
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onFocus={() => setShowSmartFilters(true)}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filtrele (has:image, is:pinned...)"
+                aria-label="Kanal mesajlarında hızlı filtrele"
+                className="bg-white/5 border border-white/10 text-xs text-white rounded-full px-3 py-1.5 pl-8 pr-7 w-40 focus:w-52 transition-all duration-200 outline-none placeholder:text-white/30"
+              />
+              <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 top-2" />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-2 text-white/40 hover:text-white"
+                  aria-label="Aramayı temizle"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSmartFilters((v) => !v)}
+              className={`w-7 h-7 rounded-full flex items-center justify-center transition ${
+                showSmartFilters || searchQuery.trim()
+                  ? 'bg-blue-500/20 text-blue-300'
+                  : 'hover:bg-white/10 text-white/50 hover:text-white'
+              }`}
+              title="Akıllı Arama Filtreleri"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </header>
+
+      {(showSmartFilters || searchQuery.trim().length > 0) && (
+        <SmartSearchFilterBar
+          searchQuery={searchQuery}
+          onChangeQuery={setSearchQuery}
+          matchCount={filteredMessages.length}
+          onCloseFilters={() => setShowSmartFilters(false)}
+        />
+      )}
 
       {/* Active 1-on-1 Call Stage inside DM Chat */}
       {isDM &&
@@ -2558,7 +2760,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         )}
                         {msg.content && (
                           <div className="select-text">
-                            {isE2eeCiphertext(msg.content) ? (
+                            {isE2eeCiphertext(msg.content) || isGroupE2eeCiphertext(msg.content) ? (
                               <div className="inline-flex items-start gap-1.5">
                                 <span
                                   className="mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-bold text-emerald-300 shrink-0"
@@ -2580,6 +2782,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             )}
                             {showLinkPreviews &&
                               !isE2eeCiphertext(msg.content) &&
+                              !isGroupE2eeCiphertext(msg.content) &&
                               (!msg.attachments || msg.attachments.length === 0) && (
                                 <LinkPreviewCard
                                   text={msg.content}
@@ -2656,6 +2859,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             return (
                               <div key={att.id} className="pt-1">
                                 <VoiceNotePlayer url={resolvedUrl} authorName={msg.author.username} />
+                              </div>
+                            );
+                          }
+
+                          if (att.type.startsWith('video/')) {
+                            const isVideoNote =
+                              att.name.toLowerCase().includes('video notu') ||
+                              att.name.toLowerCase().includes('video-not');
+                            return (
+                              <div key={att.id} className="pt-1 flex flex-col gap-1 max-w-sm">
+                                <video
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  src={resolvedUrl}
+                                  className={
+                                    isVideoNote
+                                      ? 'w-56 h-56 rounded-2xl object-cover border-2 border-rose-400/40 shadow-xl bg-black'
+                                      : 'max-h-72 max-w-full rounded-xl border border-white/10 shadow-lg bg-black'
+                                  }
+                                />
+                                <div className="flex items-center gap-2 text-[10px] text-white/50">
+                                  <span className="truncate">{att.name}</span>
+                                  <a
+                                    href={resolvedUrl}
+                                    download={att.name}
+                                    className="hover:text-white underline shrink-0"
+                                  >
+                                    İndir
+                                  </a>
+                                </div>
                               </div>
                             );
                           }
@@ -3077,67 +3311,31 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </div>
             )}
 
-            {/* Emoji Picker Popover */}
+            {/* Emoji & Sticker Picker Popover */}
             {isEmojiPickerOpen && (
-              <div className="absolute bottom-14 right-0 z-30 w-[calc(100vw-24px)] max-w-72 p-3 rounded-2xl ios-glass border border-white/15 shadow-2xl space-y-3 animate-slide-up">
-                <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
-                  <span className="text-xs font-bold text-white/90">Emoji Seç</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsEmojiPickerOpen(false)}
-                    className="text-white/40 hover:text-white transition"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-                  {activeServer?.customEmojis && activeServer.customEmojis.length > 0 && (
-                    <div>
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-blue-300/80 mb-1.5">
-                        Sunucu Emojileri
-                      </div>
-                      <div className="grid grid-cols-6 gap-1">
-                        {activeServer.customEmojis.map((ce) => (
-                          <button
-                            key={ce.id}
-                            type="button"
-                            onClick={() => {
-                              setPendingAttachments((prev) => [
-                                ...prev,
-                                { id: `emj-${Date.now()}`, name: `${ce.name}.png`, size: 1024, type: 'image/png', url: ce.url }
-                              ]);
-                              setIsEmojiPickerOpen(false);
-                            }}
-                            title={`:${ce.name}:`}
-                            className="h-8 rounded-lg hover:bg-white/15 flex items-center justify-center p-1 transition hover:scale-110"
-                          >
-                            <img src={ce.url} alt={ce.name} className="w-6 h-6 object-contain rounded" />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {EMOJI_GROUPS.map((group) => (
-                    <div key={group.label}>
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1.5">
-                        {group.label}
-                      </div>
-                      <div className="grid grid-cols-6 gap-1">
-                        {group.emojis.map((em) => (
-                          <button
-                            key={em}
-                            type="button"
-                            onClick={() => setInputText((prev) => prev + em)}
-                            className="h-8 rounded-lg hover:bg-white/15 flex items-center justify-center text-lg transition hover:scale-110"
-                          >
-                            {em}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <EmojiAndStickerPicker
+                activeServer={activeServer || null}
+                currentServerHost={currentServerHost}
+                canManageChannels={canManageChannels}
+                language={language}
+                emojiGroups={EMOJI_GROUPS}
+                onInsertEmoji={(em) => setInputText((prev) => prev + em)}
+                onSelectCustomEmoji={(att) => setPendingAttachments((prev) => [...prev, att])}
+                onSendSticker={(st) => {
+                  sendMessage('', [
+                    {
+                      id: `stk-${Date.now()}`,
+                      name: `${st.name}.png`,
+                      size: 1024,
+                      type: 'image/png',
+                      url: st.imageUrl,
+                    },
+                  ]);
+                }}
+                onAddSticker={addServerSticker}
+                onDeleteSticker={deleteServerSticker}
+                onClose={() => setIsEmojiPickerOpen(false)}
+              />
             )}
 
             {mentionCandidates.length > 0 && (
@@ -3363,15 +3561,26 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </button>
 
               {!inputText.trim() && pendingAttachments.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={startVoiceRecording}
-                  className="w-8 h-8 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white flex items-center justify-center transition shrink-0 shadow"
-                  title="Sesli Mesaj Kaydet"
-                  aria-label="Sesli Mesaj Kaydet"
-                >
-                  <Mic className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsVideoNoteModalOpen(true)}
+                    className="w-8 h-8 rounded-full bg-rose-500/15 hover:bg-rose-500 border border-rose-400/30 text-rose-300 hover:text-white flex items-center justify-center transition shadow"
+                    title={t(language, 'recordVideoNote')}
+                    aria-label={t(language, 'recordVideoNote')}
+                  >
+                    <Video className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startVoiceRecording}
+                    className="w-8 h-8 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white flex items-center justify-center transition shadow"
+                    title="Sesli Mesaj Kaydet"
+                    aria-label="Sesli Mesaj Kaydet"
+                  >
+                    <Mic className="w-4 h-4" />
+                  </button>
+                </div>
               ) : (
                 <button
                   type="submit"
@@ -3643,6 +3852,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             sourceChannelId={activeChannel.id}
             message={forwardingMessage}
             onClose={() => setForwardingMessage(null)}
+          />
+        )}
+        {isVideoNoteModalOpen && (
+          <VideoNoteRecorderModal
+            currentServerHost={currentServerHost}
+            onSendVideoNote={(att) => sendMessage('🎬 Video Notu', [att])}
+            onClose={() => setIsVideoNoteModalOpen(false)}
           />
         )}
       </Suspense>

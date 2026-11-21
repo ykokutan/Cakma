@@ -14,6 +14,9 @@ import { GoLiveModal } from './GoLiveModal';
 import { WhisperListsModal } from './WhisperListsModal';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
 import { AvatarView } from './AvatarView';
+import { StageChannelView } from './voice/StageChannelView';
+import { ScreenAnnotationOverlay } from './voice/ScreenAnnotationOverlay';
+import { LiveCaptionsOverlay } from './voice/LiveCaptionsOverlay';
 import {
   Mic,
   MicOff,
@@ -46,12 +49,16 @@ import {
   LayoutGrid,
   Focus,
   Droplet,
+  PenTool,
+  Trash2,
+  Captions,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
 const VideoStreamPlayer: React.FC<{
   stream: MediaStream;
   title: string;
+  channelId?: string;
   presenterId?: string;
   isLocalStream?: boolean;
   viewerNames?: string[];
@@ -63,9 +70,12 @@ const VideoStreamPlayer: React.FC<{
   getStreamStats?: (presenterUserId?: string) => Promise<ScreenShareStats | null>;
   laserPoints?: ScreenShareLaserPoint[];
   onSendLaser?: (x: number, y: number) => void;
+  annotateLabel?: string;
+  clearAnnotateLabel?: string;
 }> = ({
   stream,
   title,
+  channelId,
   presenterId,
   isLocalStream = false,
   viewerNames = [],
@@ -77,6 +87,8 @@ const VideoStreamPlayer: React.FC<{
   getStreamStats,
   laserPoints = [],
   onSendLaser,
+  annotateLabel = 'Ekran Üzerine Çiz',
+  clearAnnotateLabel = 'Çizimleri Temizle',
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -96,6 +108,9 @@ const VideoStreamPlayer: React.FC<{
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<ScreenShareStats | null>(null);
   const [laserMode, setLaserMode] = useState(false);
+  const [annotateMode, setAnnotateMode] = useState(false);
+  const [annotateColor, setAnnotateColor] = useState('#f43f5e');
+  const [clearAnnotSignal, setClearAnnotSignal] = useState(0);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -178,6 +193,17 @@ const VideoStreamPlayer: React.FC<{
         style={hdrBoost ? { filter: 'contrast(1.12) saturate(1.18) brightness(1.04)' } : undefined}
       />
 
+      {/* Ephemeral Screen Annotation Layer */}
+      {channelId && presenterId && (
+        <ScreenAnnotationOverlay
+          channelId={channelId}
+          targetSharerId={presenterId}
+          active={annotateMode}
+          color={annotateColor}
+          clearSignal={clearAnnotSignal}
+        />
+      )}
+
       {/* Ephemeral Laser Pointer Overlay */}
       {laserPoints.map((pt) => (
         <div
@@ -237,7 +263,11 @@ const VideoStreamPlayer: React.FC<{
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              setLaserMode((prev) => !prev);
+              setLaserMode((prev) => {
+                const next = !prev;
+                if (next) setAnnotateMode(false);
+                return next;
+              });
             }}
             className={`px-3 py-1.5 backdrop-blur-md rounded-full text-xs font-semibold transition border shadow-lg ${
               laserMode
@@ -248,6 +278,56 @@ const VideoStreamPlayer: React.FC<{
           >
             Lazer
           </button>
+        )}
+        {channelId && presenterId && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 bg-black/60 backdrop-blur-md rounded-full border border-white/10 p-0.5 shadow-lg"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setAnnotateMode((prev) => {
+                  const next = !prev;
+                  if (next) setLaserMode(false);
+                  return next;
+                });
+              }}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 transition ${
+                annotateMode
+                  ? 'bg-amber-500 text-black'
+                  : 'text-white/80 hover:text-white hover:bg-white/10'
+              }`}
+              title={annotateLabel}
+            >
+              <PenTool className="w-3 h-3" />
+              <span>{annotateLabel}</span>
+            </button>
+            {annotateMode && (
+              <>
+                {['#f43f5e', '#fbbf24', '#34d399', '#38bdf8'].map((hex) => (
+                  <button
+                    key={hex}
+                    type="button"
+                    onClick={() => setAnnotateColor(hex)}
+                    className={`w-4 h-4 rounded-full border transition ${
+                      annotateColor === hex ? 'border-white scale-110' : 'border-black/40 opacity-75'
+                    }`}
+                    style={{ backgroundColor: hex }}
+                    title="Çizim Rengi"
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setClearAnnotSignal((c) => c + 1)}
+                  className="p-1 rounded-full hover:bg-rose-500/30 text-rose-300 transition"
+                  title={clearAnnotateLabel}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </>
+            )}
+          </div>
         )}
         {getStreamStats && (
           <button
@@ -460,7 +540,15 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [isGoLiveOpen, setIsGoLiveOpen] = useState(false);
   const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
   const [isScreenFocused, setIsScreenFocused] = useState(false);
+  const [isMultiStreamGrid, setIsMultiStreamGrid] = useState(false);
+  const [liveCaptionsEnabled, setLiveCaptionsEnabled] = useState(false);
   const [selectedScreenPresenterId, setSelectedScreenPresenterId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = () => setLiveCaptionsEnabled((prev) => !prev);
+    window.addEventListener('cakma-toggle-live-captions', handler);
+    return () => window.removeEventListener('cakma-toggle-live-captions', handler);
+  }, []);
   const [viewerQualityByPresenter, setViewerQualityByPresenter] = useState<Record<string, ViewerStreamQuality>>({});
   const [liveFps, setLiveFps] = useState<5 | 30 | 60>(30);
   const [liveBitrateKbps, setLiveBitrateKbps] = useState<number>(10000);
@@ -474,7 +562,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     setUserContextMenu({ user, x: Math.max(8, x), y: Math.max(8, y) });
   };
 
-  if (!activeChannel || activeChannel.type !== 'voice') return null;
+  if (!activeChannel || (activeChannel.type !== 'voice' && activeChannel.type !== 'stage')) return null;
 
   const isConnected = connectedVoiceChannelId === activeChannel.id;
   const usersInRoom = onlineUsers.filter(
@@ -483,6 +571,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
 
   // Determine active screen share (local or remote) with multi-stream switching
   const remoteEntries = Array.from(remoteScreenStreams.entries());
+  const totalActiveStreams = (isScreenSharing && screenStream ? 1 : 0) + remoteEntries.length;
   const activeRemoteStreamEntry =
     (selectedScreenPresenterId && remoteEntries.find(([uid]) => uid === selectedScreenPresenterId)) ||
     remoteEntries[0];
@@ -614,6 +703,19 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
           </button>
 
           <button
+            onClick={() => setLiveCaptionsEnabled((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
+              liveCaptionsEnabled
+                ? 'bg-sky-500/20 border-sky-400/50 text-sky-300'
+                : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+            }`}
+            title={t(language, 'liveCaptions')}
+          >
+            <Captions className="w-3.5 h-3.5" />
+            <span>{t(language, 'liveCaptions')}</span>
+          </button>
+
+          <button
             onClick={() => setShowVoiceChat((prev) => !prev)}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
               showVoiceChat
@@ -738,7 +840,17 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
 
       {/* Main Grid or Screen Share Stage */}
       <div className="flex-1 min-h-0 p-3 sm:p-5 overflow-y-auto flex flex-col items-center justify-center">
-        {usersInRoom.length === 0 ? (
+        {activeChannel.type === 'stage' && activeServer && !hasAnyScreenShare ? (
+          <StageChannelView
+            server={activeServer}
+            channel={activeChannel}
+            usersInRoom={usersInRoom}
+            currentUser={currentUser}
+            isConnected={isConnected}
+            onJoin={() => joinVoiceChannel(activeChannel.id)}
+            onContextMenuUser={handleOpenUserContextMenu}
+          />
+        ) : usersInRoom.length === 0 ? (
           /* Empty Room State - iOS style */
           <div className="text-center max-w-sm space-y-5 p-8 rounded-3xl ios-glass-card border border-white/10 shadow-2xl">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-emerald-500/20 to-cyan-500/20 border border-white/10 flex items-center justify-center mx-auto text-4xl shadow-inner">
@@ -761,30 +873,45 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             )}
           </div>
         ) : hasAnyScreenShare ? (
-          /* Screen Sharing Stage (Theater Layout: Video on top, Sleek Participant Strip Below) */
+          /* Screen Sharing Stage (Theater or Multi-Stream Grid + Live Annotation) */
           <div className={`w-full h-full min-h-0 flex flex-col gap-3 ${isScreenFocused ? 'max-w-none' : 'max-w-6xl'}`}>
-            {remoteEntries.length > 1 && (
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
-                <span className="text-[11px] font-semibold text-white/50 shrink-0">Aktif Yayınlar:</span>
-                {remoteEntries.map(([uid]) => {
-                  const presenter = onlineUsers.find((u) => u.id === uid);
-                  const isActive = activeRemoteStreamEntry?.[0] === uid && !(isScreenSharing && screenStream);
-                  return (
-                    <button
-                      key={uid}
-                      type="button"
-                      onClick={() => setSelectedScreenPresenterId(uid)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition shrink-0 flex items-center gap-1.5 ${
-                        isActive
-                          ? 'bg-red-500/20 border-red-400/50 text-red-200'
-                          : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                      }`}
-                    >
-                      <Tv className="w-3 h-3 text-red-400" />
-                      <span>{presenter?.username || 'Yayıncı'}</span>
-                    </button>
-                  );
-                })}
+            {totalActiveStreams > 1 && (
+              <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-white/50 shrink-0">Aktif Yayınlar ({totalActiveStreams}):</span>
+                  {!isMultiStreamGrid &&
+                    remoteEntries.map(([uid]) => {
+                      const presenter = onlineUsers.find((u) => u.id === uid);
+                      const isActive = activeRemoteStreamEntry?.[0] === uid && !(isScreenSharing && screenStream);
+                      return (
+                        <button
+                          key={uid}
+                          type="button"
+                          onClick={() => setSelectedScreenPresenterId(uid)}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold border transition shrink-0 flex items-center gap-1.5 ${
+                            isActive
+                              ? 'bg-red-500/20 border-red-400/50 text-red-200'
+                              : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                          }`}
+                        >
+                          <Tv className="w-3 h-3 text-red-400" />
+                          <span>{presenter?.username || 'Yayıncı'}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMultiStreamGrid((p) => !p)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition shrink-0 flex items-center gap-1.5 ${
+                    isMultiStreamGrid
+                      ? 'bg-indigo-500/25 border-indigo-400/50 text-indigo-200'
+                      : 'bg-white/5 border-white/10 text-white/75 hover:bg-white/10'
+                  }`}
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>{isMultiStreamGrid ? 'Tek Yayın Odak' : 'Çoklu Yayın Izgarası'}</span>
+                </button>
               </div>
             )}
             {/* Presenter Live Stream Adjustments (FPS / Bitrate without restarting) */}
@@ -835,12 +962,62 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
               </div>
             )}
 
-            {/* Live Video Player */}
+            {/* Live Video Player (Single Focus or Multi-Stream Grid) */}
+            {isMultiStreamGrid && totalActiveStreams > 1 ? (
+              <div className="flex-1 w-full min-h-[260px] grid grid-cols-1 lg:grid-cols-2 gap-3 overflow-y-auto">
+                {isScreenSharing && screenStream && (
+                  <div className="min-h-[220px] rounded-2xl overflow-hidden border border-white/10 bg-black/50">
+                    <VideoStreamPlayer
+                      stream={screenStream}
+                      title={`${currentUser?.username || 'Sen'} (Ekran Yayını)`}
+                      channelId={activeChannel.id}
+                      presenterId={currentUser?.id}
+                      isLocalStream
+                      viewerNames={usersInRoom.filter((u) => u.id !== currentUser?.id).map((u) => u.username)}
+                      getStreamStats={getScreenShareStats}
+                      laserPoints={laserPoints.filter((pt) => pt.presenterId === currentUser?.id)}
+                      onSendLaser={currentUser?.id ? (x, y) => sendScreenShareLaser(currentUser.id, x, y) : undefined}
+                      annotateLabel={t(language, 'annotateScreen')}
+                      clearAnnotateLabel={t(language, 'clearAnnotations')}
+                    />
+                  </div>
+                )}
+                {remoteEntries.map(([uid, stream]) => {
+                  const presenter = onlineUsers.find((u) => u.id === uid);
+                  return (
+                    <div key={uid} className="min-h-[220px] rounded-2xl overflow-hidden border border-white/10 bg-black/50">
+                      <VideoStreamPlayer
+                        stream={stream}
+                        title={`${presenter?.username || 'Kullanıcı'} (Ekran Yayını)`}
+                        channelId={activeChannel.id}
+                        presenterId={uid}
+                        viewerNames={usersInRoom.filter((u) => u.id !== uid).map((u) => u.username)}
+                        canSelectQuality
+                        selectedQuality={
+                          viewerQualityByPresenter[uid] ||
+                          ((typeof window !== 'undefined' && (localStorage.getItem('cakma_default_viewer_quality') as ViewerStreamQuality)) || 'auto')
+                        }
+                        onSelectQuality={(q) => {
+                          setViewerQualityByPresenter((prev) => ({ ...prev, [uid]: q }));
+                          requestScreenShareQuality(uid, q);
+                        }}
+                        getStreamStats={getScreenShareStats}
+                        laserPoints={laserPoints.filter((pt) => pt.presenterId === uid)}
+                        onSendLaser={(x, y) => sendScreenShareLaser(uid, x, y)}
+                        annotateLabel={t(language, 'annotateScreen')}
+                        clearAnnotateLabel={t(language, 'clearAnnotations')}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <div className="flex-1 w-full min-h-[260px] rounded-2xl overflow-hidden border border-white/10 bg-black/50 shadow-[0_24px_60px_-15px_rgba(0,0,0,0.8)]">
               {isScreenSharing && screenStream ? (
                 <VideoStreamPlayer
                   stream={screenStream}
                   title={`${currentUser?.username || 'Sen'} (Ekran Yayını)`}
+                  channelId={activeChannel.id}
                   presenterId={currentUser?.id}
                   isLocalStream
                   viewerNames={usersInRoom.filter((u) => u.id !== currentUser?.id).map((u) => u.username)}
@@ -849,11 +1026,14 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                   getStreamStats={getScreenShareStats}
                   laserPoints={laserPoints.filter((pt) => pt.presenterId === currentUser?.id)}
                   onSendLaser={currentUser?.id ? (x, y) => sendScreenShareLaser(currentUser.id, x, y) : undefined}
+                  annotateLabel={t(language, 'annotateScreen')}
+                  clearAnnotateLabel={t(language, 'clearAnnotations')}
                 />
               ) : activeRemoteStreamEntry ? (
                 <VideoStreamPlayer
                   stream={activeRemoteStreamEntry[1]}
                   title={`${activePresenter?.username || 'Kullanıcı'} (Ekran Yayını)`}
+                  channelId={activeChannel.id}
                   presenterId={activeRemoteStreamEntry[0]}
                   viewerNames={usersInRoom.filter((u) => u.id !== activeRemoteStreamEntry[0]).map((u) => u.username)}
                   isFocused={isScreenFocused}
@@ -871,9 +1051,12 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                   getStreamStats={getScreenShareStats}
                   laserPoints={laserPoints.filter((pt) => pt.presenterId === activeRemoteStreamEntry[0])}
                   onSendLaser={(x, y) => sendScreenShareLaser(activeRemoteStreamEntry[0], x, y)}
+                  annotateLabel={t(language, 'annotateScreen')}
+                  clearAnnotateLabel={t(language, 'clearAnnotations')}
                 />
               ) : null}
             </div>
+            )}
 
             {/* Bottom Row of Voice Participants */}
             {!isScreenFocused && (
@@ -1497,6 +1680,11 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
           </form>
         </aside>
       )}
+      <LiveCaptionsOverlay
+        enabled={liveCaptionsEnabled}
+        channelName={activeChannel.name}
+        onClose={() => setLiveCaptionsEnabled(false)}
+      />
     </div>
   );
 };

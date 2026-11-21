@@ -630,7 +630,7 @@ export function registerCloudSyncAndEvents(
     if (typeof name !== 'string' || typeof dataUrl !== 'string' || !name.trim() || !dataUrl) {
       return res.status(400).json({ ok: false, error: 'Geçersiz dosya yükleme isteği.' });
     }
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    const match = dataUrl.match(/^data:([^;,]+)(?:;[^,]+)*;base64,(.+)$/);
     if (!match) {
       return res.status(400).json({ ok: false, error: 'Desteklenmeyen veri formatı (Base64 bekleniyor).' });
     }
@@ -679,7 +679,8 @@ export function registerCloudSyncAndEvents(
     }
     const rawExt = path.extname(name.trim()).toLowerCase().replace(/^\./, '');
     const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
-    const storedName = `upl-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
+    const isVideoUpload = mimeType.toLowerCase().startsWith('video/');
+    const storedName = `${isVideoUpload ? 'upl-vid' : 'upl'}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
     try {
       ensureDirs();
       await fs.promises.writeFile(path.join(UPLOADS_DIR, storedName), buffer);
@@ -746,7 +747,8 @@ export function registerCloudSyncAndEvents(
       return res.status(404).json({ error: 'Dosya bulunamadı' });
     }
     const ext = path.extname(safeName).toLowerCase();
-    const inlineMime = INLINE_MEDIA_MIME[ext];
+    const inlineMime =
+      ext === '.webm' && safeName.startsWith('upl-vid-') ? 'video/webm' : INLINE_MEDIA_MIME[ext];
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'private, max-age=3600');

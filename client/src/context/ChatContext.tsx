@@ -61,6 +61,11 @@ export interface ChatContextValue {
   sendThreadMessage: (channelId: string, parentMessageId: string, content: string) => void;
   chatLayout: ChatLayoutMode;
   setChatLayout: (mode: ChatLayoutMode) => void;
+  executeCustomCommand: (serverId: string, channelId: string, commandName: string, args: string) => void;
+  groupE2eeReadyEpochs: Record<string, number>;
+  groupE2eeVersion: number;
+  enableOrRotateGroupE2ee: (groupId: string) => Promise<boolean>;
+  requestGroupE2eeKeys: (groupId: string) => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | undefined>(undefined);

@@ -50,6 +50,10 @@ export interface ServerAdminHandlerDeps {
     userId?: string
   ) => { initialMessages: Record<string, Message[]>; hasMoreMessages: Record<string, boolean> };
   addAuditLog: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
+  onModerationEvent?: (
+    serverId: string,
+    entry: { targetUsername: string; moderatorUsername: string; action: 'kick' | 'timeout' | 'untimeout'; reason: string; durationMinutes?: number }
+  ) => void;
 }
 
 export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAdminHandlerDeps): void {
@@ -76,6 +80,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     cleanupTemporaryChannels,
     getInitialMessagesForServers,
     addAuditLog,
+    onModerationEvent,
   } = deps;
 
   socket.on('create_channel', (rawPayload: unknown) => {
@@ -87,7 +92,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     const check = validatePayload<{
       serverId: string;
       name: string;
-      type: 'text' | 'voice' | 'announcement' | 'forum';
+      type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
       categoryId?: string | null;
       isLocked?: boolean;
       password?: string;
@@ -98,7 +103,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     }>(rawPayload, {
       serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
       name: { type: 'string', required: true, minLen: 1, maxLen: 48 },
-      type: { type: 'string', required: true, enum: ['text', 'voice', 'announcement', 'forum'] },
+      type: { type: 'string', required: true, enum: ['text', 'voice', 'announcement', 'forum', 'stage'] },
       categoryId: { type: 'string', required: false, maxLen: 120 },
       isLocked: { type: 'boolean', required: false },
       password: { type: 'string', required: false, maxLen: 64 },
@@ -126,6 +131,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     const validCatId =
       categoryId && targetServer.categories?.some((c) => c.id === categoryId) ? categoryId : null;
 
+    const isVoiceOrStage = type === 'voice' || type === 'stage';
     const newChannel: Channel = {
       id: `ch-${type}-${Date.now()}`,
       name: cleanName,
@@ -136,9 +142,10 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       isLocked: !!isLocked,
       password: password?.trim() || undefined,
       topic: cleanTopic,
-      ...(type === 'voice' && bitrateKbps ? { bitrateKbps: Math.min(320, Math.max(32, Number(bitrateKbps))) } : {}),
-      ...(type === 'voice' && userLimit !== undefined ? { userLimit: Math.min(99, Math.max(0, Number(userLimit) || 0)) } : {}),
+      ...(isVoiceOrStage && bitrateKbps ? { bitrateKbps: Math.min(320, Math.max(32, Number(bitrateKbps))) } : {}),
+      ...(isVoiceOrStage && userLimit !== undefined ? { userLimit: Math.min(99, Math.max(0, Number(userLimit) || 0)) } : {}),
       ...(type === 'voice' && isTempCreatorChannel ? { isTempCreatorChannel: true } : {}),
+      ...(type === 'stage' ? { stageState: { topic: cleanTopic || '', speakerUsernames: [user.username], raisedHands: [] } } : {}),
     };
 
     targetServer.channels.push(newChannel);
@@ -178,10 +185,10 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       const ch = targetServer.channels.find((c) => c.id === channelId);
       if (!ch) return;
 
-      if (bitrateKbps !== undefined && ch.type === 'voice') {
+      if (bitrateKbps !== undefined && (ch.type === 'voice' || ch.type === 'stage')) {
         ch.bitrateKbps = Math.min(320, Math.max(32, Number(bitrateKbps) || 128));
       }
-      if (userLimit !== undefined && ch.type === 'voice') {
+      if (userLimit !== undefined && (ch.type === 'voice' || ch.type === 'stage')) {
         ch.userLimit = Math.min(99, Math.max(0, Number(userLimit) || 0));
       }
       if (topic !== undefined) {
@@ -640,6 +647,12 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     addAuditLog('UYE_ATILDI', `${kickedMember?.username || targetUserId} sunucudan atildi (Yetkili: ${user.username})`, 'warn');
     emitServerUpdatedToMembers(s);
     const kickedName = kickedMember?.username || activeTarget?.username;
+    onModerationEvent?.(s.id, {
+      targetUsername: kickedName || targetUserId,
+      moderatorUsername: user.username,
+      action: 'kick',
+      reason: 'Sunucu yetkilisi tarafından atıldı',
+    });
     if (kickedName) {
       emitToUserSockets(kickedName, 'server_removed', { serverId });
     }
@@ -668,6 +681,12 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       if (durationMinutes <= 0) {
         delete s.timeouts[targetLower];
         addAuditLog('ZAMAN_ASIMI_KALDIRILDI', `${targetUsername} kullanıcısının susturması kaldırıldı (Yetkili: ${user.username})`, 'info');
+        onModerationEvent?.(s.id, {
+          targetUsername,
+          moderatorUsername: user.username,
+          action: 'untimeout',
+          reason: 'Zaman aşımı kaldırıldı',
+        });
       } else {
         s.timeouts[targetLower] = Date.now() + durationMinutes * 60 * 1000;
         addAuditLog(
@@ -675,6 +694,13 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
           `${targetUsername} ${durationMinutes} dakika susturuldu (Yetkili: ${user.username})`,
           'warn'
         );
+        onModerationEvent?.(s.id, {
+          targetUsername,
+          moderatorUsername: user.username,
+          action: 'timeout',
+          reason: `${durationMinutes} dakika zaman aşımı uygulandı`,
+          durationMinutes,
+        });
       }
       saveServers(servers);
       emitServerUpdatedToMembers(s);

@@ -16,11 +16,30 @@ export default defineConfig({
     chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'icons': ['lucide-react'],
-          'realtime': ['socket.io-client'],
-          'tauri': ['@tauri-apps/api', '@tauri-apps/plugin-updater', '@tauri-apps/plugin-process'],
+        manualChunks(id) {
+          const norm = id.replace(/\\/g, '/');
+          if (!norm.includes('/node_modules/')) return undefined;
+          if (
+            norm.includes('/node_modules/react/') ||
+            norm.includes('/node_modules/react-dom/') ||
+            norm.includes('/node_modules/scheduler/')
+          ) {
+            return 'react-vendor';
+          }
+          if (norm.includes('/node_modules/lucide-react/')) {
+            return 'icons';
+          }
+          if (
+            norm.includes('/node_modules/socket.io-client/') ||
+            norm.includes('/node_modules/engine.io-client/') ||
+            norm.includes('/node_modules/@socket.io/')
+          ) {
+            return 'realtime';
+          }
+          if (norm.includes('/node_modules/@tauri-apps/')) {
+            return 'tauri';
+          }
+          return undefined;
         },
       },
     },

@@ -14,6 +14,7 @@ import {
 import { Message } from '../types';
 import { useChat } from '../context/ChatContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { matchesSmartSearch, parseSmartSearchQuery } from '../utils/chatExportAndFilters';
 
 interface AdvancedSearchModalProps {
   messages: Message[];
@@ -139,9 +140,23 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
       }
 
       if (scope === 'local' && q) {
-        const contentMatch = msg.content.toLowerCase().includes(q);
-        const attachmentMatch = msg.attachments && msg.attachments.some((a) => a.name.toLowerCase().includes(q));
-        if (!contentMatch && !attachmentMatch) return false;
+        const parsed = parseSmartSearchQuery(query);
+        const asMsg: Message = {
+          id: msg.id,
+          serverId: '',
+          channelId: activeChannel?.id || '',
+          author: { id: '', username: msg.author?.username || 'Kullanıcı', avatar: '' },
+          content: msg.content,
+          timestamp: msg.timestamp,
+          reactions: {},
+          isPinned: messages.find((orig) => orig.id === msg.id)?.isPinned,
+          attachments: msg.attachments as Message['attachments'],
+        };
+        if (!matchesSmartSearch(asMsg, parsed)) {
+          const attachmentMatch =
+            msg.attachments && msg.attachments.some((a) => a.name.toLowerCase().includes(q));
+          if (!attachmentMatch) return false;
+        }
       }
 
       return true;
@@ -237,7 +252,7 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
               placeholder={
                 scope === 'server'
                   ? 'Tüm sunucu geçmişinde aranacak kelimeyi yazın...'
-                  : 'Mesaj içeriği, kelime veya dosya adı ara...'
+                  : 'Kelime ara veya has:image has:file has:link is:pinned from:@kullanici...'
               }
               className="w-full pl-10 pr-9 py-2.5 bg-white/[0.05] border border-white/10 rounded-xl text-xs text-white placeholder:text-white/30 outline-none focus:border-blue-500 transition"
             />

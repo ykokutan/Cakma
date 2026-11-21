@@ -40,6 +40,7 @@ import {
 import { OtpCodeInput } from './auth/OtpCodeInput';
 import { TwoFactorForm } from './auth/TwoFactorForm';
 import { ForgotPasswordForm } from './auth/ForgotPasswordForm';
+import { isWebAuthnSupported, loginWithPasskey } from '../utils/webauthn';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -76,6 +77,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
     setUiTheme,
     connectionState,
     maintenanceStatus,
+    loginWithSessionToken,
   } = useAuth();
   const ping = useNetworkPing();
   const modalRef = useRef<HTMLDivElement>(null);
@@ -83,6 +85,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
 
   const [savedInitialUser] = useState<string>(() => readSavedUsername());
   const [isRegister, setIsRegister] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [username, setUsername] = useState(savedInitialUser);
   const [rememberUsername, setRememberUsername] = useState<boolean>(() => Boolean(savedInitialUser));
   const [email, setEmail] = useState('');
@@ -194,6 +197,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
     setResetConfirmPassword('');
     setResetCodeSent(false);
     setShowResetPassword(false);
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (passkeyLoading || loading || !isConnected) return;
+    setErrorMessage('');
+    setPasskeyLoading(true);
+    const res = await loginWithPasskey(currentServerHost, username.trim() || undefined);
+    setPasskeyLoading(false);
+    if (!res.success || !res.token) {
+      triggerError(res.error || 'Passkey ile giriş yapılamadı.');
+      return;
+    }
+    loginWithSessionToken(res.token, res.mediaToken);
   };
 
   const handleSendResetCode = async () => {
@@ -581,7 +597,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-extrabold tracking-tight text-white">Çakma</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 border border-rose-500/35 text-rose-300">
-                          v0.9.0
+                          v1.0.0
                         </span>
                       </div>
                       <p className="text-[11px] text-white/50">Ses &amp; Topluluk Platformu</p>
@@ -1234,6 +1250,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                         ? t(language, 'registerSubmit')
                         : t(language, 'loginSubmit')}
                     </button>
+
+                    {!isRegister && isWebAuthnSupported() && (
+                      <button
+                        type="button"
+                        data-testid="passkey-login-btn"
+                        onClick={() => void handlePasskeyLogin()}
+                        disabled={passkeyLoading || loading || !isConnected}
+                        className="w-full py-2.5 bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-white font-semibold text-xs rounded-xl transition flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        <KeyRound className="w-3.5 h-3.5 text-sky-400" />
+                        <span>
+                          {passkeyLoading ? 'Passkey doğrulanıyor...' : t(language, 'loginWithPasskey')}
+                        </span>
+                      </button>
+                    )}
 
                     <div className="text-center pt-1">
                       <button

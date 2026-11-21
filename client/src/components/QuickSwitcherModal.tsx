@@ -19,6 +19,10 @@ import {
   Megaphone,
   MessagesSquare,
   Users,
+  Radio,
+  Download,
+  Sparkles,
+  Captions,
 } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
@@ -48,6 +52,8 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
 }) => {
   const {
     servers,
+    activeServer,
+    activeChannel,
     onlineUsers,
     currentUser,
     connectedVoiceChannelId,
@@ -84,10 +90,12 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
     servers.forEach((srv) => {
       srv.channels.forEach((ch) => {
         if (ch.isTempCreatorChannel) return;
-        const isVoice = ch.type === 'voice';
+        const isVoice = ch.type === 'voice' || ch.type === 'stage';
         const typeLabel =
           ch.type === 'voice'
             ? 'Ses Odası'
+            : ch.type === 'stage'
+            ? 'Sahne / Tribün'
             : ch.type === 'announcement'
             ? 'Duyuru Kanalı'
             : ch.type === 'forum'
@@ -96,6 +104,8 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
         const icon =
           ch.type === 'voice' ? (
             <Volume2 className="w-4 h-4 text-emerald-400" />
+          ) : ch.type === 'stage' ? (
+            <Radio className="w-4 h-4 text-purple-400" />
           ) : ch.type === 'announcement' ? (
             <Megaphone className="w-4 h-4 text-amber-400" />
           ) : ch.type === 'forum' ? (
@@ -223,6 +233,30 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
       ...(connectedVoiceChannelId
         ? [
             {
+              id: 'act-soundboard',
+              category: 'action' as const,
+              title: 'Ses Tahtası (Soundboard)',
+              subtitle: 'Bağlı olduğunuz ses/sahne odasında ses çalın',
+              keywords: 'soundboard ses tahtasi efekt',
+              icon: <Sparkles className="w-4 h-4 text-pink-400" />,
+              onSelect: () => {
+                window.dispatchEvent(new CustomEvent('cakma-open-soundboard'));
+                onClose();
+              },
+            },
+            {
+              id: 'act-live-captions',
+              category: 'action' as const,
+              title: 'Canlı Altyazıları Aç / Kapat',
+              subtitle: 'Web Speech canlı ses transkripti',
+              keywords: 'altyazi live captions speech transcript',
+              icon: <Captions className="w-4 h-4 text-sky-400" />,
+              onSelect: () => {
+                window.dispatchEvent(new CustomEvent('cakma-toggle-live-captions'));
+                onClose();
+              },
+            },
+            {
               id: 'act-leave-voice',
               category: 'action' as const,
               title: 'Ses Odasından Ayrıl',
@@ -231,6 +265,40 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
               icon: <PhoneOff className="w-4 h-4 text-rose-400" />,
               onSelect: () => {
                 leaveVoiceChannel();
+                onClose();
+              },
+            },
+          ]
+        : []),
+      ...(activeChannel && activeChannel.type !== 'voice' && activeChannel.type !== 'stage'
+        ? [
+            {
+              id: 'act-export-md',
+              category: 'action' as const,
+              title: 'Sohbeti Dışa Aktar (.md)',
+              subtitle: `#${activeChannel.name} mesajlarını Markdown olarak indir`,
+              keywords: 'export disari aktar transcript markdown md',
+              icon: <Download className="w-4 h-4 text-cyan-400" />,
+              onSelect: () => {
+                window.dispatchEvent(new CustomEvent('cakma-export-transcript-md'));
+                onClose();
+              },
+            },
+          ]
+        : []),
+      ...(activeServer &&
+      activeServer.id !== 'direct-messages' &&
+      (activeServer.onboarding?.enabled || (activeServer.onboarding?.selfAssignableRoleIds?.length || 0) > 0)
+        ? [
+            {
+              id: 'act-open-onboarding',
+              category: 'action' as const,
+              title: 'Onboarding & Seçilebilir Roller',
+              subtitle: `${activeServer.name} sunucu kuralları ve ilgi alanı rolleri`,
+              keywords: 'onboarding self role kurallar roller',
+              icon: <Sparkles className="w-4 h-4 text-indigo-400" />,
+              onSelect: () => {
+                window.dispatchEvent(new CustomEvent('cakma-open-onboarding'));
                 onClose();
               },
             },
@@ -278,6 +346,8 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
     return items;
   }, [
     servers,
+    activeServer,
+    activeChannel,
     onlineUsers,
     currentUser?.id,
     connectedVoiceChannelId,

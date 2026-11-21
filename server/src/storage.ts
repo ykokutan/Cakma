@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData, GroupDmRoom, ServerWebhook } from './types.js';
+import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule } from './types.js';
 import { ShardedMessageStore, getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages } from './messageStore.js';
 import { SqliteStore } from './sqliteStore.js';
 
@@ -803,4 +803,45 @@ export function loadWebhooks(): ServerWebhook[] {
 
 export function saveWebhooks(webhooks: ServerWebhook[]): void {
   scheduleWriteJson('webhooks.json', webhooks);
+}
+
+// 16. v1.0.0 GOVERNANCE, SCHEDULED MESSAGES, BOTS & AUTOMATIONS
+export function loadServerAuditLogs(): Record<string, ServerAuditEntry[]> {
+  return safeReadJson<Record<string, ServerAuditEntry[]>>('server-audit.json', {});
+}
+
+export function saveServerAuditLogs(data: Record<string, ServerAuditEntry[]>): void {
+  scheduleWriteJson('server-audit.json', data);
+}
+
+export function loadServerModerationCases(): Record<string, ServerModerationCase[]> {
+  return safeReadJson<Record<string, ServerModerationCase[]>>('server-cases.json', {});
+}
+
+export function saveServerModerationCases(data: Record<string, ServerModerationCase[]>): void {
+  scheduleWriteJson('server-cases.json', data);
+}
+
+export function loadScheduledMessages(): ScheduledMessage[] {
+  return safeReadJson<ScheduledMessage[]>('scheduled-messages.json', []);
+}
+
+export function saveScheduledMessages(items: ScheduledMessage[]): void {
+  scheduleWriteJson('scheduled-messages.json', items);
+}
+
+export function loadServerBots(): ServerBot[] {
+  return safeReadJson<ServerBot[]>('server-bots.json', []);
+}
+
+export function saveServerBots(bots: ServerBot[]): void {
+  scheduleWriteJson('server-bots.json', bots);
+}
+
+export function loadServerAutomations(): ServerAutomationRule[] {
+  return safeReadJson<ServerAutomationRule[]>('server-automations.json', []);
+}
+
+export function saveServerAutomations(rules: ServerAutomationRule[]): void {
+  scheduleWriteJson('server-automations.json', rules);
 }

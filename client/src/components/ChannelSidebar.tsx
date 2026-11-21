@@ -53,15 +53,23 @@ import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
 import { AvatarView, isImageAvatar } from './AvatarView';
 
+import { Radio as StageRadioIcon, Shield as ChannelShieldIcon, Sparkles as OnboardingSparklesIcon } from 'lucide-react';
+
 const ServerEventsModal = lazy(() =>
   import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal }))
 );
 const CreateGroupDmModal = lazy(() =>
   import('./chat/CreateGroupDmModal').then((m) => ({ default: m.CreateGroupDmModal }))
 );
+const ChannelPermissionsModal = lazy(() =>
+  import('./server/ChannelPermissionsModal').then((m) => ({ default: m.ChannelPermissionsModal }))
+);
+const OnboardingModal = lazy(() =>
+  import('./server/OnboardingModal').then((m) => ({ default: m.OnboardingModal }))
+);
 
 interface ChannelSidebarProps {
-  onOpenCreateChannel: (type: 'text' | 'voice' | 'announcement' | 'forum', categoryId?: string | null) => void;
+  onOpenCreateChannel: (type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage', categoryId?: string | null) => void;
   onOpenSettings: () => void;
   onOpenServerSettings: () => void;
   onOpenAuth: () => void;
@@ -185,6 +193,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isEventsOpen, setIsEventsOpen] = useState(false);
+  const [permChannel, setPermChannel] = useState<Channel | null>(null);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const [customStatusInput, setCustomStatusInput] = useState(currentUser?.statusMessage || '');
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
@@ -192,6 +202,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   useEffect(() => {
     setCustomStatusInput(currentUser?.statusMessage || '');
   }, [currentUser?.statusMessage]);
+
+  useEffect(() => {
+    const handler = () => setIsOnboardingOpen(true);
+    window.addEventListener('cakma-open-onboarding', handler);
+    return () => window.removeEventListener('cakma-open-onboarding', handler);
+  }, []);
 
   useEffect(() => {
     if (!isStatusMenuOpen) return;
@@ -347,8 +363,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   const sortedChannels = [...activeServer.channels].sort(
     (a, b) => (a.position ?? 0) - (b.position ?? 0)
   );
-  const textChannels = sortedChannels.filter((c) => c.type !== 'voice');
-  const voiceChannels = sortedChannels.filter((c) => c.type === 'voice');
+  const textChannels = sortedChannels.filter((c) => c.type !== 'voice' && c.type !== 'stage');
+  const voiceChannels = sortedChannels.filter((c) => c.type === 'voice' || c.type === 'stage');
 
   const connectedVoiceChannel = activeServer.channels.find(
     (c) => c.id === connectedVoiceChannelId
@@ -425,6 +441,11 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           <span className={`truncate ${isMutedPref ? 'opacity-55' : ''}`}>
             {channel.name}
           </span>
+          {channel.isPrivate && (
+            <span title={t(language, 'privateChannel')}>
+              <Lock className="w-3 h-3 text-amber-300 shrink-0" />
+            </span>
+          )}
         </button>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -437,6 +458,19 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             <span title="Kaydedilmiş mesaj taslağı" className="text-amber-300/85 shrink-0">
               <Pencil className="w-3 h-3" />
             </span>
+          )}
+          {canManageChannels && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPermChannel(channel);
+              }}
+              className="hidden group-hover:flex w-5 h-5 rounded-md hover:bg-indigo-500/20 text-white/45 hover:text-indigo-300 items-center justify-center transition"
+              title={t(language, 'channelPermissions')}
+            >
+              <ChannelShieldIcon className="w-3 h-3" />
+            </button>
           )}
           {canManageChannels && siblings.length > 1 && (
             <div className="hidden group-hover:flex items-center gap-0.5 mr-0.5">
@@ -580,12 +614,25 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             {canManageChannels && !isTempCreator && (
               <GripVertical className="w-3 h-3 text-white/25 opacity-0 group-hover:opacity-100 shrink-0 -ml-1 cursor-grab" />
             )}
-            <Volume2
-              className={`w-4 h-4 shrink-0 ${
-                isConnectedHere ? 'text-emerald-400' : 'opacity-70'
-              }`}
-            />
+            {channel.type === 'stage' ? (
+              <StageRadioIcon
+                className={`w-4 h-4 shrink-0 ${
+                  isConnectedHere ? 'text-purple-300' : 'text-purple-400/80'
+                }`}
+              />
+            ) : (
+              <Volume2
+                className={`w-4 h-4 shrink-0 ${
+                  isConnectedHere ? 'text-emerald-400' : 'opacity-70'
+                }`}
+              />
+            )}
             <span className="truncate">{channel.name}</span>
+            {channel.isPrivate && (
+              <span title={t(language, 'privateChannel')}>
+                <Lock className="w-3 h-3 text-amber-300 shrink-0" />
+              </span>
+            )}
             {isLocked && (
               <span title="Korumalı Ses Odası">
                 <Lock className="w-3 h-3 text-amber-400 shrink-0" />
@@ -594,7 +641,20 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </button>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {canManageChannels && siblings.length > 1 && (
+            {canManageChannels && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPermChannel(channel);
+              }}
+              className="hidden group-hover:flex w-5 h-5 rounded-md hover:bg-indigo-500/20 text-white/45 hover:text-indigo-300 items-center justify-center transition"
+              title={t(language, 'channelPermissions')}
+            >
+              <ChannelShieldIcon className="w-3 h-3" />
+            </button>
+          )}
+          {canManageChannels && siblings.length > 1 && (
               <div className="hidden group-hover:flex items-center gap-0.5">
                 {idx > 0 && (
                   <button
@@ -1162,6 +1222,22 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </button>
         )}
 
+        {/* Server Onboarding & Self-Roles Button */}
+        {activeServer &&
+          (activeServer.onboarding?.enabled ||
+            (activeServer.onboarding?.selfAssignableRoleIds?.length || 0) > 0) && (
+            <button
+              type="button"
+              onClick={() => setIsOnboardingOpen(true)}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-400/25 text-xs font-semibold text-indigo-200 hover:text-white transition"
+            >
+              <span className="flex items-center gap-2">
+                <OnboardingSparklesIcon className="w-3.5 h-3.5 text-indigo-300" />
+                <span>{t(language, 'serverOnboarding')} &amp; {t(language, 'selfRoles')}</span>
+              </span>
+            </button>
+          )}
+
         {sortedCategories.length > 0 ? (
           <>
             {/* Uncategorized channels (always shown above categories if any exist) */}
@@ -1302,7 +1378,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                   {!isCatCollapsed && (
                     <div className="space-y-0.5">
                       {catChannels.map((channel, idx) =>
-                        channel.type === 'voice'
+                        channel.type === 'voice' || channel.type === 'stage'
                           ? renderVoiceRow(channel, catChannels, idx)
                           : renderNonVoiceRow(channel, catChannels, idx)
                       )}
@@ -1765,6 +1841,25 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         </Suspense>
       )}
 
+      {permChannel && activeServer && (
+        <Suspense fallback={null}>
+          <ChannelPermissionsModal
+            server={activeServer}
+            channel={permChannel}
+            onClose={() => setPermChannel(null)}
+          />
+        </Suspense>
+      )}
+
+      {isOnboardingOpen && activeServer && (
+        <Suspense fallback={null}>
+          <OnboardingModal
+            server={activeServer}
+            onClose={() => setIsOnboardingOpen(false)}
+          />
+        </Suspense>
+      )}
+
       <VoiceUserContextMenu
         menu={voiceUserMenu}
         onClose={() => setVoiceUserMenu(null)}
@@ -1782,7 +1877,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               <span className="truncate">{channelMenu.channel.name}</span>
             </div>
 
-            {channelMenu.channel.type === 'voice' ? (
+            {channelMenu.channel.type === 'voice' || channelMenu.channel.type === 'stage' ? (
               connectedVoiceChannelId === channelMenu.channel.id ? (
                 <button
                   type="button"
@@ -1871,7 +1966,18 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
             {canManageChannels && activeServer && (
               <>
-                {channelMenu.channel.type === 'voice' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPermChannel(channelMenu.channel);
+                    setChannelMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-indigo-500/15 text-indigo-300 transition text-left"
+                >
+                  <ChannelShieldIcon className="w-3.5 h-3.5" />
+                  <span>{t(language, 'channelPermissions')}</span>
+                </button>
+                {(channelMenu.channel.type === 'voice' || channelMenu.channel.type === 'stage') && (
                   <button
                     type="button"
                     onClick={() => {

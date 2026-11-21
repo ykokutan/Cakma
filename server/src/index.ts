@@ -20,7 +20,7 @@ import {
 } from './utils/mailDelivery.js';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook } from './types.js';
+import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule } from './types.js';
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
 import {
   buildPersistentDmChannelId,
@@ -30,6 +30,7 @@ import {
   findServerByChannelId,
   canUserAccessChannel,
 } from './utils/channelAccess.js';
+import { resolveChannelPermissions } from './utils/channelPermissions.js';
 import {
   getPersistentUserId,
   findServerMember,
@@ -81,6 +82,11 @@ import {
   loadPushSubscriptions, savePushSubscriptions,
   loadGroupDms, saveGroupDms,
   loadWebhooks, saveWebhooks,
+  loadServerAuditLogs, saveServerAuditLogs,
+  loadServerModerationCases, saveServerModerationCases,
+  loadScheduledMessages, saveScheduledMessages,
+  loadServerBots, saveServerBots,
+  loadServerAutomations, saveServerAutomations,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   searchMessagesSmart, initStorageEngine, getStorageEngineInfo, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
@@ -107,6 +113,28 @@ import { registerServerAdminSocketHandlers } from './features/serverAdminSocketH
 import { registerChatEnhancementsRoutes } from './features/chatEnhancementsRoutes.js';
 import { registerGroupDmSocketHandlers, getGroupDmsForUser } from './features/groupDmSocketHandlers.js';
 import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTemplatesRoutes.js';
+import { registerPasskeyRoutes } from './features/passkeyRoutes.js';
+import {
+  createServerGovernanceHelpers,
+  registerServerGovernanceRoutes,
+  registerServerGovernanceSocketHandlers,
+  type ServerGovernanceDeps,
+} from './features/serverGovernanceHandlers.js';
+import {
+  ScheduledMessagesService,
+  registerScheduledMessagesRoutes,
+} from './features/scheduledMessagesService.js';
+import {
+  ensureStageState,
+  handleUserLeaveStage,
+  registerStageAndMediaSocketHandlers,
+} from './features/stageAndMediaHandlers.js';
+import {
+  dispatchBotEvent,
+  evaluateAutomationRules,
+  registerBotCommandSocketHandlers,
+  registerBotsAndAutomationRoutes,
+} from './features/botsAndAutomationRoutes.js';
 import { MaintenanceService, registerMaintenanceRoutes } from './features/maintenanceService.js';
 import {
   hashPassword,
@@ -524,6 +552,18 @@ const servers: Server[] = loadServers(initialServers);
 const messages: Record<string, Message[]> = loadMessages(initialMessages);
 const groupDms: GroupDmRoom[] = loadGroupDms();
 const webhooks: ServerWebhook[] = loadWebhooks();
+const serverAuditLogs: Record<string, ServerAuditEntry[]> = loadServerAuditLogs();
+const serverCases: Record<string, ServerModerationCase[]> = loadServerModerationCases();
+const scheduledMessages: ScheduledMessage[] = loadScheduledMessages();
+const serverBots: ServerBot[] = loadServerBots();
+const serverAutomations: ServerAutomationRule[] = loadServerAutomations();
+const automationSpamTracker = new Map<string, number[]>();
+const governanceHelpers = createServerGovernanceHelpers({
+  serverAuditLogs,
+  serverCases,
+  saveServerAuditLogs,
+  saveServerModerationCases,
+});
 
 // Dedicated Servers Registry (Reported by standalone licensed servers)
 const dedicatedServersRegistry = new Map<string, DedicatedServerInfo>();
@@ -708,10 +748,18 @@ function emitToChannelAudience(
   }
 }
 
-function getInitialMessagesForServers(userServers: Server[], username: string, userId?: string) {
+function getInitialMessagesForServers(userServers: Server[], username: string, userId?: string, role?: string) {
   const { initialMessages, hasMoreMessages } = getInitialMessagesSlice(messages, 60);
   const allowedChannelIds = new Set<string>();
-  userServers.forEach((s) => s.channels.forEach((c) => allowedChannelIds.add(c.id)));
+  const effectiveRole = role ?? registeredAccounts.get(username.toLowerCase())?.role;
+  const userIdentity = { id: userId, username, role: effectiveRole };
+  userServers.forEach((s) =>
+    s.channels.forEach((c) => {
+      if (resolveChannelPermissions(userIdentity, s, c).view_channel) {
+        allowedChannelIds.add(c.id);
+      }
+    })
+  );
   const scopedMessages: Record<string, Message[]> = {};
   const scopedHasMore: Record<string, boolean> = {};
   for (const [chId, msgs] of Object.entries(initialMessages)) {
@@ -811,6 +859,35 @@ function addUserToServer(user: User, srv: Server): boolean {
       emitToServerMembers(srv, 'new_message', welcomeMsg);
     }
   }
+
+  // Trigger v1.0.0 member_join automation rules & bot webhooks
+  const autoRes = evaluateAutomationRules(
+    { type: 'member_join', server: srv, username: user.username, userRole: user.role },
+    serverAutomations,
+    automationSpamTracker
+  );
+  const addedMember = srv.members[srv.members.length - 1];
+  if (addedMember && autoRes.assignRoleIds.length > 0) {
+    for (const rId of autoRes.assignRoleIds) {
+      if (!addedMember.roleIds.includes(rId)) addedMember.roleIds.push(rId);
+    }
+  }
+  for (const notice of autoRes.notices) {
+    const noticeMsg: Message = {
+      id: `msg-auto-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      serverId: srv.id,
+      channelId: notice.channelId,
+      author: { id: 'system-automod', username: 'Otomasyon Botu ⚙️', avatar: '🤖' },
+      content: notice.content,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      reactions: {},
+    };
+    if (!messages[notice.channelId]) messages[notice.channelId] = [];
+    messages[notice.channelId].push(noticeMsg);
+    saveChannelMessageUpsert(notice.channelId, messages[notice.channelId], noticeMsg);
+    emitToChannelAudience(notice.channelId, srv.id, 'new_message', noticeMsg);
+  }
+  void dispatchBotEvent('member_join', srv.id, { userId: user.id, username: user.username }, serverBots);
 
   saveServers(servers);
   return true;
@@ -1603,6 +1680,83 @@ registerWebhooksAndTemplatesRoutes(app, {
   onMessageCreated: () => maintenanceService.incrementMessageCount(),
 });
 
+registerPasskeyRoutes(app, {
+  registeredAccounts,
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  generateSessionToken,
+  generateMediaToken,
+  saveAccounts,
+  addAuditLog,
+  checkLoginRateLimit,
+  recordFailedLogin,
+  clearLoginRateLimit,
+  getClientIp,
+});
+
+const socketEventLimiter = createSocketEventRateLimiter();
+
+const governanceDeps: ServerGovernanceDeps = {
+  activeUsers,
+  registeredAccounts,
+  servers,
+  serverAuditLogs,
+  serverCases,
+  socketEventLimiter,
+  sanitizeText,
+  isSafeImageMedia,
+  checkServerPermission: (u, s, p) => checkServerPermission(u, s, p),
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  saveServers,
+  saveServerAuditLogs,
+  saveServerModerationCases,
+  emitServerUpdatedToMembers,
+  emitServersUpdatedForAll,
+  emitToUserSockets,
+};
+registerServerGovernanceRoutes(app, governanceDeps, governanceHelpers);
+
+const scheduledMessagesService = new ScheduledMessagesService({
+  scheduledMessages,
+  servers,
+  messages,
+  saveScheduledMessages,
+  saveChannelMessageUpsert,
+  emitToChannelAudience,
+  onMessageCreated: () => maintenanceService.incrementMessageCount(),
+  recordServerAudit: governanceHelpers.recordServerAudit,
+});
+registerScheduledMessagesRoutes(app, {
+  scheduledMessages,
+  servers,
+  activeUsers,
+  sanitizeText,
+  checkServerPermission: (u, s, p) => checkServerPermission(u, s, p),
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  saveScheduledMessages,
+  recordServerAudit: governanceHelpers.recordServerAudit,
+});
+
+registerBotsAndAutomationRoutes(app, {
+  servers,
+  messages,
+  bots: serverBots,
+  automations: serverAutomations,
+  activeUsers,
+  sanitizeText,
+  checkServerPermission: (u, s, p) => checkServerPermission(u, s, p),
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  saveBots: saveServerBots,
+  saveAutomations: saveServerAutomations,
+  saveChannelMessageUpsert,
+  emitToChannelAudience,
+  onMessageCreated: () => maintenanceService.incrementMessageCount(),
+  recordServerAudit: governanceHelpers.recordServerAudit,
+});
+
 // Intelligent AI Assistant Response Generator
 function generateAIResponse(prompt: string, senderName: string): string {
   const p = prompt.toLowerCase();
@@ -1643,7 +1797,6 @@ const pendingDirectCalls = new Map<
 const pendingDirectCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const remoteAssistManager = new RemoteAssistManager();
 const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
-const socketEventLimiter = createSocketEventRateLimiter();
 const pendingVoicePullInvites = new Map<
   string,
   {
@@ -1696,6 +1849,7 @@ function performVoiceMove(
   if (oldChannelId) {
     targetSock.leave(oldChannelId);
     io.to(oldChannelId).emit('user_left_voice', { userId: targetUserId, channelId: oldChannelId });
+    handleUserLeaveStage(servers, targetUser.username, oldChannelId, emitToServerMembers, saveServers);
     cleanupTemporaryChannels();
   }
 
@@ -1726,6 +1880,15 @@ function performVoiceMove(
     user: targetUser,
     channelId: targetChannelId
   });
+
+  if (targetChannel.type === 'stage' && parentServer) {
+    const st = ensureStageState(targetChannel);
+    targetSock.emit('stage_state_updated', {
+      serverId: parentServer.id,
+      channelId: targetChannel.id,
+      stageState: st,
+    });
+  }
 
   const voicePayload = {
     userId: targetUserId,
@@ -1780,6 +1943,11 @@ setInterval(() => {
   }
   for (const [reqId, inv] of pendingVoicePullInvites.entries()) {
     if (now > inv.expiresAt) pendingVoicePullInvites.delete(reqId);
+  }
+  for (const [k, stamps] of automationSpamTracker.entries()) {
+    const fresh = stamps.filter((t) => now - t <= 120_000);
+    if (fresh.length === 0) automationSpamTracker.delete(k);
+    else automationSpamTracker.set(k, fresh);
   }
   socketEventLimiter.prune();
   pruneGifCache();
@@ -1871,7 +2039,12 @@ function emitUserUpdated(user: User) {
 
 function emitInitData(targetSocket: Socket, currentUser: User) {
   const userServers = filterServersForUser(servers, currentUser);
-  const { initialMessages, hasMoreMessages } = getInitialMessagesForServers(userServers, currentUser.username, currentUser.id);
+  const { initialMessages, hasMoreMessages } = getInitialMessagesForServers(
+    userServers,
+    currentUser.username,
+    currentUser.id,
+    currentUser.role
+  );
   const foundAcc = registeredAccounts.get(currentUser.username.toLowerCase());
   const userGroupDms = getGroupDmsForUser(groupDms, currentUser.username);
   targetSocket.emit('init_data', {
@@ -1970,6 +2143,106 @@ io.on('connection', (socket: Socket) => {
     emitToRelevantUsers,
     sendWebPushToUsername,
     addAuditLog,
+    onBeforeMessageBroadcast: ({ sender, server: targetSrv, channelId, content }) => {
+      if (!targetSrv) return;
+      const evalRes = evaluateAutomationRules(
+        {
+          type: 'message',
+          server: targetSrv,
+          username: sender.username,
+          userRole: sender.role,
+          channelId,
+          content,
+        },
+        serverAutomations,
+        automationSpamTracker
+      );
+      if (evalRes.matchedRules.length === 0) return;
+
+      if (evalRes.timeoutMinutes) {
+        if (!targetSrv.timeouts) targetSrv.timeouts = {};
+        targetSrv.timeouts[sender.username.toLowerCase()] = Date.now() + evalRes.timeoutMinutes * 60_000;
+        saveServers(servers);
+        emitServerUpdatedToMembers(targetSrv);
+        const modCase = governanceHelpers.recordModerationCase({
+          serverId: targetSrv.id,
+          targetUsername: sender.username,
+          moderatorUsername: 'Otomasyon ⚙️',
+          action: 'timeout',
+          reason: evalRes.blockReason || 'Otomatik zaman aşımı kuralı tetiklendi',
+          durationMinutes: evalRes.timeoutMinutes,
+        });
+        emitToUserSockets(sender.username, 'moderation_notice', {
+          serverId: targetSrv.id,
+          serverName: targetSrv.name,
+          caseItem: modCase,
+        });
+      } else if (evalRes.warnReason) {
+        const modCase = governanceHelpers.recordModerationCase({
+          serverId: targetSrv.id,
+          targetUsername: sender.username,
+          moderatorUsername: 'Otomasyon ⚙️',
+          action: 'warn',
+          reason: evalRes.warnReason,
+        });
+        emitToUserSockets(sender.username, 'moderation_notice', {
+          serverId: targetSrv.id,
+          serverName: targetSrv.name,
+          caseItem: modCase,
+        });
+      }
+
+      for (const notice of evalRes.notices) {
+        const noticeMsg: Message = {
+          id: `msg-auto-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+          serverId: targetSrv.id,
+          channelId: notice.channelId,
+          author: { id: 'system-automod', username: 'Otomasyon Botu ⚙️', avatar: '🤖' },
+          content: notice.content,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          reactions: {},
+        };
+        if (!messages[notice.channelId]) messages[notice.channelId] = [];
+        messages[notice.channelId].push(noticeMsg);
+        saveChannelMessageUpsert(notice.channelId, messages[notice.channelId], noticeMsg);
+        emitToChannelAudience(notice.channelId, targetSrv.id, 'new_message', noticeMsg);
+      }
+
+      governanceHelpers.recordServerAudit(
+        targetSrv.id,
+        'Otomasyon',
+        'OTOMASYON_TETIKLENDI',
+        `${sender.username} için ${evalRes.matchedRules.map((r) => r.name).join(', ')} kural(lar)ı tetiklendi.`,
+        sender.username
+      );
+
+      if (evalRes.blockMessage) {
+        return { blocked: true, reason: evalRes.blockReason };
+      }
+    },
+    onAfterMessageBroadcast: ({ sender, server: targetSrv, message }) => {
+      if (!targetSrv) return;
+      void dispatchBotEvent(
+        'message_create',
+        targetSrv.id,
+        {
+          messageId: message.id,
+          channelId: message.channelId,
+          authorUsername: sender.username,
+          content: message.content,
+        },
+        serverBots
+      );
+    },
+    onReactionAdded: ({ user: reactor, serverId, channelId, messageId, emoji }) => {
+      if (!serverId || serverId === 'direct-messages') return;
+      void dispatchBotEvent(
+        'reaction_add',
+        serverId,
+        { channelId, messageId, emoji, username: reactor.username },
+        serverBots
+      );
+    },
   });
   registerDirectCallSocketHandlers(socket, {
     io,
@@ -2019,6 +2292,23 @@ io.on('connection', (socket: Socket) => {
     cleanupTemporaryChannels,
     getInitialMessagesForServers,
     addAuditLog,
+    onModerationEvent: (serverId, entry) => {
+      governanceHelpers.recordModerationCase({
+        serverId,
+        targetUsername: entry.targetUsername,
+        moderatorUsername: entry.moderatorUsername,
+        action: entry.action,
+        reason: entry.reason,
+        durationMinutes: entry.durationMinutes,
+      });
+      governanceHelpers.recordServerAudit(
+        serverId,
+        entry.moderatorUsername,
+        `MOD_${entry.action.toUpperCase()}`,
+        `${entry.targetUsername}: ${entry.reason}`,
+        entry.targetUsername
+      );
+    },
   });
   registerGroupDmSocketHandlers(socket, {
     activeUsers,
@@ -2030,6 +2320,30 @@ io.on('connection', (socket: Socket) => {
     saveGroupDms,
     emitToUserSockets,
     addAuditLog,
+  });
+  registerServerGovernanceSocketHandlers(socket, governanceDeps, governanceHelpers);
+  registerStageAndMediaSocketHandlers(socket, {
+    activeUsers,
+    servers,
+    groupDms,
+    socketEventLimiter,
+    sanitizeText,
+    checkServerPermission,
+    saveServers,
+    saveGroupDms,
+    emitToServerMembers,
+    emitToUserSockets,
+  });
+  registerBotCommandSocketHandlers(socket, {
+    activeUsers,
+    servers,
+    messages,
+    bots: serverBots,
+    socketEventLimiter,
+    sanitizeText,
+    saveChannelMessageUpsert,
+    emitToChannelAudience,
+    onMessageCreated: () => maintenanceService.incrementMessageCount(),
   });
 
   socket.emit('system_maintenance_status', {
@@ -3495,6 +3809,14 @@ io.on('connection', (socket: Socket) => {
     let targetChannelId = channelId;
     const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === channelId);
     const parentServer = servers.find(s => s.channels.some(c => c.id === channelId));
+    if (targetChannel && parentServer) {
+      const chPerms = resolveChannelPermissions(user, parentServer, targetChannel);
+      if (!chPerms.view_channel || !chPerms.connect_voice) {
+        return socket.emit('server_action_error', {
+          message: 'Bu ses kanalına katılma yetkiniz yok.'
+        });
+      }
+    }
     const voiceTimeoutUntil = parentServer?.timeouts?.[user.username.toLowerCase()];
     if (voiceTimeoutUntil && voiceTimeoutUntil > Date.now()) {
       const minsLeft = Math.ceil((voiceTimeoutUntil - Date.now()) / 60000);
@@ -3556,6 +3878,7 @@ io.on('connection', (socket: Socket) => {
       const oldVoiceChannelId = user.currentVoiceChannelId;
       socket.leave(oldVoiceChannelId);
       io.to(oldVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: oldVoiceChannelId });
+      handleUserLeaveStage(servers, user.username, oldVoiceChannelId, emitToServerMembers, saveServers);
       cleanupTemporaryChannels();
       const oldSrv = findServerByChannelId(servers, oldVoiceChannelId);
       const newSrv = findServerByChannelId(servers, targetChannelId);
@@ -3589,6 +3912,29 @@ io.on('connection', (socket: Socket) => {
       user,
       channelId: targetChannelId
     });
+
+    if (targetChannel?.type === 'stage' && parentServer) {
+      const st = ensureStageState(targetChannel);
+      const isStageMod =
+        isServerOwner(user, parentServer) ||
+        checkServerPermission(user, parentServer, 'mute_members') ||
+        checkServerPermission(user, parentServer, 'manage_channels');
+      if (isStageMod && !st.speakerUsernames.some((u) => u.toLowerCase() === user.username.toLowerCase())) {
+        st.speakerUsernames.push(user.username);
+        saveServers(servers);
+        emitToServerMembers(parentServer, 'stage_state_updated', {
+          serverId: parentServer.id,
+          channelId: targetChannel.id,
+          stageState: st,
+        });
+      } else {
+        socket.emit('stage_state_updated', {
+          serverId: parentServer.id,
+          channelId: targetChannel.id,
+          stageState: st,
+        });
+      }
+    }
 
     // Hybrid SFU: Switch room to LiveKit SFU based on server sfuMode & system threshold
     const lkCfg = getEffectiveLiveKitConfig();
@@ -3655,7 +4001,8 @@ io.on('connection', (socket: Socket) => {
 
     const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === targetChannelId);
     const parentServer = servers.find(s => s.channels.some(c => c.id === targetChannelId));
-    if (!targetChannel || targetChannel.type !== 'voice') return;
+    if (!targetChannel || (targetChannel.type !== 'voice' && targetChannel.type !== 'stage')) return;
+    if (parentServer && !resolveChannelPermissions(targetUser, parentServer, targetChannel).connect_voice) return;
     if (targetChannel.isTempCreatorChannel || targetChannel.name.includes('➕ Oda Kur')) return;
 
     const isSelf = targetUserId === socket.id;
@@ -3762,6 +4109,7 @@ io.on('connection', (socket: Socket) => {
 
     addAuditLog('SESTEN_AYRILDI', `${user.username} ses kanalindan ayrildi`, 'voice');
     updateUserConnectionLocation(socket.id, undefined, '#genel-sohbet');
+    handleUserLeaveStage(servers, user.username, oldChannelId, emitToServerMembers, saveServers);
     cleanupTemporaryChannels();
   });
 
@@ -5096,7 +5444,7 @@ io.on('connection', (socket: Socket) => {
       addAuditLog('SUNUCU_KATILIM', `${user.username}, "${srv.name}" sunucusuna keşfet üzerinden katıldı.`, 'info');
     }
     emitServerUpdatedToMembers(srv);
-    const srvMsgs = getInitialMessagesForServers([srv], user.username);
+    const srvMsgs = getInitialMessagesForServers([srv], user.username, user.id, user.role);
     socket.emit('join_public_server_response', {
       success: true,
       server: srv,
@@ -5395,10 +5743,12 @@ io.on('connection', (socket: Socket) => {
     recordUserDisconnection(socket.id);
     if (user) {
       if (user.currentVoiceChannelId) {
-        socket.to(user.currentVoiceChannelId).emit('user_left_voice', {
+        const departedChannelId = user.currentVoiceChannelId;
+        socket.to(departedChannelId).emit('user_left_voice', {
           userId: socket.id,
-          channelId: user.currentVoiceChannelId
+          channelId: departedChannelId
         });
+        handleUserLeaveStage(servers, user.username, departedChannelId, emitToServerMembers, saveServers);
       }
       activeUsers.delete(socket.id);
       emitToRelevantUsers(user, 'user_disconnected', socket.id);
@@ -5556,12 +5906,14 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 [Backend Server] Discord/TeamSpeak Clone running on http://127.0.0.1:${PORT}`);
   void initStorageEngine(messages, { accounts: registeredAccounts, auditLogs }).then(() => {
     maintenanceService.startSchedulers();
+    scheduledMessagesService.start();
   });
 });
 
 function handleGracefulShutdown(signal: string) {
   console.log(`🛑 [Shutdown] ${signal} alındı, bekleyen veriler diske yazılıyor...`);
   try {
+    scheduledMessagesService.stop();
     maintenanceService.stopSchedulers();
     flushPendingWritesSync();
     closeStorageEngine();
