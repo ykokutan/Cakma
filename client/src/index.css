@@ -7,6 +7,16 @@
     --custom-bg: #111827;
     --custom-accent: #3b82f6;
     --custom-accent-rgb: 59, 130, 246;
+    --ui-accent: #2563eb;
+    --ui-accent-rgb: 37, 99, 235;
+    --ui-accent-soft: rgba(var(--ui-accent-rgb), 0.16);
+    --ui-accent-border: rgba(var(--ui-accent-rgb), 0.38);
+    --ui-focus-ring: rgba(var(--ui-accent-rgb), 0.78);
+    --ui-surface-panel: rgba(16, 18, 24, 0.86);
+    --ui-surface-card: rgba(255, 255, 255, 0.05);
+    --ui-border-subtle: rgba(255, 255, 255, 0.09);
+    --ui-text-primary: #f4f4f6;
+    --ui-text-muted: rgba(255, 255, 255, 0.58);
   }
 
   body {
@@ -23,6 +33,10 @@
     min-height: 100vh;
   }
 
+  html[data-theme="midnight-blue"] {
+    --ui-accent: #2563eb;
+    --ui-accent-rgb: 37, 99, 235;
+  }
   html[data-theme="midnight-blue"] body {
     background-image:
       radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -32,6 +46,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="cyber-emerald"] {
+    --ui-accent: #059669;
+    --ui-accent-rgb: 5, 150, 105;
+  }
   html[data-theme="cyber-emerald"] body {
     background-image:
       radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -41,6 +59,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="amber-gold"] {
+    --ui-accent: #d97706;
+    --ui-accent-rgb: 217, 119, 6;
+  }
   html[data-theme="amber-gold"] body {
     background-image:
       radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -50,6 +72,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="crimson-rose"] {
+    --ui-accent: #e11d48;
+    --ui-accent-rgb: 225, 29, 72;
+  }
   html[data-theme="crimson-rose"] body {
     background-image:
       radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -59,6 +85,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="royal-violet"] {
+    --ui-accent: #7c3aed;
+    --ui-accent-rgb: 124, 58, 237;
+  }
   html[data-theme="royal-violet"] body {
     background-image:
       radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -68,6 +98,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="nordic-frost"] {
+    --ui-accent: #0284c7;
+    --ui-accent-rgb: 2, 132, 199;
+  }
   html[data-theme="nordic-frost"] body {
     background-image:
       radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
@@ -77,12 +111,20 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="oled-black"] {
+    --ui-accent: #2563eb;
+    --ui-accent-rgb: 37, 99, 235;
+  }
   html[data-theme="oled-black"] body {
     background-color: #000000;
     background-image: none;
   }
 
   /* Light Themes */
+  html[data-theme="pearl-white"] {
+    --ui-accent: #2563eb;
+    --ui-accent-rgb: 37, 99, 235;
+  }
   html[data-theme="pearl-white"] body {
     color: #0f172a;
     background-color: #f3f6fb;
@@ -94,6 +136,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="sky-daylight"] {
+    --ui-accent: #0284c7;
+    --ui-accent-rgb: 2, 132, 199;
+  }
   html[data-theme="sky-daylight"] body {
     color: #0c1b2e;
     background-color: #eaf3fc;
@@ -105,6 +151,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="warm-sand"] {
+    --ui-accent: #b45309;
+    --ui-accent-rgb: 180, 83, 9;
+  }
   html[data-theme="warm-sand"] body {
     color: #292018;
     background-color: #f6f1e7;
@@ -116,6 +166,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="mint-breeze"] {
+    --ui-accent: #047857;
+    --ui-accent-rgb: 4, 120, 87;
+  }
   html[data-theme="mint-breeze"] body {
     color: #0d261f;
     background-color: #ecf7f2;
@@ -127,6 +181,10 @@
     background-size: 26px 26px, 100% 100%, 100% 100%, 100% 100%;
   }
 
+  html[data-theme="custom"] {
+    --ui-accent: var(--custom-accent);
+    --ui-accent-rgb: var(--custom-accent-rgb);
+  }
   html[data-theme="custom"] body {
     background-color: var(--custom-bg);
     background-image:
@@ -157,8 +215,8 @@
   html[data-glass="high"] .ios-glass,
   html[data-glass="high"] .ios-glass-sidebar,
   html[data-glass="high"] .ios-glass-panel {
-    backdrop-filter: blur(52px) saturate(240%) !important;
-    -webkit-backdrop-filter: blur(52px) saturate(240%) !important;
+    backdrop-filter: blur(32px) saturate(210%) !important;
+    -webkit-backdrop-filter: blur(32px) saturate(210%) !important;
   }
 
   html[data-corners="sharp"] .rounded-3xl {
@@ -177,35 +235,35 @@
   }
 }
 
-/* Ultra-Modern Obsidian Atelier Glassmorphism */
+/* Ultra-Modern Obsidian Atelier Glassmorphism (GPU-balanced blur radii) */
 .ios-glass {
-  background: linear-gradient(155deg, rgba(22, 24, 32, 0.82) 0%, rgba(13, 14, 20, 0.90) 100%);
-  backdrop-filter: blur(36px) saturate(210%);
-  -webkit-backdrop-filter: blur(36px) saturate(210%);
+  background: linear-gradient(155deg, rgba(22, 24, 32, 0.86) 0%, rgba(13, 14, 20, 0.92) 100%);
+  backdrop-filter: blur(22px) saturate(190%);
+  -webkit-backdrop-filter: blur(22px) saturate(190%);
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 22px 48px -12px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.13);
 }
 
 .ios-glass-sidebar {
-  background: linear-gradient(180deg, rgba(17, 19, 26, 0.84) 0%, rgba(10, 11, 16, 0.92) 100%);
-  backdrop-filter: blur(42px) saturate(220%);
-  -webkit-backdrop-filter: blur(42px) saturate(220%);
+  background: linear-gradient(180deg, rgba(17, 19, 26, 0.86) 0%, rgba(10, 11, 16, 0.93) 100%);
+  backdrop-filter: blur(24px) saturate(195%);
+  -webkit-backdrop-filter: blur(24px) saturate(195%);
   border-right: 1px solid rgba(255, 255, 255, 0.075);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 16px 40px -12px rgba(0, 0, 0, 0.55);
 }
 
 .ios-glass-panel {
-  background: linear-gradient(180deg, rgba(16, 18, 24, 0.82) 0%, rgba(11, 12, 17, 0.90) 100%);
-  backdrop-filter: blur(36px) saturate(200%);
-  -webkit-backdrop-filter: blur(36px) saturate(200%);
+  background: linear-gradient(180deg, rgba(16, 18, 24, 0.85) 0%, rgba(11, 12, 17, 0.92) 100%);
+  backdrop-filter: blur(20px) saturate(185%);
+  -webkit-backdrop-filter: blur(20px) saturate(185%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 20px 50px -15px rgba(0, 0, 0, 0.6);
 }
 
 .ios-glass-card {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(16px) saturate(175%);
+  -webkit-backdrop-filter: blur(16px) saturate(175%);
+  border: 1px solid rgba(255, 255, 255, 0.085);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.36), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -214,6 +272,56 @@
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+}
+
+/* Unified Theme-Aware Accent Helpers & Lightweight Chat Surfaces */
+.ui-accent-bg {
+  background-color: var(--ui-accent);
+  color: #ffffff !important;
+  border-color: rgba(var(--ui-accent-rgb), 0.55);
+  box-shadow: 0 6px 18px -4px rgba(var(--ui-accent-rgb), 0.42);
+}
+
+.ui-accent-bg:hover {
+  filter: brightness(1.08);
+}
+
+.ui-accent-soft {
+  background-color: rgba(var(--ui-accent-rgb), 0.16);
+  border-color: rgba(var(--ui-accent-rgb), 0.38);
+  color: #ffffff;
+}
+
+.ui-accent-bar {
+  background-color: var(--ui-accent);
+  box-shadow: 0 0 12px rgba(var(--ui-accent-rgb), 0.78);
+}
+
+.ui-focus-accent:focus-within {
+  border-color: rgba(var(--ui-accent-rgb), 0.68) !important;
+  box-shadow: 0 0 24px -4px rgba(var(--ui-accent-rgb), 0.26);
+}
+
+.chat-bubble-incoming {
+  background-color: rgba(255, 255, 255, 0.075);
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Real Cozy / Compact Message Density Controls */
+html[data-density="compact"] .chat-msg-row {
+  margin-top: 0.25rem !important;
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+
+html[data-density="compact"] .chat-msg-bubble {
+  padding: 0.375rem 0.75rem !important;
+}
+
+html[data-density="compact"] .chat-msg-avatar {
+  width: 1.65rem !important;
+  height: 1.65rem !important;
 }
 
 /* Custom Scrollbar - iOS Style */
@@ -484,9 +592,30 @@ html[data-theme-mode="light"] [class*="border-white/"] {
   border-color: rgba(15, 23, 42, 0.12) !important;
 }
 
+/* Light mode overrides for semantic helpers and focus ring */
+html[data-theme-mode="light"] {
+  --ui-surface-panel: rgba(255, 255, 255, 0.9);
+  --ui-surface-card: rgba(15, 23, 42, 0.05);
+  --ui-border-subtle: rgba(15, 23, 42, 0.12);
+  --ui-text-primary: #0f172a;
+  --ui-text-muted: rgba(15, 23, 42, 0.62);
+}
+
+html[data-theme-mode="light"] .ui-accent-soft {
+  color: #0f172a;
+  background-color: rgba(var(--ui-accent-rgb), 0.13);
+  border-color: rgba(var(--ui-accent-rgb), 0.38);
+}
+
+html[data-theme-mode="light"] .chat-bubble-incoming {
+  background-color: rgba(255, 255, 255, 0.88);
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.11);
+}
+
 /* Primary & muted text contrast (preserves white text on solid colored/gradient buttons) */
-html[data-theme-mode="light"] .text-white:not([class*="bg-emerald-5"]):not([class*="bg-emerald-6"]):not([class*="bg-blue-5"]):not([class*="bg-blue-6"]):not([class*="bg-indigo-5"]):not([class*="bg-indigo-6"]):not([class*="bg-red-5"]):not([class*="bg-red-6"]):not([class*="bg-rose-5"]):not([class*="bg-amber-5"]):not([class*="bg-purple-5"]):not([class*="bg-violet-5"]):not([class*="bg-sky-5"]):not([class*="bg-cyan-5"]):not([class*="bg-pink-5"]):not([class*="bg-teal-5"]):not([class*="bg-gradient-"]),
-html[data-theme-mode="light"] .hover\:text-white:hover:not([class*="bg-emerald-5"]):not([class*="bg-blue-5"]):not([class*="bg-indigo-5"]):not([class*="bg-red-5"]):not([class*="bg-gradient-"]),
+html[data-theme-mode="light"] .text-white:not(.ui-accent-bg):not([class*="bg-emerald-5"]):not([class*="bg-emerald-6"]):not([class*="bg-blue-5"]):not([class*="bg-blue-6"]):not([class*="bg-indigo-5"]):not([class*="bg-indigo-6"]):not([class*="bg-red-5"]):not([class*="bg-red-6"]):not([class*="bg-rose-5"]):not([class*="bg-amber-5"]):not([class*="bg-purple-5"]):not([class*="bg-violet-5"]):not([class*="bg-sky-5"]):not([class*="bg-cyan-5"]):not([class*="bg-pink-5"]):not([class*="bg-teal-5"]):not([class*="bg-gradient-"]),
+html[data-theme-mode="light"] .hover\:text-white:hover:not(.ui-accent-bg):not([class*="bg-emerald-5"]):not([class*="bg-blue-5"]):not([class*="bg-indigo-5"]):not([class*="bg-red-5"]):not([class*="bg-gradient-"]),
 html[data-theme-mode="light"] .text-slate-100,
 html[data-theme-mode="light"] .text-slate-200,
 html[data-theme-mode="light"] .text-zinc-100,
@@ -582,7 +711,7 @@ html[data-theme-mode="light"] .ring-\[\#0b0d14\] {
 /* Keyboard focus accessibility polish */
 button:focus-visible,
 [role="button"]:focus-visible {
-  outline: 2px solid rgba(239, 68, 68, 0.72);
+  outline: 2px solid var(--ui-focus-ring);
   outline-offset: 2px;
 }
 

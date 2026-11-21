@@ -22,6 +22,8 @@ import type { MessageContextResponse, MessageSearchHit, OfflineQueuedMessage } f
 import { useOfflineMessageQueue } from './hooks/useOfflineMessageQueue';
 import { AuthContext } from './AuthContext';
 import { ChatContext } from './ChatContext';
+import type { ChatLayoutMode } from './ChatContext';
+export type { ChatLayoutMode };
 import { VoiceContext } from './VoiceContext';
 import { SocialContext } from './SocialContext';
 
@@ -613,6 +615,8 @@ interface SocketContextType {
   setGlassIntensity: (v: 'low' | 'normal' | 'high') => void;
   messageDensity: 'cozy' | 'compact';
   setMessageDensity: (v: 'cozy' | 'compact') => void;
+  chatLayout: ChatLayoutMode;
+  setChatLayout: (v: ChatLayoutMode) => void;
   cornerStyle: 'rounded' | 'sharp';
   setCornerStyle: (v: 'rounded' | 'sharp') => void;
   bgPattern: 'grid' | 'dots' | 'clean';
@@ -986,6 +990,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [messageDensity, setMessageDensityState] = useState<'cozy' | 'compact'>(() =>
     readLiteralFromStorage('dc_message_density', ['cozy', 'compact'] as const, 'cozy')
   );
+  const [chatLayout, setChatLayoutState] = useState<ChatLayoutMode>(() =>
+    readLiteralFromStorage('dc_chat_layout', ['auto', 'classic', 'bubble'] as const, 'auto')
+  );
   const [cornerStyle, setCornerStyleState] = useState<'rounded' | 'sharp'>(() =>
     readLiteralFromStorage('dc_corner_style', ['rounded', 'sharp'] as const, 'rounded')
   );
@@ -1049,6 +1056,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [messageDensity]);
 
   useEffect(() => {
+    document.documentElement.setAttribute('data-chat-layout', chatLayout);
+    try { localStorage.setItem('dc_chat_layout', chatLayout); } catch {}
+  }, [chatLayout]);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-corners', cornerStyle);
     try { localStorage.setItem('dc_corner_style', cornerStyle); } catch {}
   }, [cornerStyle]);
@@ -1069,6 +1081,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const setGlassIntensity = (v: 'low' | 'normal' | 'high') => setGlassIntensityState(v);
   const setMessageDensity = (v: 'cozy' | 'compact') => setMessageDensityState(v);
+  const setChatLayout = useCallback((v: ChatLayoutMode) => setChatLayoutState(v), []);
   const setCornerStyle = (v: 'rounded' | 'sharp') => setCornerStyleState(v);
   const setBgPattern = (v: 'grid' | 'dots' | 'clean') => setBgPatternState(v);
   const setReduceMotion = (v: boolean) => setReduceMotionState(v);
@@ -7787,6 +7800,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setGlassIntensity,
       messageDensity,
       setMessageDensity,
+      chatLayout,
+      setChatLayout,
       cornerStyle,
       setCornerStyle,
       bgPattern,
@@ -7933,6 +7948,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       chatFontSize,
       glassIntensity,
       messageDensity,
+      chatLayout,
+      setChatLayout,
       cornerStyle,
       bgPattern,
       reduceMotion,
@@ -8061,6 +8078,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       addReaction,
       togglePinMessage,
       sendThreadMessage,
+      chatLayout,
+      setChatLayout,
     }),
     [
       servers,
@@ -8095,6 +8114,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       addReaction,
       togglePinMessage,
       sendThreadMessage,
+      chatLayout,
+      setChatLayout,
     ]
   );
 

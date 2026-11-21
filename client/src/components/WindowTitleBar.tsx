@@ -55,7 +55,7 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
     };
   }, [isTauri]);
 
-  if (!isTauri) return null;
+  if (!isTauri && !isAuthenticated) return null;
 
   const handleMinimize = async () => {
     try {
@@ -82,24 +82,29 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
 
   return (
     <div
-      data-tauri-drag-region
-      onDoubleClick={handleToggleMaximize}
-      className="h-8 w-full shrink-0 flex items-center justify-between px-3 bg-[#0c0e16]/85 backdrop-blur-2xl border-b border-white/[0.08] select-none z-50"
+      data-tauri-drag-region={isTauri ? true : undefined}
+      onDoubleClick={isTauri ? handleToggleMaximize : undefined}
+      className={`${
+        isTauri ? 'h-8 flex' : 'hidden md:flex h-9'
+      } w-full shrink-0 items-center justify-between px-3 bg-[#0c0e16]/85 backdrop-blur-xl border-b border-white/[0.08] select-none z-50`}
     >
       {/* Left: Brand & Active Location */}
-      <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
+      <div data-tauri-drag-region={isTauri ? true : undefined} className="flex items-center gap-2 min-w-0">
         <img
           src="/app-icon.png"
           alt="Çakma"
           className="w-4 h-4 rounded-[5px] shadow-sm shrink-0 pointer-events-none object-cover"
           draggable={false}
         />
-        <span data-tauri-drag-region className="text-[11px] font-bold text-white/90 tracking-tight pointer-events-none">
+        <span
+          data-tauri-drag-region={isTauri ? true : undefined}
+          className="text-[11px] font-bold text-white/90 tracking-tight pointer-events-none"
+        >
           Çakma
         </span>
         {isAuthenticated && activeServer && (
           <div
-            data-tauri-drag-region
+            data-tauri-drag-region={isTauri ? true : undefined}
             className="hidden sm:flex items-center gap-1.5 text-[10px] text-white/50 bg-white/[0.04] border border-white/[0.06] px-2 py-0.5 rounded-full truncate max-w-[260px] pointer-events-none"
           >
             <span className="truncate font-medium text-white/70">{activeServer.name}</span>
@@ -116,6 +121,7 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
             type="button"
             onClick={() => setIsDiagnosticsOpen(true)}
             title="Ses bağlantısı aktif — Ağ teşhisini aç"
+            aria-label="Ses bağlantısı aktif — Ağ teşhisini aç"
             className="hidden lg:inline-flex items-center gap-1.5 text-[10px] text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-400/25 px-2 py-0.5 rounded-full max-w-[190px] transition cursor-pointer"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
@@ -135,6 +141,7 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
           onClick={onOpenQuickSwitcher}
           className="hidden md:flex items-center gap-2 px-3 py-0.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-[10px] text-white/55 hover:text-white transition"
           title="Hızlı Geçiş (Ctrl+K)"
+          aria-label="Hızlı Geçiş (Ctrl+K)"
         >
           <Search className="w-2.5 h-2.5" />
           <span>Hızlı Geçiş</span>
@@ -142,13 +149,14 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         </button>
       )}
 
-      {/* Right: Ping, Shortcuts & Window Controls */}
+      {/* Right: Ping, Shortcuts & Tauri Window Controls */}
       <div className="flex items-center gap-1 shrink-0">
         {isAuthenticated && (
           <button
             type="button"
             onClick={() => setIsDiagnosticsOpen(true)}
             title="Ağ Teşhisi & Bağlantı İstatistikleri"
+            aria-label="Ağ Teşhisi ve Bağlantı İstatistikleri"
             className={`hidden sm:inline-flex items-center gap-1.5 mr-1 px-2 py-0.5 rounded-full border border-white/[0.08] bg-white/[0.04] hover:bg-white/[0.1] text-[10px] font-mono transition ${
               connectionState !== 'connected'
                 ? 'text-rose-300'
@@ -190,30 +198,37 @@ export const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
             <HelpCircle className="w-3.5 h-3.5" />
           </button>
         )}
-        <button
-          type="button"
-          onClick={handleMinimize}
-          className="w-7 h-6 rounded-lg hover:bg-white/10 text-white/60 hover:text-white flex items-center justify-center transition"
-          title="Küçült"
-        >
-          <Minus className="w-3.5 h-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={handleToggleMaximize}
-          className="w-7 h-6 rounded-lg hover:bg-white/10 text-white/60 hover:text-white flex items-center justify-center transition"
-          title={isMaximized ? 'Önceki Boyut' : 'Ekranı Kapla'}
-        >
-          {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
-        </button>
-        <button
-          type="button"
-          onClick={handleClose}
-          className="w-7 h-6 rounded-lg hover:bg-rose-500/80 text-white/60 hover:text-white flex items-center justify-center transition"
-          title="Kapat (Sistem Tepsisine Küçült)"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        {isTauri && (
+          <>
+            <button
+              type="button"
+              onClick={handleMinimize}
+              className="w-7 h-6 rounded-lg hover:bg-white/10 text-white/60 hover:text-white flex items-center justify-center transition"
+              title="Küçült"
+              aria-label="Pencereyi Küçült"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleMaximize}
+              className="w-7 h-6 rounded-lg hover:bg-white/10 text-white/60 hover:text-white flex items-center justify-center transition"
+              title={isMaximized ? 'Önceki Boyut' : 'Ekranı Kapla'}
+              aria-label={isMaximized ? 'Pencereyi Önceki Boyuta Getir' : 'Pencereyi Ekranı Kapla'}
+            >
+              {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="w-7 h-6 rounded-lg hover:bg-rose-500/80 text-white/60 hover:text-white flex items-center justify-center transition"
+              title="Kapat (Sistem Tepsisine Küçült)"
+              aria-label="Pencereyi Kapat"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

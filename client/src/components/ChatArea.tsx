@@ -9,6 +9,8 @@ import { AvatarView } from './AvatarView';
 import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
 import { LinkPreviewCard } from './chat/LinkPreviewCard';
 import { OfflineQueueBanner } from './chat/OfflineQueueBanner';
+import { MessageSkeletonList } from './chat/MessageSkeletonList';
+import { extractMessageEpochMs, formatDateDividerLabel, getLocalDayKey } from '../utils/chatDateHelpers';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
@@ -93,11 +95,18 @@ import {
   Wifi,
   Pause,
   Play,
+  PanelLeftClose,
+  PanelLeftOpen,
+  BellOff,
+  LayoutGrid,
+  MoreHorizontal,
 } from 'lucide-react';
 
 interface ChatAreaProps {
   onToggleMembers: () => void;
   showMembers: boolean;
+  isChannelsCollapsed?: boolean;
+  onToggleChannelsCollapsed?: () => void;
   onOpenProfile: (user: User) => void;
   onOpenMobileNav?: () => void;
   onOpenExplore?: () => void;
@@ -107,6 +116,8 @@ interface ChatAreaProps {
 export const ChatArea: React.FC<ChatAreaProps> = ({
   onToggleMembers,
   showMembers,
+  isChannelsCollapsed = false,
+  onToggleChannelsCollapsed,
   onOpenProfile,
   onOpenMobileNav,
   onOpenExplore,
@@ -158,6 +169,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     deleteMessage,
     sendTyping,
     chatFontSize,
+    messageDensity,
+    chatLayout,
+    notificationPrefs,
+    setTargetNotificationPref,
     clearChannelMessages,
     createServerInvite,
     showLinkPreviews,
@@ -338,7 +353,39 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<{ id: string; username: string; content: string } | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [pendingNewBelow, setPendingNewBelow] = useState(0);
+  const [isNotifMenuOpen, setIsNotifMenuOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
+  const [openActionMsgId, setOpenActionMsgId] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const showScrollBottomRef = useRef(false);
+  showScrollBottomRef.current = showScrollBottom;
+
+  useEffect(() => {
+    if (!isNotifMenuOpen && !isToolsMenuOpen && !openActionMsgId) return;
+    const handleClose = () => {
+      setIsNotifMenuOpen(false);
+      setIsToolsMenuOpen(false);
+      setOpenActionMsgId(null);
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [isNotifMenuOpen, isToolsMenuOpen, openActionMsgId]);
+
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [inputText]);
 
   const EMOJI_GROUPS = [
     { label: 'Popüler', emojis: ['😊', '😂', '❤️', '🔥', '👍', '🎉', '🙌', '😎', '🤔', '👀', '💀', '💯'] },
@@ -358,7 +405,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     const el = scrollContainerRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollBottom(distFromBottom > 220);
+    const awayFromBottom = distFromBottom > 220;
+    setShowScrollBottom(awayFromBottom);
+    if (distFromBottom <= 80) {
+      setPendingNewBelow(0);
+    }
     setScrollMetrics({ top: el.scrollTop, height: el.clientHeight || 600 });
   };
 
@@ -580,9 +631,32 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [slowmodeRemaining]);
 
+  const prevMsgCountRef = useRef(messages.length);
+  const prevScrollChannelIdRef = useRef<string | undefined>(activeChannel?.id);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (activeChannel?.id !== prevScrollChannelIdRef.current) {
+      prevScrollChannelIdRef.current = activeChannel?.id;
+      prevMsgCountRef.current = messages.length;
+      setPendingNewBelow(0);
+      setShowScrollBottom(false);
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      return;
+    }
+
+    if (messages.length > prevMsgCountRef.current) {
+      const added = messages.length - prevMsgCountRef.current;
+      const newest = messages[messages.length - 1];
+      const isMine = Boolean(currentUser?.id && newest?.author?.id === currentUser.id);
+      if (!showScrollBottomRef.current || isMine) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        setPendingNewBelow(0);
+      } else {
+        setPendingNewBelow((prev) => prev + added);
+      }
+    }
+    prevMsgCountRef.current = messages.length;
+  }, [messages, activeChannel?.id, currentUser?.id]);
 
   if (activeServer?.id === 'direct-messages' && !activeDMUser) {
     return (
@@ -660,8 +734,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     return userRoles.length > 0 ? userRoles[0].color : '#94a3b8';
   };
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitCurrentMessage = async () => {
     if (slowmodeRemaining > 0) return;
     if (!inputText.trim() && pendingAttachments.length === 0) return;
     const finalMessage = inputText.trim();
@@ -875,25 +948,39 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* iOS Translucent Header */}
-      <header className="h-14 px-3 sm:px-6 border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 bg-[#101218]/75 backdrop-blur-2xl shadow-sm select-none">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+      <header className="h-14 px-3 sm:px-5 border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 bg-[#101218]/75 backdrop-blur-xl shadow-sm select-none">
+        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
           {onOpenMobileNav && (
             <button
               type="button"
               onClick={onOpenMobileNav}
               className="md:hidden w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
               title="Menüyü Aç"
+              aria-label="Menüyü Aç"
             >
               <Menu className="w-4 h-4" />
             </button>
           )}
-          {isDM ? (
-            <div
-              onClick={() => dmPartner && onOpenProfile(dmPartner)}
-              className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition"
-              title="Kullanıcı Profilini Görüntüle"
+          {onToggleChannelsCollapsed && (
+            <button
+              type="button"
+              onClick={onToggleChannelsCollapsed}
+              className="hidden md:flex w-8 h-8 rounded-full hover:bg-white/10 text-white/60 hover:text-white items-center justify-center transition shrink-0"
+              title={isChannelsCollapsed ? t(language, 'showChannels') : t(language, 'hideChannels')}
+              aria-label={isChannelsCollapsed ? t(language, 'showChannels') : t(language, 'hideChannels')}
             >
-              <div className="relative">
+              {isChannelsCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+            </button>
+          )}
+          {isDM ? (
+            <button
+              type="button"
+              onClick={() => dmPartner && onOpenProfile(dmPartner)}
+              className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition text-left min-w-0"
+              title="Kullanıcı Profilini Görüntüle"
+              aria-label={`${dmPartner?.username || 'Kullanıcı'} profilini görüntüle`}
+            >
+              <div className="relative shrink-0">
                 <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm overflow-hidden">
                   <AvatarView avatar={dmPartner?.avatar} alt={dmPartner?.username} fallback="👤" className="w-full h-full object-cover" />
                 </div>
@@ -903,12 +990,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   }`}
                 />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <h3 className="font-semibold text-white text-sm tracking-tight">
+                  <h3 className="font-semibold text-white text-sm tracking-tight truncate">
                     {dmPartner?.username || activeChannel.name}
                   </h3>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono shrink-0">
                     DM
                   </span>
                 </div>
@@ -916,7 +1003,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   {dmPartner?.statusMessage || 'Direkt Mesajlaşma'}
                 </span>
               </div>
-            </div>
+            </button>
           ) : (
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/60 shrink-0">
@@ -932,25 +1019,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
         </div>
 
-        {/* Header Action Icons */}
-        <div className="flex items-center gap-1 sm:gap-2.5 text-white/60 shrink-0">
+        {/* Header Action Icons (Primary + Clean Tools Overflow) */}
+        <div className="flex items-center gap-1 sm:gap-1.5 text-white/60 shrink-0">
           {isDM && dmPartner && (
             directCall &&
             (directCall.partner.id === dmPartner.id ||
               directCall.partner.username.toLowerCase() === dmPartner.username.toLowerCase()) ? (
               <button
+                type="button"
                 onClick={endDirectCall}
                 className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-red-500/20 hover:bg-red-500 border border-red-400/40 text-red-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
                 title="1-e-1 Görüşmeyi Sonlandır"
+                aria-label="Görüşmeyi Sonlandır"
               >
                 <PhoneOff className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Görüşmede</span>
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => startDirectCall(dmPartner)}
                 className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 hover:border-emerald-400 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
                 title="1-e-1 Sesli Arama Başlat"
+                aria-label="Sesli Arama Başlat"
               >
                 <Phone className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Sesli Ara</span>
@@ -958,99 +1049,216 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             )
           )}
 
-          <button
-            className="hidden sm:flex w-8 h-8 rounded-full hover:bg-white/10 items-center justify-center transition"
-            title="Bildirimler"
-          >
-            <Bell className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setIsMediaModalOpen(true)}
-            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-pink-400"
-            title="Kanal Medya & Dosya Galerisi"
-          >
-            <ImageIcon className="w-4 h-4" />
-          </button>
-          {activeServer && (
+          {/* Working Channel Notification Popover */}
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
             <button
-              onClick={() => setIsLeaderboardOpen(true)}
-              className="hidden sm:flex w-8 h-8 rounded-full hover:bg-white/10 items-center justify-center transition text-amber-400"
-              title="Sunucu Liderlik Tablosu (XP & Seviye)"
+              type="button"
+              onClick={() => {
+                setIsNotifMenuOpen((v) => !v);
+                setIsToolsMenuOpen(false);
+                setOpenActionMsgId(null);
+              }}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+                isNotifMenuOpen
+                  ? 'ui-accent-soft text-white'
+                  : (notificationPrefs[activeChannel.id] || 'all') === 'muted'
+                  ? 'hover:bg-white/10 text-rose-400'
+                  : (notificationPrefs[activeChannel.id] || 'all') === 'mentions'
+                  ? 'hover:bg-white/10 text-amber-300'
+                  : 'hover:bg-white/10'
+              }`}
+              title="Kanal Bildirim Tercihi"
+              aria-label="Kanal Bildirim Tercihi"
             >
-              <Trophy className="w-4 h-4" />
+              {(notificationPrefs[activeChannel.id] || 'all') === 'muted' ? (
+                <BellOff className="w-4 h-4" />
+              ) : (
+                <Bell className="w-4 h-4" />
+              )}
             </button>
-          )}
+            {isNotifMenuOpen && (
+              <div className="absolute right-0 top-10 z-50 w-52 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/45 border-b border-white/10 mb-1">
+                  Bildirim Tercihi
+                </div>
+                {(
+                  [
+                    { id: 'all', label: t(language, 'notificationsAll') },
+                    { id: 'mentions', label: t(language, 'notificationsMentions') },
+                    { id: 'muted', label: t(language, 'notificationsMuted') },
+                  ] as const
+                ).map((opt) => {
+                  const activePref = (notificationPrefs[activeChannel.id] || 'all') === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setTargetNotificationPref(activeChannel.id, opt.id);
+                        setIsNotifMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left transition ${
+                        activePref ? 'ui-accent-soft font-semibold' : 'hover:bg-white/10 text-white/80'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      {activePref && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <button
-            onClick={() => setIsChatMiniGamesOpen(true)}
-            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-purple-400"
-            title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma)"
-          >
-            <Gamepad2 className="w-4 h-4" />
-          </button>
-          <button
+            type="button"
             onClick={() => setIsPinModalOpen(true)}
-            className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
+            className="relative w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
             title="Sabitlenmiş Mesajlar"
+            aria-label="Sabitlenmiş Mesajlar"
           >
-            <Pin className={`w-4 h-4 ${messages.some(m => m.isPinned) ? 'text-amber-400' : ''}`} />
-            {messages.filter(m => m.isPinned).length > 0 && (
+            <Pin className={`w-4 h-4 ${messages.some((m) => m.isPinned) ? 'text-amber-400' : ''}`} />
+            {messages.filter((m) => m.isPinned).length > 0 && (
               <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-amber-500 text-black text-[10px] font-bold flex items-center justify-center">
-                {messages.filter(m => m.isPinned).length}
+                {messages.filter((m) => m.isPinned).length}
               </span>
             )}
-          </button>
-          <button
-            onClick={() => setIsBookmarksModalOpen(true)}
-            className="relative w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition"
-            title="Kaydedilen Mesajlar (Yer İmleri)"
-          >
-            <Bookmark className={`w-4 h-4 ${bookmarkedMessages.length > 0 ? 'text-cyan-400' : ''}`} />
-            {bookmarkedMessages.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-cyan-500 text-black text-[10px] font-bold flex items-center justify-center">
-                {bookmarkedMessages.length}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={onToggleMembers}
-            className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center transition ${
-              showMembers ? 'bg-white/15 text-white' : 'hover:bg-white/10'
-            }`}
-            title="Kişileri Göster/Gizle"
-          >
-            <Users className="w-4 h-4" />
           </button>
 
           <button
+            type="button"
             onClick={() => setIsGlobalInboxOpen(true)}
-            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-cyan-400"
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-cyan-400"
             title="Gelen Kutusu & Global Arama"
+            aria-label="Gelen Kutusu ve Global Arama"
           >
             <Inbox className="w-4 h-4" />
           </button>
-          {activeServer && !isDM && (
-            <button
-              onClick={() => setIsEventsModalOpen(true)}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-emerald-400"
-              title="Sunucu Etkinlikleri (Events)"
-            >
-              <Calendar className="w-4 h-4" />
-            </button>
-          )}
+
           <button
+            type="button"
             onClick={() => setIsSearchModalOpen(true)}
-            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-blue-400"
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition text-blue-400"
             title="Gelişmiş Sohbet Araması & Işınlanma"
+            aria-label="Gelişmiş Sohbet Araması"
           >
             <Search className="w-4 h-4" />
           </button>
 
-          <div className="relative hidden md:block">
+          <button
+            type="button"
+            onClick={onToggleMembers}
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+              showMembers ? 'ui-accent-soft text-white border' : 'hover:bg-white/10'
+            }`}
+            title="Kişileri Göster/Gizle"
+            aria-label="Kişi Listesini Göster veya Gizle"
+          >
+            <Users className="w-4 h-4" />
+          </button>
+
+          {/* Secondary Channel Tools Overflow Popover */}
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsToolsMenuOpen((v) => !v);
+                setIsNotifMenuOpen(false);
+                setOpenActionMsgId(null);
+              }}
+              className={`relative w-8 h-8 rounded-full flex items-center justify-center transition ${
+                isToolsMenuOpen ? 'ui-accent-soft text-white border' : 'hover:bg-white/10'
+              }`}
+              title={t(language, 'channelTools')}
+              aria-label={t(language, 'channelTools')}
+            >
+              <LayoutGrid className="w-4 h-4" />
+              {bookmarkedMessages.length > 0 && (
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-cyan-400" />
+              )}
+            </button>
+            {isToolsMenuOpen && (
+              <div className="absolute right-0 top-10 z-50 w-56 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/45 border-b border-white/10 mb-1">
+                  {t(language, 'channelTools')}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMediaModalOpen(true);
+                    setIsToolsMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                >
+                  <ImageIcon className="w-4 h-4 text-pink-400 shrink-0" />
+                  <span>Medya &amp; Dosya Galerisi</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsBookmarksModalOpen(true);
+                    setIsToolsMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Bookmark className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <span>Kaydedilen Mesajlar</span>
+                  </span>
+                  {bookmarkedMessages.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] font-bold">
+                      {bookmarkedMessages.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsChatMiniGamesOpen(true);
+                    setIsToolsMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                >
+                  <Gamepad2 className="w-4 h-4 text-purple-400 shrink-0" />
+                  <span>Aktiviteler &amp; Mini Oyunlar</span>
+                </button>
+                {activeServer && !isDM && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsLeaderboardOpen(true);
+                        setIsToolsMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                    >
+                      <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Sunucu Liderlik Tablosu</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEventsModalOpen(true);
+                        setIsToolsMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/10 transition text-left"
+                    >
+                      <Calendar className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Sunucu Etkinlikleri</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="relative hidden xl:block ml-1">
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Hızlı filtrele..."
+              aria-label="Kanal mesajlarında hızlı filtrele"
               className="bg-white/5 border border-white/10 text-xs text-white rounded-full px-3 py-1.5 pl-8 pr-7 w-36 focus:w-44 transition-all duration-200 outline-none placeholder:text-white/30"
             />
             <Search className="w-3.5 h-3.5 text-white/40 absolute left-2.5 top-2" />
@@ -1059,6 +1267,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 type="button"
                 onClick={() => setSearchQuery('')}
                 className="absolute right-2.5 top-2 text-white/40 hover:text-white"
+                aria-label="Aramayı temizle"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -1702,11 +1911,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       <div
         ref={scrollContainerRef}
         onScroll={handleMessagesScroll}
-        className="relative flex-1 overflow-y-auto px-6 py-6 space-y-4"
+        className={`relative flex-1 overflow-y-auto px-4 sm:px-6 py-5 chat-msg-list ${
+          messageDensity === 'compact' ? 'space-y-1.5' : 'space-y-3.5'
+        }`}
       >
-        {/* Welcome Banner */}
-        <div className="pt-2 pb-6 border-b border-white/[0.06] space-y-2 select-none max-w-lg">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-500/20 to-indigo-500/20 border border-white/10 flex items-center justify-center text-blue-400">
+        {/* Welcome Banner & Guided Empty State */}
+        <div className="pt-2 pb-6 border-b border-white/[0.06] space-y-2.5 select-none max-w-lg">
+          <div className="w-14 h-14 rounded-2xl ui-accent-soft border flex items-center justify-center">
             {isDM ? <MessageCircle className="w-7 h-7" /> : <Hash className="w-7 h-7" />}
           </div>
           <h2 className="text-2xl font-bold text-white tracking-tight">
@@ -1717,9 +1928,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               ? `Bu, ${dmPartner?.username || 'bu kullanıcı'} ile olan özel direkt mesajlaşma geçmişiniz. Mesaj gönderip dosya ve resim paylaşabilirsiniz.`
               : 'Bu kanalın başlangıcındasınız. Sohbet etmek ve düşüncelerinizi paylaşmak için bir mesaj yazın.'}
           </p>
+          {filteredMessages.length === 0 && !searchQuery.trim() && (
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => composerRef.current?.focus()}
+                className="px-3 py-1.5 rounded-xl ui-accent-bg text-xs font-semibold transition"
+              >
+                {t(language, 'writeFirstMessage')}
+              </button>
+              {!isDM && (
+                <button
+                  type="button"
+                  onClick={() => setIsPollModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/10 text-xs font-semibold text-white/80 transition flex items-center gap-1.5"
+                >
+                  <BarChart2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Anket Başlat</span>
+                </button>
+              )}
+              <span className="text-[11px] text-white/40 px-2">
+                <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-mono">Ctrl+K</kbd> Hızlı Geçiş
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Message Items - iOS Messages Bubble Design */}
+        {/* History Pagination & Skeleton Loader */}
+        {isLoadingOlderMessages && (
+          <MessageSkeletonList compact={messageDensity === 'compact'} count={3} />
+        )}
         {activeChannel?.id && hasMoreMessages[activeChannel.id] && filteredMessages.length <= visibleMsgCount && (
           <div className="flex justify-center py-2">
             <button
@@ -1745,16 +1983,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         )}
         {(() => {
           const displayedMessages = filteredMessages.slice(-visibleMsgCount);
+          const useClassicLayout = chatLayout === 'classic' || (chatLayout === 'auto' && !isDM);
+          const isCompact = messageDensity === 'compact';
           const vWin = computeVirtualWindow({
             totalCount: displayedMessages.length,
             scrollTop: scrollMetrics.top,
             viewportHeight: scrollMetrics.height,
-            estimatedRowHeight: 78,
+            estimatedRowHeight: useClassicLayout ? (isCompact ? 54 : 68) : isCompact ? 64 : 78,
             overscan: 12,
           });
           const slicedMessages = vWin.virtualized
             ? displayedMessages.slice(vWin.startIndex, vWin.endIndex)
             : displayedMessages;
+          const nowMs = Date.now();
           return (
             <>
               {vWin.paddingTop > 0 && <div style={{ height: vWin.paddingTop }} aria-hidden="true" />}
@@ -1762,8 +2003,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 const index = vWin.startIndex + sliceIdx;
                 const isMe = msg.author.id === currentUser?.id;
                 const prevMsg = displayedMessages[index - 1];
+                const epochMs = extractMessageEpochMs(msg);
+                const prevEpochMs = prevMsg ? extractMessageEpochMs(prevMsg) : null;
+                const showDateDivider =
+                  epochMs !== null &&
+                  (prevEpochMs === null || getLocalDayKey(epochMs) !== getLocalDayKey(prevEpochMs));
                 const isSameAuthorAsPrev =
                   prevMsg &&
+                  !showDateDivider &&
                   prevMsg.author.id === msg.author.id &&
                   prevMsg.timestamp === msg.timestamp;
 
@@ -1771,446 +2018,600 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   initialUnreadDividerCount > 0 &&
                   index === Math.max(0, displayedMessages.length - initialUnreadDividerCount);
 
-          if (msg.author.id === 'system-call') {
-            return (
-              <React.Fragment key={msg.id}>
-                <div className="flex justify-center my-2.5">
-                  <div className="px-4 py-2 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-sm flex flex-wrap items-center gap-3 text-xs text-white/80 shadow-sm">
-                    <span className="text-base">{msg.author.avatar || '📞'}</span>
-                    <span className="font-medium">{msg.content}</span>
-                    <span className="text-[10px] font-mono text-white/40">{msg.timestamp}</span>
-                    {isDM && dmPartner && !directCall && (
-                      <button
-                        type="button"
-                        onClick={() => startDirectCall(dmPartner)}
-                        className="px-2.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/35 text-emerald-300 text-[11px] font-bold flex items-center gap-1 transition"
-                      >
-                        <Phone className="w-3 h-3" />
-                        <span>Geri Ara</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </React.Fragment>
-            );
-          }
-
-          return (
-            <React.Fragment key={msg.id}>
-              {isNewMessagesStart && (
-                <div className="flex items-center gap-3 my-3 select-none">
-                  <div className="flex-1 h-px bg-rose-500/40" />
-                  <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300 uppercase tracking-wider">
-                    {t(language, 'newMessagesDivider')}
-                  </span>
-                  <div className="flex-1 h-px bg-rose-500/40" />
-                </div>
-              )}
-              <div
-                id={`message-${msg.id}`}
-              className={`flex gap-3 items-end group ${
-                isMe ? 'justify-end' : 'justify-start'
-              } ${isSameAuthorAsPrev ? 'mt-1' : 'mt-4'} ${
-                highlightedMessageId === msg.id
-                  ? 'ring-2 ring-amber-400 bg-amber-500/15 p-2 rounded-2xl shadow-xl shadow-amber-500/20 transition-all duration-300'
-                  : 'transition-all duration-200'
-              }`}
-            >
-              {/* Other User Avatar with click to open profile */}
-              {!isMe && (
-                <button
-                  type="button"
-                  onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shrink-0 shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden"
-                  title={`${msg.author.username} profilini görüntüle`}
-                >
-                  <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
-                </button>
-              )}
-
-              <div className={`relative group/msg flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                {/* Floating Quick Action Bar on Hover */}
-                <div
-                  className={`absolute -top-3.5 ${
-                    isMe ? 'right-2' : 'left-2'
-                  } opacity-0 group-hover/msg:opacity-100 transition-opacity z-20 flex items-center gap-1 bg-slate-900/95 border border-white/15 rounded-full px-2 py-0.5 shadow-xl backdrop-blur-md select-none`}
-                >
-                  {['👍', '❤️', '🔥', '😂', '🎉', '💀'].map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      onClick={() => addReaction(msg.id, emoji)}
-                      className="text-xs hover:scale-125 transition-transform px-1 py-0.5"
-                      title={`${emoji} tepkisi ver`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                  <div className="w-[1px] h-3 bg-white/20 mx-0.5" />
-                  <button
-                    type="button"
-                    onClick={() => setReplyingTo({ id: msg.id, username: msg.author.username, content: msg.content || 'Ek / Medya' })}
-                    title="Yanıtla"
-                    className="p-1 rounded-full text-xs text-slate-400 hover:text-blue-400 transition-colors"
-                  >
-                    <CornerUpLeft className="w-3 h-3" />
-                  </button>
-                  {!isDM && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveThreadMsgId(msg.id)}
-                      title="Alt Konu (Thread) Aç"
-                      className="p-1 rounded-full text-xs text-slate-400 hover:text-cyan-400 transition-colors"
-                    >
-                      <MessageSquare className="w-3 h-3" />
-                    </button>
-                  )}
-                  {msg.content && (
-                    <button
-                      type="button"
-                      onClick={() => handleCopyMessage(msg.id, msg.content)}
-                      title="Mesajı Kopyala"
-                      className={`p-1 rounded-full text-xs transition-colors ${
-                        copiedMsgId === msg.id ? 'text-emerald-400' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {copiedMsgId === msg.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => togglePinMessage(msg.id)}
-                    title={msg.isPinned ? 'Sabitlemeyi Kaldır' : 'Mesajı Sabitle'}
-                    className={`p-1 rounded-full text-xs transition-colors ${
-                      msg.isPinned ? 'text-amber-400 bg-amber-400/20' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Pin className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleBookmarkMessage(msg)}
-                    title={bookmarkedMessages.some((b) => b.id === msg.id) ? 'Yer İminden Kaldır' : 'Yer İmlerine Kaydet'}
-                    className={`p-1 rounded-full text-xs transition-colors ${
-                      bookmarkedMessages.some((b) => b.id === msg.id)
-                        ? 'text-cyan-400 bg-cyan-400/20'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Bookmark className="w-3 h-3" />
-                  </button>
-                  {isMe && msg.content && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingMsgId(msg.id);
-                        setEditingText(msg.content);
-                      }}
-                      title="Mesajı Düzenle"
-                      className="p-1 rounded-full text-xs text-slate-400 hover:text-amber-300 transition-colors"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                    </button>
-                  )}
-                  {(isMe || isUserServerOwner(currentUser, activeServer)) && (
-                    <button
-                      type="button"
-                      onClick={() => deleteMessage(msg.id)}
-                      title="Mesajı Sil"
-                      className="p-1 rounded-full text-xs text-slate-400 hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-
-                {!isSameAuthorAsPrev && (
-                  <div className="flex items-center gap-2 mb-1 px-1">
-                    <button
-                      type="button"
-                      onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                      style={{ color: getAuthorColor(msg.author.username) }}
-                      className="text-[11px] font-bold hover:underline cursor-pointer transition"
-                    >
-                      {isMe ? 'Sen' : msg.author.username}
-                    </button>
-                    {msg.author.username === 'AI Asistan' && (
-                      <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
-                        <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
-                      </span>
-                    )}
-                    <span className="text-[10px] text-white/30 select-none">
-                      {msg.timestamp}
-                      {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
-                      {activeServer?.id === 'direct-messages' &&
-                        isMe &&
-                        msg.id === lastMyMessageId &&
-                        activeDMUser?.username &&
-                        dmReadReceipts[activeDMUser.username] && (
-                          <span className="ml-1.5 text-emerald-400 font-semibold" title="Okundu">
-                            ✓✓ Görüldü
-                          </span>
-                        )}
+                const dateDividerNode = showDateDivider && epochMs !== null && (
+                  <div className="flex items-center gap-3 my-3.5 select-none">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span className="px-3 py-0.5 rounded-full bg-white/[0.06] border border-white/10 text-[10px] font-semibold text-white/60 tracking-wide">
+                      {formatDateDividerLabel(epochMs, language, nowMs)}
                     </span>
-                    {msg.isPinned && (
-                      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
-                        <Pin className="w-2.5 h-2.5" /> Sabitlendi
-                      </span>
-                    )}
+                    <div className="flex-1 h-px bg-white/10" />
                   </div>
-                )}
+                );
 
-                {/* Bubble Container */}
-                <div
-                  className={`space-y-2 px-4 py-2.5 ${
-                    chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
-                  } leading-relaxed break-words shadow-md transition-all ${
-                    isMe
-                      ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl rounded-br-sm'
-                      : 'bg-white/10 text-white/90 border border-white/10 rounded-2xl rounded-bl-sm backdrop-blur-md'
-                  }`}
-                >
-                  {/* Text Content with Code Block Formatting or Inline Edit */}
-                  {editingMsgId === msg.id ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const trimmed = editingText.trim();
-                        if (trimmed && trimmed !== msg.content) {
-                          editMessage(msg.id, trimmed);
-                        }
-                        setEditingMsgId(null);
-                      }}
-                      className="flex items-center gap-1.5 min-w-[220px]"
-                    >
-                      <input
-                        type="text"
-                        value={editingText}
-                        onChange={(e) => setEditingText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') setEditingMsgId(null);
-                        }}
-                        autoFocus
-                        className="flex-1 bg-black/30 border border-white/20 rounded-lg px-2.5 py-1 text-xs text-white outline-none focus:border-white/50"
-                      />
+                if (msg.author.id === 'system-call') {
+                  return (
+                    <React.Fragment key={msg.id}>
+                      {dateDividerNode}
+                      <div className="flex justify-center my-2.5">
+                        <div className="px-4 py-2 rounded-2xl border border-white/10 bg-white/[0.04] flex flex-wrap items-center gap-3 text-xs text-white/80 shadow-sm">
+                          <span className="text-base">{msg.author.avatar || '📞'}</span>
+                          <span className="font-medium select-text">{msg.content}</span>
+                          <span className="text-[10px] font-mono text-white/40">{msg.timestamp}</span>
+                          {isDM && dmPartner && !directCall && (
+                            <button
+                              type="button"
+                              onClick={() => startDirectCall(dmPartner)}
+                              className="px-2.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/35 text-emerald-300 text-[11px] font-bold flex items-center gap-1 transition"
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>Geri Ara</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </React.Fragment>
+                  );
+                }
+
+                const isActionOpen = openActionMsgId === msg.id;
+                const actionToolbarNode = (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className={`absolute -top-3.5 right-2 ${
+                      isActionOpen
+                        ? 'opacity-100'
+                        : 'opacity-0 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100'
+                    } transition-opacity z-20 flex items-center gap-0.5 bg-slate-900/95 border border-white/15 rounded-full px-1.5 py-0.5 shadow-xl backdrop-blur-md select-none`}
+                  >
+                    {['👍', '❤️', '🔥'].map((emoji) => (
                       <button
-                        type="submit"
-                        title="Kaydet"
-                        className="p-1 rounded-md bg-emerald-500/30 hover:bg-emerald-500/50 text-emerald-200 transition"
+                        key={emoji}
+                        type="button"
+                        onClick={() => addReaction(msg.id, emoji)}
+                        className="text-xs hover:scale-125 transition-transform px-1 py-0.5"
+                        title={`${emoji} tepkisi ver`}
+                        aria-label={`${emoji} tepkisi ver`}
                       >
-                        <Check className="w-3.5 h-3.5" />
+                        {emoji}
                       </button>
+                    ))}
+                    <div className="w-[1px] h-3 bg-white/20 mx-0.5" />
+                    <button
+                      type="button"
+                      onClick={() => setReplyingTo({ id: msg.id, username: msg.author.username, content: msg.content || 'Ek / Medya' })}
+                      title="Yanıtla"
+                      aria-label="Mesajı yanıtla"
+                      className="p-1 rounded-full text-xs text-slate-400 hover:text-blue-400 transition-colors"
+                    >
+                      <CornerUpLeft className="w-3 h-3" />
+                    </button>
+                    <div className="relative">
                       <button
                         type="button"
-                        onClick={() => setEditingMsgId(null)}
-                        title="İptal"
-                        className="p-1 rounded-md bg-white/10 hover:bg-white/20 text-white/70 transition"
+                        onClick={() => setOpenActionMsgId((prev) => (prev === msg.id ? null : msg.id))}
+                        title={t(language, 'moreActions')}
+                        aria-label={t(language, 'moreActions')}
+                        className={`p-1 rounded-full text-xs transition-colors ${
+                          isActionOpen ? 'bg-white/15 text-white' : 'text-slate-400 hover:text-white'
+                        }`}
                       >
-                        <X className="w-3.5 h-3.5" />
+                        <MoreHorizontal className="w-3.5 h-3.5" />
                       </button>
-                    </form>
-                  ) : (
-                    <>
-                      {msg.replyTo && (
-                        <div className="mb-1.5 px-2.5 py-1.5 rounded-lg bg-black/25 border-l-2 border-blue-400 text-[11px] text-white/70">
-                          <span className="font-semibold text-blue-300">@{msg.replyTo.username}: </span>
-                          <span className="truncate">{msg.replyTo.content}</span>
+                      {isActionOpen && (
+                        <div className="absolute right-0 top-7 z-40 w-44 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
+                          <div className="flex items-center justify-around pb-1 mb-1 border-b border-white/10">
+                            {['😂', '🎉', '💀', '👀'].map((em) => (
+                              <button
+                                key={em}
+                                type="button"
+                                onClick={() => {
+                                  addReaction(msg.id, em);
+                                  setOpenActionMsgId(null);
+                                }}
+                                className="p-1 rounded-lg hover:bg-white/10 text-sm transition hover:scale-110"
+                                aria-label={`${em} tepkisi ver`}
+                              >
+                                {em}
+                              </button>
+                            ))}
+                          </div>
+                          {!isDM && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveThreadMsgId(msg.id);
+                                setOpenActionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left text-cyan-300"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span>Alt Konu Aç</span>
+                            </button>
+                          )}
+                          {msg.content && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleCopyMessage(msg.id, msg.content);
+                                setOpenActionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left"
+                            >
+                              {copiedMsgId === msg.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>Mesajı Kopyala</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              togglePinMessage(msg.id);
+                              setOpenActionMsgId(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left"
+                          >
+                            <Pin className={`w-3.5 h-3.5 ${msg.isPinned ? 'text-amber-400' : ''}`} />
+                            <span>{msg.isPinned ? 'Sabitlemeyi Kaldır' : 'Mesajı Sabitle'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              toggleBookmarkMessage(msg);
+                              setOpenActionMsgId(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left"
+                          >
+                            <Bookmark
+                              className={`w-3.5 h-3.5 ${
+                                bookmarkedMessages.some((b) => b.id === msg.id) ? 'text-cyan-400' : ''
+                              }`}
+                            />
+                            <span>
+                              {bookmarkedMessages.some((b) => b.id === msg.id) ? 'Yer İminden Kaldır' : 'Yer İmlerine Ekle'}
+                            </span>
+                          </button>
+                          {isMe && msg.content && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingMsgId(msg.id);
+                                setEditingText(msg.content);
+                                setOpenActionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left text-amber-300"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>Düzenle</span>
+                            </button>
+                          )}
+                          {(isMe || isUserServerOwner(currentUser, activeServer)) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                deleteMessage(msg.id);
+                                setOpenActionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-rose-500/20 text-left text-rose-400"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Sil</span>
+                            </button>
+                          )}
                         </div>
                       )}
-                      {msg.content && (
-                        <div>
-                        {isE2eeCiphertext(msg.content) ? (
-                          <div className="inline-flex items-start gap-1.5">
-                            <span
-                              className="mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-bold text-emerald-300 shrink-0"
-                              title="Uçtan Uca Şifreli Mesaj (E2EE)"
-                            >
-                              <Lock className="w-2.5 h-2.5" /> E2EE
-                            </span>
-                            <span>
-                              {decryptedDmMap[msg.id]
-                                ? renderMessageContent(decryptedDmMap[msg.id])
-                                : '🔒 Şifreli mesaj (anahtar bekleniyor...)'}
-                            </span>
+                    </div>
+                  </div>
+                );
+
+                const bodyInnerNode = (
+                  <>
+                    {/* Text Content with Code Block Formatting or Inline Edit */}
+                    {editingMsgId === msg.id ? (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const trimmed = editingText.trim();
+                          if (trimmed && trimmed !== msg.content) {
+                            editMessage(msg.id, trimmed);
+                          }
+                          setEditingMsgId(null);
+                        }}
+                        className="flex items-center gap-1.5 min-w-[220px]"
+                      >
+                        <input
+                          type="text"
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') setEditingMsgId(null);
+                          }}
+                          autoFocus
+                          className="flex-1 bg-black/30 border border-white/20 rounded-lg px-2.5 py-1 text-xs text-white outline-none focus:border-white/50"
+                        />
+                        <button
+                          type="submit"
+                          title="Kaydet"
+                          aria-label="Düzenlemeyi kaydet"
+                          className="p-1 rounded-md bg-emerald-500/30 hover:bg-emerald-500/50 text-emerald-200 transition"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingMsgId(null)}
+                          title="İptal"
+                          aria-label="Düzenlemeyi iptal et"
+                          className="p-1 rounded-md bg-white/10 hover:bg-white/20 text-white/70 transition"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        {msg.replyTo && (
+                          <button
+                            type="button"
+                            onClick={() => handleJumpToMessage(msg.replyTo!.id)}
+                            className="mb-1.5 px-2.5 py-1.5 rounded-lg bg-black/25 hover:bg-black/40 border-l-2 border-blue-400 text-[11px] text-white/75 text-left w-full flex items-center gap-1.5 transition cursor-pointer"
+                            title="Yanıtlanan mesaja atla"
+                          >
+                            <CornerUpLeft className="w-3 h-3 text-blue-300 shrink-0" />
+                            <span className="font-semibold text-blue-300 shrink-0">@{msg.replyTo.username}:</span>
+                            <span className="truncate">{msg.replyTo.content}</span>
+                          </button>
+                        )}
+                        {msg.content && (
+                          <div className="select-text">
+                            {isE2eeCiphertext(msg.content) ? (
+                              <div className="inline-flex items-start gap-1.5">
+                                <span
+                                  className="mt-0.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[9px] font-bold text-emerald-300 shrink-0"
+                                  title="Uçtan Uca Şifreli Mesaj (E2EE)"
+                                >
+                                  <Lock className="w-2.5 h-2.5" /> E2EE
+                                </span>
+                                <span>
+                                  {decryptedDmMap[msg.id]
+                                    ? renderMessageContent(decryptedDmMap[msg.id])
+                                    : '🔒 Şifreli mesaj (anahtar bekleniyor...)'}
+                                </span>
+                              </div>
+                            ) : (
+                              renderMessageContent(msg.content)
+                            )}
+                            {isSameAuthorAsPrev && msg.isEdited && (
+                              <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
+                            )}
+                            {showLinkPreviews &&
+                              !isE2eeCiphertext(msg.content) &&
+                              (!msg.attachments || msg.attachments.length === 0) && (
+                                <LinkPreviewCard
+                                  text={msg.content}
+                                  host={currentServerHost}
+                                  enabled={showLinkPreviews}
+                                />
+                              )}
                           </div>
-                        ) : (
-                          renderMessageContent(msg.content)
                         )}
-                        {isSameAuthorAsPrev && msg.isEdited && (
-                          <span className="ml-1.5 text-[10px] italic opacity-60">(düzenlendi)</span>
-                        )}
-                        {showLinkPreviews &&
-                          !isE2eeCiphertext(msg.content) &&
-                          (!msg.attachments || msg.attachments.length === 0) && (
-                            <LinkPreviewCard
-                              text={msg.content}
-                              host={currentServerHost}
-                              enabled={showLinkPreviews}
-                            />
-                          )}
+                      </>
+                    )}
+
+                    {/* Interactive Poll Card */}
+                    {msg.poll && (
+                      <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-white/15 space-y-2 min-w-[240px] max-w-md">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-white mb-1">
+                          <BarChart2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>{msg.poll.question}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {msg.poll.options.map((opt) => {
+                            const isVoted = currentUser && opt.votes.includes(currentUser.username);
+                            const total = msg.poll!.totalVotes || 1;
+                            const pct = total > 0 ? Math.round((opt.votes.length / total) * 100) : 0;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => votePoll(msg.id, opt.id)}
+                                className={`w-full relative overflow-hidden flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-all ${
+                                  isVoted
+                                    ? 'border-emerald-500 bg-emerald-500/20 text-white font-semibold'
+                                    : 'border-white/5 bg-white/5 text-slate-300 hover:bg-white/10'
+                                }`}
+                              >
+                                <div
+                                  className="absolute left-0 top-0 bottom-0 bg-emerald-500/25 transition-all duration-500"
+                                  style={{ width: `${pct}%` }}
+                                />
+                                <span className="relative z-10 truncate">{opt.text}</span>
+                                <span className="relative z-10 text-[10px] text-slate-400 font-mono ml-2">
+                                  %{pct} ({opt.votes.length})
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="text-[10px] text-slate-400 pt-1 border-t border-white/10 flex items-center justify-between select-none">
+                          <span>Toplam {msg.poll.totalVotes || 0} oy</span>
+                          <span className="text-emerald-400">Oylamak için dokunun</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Attachments rendering */}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="space-y-2 pt-1">
+                        {msg.attachments.map((att) => {
+                          const resolvedUrl = resolveMediaUrl(att.url, currentServerHost);
+                          if (att.type.startsWith('audio/')) {
+                            return (
+                              <div key={att.id} className="pt-1">
+                                <VoiceNotePlayer url={resolvedUrl} authorName={msg.author.username} />
+                              </div>
+                            );
+                          }
+
+                          const isImage = att.type.startsWith('image/');
+                          if (isImage) {
+                            return (
+                              <div key={att.id} className="relative group/att overflow-hidden rounded-xl max-w-md">
+                                <img
+                                  src={resolvedUrl}
+                                  alt={att.name}
+                                  onClick={() => setLightboxImage(resolvedUrl)}
+                                  className="max-h-64 max-w-full rounded-xl cursor-pointer hover:opacity-95 transition object-cover shadow-lg"
+                                />
+                                <div className="absolute top-2 right-2 opacity-0 group-hover/att:opacity-100 transition flex items-center gap-1.5">
+                                  <a
+                                    href={resolvedUrl}
+                                    download={att.name}
+                                    className="p-1.5 rounded-lg bg-black/60 hover:bg-black text-white text-xs backdrop-blur-md shadow"
+                                    title="İndir"
+                                    aria-label={`${att.name} indir`}
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </a>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div
+                              key={att.id}
+                              className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-black/20 border border-white/10 max-w-sm"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0 text-white/80">
+                                  <FileText className="w-4 h-4" />
+                                </div>
+                                <div className="truncate">
+                                  <div className="text-xs font-semibold truncate text-white">{att.name}</div>
+                                  <div className="text-[10px] text-white/50">{formatFileSize(att.size)}</div>
+                                </div>
+                              </div>
+
+                              <a
+                                href={resolvedUrl}
+                                download={att.name}
+                                className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
+                                title="Dosyayı İndir"
+                                aria-label={`${att.name} dosyasını indir`}
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </>
-                )}
+                );
 
-                  {/* Interactive Poll Card */}
-                  {msg.poll && (
-                    <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-white/15 space-y-2 min-w-[240px]">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-white mb-1">
-                        <BarChart2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>{msg.poll.question}</span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {msg.poll.options.map((opt) => {
-                          const isVoted = currentUser && opt.votes.includes(currentUser.username);
-                          const total = msg.poll!.totalVotes || 1;
-                          const pct = total > 0 ? Math.round((opt.votes.length / total) * 100) : 0;
+                const reactionsAndThreadsNode = (
+                  <>
+                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5 px-0.5 select-none">
+                        {Object.entries(msg.reactions).map(([emoji, usernames]) => {
+                          const hasMyVote = currentUser && usernames.includes(currentUser.username);
                           return (
                             <button
-                              key={opt.id}
+                              key={emoji}
                               type="button"
-                              onClick={() => votePoll(msg.id, opt.id)}
-                              className={`w-full relative overflow-hidden flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-all ${
-                                isVoted
-                                  ? 'border-emerald-500 bg-emerald-500/20 text-white font-semibold'
-                                  : 'border-white/5 bg-white/5 text-slate-300 hover:bg-white/10'
+                              onClick={() => addReaction(msg.id, emoji)}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all ${
+                                hasMyVote
+                                  ? 'ui-accent-soft'
+                                  : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
                               }`}
+                              title={`Tepki verenler: ${usernames.join(', ')}`}
                             >
-                              <div
-                                className="absolute left-0 top-0 bottom-0 bg-emerald-500/25 transition-all duration-500"
-                                style={{ width: `${pct}%` }}
-                              />
-                              <span className="relative z-10 truncate">{opt.text}</span>
-                              <span className="relative z-10 text-[10px] text-slate-400 font-mono ml-2">
-                                %{pct} ({opt.votes.length})
-                              </span>
+                              <span>{emoji}</span>
+                              <span className="font-bold text-[10px]">{usernames.length}</span>
                             </button>
                           );
                         })}
                       </div>
-                      <div className="text-[10px] text-slate-400 pt-1 border-t border-white/10 flex items-center justify-between select-none">
-                        <span>Toplam {msg.poll.totalVotes || 0} oy</span>
-                        <span className="text-emerald-400">Oylamak için dokunun</span>
+                    )}
+
+                    {!isDM && msg.threadMessages && msg.threadMessages.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveThreadMsgId(msg.id)}
+                        className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/25 text-[11px] font-semibold text-cyan-300 transition"
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>{msg.threadMessages.length} alt konu yanıtı</span>
+                      </button>
+                    )}
+                  </>
+                );
+
+                return (
+                  <React.Fragment key={msg.id}>
+                    {dateDividerNode}
+                    {isNewMessagesStart && (
+                      <div className="flex items-center gap-3 my-3 select-none">
+                        <div className="flex-1 h-px bg-rose-500/40" />
+                        <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300 uppercase tracking-wider">
+                          {t(language, 'newMessagesDivider')}
+                        </span>
+                        <div className="flex-1 h-px bg-rose-500/40" />
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* Attachments rendering */}
-                  {msg.attachments && msg.attachments.length > 0 && (
-                    <div className="space-y-2 pt-1">
-                      {msg.attachments.map((att) => {
-                        const resolvedUrl = resolveMediaUrl(att.url, currentServerHost);
-                        // Voice Note / Audio
-                        if (att.type.startsWith('audio/')) {
-                          return (
-                            <div key={att.id} className="pt-1">
-                              <VoiceNotePlayer
-                                url={resolvedUrl}
-                                authorName={msg.author.username}
-                              />
-                            </div>
-                          );
-                        }
-
-                        const isImage = att.type.startsWith('image/');
-                        if (isImage) {
-                          return (
-                            <div key={att.id} className="relative group/att overflow-hidden rounded-xl">
-                              <img
-                                src={resolvedUrl}
-                                alt={att.name}
-                                onClick={() => setLightboxImage(resolvedUrl)}
-                                className="max-h-64 max-w-full rounded-xl cursor-pointer hover:opacity-95 transition object-cover shadow-lg"
-                              />
-                              <div className="absolute top-2 right-2 opacity-0 group/att:opacity-100 transition flex items-center gap-1.5">
-                                <a
-                                  href={resolvedUrl}
-                                  download={att.name}
-                                  className="p-1.5 rounded-lg bg-black/60 hover:bg-black text-white text-xs backdrop-blur-md shadow"
-                                  title="İndir"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </a>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        // Document / File Card
-                        return (
-                          <div
-                            key={att.id}
-                            className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-black/20 border border-white/10 max-w-sm"
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0 text-white/80">
-                                <FileText className="w-4 h-4" />
-                              </div>
-                              <div className="truncate">
-                                <div className="text-xs font-semibold truncate text-white">
-                                  {att.name}
-                                </div>
-                                <div className="text-[10px] text-white/50">
-                                  {formatFileSize(att.size)}
-                                </div>
-                              </div>
-                            </div>
-
-                            <a
-                              href={resolvedUrl}
-                              download={att.name}
-                              className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
-                              title="Dosyayı İndir"
+                    {useClassicLayout ? (
+                      <div
+                        id={`message-${msg.id}`}
+                        className={`relative group/msg chat-msg-row flex items-start ${
+                          isCompact ? 'gap-2.5 py-0.5' : 'gap-3 py-1'
+                        } px-2.5 rounded-xl hover:bg-white/[0.03] transition-colors ${
+                          isSameAuthorAsPrev ? 'mt-0.5' : 'mt-3'
+                        } ${
+                          highlightedMessageId === msg.id
+                            ? 'ring-2 ring-amber-400 bg-amber-500/15'
+                            : ''
+                        }`}
+                      >
+                        {actionToolbarNode}
+                        <div className={`shrink-0 flex justify-center ${isCompact ? 'w-7' : 'w-9'}`}>
+                          {!isSameAuthorAsPrev ? (
+                            <button
+                              type="button"
+                              onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                              className={`${
+                                isCompact ? 'w-7 h-7' : 'w-9 h-9'
+                              } chat-msg-avatar rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden`}
+                              title={`${msg.author.username} profilini görüntüle`}
+                              aria-label={`${msg.author.username} profilini görüntüle`}
                             >
-                              <Download className="w-3.5 h-3.5" />
-                            </a>
+                              <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
+                            </button>
+                          ) : (
+                            <span className="text-[9px] text-white/25 opacity-0 group-hover/msg:opacity-100 transition pt-1 font-mono select-none">
+                              {msg.timestamp}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {!isSameAuthorAsPrev && (
+                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                                style={{ color: getAuthorColor(msg.author.username) }}
+                                className="text-xs font-bold hover:underline cursor-pointer transition"
+                              >
+                                {isMe ? `${msg.author.username} (Sen)` : msg.author.username}
+                              </button>
+                              {msg.author.username === 'AI Asistan' && (
+                                <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
+                                  <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
+                                </span>
+                              )}
+                              <span className="text-[10px] text-white/35 select-none">
+                                {msg.timestamp}
+                                {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
+                              </span>
+                              {msg.isPinned && (
+                                <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                                  <Pin className="w-2.5 h-2.5" /> Sabitlendi
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <div
+                            className={`space-y-1.5 ${
+                              chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
+                            } leading-relaxed break-words text-white/90`}
+                          >
+                            {bodyInnerNode}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                          {reactionsAndThreadsNode}
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        id={`message-${msg.id}`}
+                        className={`flex gap-3 items-end group chat-msg-row ${
+                          isMe ? 'justify-end' : 'justify-start'
+                        } ${isSameAuthorAsPrev ? 'mt-1' : 'mt-4'} ${
+                          highlightedMessageId === msg.id
+                            ? 'ring-2 ring-amber-400 bg-amber-500/15 p-2 rounded-2xl shadow-xl shadow-amber-500/20 transition-all duration-300'
+                            : 'transition-all duration-200'
+                        }`}
+                      >
+                        {!isMe && (
+                          <button
+                            type="button"
+                            onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                            className="w-8 h-8 chat-msg-avatar rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shrink-0 shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden"
+                            title={`${msg.author.username} profilini görüntüle`}
+                            aria-label={`${msg.author.username} profilini görüntüle`}
+                          >
+                            <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
+                          </button>
+                        )}
 
-                {/* Reaction Badges Pill Container */}
-                {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1.5 px-0.5 select-none">
-                    {Object.entries(msg.reactions).map(([emoji, usernames]) => {
-                      const hasMyVote = currentUser && usernames.includes(currentUser.username);
-                      return (
-                        <button
-                          key={emoji}
-                          type="button"
-                          onClick={() => addReaction(msg.id, emoji)}
-                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-all ${
-                            hasMyVote
-                              ? 'bg-blue-600/30 border-blue-500 text-blue-200'
-                              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
-                          }`}
-                          title={`Tepki verenler: ${usernames.join(', ')}`}
-                        >
-                          <span>{emoji}</span>
-                          <span className="font-bold text-[10px]">{usernames.length}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                        <div className={`relative group/msg flex flex-col max-w-[75%] sm:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+                          {actionToolbarNode}
 
-                {!isDM && msg.threadMessages && msg.threadMessages.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveThreadMsgId(msg.id)}
-                    className="mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/25 text-[11px] font-semibold text-cyan-300 transition"
-                  >
-                    <MessageSquare className="w-3 h-3" />
-                    <span>{msg.threadMessages.length} alt konu yanıtı</span>
-                  </button>
-                )}
-              </div>
-            </div>
-            </React.Fragment>
-          );
-        })}
+                          {!isSameAuthorAsPrev && (
+                            <div className="flex items-center gap-2 mb-1 px-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                                style={{ color: getAuthorColor(msg.author.username) }}
+                                className="text-[11px] font-bold hover:underline cursor-pointer transition"
+                              >
+                                {isMe ? 'Sen' : msg.author.username}
+                              </button>
+                              {msg.author.username === 'AI Asistan' && (
+                                <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
+                                  <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
+                                </span>
+                              )}
+                              <span className="text-[10px] text-white/30 select-none">
+                                {msg.timestamp}
+                                {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
+                                {activeServer?.id === 'direct-messages' &&
+                                  isMe &&
+                                  msg.id === lastMyMessageId &&
+                                  activeDMUser?.username &&
+                                  dmReadReceipts[activeDMUser.username] && (
+                                    <span className="ml-1.5 text-emerald-400 font-semibold" title="Okundu">
+                                      ✓✓ Görüldü
+                                    </span>
+                                  )}
+                              </span>
+                              {msg.isPinned && (
+                                <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                                  <Pin className="w-2.5 h-2.5" /> Sabitlendi
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          <div
+                            className={`space-y-2 chat-msg-bubble ${
+                              isCompact ? 'px-3 py-1.5' : 'px-4 py-2.5'
+                            } ${
+                              chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
+                            } leading-relaxed break-words shadow-md transition-all ${
+                              isMe
+                                ? 'ui-accent-bg rounded-2xl rounded-br-sm'
+                                : 'chat-bubble-incoming rounded-2xl rounded-bl-sm'
+                            }`}
+                          >
+                            {bodyInnerNode}
+                          </div>
+
+                          {reactionsAndThreadsNode}
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
               {vWin.paddingBottom > 0 && <div style={{ height: vWin.paddingBottom }} aria-hidden="true" />}
             </>
           );
@@ -2306,7 +2707,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   ? `${activeTypers[0]} ve ${activeTypers[1]} yazıyor...`
                   : `${activeTypers.length} kişi yazıyor...`;
               return (
-                <div className="flex items-center gap-2 px-4 pb-1.5 text-[11px] text-white/60 animate-fadeIn">
+                <div className="flex items-center gap-2 px-4 pb-1.5 text-[11px] text-white/60 animate-fade-in">
                   <span className="flex gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:0ms]" />
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" />
@@ -2317,14 +2718,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               );
             })()}
             {/* Scroll to Bottom Floating Pill */}
-            {showScrollBottom && (
+            {(showScrollBottom || pendingNewBelow > 0) && (
               <button
                 type="button"
-                onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}
-                className="absolute -top-12 right-2 z-20 px-3 py-1.5 rounded-full bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xl backdrop-blur-md border border-blue-400/30 transition animate-fade-in"
+                onClick={() => {
+                  setPendingNewBelow(0);
+                  messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="absolute -top-12 right-2 z-20 px-3 py-1.5 rounded-full ui-accent-bg text-xs font-semibold flex items-center gap-1.5 shadow-xl border transition animate-fade-in"
+                aria-label={t(language, 'scrollToBottom')}
               >
                 <ArrowDown className="w-3.5 h-3.5" />
-                <span>En Alta İn</span>
+                <span>
+                  {pendingNewBelow > 0
+                    ? `${pendingNewBelow} ${t(language, 'newMessagesBelow')}`
+                    : t(language, 'scrollToBottom')}
+                </span>
               </button>
             )}
 
@@ -2461,14 +2870,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             {activeChannel?.id && <OfflineQueueBanner channelId={activeChannel.id} />}
 
             <form
-              onSubmit={handleSend}
-              className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15 focus-within:border-amber-400/50 focus-within:shadow-[0_0_28px_rgba(245,158,11,0.18)] transition-all"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitCurrentMessage();
+              }}
+              className="ios-glass-card rounded-3xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-end gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15 ui-focus-accent transition-all"
             >
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center transition shrink-0"
                 title="Resim veya Dosya Ekle"
+                aria-label="Resim veya Dosya Ekle"
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -2479,6 +2892,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 disabled={isCapturingScreenshot}
                 className="w-8 h-8 rounded-full bg-white/10 hover:bg-cyan-500/20 text-white/70 hover:text-cyan-300 flex items-center justify-center transition shrink-0 disabled:opacity-50"
                 title="Hızlı Ekran Görüntüsü Al ve Ekle"
+                aria-label="Hızlı Ekran Görüntüsü Al"
               >
                 <Camera className="w-4 h-4" />
               </button>
@@ -2486,14 +2900,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               <button
                 type="button"
                 onClick={() => setIsGifModalOpen(true)}
-                className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-[10px] font-bold tracking-wider transition shrink-0 border border-white/10"
+                className="h-8 px-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white text-[10px] font-bold tracking-wider transition shrink-0 border border-white/10"
                 title="GIF Arama & Ekleme"
+                aria-label="GIF Ara"
               >
                 GIF
               </button>
 
               {isDM && (dmPartner?.e2eePublicKey || onlineUsers.find((u) => u.id === dmPartner?.id)?.e2eePublicKey) && (
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0 h-8">
                   <button
                     type="button"
                     onClick={() => setDmE2eeEnabled((v) => !v)}
@@ -2503,6 +2918,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         : 'bg-white/10 hover:bg-white/20 border-white/10 text-white/70 hover:text-white'
                     }`}
                     title={dmE2eeEnabled ? 'Uçtan Uca Şifreleme (E2EE) Aktif' : 'Uçtan Uca Şifreli Sohbeti Aç (E2EE)'}
+                    aria-label="Uçtan Uca Şifreleme (E2EE)"
                   >
                     <Lock className="w-3 h-3" />
                     <span>E2EE</span>
@@ -2525,19 +2941,21 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   onClick={() => setIsPollModalOpen(true)}
                   className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
                   title="Anket Başlat (Poll)"
+                  aria-label="Anket Başlat"
                 >
                   <BarChart2 className="w-4 h-4" />
                 </button>
               )}
 
               {slowmodeRemaining > 0 ? (
-                <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                <div className="flex-1 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 px-3 py-1.5 rounded-full border border-amber-500/20">
                   <Clock className="w-3.5 h-3.5 animate-spin" />
                   <span>Yavaş Mod aktif: Lütfen {slowmodeRemaining} saniye bekleyin...</span>
                 </div>
               ) : (
-                <input
-                  type="text"
+                <textarea
+                  ref={composerRef}
+                  rows={1}
                   value={inputText}
                   onKeyDown={(e) => {
                     if (mentionCandidates.length > 0) {
@@ -2561,6 +2979,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         setMentionIndex(0);
                         return;
                       }
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void submitCurrentMessage();
+                      return;
                     }
                     if (e.key === 'ArrowUp' && !inputText.trim() && lastMyMessageId) {
                       const target = messages.find((m) => m.id === lastMyMessageId);
@@ -2597,7 +3020,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       ? `@${dmPartner?.username || 'Sohbet'} — ${t(language, 'messagePlaceholder')}`
                       : `#${activeChannel.name} — ${t(language, 'messagePlaceholder')}`
                   }
-                  className="flex-1 min-w-0 bg-transparent text-white placeholder-white/30 text-base sm:text-sm outline-none px-1 sm:px-2"
+                  aria-label="Mesaj yaz"
+                  className="flex-1 min-w-0 bg-transparent text-white placeholder-white/30 text-base sm:text-sm outline-none px-1 sm:px-2 py-1 resize-none max-h-[140px] leading-5 overflow-y-auto"
                 />
               )}
 
@@ -2609,6 +3033,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     : 'hover:bg-white/10 text-white/60 hover:text-yellow-400'
                 }`}
                 title="Emoji Seç"
+                aria-label="Emoji Seç"
                 onClick={() => setIsEmojiPickerOpen((prev) => !prev)}
               >
                 <Smile className="w-5 h-5" />
@@ -2620,6 +3045,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   onClick={startVoiceRecording}
                   className="w-8 h-8 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white flex items-center justify-center transition shrink-0 shadow"
                   title="Sesli Mesaj Kaydet"
+                  aria-label="Sesli Mesaj Kaydet"
                 >
                   <Mic className="w-4 h-4" />
                 </button>
@@ -2627,13 +3053,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <button
                   type="submit"
                   disabled={(!inputText.trim() && pendingAttachments.length === 0) || slowmodeRemaining > 0}
-                  className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-500 to-teal-500 hover:brightness-110 text-white flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md shadow-amber-500/25"
+                  className="w-8 h-8 rounded-full ui-accent-bg flex items-center justify-center transition disabled:opacity-20 shrink-0 shadow-md"
                   title="Gönder"
+                  aria-label="Mesajı Gönder"
                 >
                   <ArrowUp className="w-4 h-4 stroke-[2.5]" />
                 </button>
               )}
             </form>
+            <div className="hidden sm:flex justify-end pr-3 pt-1 text-[10px] text-white/30 select-none">
+              {t(language, 'composerHint')}
+            </div>
           </div>
         )}
       </div>

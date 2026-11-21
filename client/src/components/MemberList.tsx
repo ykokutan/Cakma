@@ -221,7 +221,7 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
   const totalMemberCount = activeOnlineUsers.length + offlineMembers.length;
 
   return (
-    <aside className="w-60 ios-glass-sidebar lg:rounded-2xl lg:border lg:border-white/[0.08] lg:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-y-auto p-4 border-l border-white/[0.06]">
+    <aside className="w-60 ios-glass-sidebar xl:rounded-2xl xl:border xl:border-white/[0.08] xl:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-y-auto p-4 border-l border-white/[0.06]">
       <div className="mb-3 pb-2.5 border-b border-white/[0.06] space-y-2 shrink-0">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/75">

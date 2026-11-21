@@ -643,7 +643,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
           <div className="space-y-3">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-xl font-bold tracking-tight text-white">{user.username}</h3>
+                <h3 className="text-xl font-bold tracking-tight text-white select-text">{user.username}</h3>
                 {user.role === 'admin' ? (
                   <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
                     <Shield className="w-3 h-3" />
@@ -793,7 +793,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
               <div className="px-3 py-2 rounded-xl bg-white/[0.04] border border-white/5 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-sm shrink-0">💬</span>
-                  <span className="text-xs text-white/80 font-medium truncate">
+                  <span className="text-xs text-white/80 font-medium truncate select-text">
                     {user.statusMessage || 'Çevrimiçi'}
                   </span>
                 </div>
@@ -954,7 +954,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
 
                 {profileTab === 'about' && (
                   <div className="space-y-2">
-                    <div className="text-xs text-white/75 leading-relaxed bg-white/[0.03] p-3 rounded-xl border border-white/5 whitespace-pre-wrap">
+                    <div className="text-xs text-white/75 leading-relaxed bg-white/[0.03] p-3 rounded-xl border border-white/5 whitespace-pre-wrap select-text">
                       {renderRichBio(user.bio || 'Bu kullanıcı henüz hakkında yazısı eklememiş.')}
                     </div>
                     {(user.socialLinks?.steam || user.socialLinks?.github || user.socialLinks?.website) && (

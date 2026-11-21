@@ -1138,6 +1138,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         {/* Tier 2: Controls Toolbar (Clean 4-icon dock) */}
         <div className="flex items-center justify-between gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/[0.06]">
           <button
+            type="button"
             onClick={toggleMute}
             className={`flex-1 h-7 rounded-lg flex items-center justify-center transition ${
               isMuted
@@ -1145,11 +1146,13 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title={isMuted ? 'Mikrofonu Aç' : 'Sustur'}
+            aria-label={isMuted ? 'Mikrofonu Aç' : 'Mikrofonu Sustur'}
           >
             {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
           </button>
 
           <button
+            type="button"
             onClick={toggleDeafen}
             className={`flex-1 h-7 rounded-lg flex items-center justify-center transition ${
               isDeafened
@@ -1157,11 +1160,13 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title={isDeafened ? 'Sağırlaştırmayı Kaldır' : 'Kulaklığı Kapat'}
+            aria-label={isDeafened ? 'Sağırlaştırmayı Kaldır' : 'Kulaklığı Kapat'}
           >
             <Headphones className="w-3.5 h-3.5" />
           </button>
 
           <button
+            type="button"
             onClick={() => setIsActivityModalOpen(true)}
             className={`flex-1 h-7 rounded-lg flex items-center justify-center transition ${
               currentUser?.activity
@@ -1169,14 +1174,17 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                 : 'text-white/70 hover:bg-white/10 hover:text-white'
             }`}
             title="Oyun / Aktivite Durumunu Ayarla"
+            aria-label="Oyun veya Aktivite Durumunu Ayarla"
           >
             <Gamepad2 className="w-3.5 h-3.5" />
           </button>
 
           <button
+            type="button"
             onClick={onOpenSettings}
             className="flex-1 h-7 rounded-lg flex items-center justify-center text-white/70 hover:bg-white/10 hover:text-white transition"
             title="Ayarlar"
+            aria-label="Ayarlar"
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
@@ -1218,7 +1226,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       {isInviteModalOpen &&
         activeServer &&
         createPortal(
-          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
             <div className="w-full max-w-md rounded-3xl bg-slate-900/95 border border-white/15 p-6 shadow-2xl space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -1388,14 +1396,14 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                       setChannelMenu(null);
                     }}
                     className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl transition text-left ${
-                      current === opt.id ? 'bg-red-500/20 text-white font-semibold' : 'hover:bg-white/10 text-white/75'
+                      current === opt.id ? 'ui-accent-soft border font-semibold' : 'hover:bg-white/10 text-white/75'
                     }`}
                   >
                     <span className="flex items-center gap-2">
                       <Icon className="w-3.5 h-3.5 text-white/60" />
                       <span>{opt.label}</span>
                     </span>
-                    {current === opt.id && <span className="w-1.5 h-1.5 rounded-full bg-red-400" />}
+                    {current === opt.id && <Check className="w-3.5 h-3.5" />}
                   </button>
                 );
               })}

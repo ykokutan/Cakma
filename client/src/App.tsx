@@ -11,6 +11,7 @@ import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { MiniScreenSharePiP } from './components/MiniScreenSharePiP';
 import { WindowTitleBar } from './components/WindowTitleBar';
 import { AppDialogHost } from './components/AppDialogHost';
+import { AppBannerStack } from './components/AppBannerStack';
 
 const DirectCallModal = lazy(() => import('./components/DirectCallModal').then((m) => ({ default: m.DirectCallModal })));
 const UserProfileModal = lazy(() => import('./components/UserProfileModal').then((m) => ({ default: m.UserProfileModal })));
@@ -25,7 +26,7 @@ const ServerSettingsModal = lazy(() => import('./components/ServerSettingsModal'
 const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDiagnosticsModal').then((m) => ({ default: m.ConnectionDiagnosticsModal })));
 const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
 import { User } from './types';
-import { Megaphone, X, Volume2, Check } from 'lucide-react';
+import { X, Volume2, Check } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const {
@@ -118,8 +119,24 @@ const MainLayout: React.FC = () => {
     return () => window.removeEventListener('keydown', onGlobalKeyDown);
   }, [toggleMute, toggleDeafen, activeServer, activeChannel, selectChannel, unreadCounts]);
   const [showMembers, setShowMembers] = useState<boolean>(() =>
-    typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
+    typeof window !== 'undefined' ? window.innerWidth >= 1280 : true
   );
+  const [isChannelsCollapsed, setIsChannelsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('dc_channels_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleChannelsCollapsed = () => {
+    setIsChannelsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('dc_channels_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
@@ -170,103 +187,18 @@ const MainLayout: React.FC = () => {
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
       />
       <div className="relative flex flex-1 min-h-0 w-full overflow-hidden md:p-2.5 md:gap-2.5">
-      {/* Dedicated Server Banner Indicator */}
-      {isDedicatedServer && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 animate-fade-in pointer-events-auto">
-          <div className="ios-glass px-4 py-1.5 rounded-full border border-amber-500/40 bg-black/60 text-xs flex items-center gap-3 backdrop-blur-xl shadow-2xl">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-white/80 text-[11px]">
-              Bağlı Özel Sunucu: <b className="text-amber-300 font-mono">{currentServerHost}</b>
-            </span>
-            <button
-              onClick={resetToMainServer}
-              className="px-2.5 py-0.5 rounded-full bg-amber-500 text-black font-bold text-[10px] hover:bg-amber-400 transition shadow-sm"
-            >
-              Ana Sunucuya Dön (Port 4000)
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Real-time Maintenance & Pinned System Banner */}
-      {(maintenanceStatus?.active || pinnedBanner) && !systemAnnouncement && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-full px-4 pointer-events-none">
-          <div className="space-y-1.5 pointer-events-auto">
-            {maintenanceStatus?.active && (
-              <div className="px-4 py-2 rounded-xl border border-rose-500/40 bg-rose-500/20 text-rose-100 text-xs font-semibold flex items-center justify-between gap-3 backdrop-blur-xl shadow-lg">
-                <span>🛠️ Bakım Modu Aktif: {maintenanceStatus.message}</span>
-              </div>
-            )}
-            {pinnedBanner && (
-              <div className="px-4 py-2 rounded-xl border border-amber-500/40 bg-amber-500/20 text-amber-100 text-xs font-semibold flex items-center justify-between gap-3 backdrop-blur-xl shadow-lg">
-                <span>📌 Sabit Duyuru ({pinnedBanner.sender}): {pinnedBanner.message}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Connection Lost / Reconnecting Banner */}
-      {isAuthenticated && connectionState !== 'connected' && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[120] px-4 py-1.5 rounded-full bg-amber-500/20 border border-amber-400/40 backdrop-blur-xl text-amber-200 text-xs font-semibold flex items-center gap-2 shadow-xl">
-          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-          <span>
-            {connectionState === 'reconnecting'
-              ? 'Bağlantı koptu, yeniden bağlanılıyor... (Mesajlarınız sıraya alınıyor)'
-              : 'Sunucu bağlantısı kesildi.'}
-          </span>
-        </div>
-      )}
-
-      {/* New IP Login Security Alert Banner */}
-      {isAuthenticated && newIpAlert && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[125] max-w-lg w-full px-4 animate-fade-in">
-          <div className="ios-glass p-3 rounded-2xl border border-rose-500/40 bg-rose-950/90 text-white flex items-center justify-between gap-3 shadow-2xl backdrop-blur-xl">
-            <div className="text-xs leading-relaxed">
-              <div className="font-bold text-rose-300">⚠️ Yeni IP Adresinden Giriş Algılandı</div>
-              <div className="text-white/85">
-                Hesabınıza yeni bir IP adresinden (<span className="font-mono font-semibold">{newIpAlert.ip}</span>) giriş yapıldı. Siz değilseniz şifrenizi değiştirin.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={dismissNewIpAlert}
-              className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-white/70 hover:text-white shrink-0"
-              title="Kapat"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Real-time System Announcement Banner */}
-      {systemAnnouncement && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 max-w-xl w-full px-4 animate-fade-in">
-          <div className="ios-glass p-3 rounded-2xl border border-amber-500/40 bg-amber-500/20 text-white flex items-center justify-between shadow-2xl backdrop-blur-xl">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-amber-500/30 flex items-center justify-center text-amber-300">
-                <Megaphone className="w-4 h-4 animate-pulse" />
-              </div>
-              <div>
-                <div className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-                  Sistem Duyurusu ({systemAnnouncement.sender}) · {systemAnnouncement.timestamp}
-                </div>
-                <div className="text-xs font-semibold text-white/90">
-                  {systemAnnouncement.message}
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={dismissAnnouncement}
-              className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-white/70 hover:text-white transition"
-              title="Kapat"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      <AppBannerStack
+        isDedicatedServer={isDedicatedServer}
+        currentServerHost={currentServerHost}
+        onResetToMainServer={resetToMainServer}
+        connectionState={connectionState}
+        maintenanceStatus={maintenanceStatus}
+        pinnedBanner={pinnedBanner}
+        systemAnnouncement={systemAnnouncement}
+        onDismissAnnouncement={dismissAnnouncement}
+        newIpAlert={newIpAlert}
+        onDismissNewIpAlert={dismissNewIpAlert}
+      />
 
       {/* Voice Pull Permission Invite Notification (for users not currently in voice) */}
       {voicePullInvite && (
@@ -351,25 +283,29 @@ const MainLayout: React.FC = () => {
           onOpenDownload={() => { setIsDownloadOpen(true); setIsMobileNavOpen(false); }}
         />
 
-        <ChannelSidebar
-          onOpenCreateChannel={(type) => {
-            setCreateChannelModal({ isOpen: true, type });
-            setIsMobileNavOpen(false);
-          }}
-          onOpenSettings={() => { setIsSettingsOpen(true); setIsMobileNavOpen(false); }}
-          onOpenServerSettings={() => { setIsServerSettingsOpen(true); setIsMobileNavOpen(false); }}
-          onOpenAuth={() => { setIsAuthOpen(true); setIsMobileNavOpen(false); }}
-          onOpenAdminDashboard={() => { setIsAdminDashboardOpen(true); setIsMobileNavOpen(false); }}
-          onOpenStore={() => { setIsStoreOpen(true); setIsMobileNavOpen(false); }}
-          onOpenProfile={(user) => { setSelectedProfileUser(user); setIsMobileNavOpen(false); }}
-        />
+        {(!isChannelsCollapsed || isMobileNavOpen) && (
+          <ChannelSidebar
+            onOpenCreateChannel={(type) => {
+              setCreateChannelModal({ isOpen: true, type });
+              setIsMobileNavOpen(false);
+            }}
+            onOpenSettings={() => { setIsSettingsOpen(true); setIsMobileNavOpen(false); }}
+            onOpenServerSettings={() => { setIsServerSettingsOpen(true); setIsMobileNavOpen(false); }}
+            onOpenAuth={() => { setIsAuthOpen(true); setIsMobileNavOpen(false); }}
+            onOpenAdminDashboard={() => { setIsAdminDashboardOpen(true); setIsMobileNavOpen(false); }}
+            onOpenStore={() => { setIsStoreOpen(true); setIsMobileNavOpen(false); }}
+            onOpenProfile={(user) => { setSelectedProfileUser(user); setIsMobileNavOpen(false); }}
+          />
+        )}
       </div>
 
       {/* 3. Ana Mesajlaşma / Ses Odası Alanı */}
-      <div className="flex-1 min-w-0 h-full flex overflow-hidden md:rounded-2xl md:border md:border-white/[0.08] md:bg-[#0d0f16]/60 md:backdrop-blur-2xl md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.65)]">
+      <div className="flex-1 min-w-0 h-full flex overflow-hidden md:rounded-2xl md:border md:border-white/[0.08] md:bg-[#0d0f16]/60 md:backdrop-blur-xl md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.65)]">
         <ChatArea
           showMembers={showMembers}
           onToggleMembers={() => setShowMembers((prev) => !prev)}
+          isChannelsCollapsed={isChannelsCollapsed}
+          onToggleChannelsCollapsed={toggleChannelsCollapsed}
           onOpenProfile={(user) => setSelectedProfileUser(user)}
           onOpenMobileNav={() => setIsMobileNavOpen(true)}
           onOpenExplore={() => setIsExploreOpen(true)}
@@ -377,18 +313,18 @@ const MainLayout: React.FC = () => {
         />
       </div>
 
-      {/* 4. Sağ Üye Listesi Sütunu (Mobilde çekmece, masaüstünde sabit) */}
+      {/* 4. Sağ Üye Listesi Sütunu (Dar pencerede çekmece, geniş ekranda sabit) */}
       {showMembers && (
         <>
           <div
             onClick={() => setShowMembers(false)}
-            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden animate-fade-in"
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm xl:hidden animate-fade-in"
           />
-          <div className="fixed inset-y-0 right-0 z-40 lg:relative lg:z-auto flex h-full shrink-0 animate-fade-in">
+          <div className="fixed inset-y-0 right-0 z-40 xl:relative xl:z-auto flex h-full shrink-0 animate-fade-in">
             <MemberList
               onOpenProfile={(user) => {
                 setSelectedProfileUser(user);
-                if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                if (typeof window !== 'undefined' && window.innerWidth < 1280) {
                   setShowMembers(false);
                 }
               }}

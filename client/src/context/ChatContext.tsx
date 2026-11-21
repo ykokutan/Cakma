@@ -2,6 +2,8 @@ import { createContext, useContext } from 'react';
 import type { Channel, Message, MessageAttachment, Server, User } from '../types';
 import type { MessageContextResponse, MessageSearchHit, OfflineQueuedMessage } from '../sharedContracts';
 
+export type ChatLayoutMode = 'auto' | 'classic' | 'bubble';
+
 export interface ChatContextValue {
   servers: Server[];
   activeServer: Server | null;
@@ -42,6 +44,8 @@ export interface ChatContextValue {
   addReaction: (messageId: string, emoji: string) => void;
   togglePinMessage: (messageId: string) => void;
   sendThreadMessage: (channelId: string, parentMessageId: string, content: string) => void;
+  chatLayout: ChatLayoutMode;
+  setChatLayout: (mode: ChatLayoutMode) => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | undefined>(undefined);

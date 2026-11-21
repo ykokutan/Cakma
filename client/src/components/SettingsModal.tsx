@@ -108,6 +108,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setGlassIntensity,
     messageDensity,
     setMessageDensity,
+    chatLayout,
+    setChatLayout,
     cornerStyle,
     setCornerStyle,
     bgPattern,
@@ -243,7 +245,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.8.0');
+  const [appVersion, setAppVersion] = useState<string>('0.8.1');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -669,7 +671,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 onClick={() => setActiveTab('profile')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'profile'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
@@ -680,11 +682,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 onClick={() => setActiveTab('security')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'security'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Lock className="w-4 h-4 text-amber-400" />
+                <Lock className={`w-4 h-4 ${activeTab === 'security' ? 'text-white' : 'text-amber-400'}`} />
                 {t(language, 'tabSecurity')}
               </button>
             </div>
@@ -698,29 +700,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 onClick={() => setActiveTab('appearance')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'appearance'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Palette className="w-4 h-4 text-purple-400" />
+                <Palette className={`w-4 h-4 ${activeTab === 'appearance' ? 'text-white' : 'text-purple-400'}`} />
                 {t(language, 'tabAppearance')}
               </button>
               <button
                 onClick={() => setActiveTab('overlay')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'overlay'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Radio className="w-4 h-4 text-emerald-400" />
-                <span>Oyun İçi Overlay</span>
+                <Radio className={`w-4 h-4 ${activeTab === 'overlay' ? 'text-white' : 'text-emerald-400'}`} />
+                <span>{t(language, 'tabOverlay')}</span>
               </button>
               <button
                 onClick={() => setActiveTab('audio')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'audio'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
@@ -731,55 +733,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 onClick={() => setActiveTab('voice_processing')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'voice_processing'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <Sparkles className={`w-4 h-4 ${activeTab === 'voice_processing' ? 'text-white' : 'text-emerald-400'}`} />
                 {t(language, 'tabVoiceProcessing')}
               </button>
               <button
                 onClick={() => setActiveTab('video')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'video'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Video className="w-4 h-4 text-sky-400" />
+                <Video className={`w-4 h-4 ${activeTab === 'video' ? 'text-white' : 'text-sky-400'}`} />
                 {t(language, 'tabVideo')}
               </button>
               <button
                 onClick={() => setActiveTab('keybindings')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'keybindings'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Keyboard className="w-4 h-4 text-indigo-400" />
+                <Keyboard className={`w-4 h-4 ${activeTab === 'keybindings' ? 'text-white' : 'text-indigo-400'}`} />
                 {t(language, 'tabKeybindings')}
               </button>
               <button
                 onClick={() => setActiveTab('chats')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'chats'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <MessageSquare className="w-4 h-4 text-teal-400" />
+                <MessageSquare className={`w-4 h-4 ${activeTab === 'chats' ? 'text-white' : 'text-teal-400'}`} />
                 {t(language, 'tabChats')}
               </button>
               <button
                 onClick={() => setActiveTab('notifications')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'notifications'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Bell className="w-4 h-4 text-pink-400" />
+                <Bell className={`w-4 h-4 ${activeTab === 'notifications' ? 'text-white' : 'text-pink-400'}`} />
                 {t(language, 'tabNotifications')}
               </button>
             </div>
@@ -793,11 +795,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 onClick={() => setActiveTab('about')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
                   activeTab === 'about'
-                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                    ? 'ui-accent-bg shadow-md'
                     : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
                 }`}
               >
-                <Info className="w-4 h-4 text-slate-300" />
+                <Info className={`w-4 h-4 ${activeTab === 'about' ? 'text-white' : 'text-slate-300'}`} />
                 {t(language, 'tabAbout')}
               </button>
             </div>
@@ -2174,7 +2176,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           onClick={() => setChatFontSize(s.id)}
                           className={`flex-1 py-1.5 px-2.5 rounded-xl border text-xs font-semibold transition ${
                             chatFontSize === s.id
-                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              ? 'ui-accent-bg shadow'
                               : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
                           }`}
                         >
@@ -2199,7 +2201,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           onClick={() => setMessageDensity(d.id)}
                           className={`flex-1 py-1.5 px-2.5 rounded-xl border text-xs font-semibold transition ${
                             messageDensity === d.id
-                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              ? 'ui-accent-bg shadow'
                               : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
                           }`}
                         >
@@ -2207,6 +2209,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         </button>
                       ))}
                     </div>
+                  </div>
+                </div>
+
+                {/* Chat Layout Mode */}
+                <div className="pt-2 border-t border-white/10">
+                  <div className="text-xs font-semibold text-white/80 mb-2">{t(language, 'chatLayoutTitle')}</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        { id: 'auto', label: `${t(language, 'chatLayoutAuto')} (Sunucu: Klasik · DM: Balon)` },
+                        { id: 'classic', label: t(language, 'chatLayoutClassic') },
+                        { id: 'bubble', label: t(language, 'chatLayoutBubble') },
+                      ] as const
+                    ).map((mode) => (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setChatLayout(mode.id)}
+                        className={`py-1.5 px-2.5 rounded-xl border text-[11px] font-semibold transition ${
+                          chatLayout === mode.id
+                            ? 'ui-accent-bg shadow'
+                            : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -2228,7 +2257,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           onClick={() => setGlassIntensity(g.id)}
                           className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
                             glassIntensity === g.id
-                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              ? 'ui-accent-bg shadow'
                               : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
                           }`}
                         >
@@ -2253,7 +2282,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           onClick={() => setCornerStyle(c.id)}
                           className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
                             cornerStyle === c.id
-                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              ? 'ui-accent-bg shadow'
                               : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
                           }`}
                         >
@@ -2279,7 +2308,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           onClick={() => setBgPattern(p.id)}
                           className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
                             bgPattern === p.id
-                              ? 'bg-blue-500 text-white border-blue-400 shadow'
+                              ? 'ui-accent-bg shadow'
                               : 'bg-black/25 border-white/10 text-white/60 hover:text-white hover:bg-white/5'
                           }`}
                         >
@@ -2300,7 +2329,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     type="button"
                     onClick={() => setReduceMotion(!reduceMotion)}
                     className={`w-12 h-6 rounded-full transition-all relative shrink-0 ${
-                      reduceMotion ? 'bg-blue-500' : 'bg-white/15'
+                      reduceMotion ? 'ui-accent-bg' : 'bg-white/15'
                     }`}
                   >
                     <span

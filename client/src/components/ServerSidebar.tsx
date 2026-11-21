@@ -82,13 +82,14 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
         <div
           className={`absolute left-0 w-[3.5px] rounded-r-full transition-all duration-200 ${
             isDMActive
-              ? 'h-7 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 shadow-[0_0_12px_rgba(245,158,11,0.85)] opacity-100'
+              ? 'h-7 ui-accent-bar opacity-100'
               : totalDmUnreads > 0
               ? 'h-2 bg-white/85 group-hover:h-4 opacity-100'
-              : 'h-0 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 group-hover:h-4 opacity-0 group-hover:opacity-100'
+              : 'h-0 ui-accent-bar group-hover:h-4 opacity-0 group-hover:opacity-100'
           }`}
         />
         <button
+          type="button"
           onClick={() => selectServer('direct-messages')}
           onMouseEnter={(e) =>
             showTooltip(
@@ -100,8 +101,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
           onMouseLeave={hideTooltip}
           className={`w-11 h-11 transition-all duration-200 flex items-center justify-center border shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] ${
             isDMActive
-              ? 'rounded-[15px] bg-gradient-to-tr from-amber-500 via-orange-500 to-teal-500 text-white border-amber-300/40 shadow-[0_8px_22px_-4px_rgba(245,158,11,0.45)]'
-              : 'rounded-[22px] hover:rounded-[15px] bg-white/[0.06] hover:bg-gradient-to-tr hover:from-amber-500/80 hover:to-teal-500/80 text-white/75 hover:text-white border-white/[0.08] hover:border-white/20'
+              ? 'rounded-[15px] ui-accent-bg'
+              : 'rounded-[22px] hover:rounded-[15px] bg-white/[0.06] hover:bg-white/[0.14] text-white/75 hover:text-white border-white/[0.08] hover:border-white/20'
           }`}
           aria-label="Direkt Mesajlar"
         >
@@ -134,7 +135,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
               <div
                 className={`absolute left-0 w-[3.5px] rounded-r-full transition-all duration-200 ${
                   isActive
-                    ? 'h-7 bg-gradient-to-b from-amber-400 via-orange-400 to-teal-400 shadow-[0_0_12px_rgba(245,158,11,0.85)] opacity-100'
+                    ? 'h-7 ui-accent-bar opacity-100'
                     : serverUnreads > 0
                     ? 'h-2 bg-white/85 group-hover:h-4 opacity-100'
                     : 'h-0 bg-white/75 group-hover:h-4 opacity-0 group-hover:opacity-100'
@@ -143,6 +144,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
               {/* Server Tile */}
               <button
+                type="button"
                 onClick={() => selectServer(server.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -169,7 +171,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                 onMouseLeave={hideTooltip}
                 className={`w-11 h-11 transition-all duration-200 flex items-center justify-center font-bold text-sm overflow-hidden border shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] ${
                   isActive
-                    ? 'rounded-[15px] bg-gradient-to-tr from-amber-500/90 via-orange-500/80 to-teal-500/90 text-white border-amber-300/45 shadow-[0_8px_22px_-4px_rgba(245,158,11,0.4)]'
+                    ? 'rounded-[15px] ui-accent-bg'
                     : 'rounded-[22px] hover:rounded-[15px] bg-white/[0.06] hover:bg-white/[0.13] text-white/90 border-white/[0.08] hover:border-white/20'
                 }`}
                 aria-label={server.name}
