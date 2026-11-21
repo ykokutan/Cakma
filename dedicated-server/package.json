@@ -7,7 +7,9 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "eslint --config ../eslint.config.mjs src",
+    "test": "npm run build && node --test dist/__tests__/*.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

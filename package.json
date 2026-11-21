@@ -8,6 +8,7 @@
     "dev:client": "cd client && npm run dev",
     "dev:desktop": "cd client && npm run tauri dev",
     "test": "npm --prefix server test && npm --prefix client test",
+    "lint": "eslint server/src dedicated-server/src client/src shared",
     "build": "cd server && npm run build && cd ../client && npm run build",
     "build:all": "npm --prefix server run build && npm --prefix client run build && npm --prefix dedicated-server run build",
     "build:desktop": "cd client && npm run tauri build",
@@ -16,6 +17,11 @@
     "update": "git pull origin main && npm run install:all && npm run build"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^9.1.2",
+    "eslint": "^10.15.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.10.1",
+    "typescript-eslint": "^8.73.0"
   }
 }

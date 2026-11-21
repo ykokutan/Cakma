@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useMicVolumeLevel } from '../context/VoiceMetricsContext';
 import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } from '../utils/tsSoundEffects';
 import { DEFAULT_CUSTOM_THEME } from '../utils/themeBuilder';
 import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import { authFetch, resolveBackendBaseUrl } from '../utils/authFetch';
-import { evaluatePasswordStrength } from '../utils/authValidation';
 import { appToast } from '../utils/appDialogs';
 import { WebPushSettingsCard } from './settings/WebPushSettingsCard';
 import { AccountSecuritySection } from './settings/AccountSecuritySection';
+import { ActiveSessionsCard } from './settings/ActiveSessionsCard';
+import { PasswordChangeCard } from './settings/PasswordChangeCard';
 import { ChangelogTab } from './settings/ChangelogTab';
 import {
   X,
@@ -95,8 +97,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setPttBeepEnabled,
     desktopNotificationsEnabled,
     setDesktopNotificationsEnabled,
-    changePassword,
-    revokeSingleSession,
     unblockUser,
     uiTheme,
     setUiTheme,
@@ -243,7 +243,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.6.0');
+  const [appVersion, setAppVersion] = useState<string>('0.8.0');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -364,28 +364,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [twoFaBackupCodes, setTwoFaBackupCodes] = useState<string[] | null>(null);
   const [twoFaStatusMsg, setTwoFaStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [twoFaLoading, setTwoFaLoading] = useState(false);
-
-  // Active Sessions State
-  const [activeSessions, setActiveSessions] = useState<
-    { socketId: string; ip: string; userAgent: string; connectedAt: string; isCurrent: boolean }[]
-  >([]);
-  const [sessionsNotice, setSessionsNotice] = useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (activeTab !== 'security' || !socket || !isAuthenticated) return;
-    socket.emit('get_active_sessions');
-    const onSessions = (list: any[]) => setActiveSessions(list || []);
-    const onRevokeRes = (res: { revokedCount: number }) => {
-      setSessionsNotice(`Diğer ${res.revokedCount} oturum başarıyla kapatıldı.`);
-      setTimeout(() => setSessionsNotice(null), 3500);
-    };
-    socket.on('active_sessions_list', onSessions);
-    socket.on('revoke_sessions_result', onRevokeRes);
-    return () => {
-      socket.off('active_sessions_list', onSessions);
-      socket.off('revoke_sessions_result', onRevokeRes);
-    };
-  }, [activeTab, socket, isAuthenticated]);
 
   const handleInit2fa = () => {
     if (!socket) return;
@@ -519,7 +497,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         setUpdateStatusMsg(`Yeni sürüm bulundu: v${update.version}. İndiriliyor...`);
         let totalBytes = 0;
         let downloadedBytes = 0;
-        await update.downloadAndInstall((event: any) => {
+        await update.downloadAndInstall((event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
           if (event.event === 'Started') {
             totalBytes = Number(event.data?.contentLength || 0);
             setUpdateProgress({
@@ -573,15 +551,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       const reg = await navigator.serviceWorker.register('/sw.js');
       await reg.update().catch(() => {});
       setPushRegStatus(`PWA Service Worker aktif (${reg.scope}). Arka plan bildirimleri hazır.`);
-    } catch (err: any) {
-      setPushRegStatus(`Service Worker kaydı başarısız: ${err?.message || 'Bilinmeyen hata'}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      setPushRegStatus(`Service Worker kaydı başarısız: ${msg || 'Bilinmeyen hata'}`);
     }
   };
-  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-  const [passwordStatus, setPasswordStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true, onClose);
   const [recordingKey, setRecordingKey] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [notifPermission, setNotifPermission] = useState(
@@ -626,7 +602,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xl flex items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-5xl ios-glass rounded-none sm:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden border-0 sm:border border-white/10 h-[100dvh] sm:h-[660px] sm:max-h-[90vh]">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t(language, 'settings')}
+        className="w-full max-w-5xl ios-glass rounded-none sm:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden border-0 sm:border border-white/10 h-[100dvh] sm:h-[660px] sm:max-h-[90vh]"
+      >
         {/* Left Settings Sidebar - TeamSpeak-style Categorized Panel */}
         <div className="w-full md:w-60 max-h-44 md:max-h-none bg-white/[0.02] p-3 md:p-4 flex flex-col justify-between shrink-0 border-b md:border-b-0 md:border-r border-white/[0.06] overflow-y-auto">
           <div className="space-y-4">
@@ -1575,8 +1557,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                             setAvatar(res.dataUrl);
                             setAvatarUrlInput('');
                           }
-                        } catch (err: any) {
-                          setProfileUploadErr(err?.message || 'Görsel işlenemedi.');
+                        } catch (err: unknown) {
+                          setProfileUploadErr(err instanceof Error && err.message ? err.message : 'Görsel işlenemedi.');
                         }
                         e.target.value = '';
                       }}
@@ -1645,16 +1627,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     Çevrimiçi Durum
                   </label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {[
-                      { id: 'online', label: 'Çevrimiçi', dot: 'bg-emerald-400' },
-                      { id: 'idle', label: 'Boşta', dot: 'bg-amber-400' },
-                      { id: 'dnd', label: 'Rahatsız Etmeyin', dot: 'bg-red-500' },
-                      { id: 'offline', label: 'Görünmez', dot: 'bg-slate-500' },
-                    ].map((st) => (
+                    {(
+                      [
+                        { id: 'online', label: 'Çevrimiçi', dot: 'bg-emerald-400' },
+                        { id: 'idle', label: 'Boşta', dot: 'bg-amber-400' },
+                        { id: 'dnd', label: 'Rahatsız Etmeyin', dot: 'bg-red-500' },
+                        { id: 'offline', label: 'Görünmez', dot: 'bg-slate-500' },
+                      ] as const
+                    ).map((st) => (
                       <button
                         key={st.id}
                         type="button"
-                        onClick={() => setProfileStatus(st.id as any)}
+                        onClick={() => setProfileStatus(st.id)}
                         className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 transition ${
                           profileStatus === st.id
                             ? 'bg-blue-500/20 border-blue-400 text-white'
@@ -1930,180 +1914,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </div>
 
               {/* Active Sessions Management */}
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <Smartphone className="w-4 h-4 text-sky-400" />
-                    <span>Aktif Oturumlarım (Cihazlar)</span>
-                  </div>
-                  {isAuthenticated && activeSessions.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => socket?.emit('revoke_other_sessions')}
-                      className="px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 text-xs font-semibold transition"
-                    >
-                      Diğer Tüm Oturumları Kapat
-                    </button>
-                  )}
-                </div>
-
-                {sessionsNotice && (
-                  <div className="text-xs px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                    {sessionsNotice}
-                  </div>
-                )}
-
-                {!isAuthenticated ? (
-                  <p className="text-xs text-white/50">Aktif oturumları görmek için giriş yapmalısınız.</p>
-                ) : activeSessions.length === 0 ? (
-                  <p className="text-xs text-white/50">Aktif oturum bilgisi yükleniyor...</p>
-                ) : (
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {activeSessions.map((sess) => (
-                      <div
-                        key={sess.socketId}
-                        className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-black/30 border border-white/5 text-xs"
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="font-semibold text-white flex items-center gap-2">
-                            <span className="font-mono">{sess.ip}</span>
-                            {sess.isCurrent && (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                                Bu Cihaz
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-white/40 truncate mt-0.5">{sess.userAgent}</div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[10px] text-white/40">
-                            {new Date(sess.connectedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                          {!sess.isCurrent && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const res = await revokeSingleSession(sess.socketId);
-                                if (!res.success && res.error) {
-                                  setSessionsNotice(res.error);
-                                }
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500 text-red-300 hover:text-white border border-red-500/30 text-[10px] font-bold transition"
-                            >
-                              {t(language, 'endSessionBtn')}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <ActiveSessionsCard />
 
               {/* Password Change */}
-              <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Lock className="w-4 h-4 text-amber-400" />
-                  <span>Şifre Değiştir</span>
-                </div>
-
-                {!isAuthenticated ? (
-                  <p className="text-xs text-white/50">
-                    Şifre değiştirebilmek için kayıtlı bir hesapla giriş yapmış olmalısınız.
-                  </p>
-                ) : (
-                  <form
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      setPasswordStatus(null);
-                      if (newPasswordInput.length < 6) {
-                        setPasswordStatus({ type: 'error', text: 'Yeni şifre en az 6 karakter olmalıdır.' });
-                        return;
-                      }
-                      if (newPasswordInput !== confirmPasswordInput) {
-                        setPasswordStatus({ type: 'error', text: 'Yeni şifreler eşleşmiyor.' });
-                        return;
-                      }
-                      setIsChangingPassword(true);
-                      const res = await changePassword(currentPasswordInput, newPasswordInput);
-                      setIsChangingPassword(false);
-                      if (res.success) {
-                        setPasswordStatus({ type: 'success', text: res.message || 'Şifreniz başarıyla güncellendi.' });
-                        setCurrentPasswordInput('');
-                        setNewPasswordInput('');
-                        setConfirmPasswordInput('');
-                      } else {
-                        setPasswordStatus({ type: 'error', text: res.error || 'Şifre güncellenemedi.' });
-                      }
-                    }}
-                    className="space-y-2.5"
-                  >
-                    <input
-                      type="password"
-                      required
-                      value={currentPasswordInput}
-                      onChange={(e) => setCurrentPasswordInput(e.target.value)}
-                      placeholder="Mevcut Şifre"
-                      className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
-                    />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      <input
-                        type="password"
-                        required
-                        value={newPasswordInput}
-                        onChange={(e) => setNewPasswordInput(e.target.value)}
-                        placeholder="Yeni Şifre (en az 6 karakter)"
-                        className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
-                      />
-                      <input
-                        type="password"
-                        required
-                        value={confirmPasswordInput}
-                        onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                        placeholder="Yeni Şifre (Tekrar)"
-                        className="w-full bg-black/30 border border-white/10 text-white text-xs rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-amber-500"
-                      />
-                    </div>
-                    {newPasswordInput.length > 0 && (() => {
-                      const st = evaluatePasswordStrength(newPasswordInput);
-                      const barColors = ['bg-white/10', 'bg-rose-500', 'bg-amber-400', 'bg-emerald-400', 'bg-teal-400'];
-                      return (
-                        <div className="flex items-center gap-2 pt-0.5">
-                          <div className="flex-1 grid grid-cols-4 gap-1">
-                            {[1, 2, 3, 4].map((seg) => (
-                              <div
-                                key={seg}
-                                className={`h-1.5 rounded-full transition-all ${
-                                  st.level >= seg ? barColors[st.level] : 'bg-white/10'
-                                }`}
-                              />
-                            ))}
-                          </div>
-                          <span className="text-[10px] font-bold text-white/70">{st.label}</span>
-                        </div>
-                      );
-                    })()}
-                    {passwordStatus && (
-                      <div
-                        className={`text-xs px-3 py-2 rounded-xl border ${
-                          passwordStatus.type === 'success'
-                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                            : 'bg-red-500/15 border-red-500/30 text-red-300'
-                        }`}
-                      >
-                        {passwordStatus.text}
-                      </div>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={isChangingPassword}
-                      className="px-4 py-2 rounded-full bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs transition disabled:opacity-50"
-                    >
-                      {isChangingPassword ? 'Güncelleniyor...' : 'Şifreyi Güncelle'}
-                    </button>
-                  </form>
-                )}
-              </div>
+              <PasswordChangeCard />
 
               {/* Modular Self-Service Email Change (OTP) & Permanent Account Deletion */}
               <AccountSecuritySection />
@@ -2195,24 +2009,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <span className="text-[11px] text-white/45 font-mono">{uiTheme}</span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {[
-                      { id: 'vision-dark', label: 'Vision Dark', desc: 'Obsidian & Amber', grad: 'from-slate-800 via-zinc-900 to-amber-900/60', dot: 'bg-slate-300' },
-                      { id: 'midnight-blue', label: 'Midnight Blue', desc: 'Safir & İndigo', grad: 'from-blue-950 via-indigo-950 to-slate-900', dot: 'bg-blue-400' },
-                      { id: 'cyber-emerald', label: 'Cyber Emerald', desc: 'Zümrüt & Camgöbeği', grad: 'from-emerald-950 via-teal-950 to-slate-900', dot: 'bg-emerald-400' },
-                      { id: 'amber-gold', label: 'Amber Gold', desc: 'Sıcak Altın', grad: 'from-amber-950 via-orange-950 to-stone-950', dot: 'bg-amber-400' },
-                      { id: 'crimson-rose', label: 'Crimson Rose', desc: 'Yakut & Pembe', grad: 'from-rose-950 via-pink-950 to-zinc-950', dot: 'bg-rose-400' },
-                      { id: 'royal-violet', label: 'Royal Violet', desc: 'Kozmik Mor', grad: 'from-violet-950 via-purple-950 to-slate-950', dot: 'bg-violet-400' },
-                      { id: 'nordic-frost', label: 'Nordic Frost', desc: 'Buz Mavisi', grad: 'from-sky-950 via-slate-900 to-zinc-950', dot: 'bg-sky-400' },
-                      { id: 'oled-black', label: 'OLED Siyah', desc: 'Saf AMOLED #000', grad: 'from-black via-neutral-950 to-black', dot: 'bg-white' },
-                      { id: 'pearl-white', label: 'İnci Beyazı', desc: 'Açık · Saf Cam', grad: 'from-white via-slate-100 to-blue-100', dot: 'bg-blue-600' },
-                      { id: 'sky-daylight', label: 'Gündüz Mavisi', desc: 'Açık · Ferah Gökyüzü', grad: 'from-sky-50 via-sky-100 to-indigo-100', dot: 'bg-sky-600' },
-                      { id: 'warm-sand', label: 'Sıcak Kum', desc: 'Açık · Göz Dostu Krem', grad: 'from-amber-50 via-orange-50 to-stone-200', dot: 'bg-amber-600' },
-                      { id: 'mint-breeze', label: 'Nane Esintisi', desc: 'Açık · Pastel Yeşil', grad: 'from-emerald-50 via-teal-50 to-emerald-100', dot: 'bg-emerald-600' },
-                    ].map((t) => (
+                    {(
+                      [
+                        { id: 'vision-dark', label: 'Vision Dark', desc: 'Obsidian & Amber', grad: 'from-slate-800 via-zinc-900 to-amber-900/60', dot: 'bg-slate-300' },
+                        { id: 'midnight-blue', label: 'Midnight Blue', desc: 'Safir & İndigo', grad: 'from-blue-950 via-indigo-950 to-slate-900', dot: 'bg-blue-400' },
+                        { id: 'cyber-emerald', label: 'Cyber Emerald', desc: 'Zümrüt & Camgöbeği', grad: 'from-emerald-950 via-teal-950 to-slate-900', dot: 'bg-emerald-400' },
+                        { id: 'amber-gold', label: 'Amber Gold', desc: 'Sıcak Altın', grad: 'from-amber-950 via-orange-950 to-stone-950', dot: 'bg-amber-400' },
+                        { id: 'crimson-rose', label: 'Crimson Rose', desc: 'Yakut & Pembe', grad: 'from-rose-950 via-pink-950 to-zinc-950', dot: 'bg-rose-400' },
+                        { id: 'royal-violet', label: 'Royal Violet', desc: 'Kozmik Mor', grad: 'from-violet-950 via-purple-950 to-slate-950', dot: 'bg-violet-400' },
+                        { id: 'nordic-frost', label: 'Nordic Frost', desc: 'Buz Mavisi', grad: 'from-sky-950 via-slate-900 to-zinc-950', dot: 'bg-sky-400' },
+                        { id: 'oled-black', label: 'OLED Siyah', desc: 'Saf AMOLED #000', grad: 'from-black via-neutral-950 to-black', dot: 'bg-white' },
+                        { id: 'pearl-white', label: 'İnci Beyazı', desc: 'Açık · Saf Cam', grad: 'from-white via-slate-100 to-blue-100', dot: 'bg-blue-600' },
+                        { id: 'sky-daylight', label: 'Gündüz Mavisi', desc: 'Açık · Ferah Gökyüzü', grad: 'from-sky-50 via-sky-100 to-indigo-100', dot: 'bg-sky-600' },
+                        { id: 'warm-sand', label: 'Sıcak Kum', desc: 'Açık · Göz Dostu Krem', grad: 'from-amber-50 via-orange-50 to-stone-200', dot: 'bg-amber-600' },
+                        { id: 'mint-breeze', label: 'Nane Esintisi', desc: 'Açık · Pastel Yeşil', grad: 'from-emerald-50 via-teal-50 to-emerald-100', dot: 'bg-emerald-600' },
+                      ] as const
+                    ).map((t) => (
                       <button
                         key={t.id}
                         type="button"
-                        onClick={() => setUiTheme(t.id as any)}
+                        onClick={() => setUiTheme(t.id)}
                         className={`text-left p-2.5 rounded-xl border transition-all group ${
                           uiTheme === t.id
                             ? 'bg-blue-500/15 border-blue-400 text-white shadow-lg shadow-blue-500/10'
@@ -2345,15 +2161,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-xs font-semibold text-white/80 mb-2">Sohbet Yazı Boyutu</div>
                     <div className="flex gap-2">
-                      {[
-                        { id: 'sm', label: 'Küçük' },
-                        { id: 'base', label: 'Normal' },
-                        { id: 'lg', label: 'Büyük' },
-                      ].map((s) => (
+                      {(
+                        [
+                          { id: 'sm', label: 'Küçük' },
+                          { id: 'base', label: 'Normal' },
+                          { id: 'lg', label: 'Büyük' },
+                        ] as const
+                      ).map((s) => (
                         <button
                           key={s.id}
                           type="button"
-                          onClick={() => setChatFontSize(s.id as any)}
+                          onClick={() => setChatFontSize(s.id)}
                           className={`flex-1 py-1.5 px-2.5 rounded-xl border text-xs font-semibold transition ${
                             chatFontSize === s.id
                               ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -2369,14 +2187,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-xs font-semibold text-white/80 mb-2">Mesaj Görünüm Yoğunluğu</div>
                     <div className="flex gap-2">
-                      {[
-                        { id: 'cozy', label: 'Rahat (Cozy)' },
-                        { id: 'compact', label: 'Sıkışık (Compact)' },
-                      ].map((d) => (
+                      {(
+                        [
+                          { id: 'cozy', label: 'Rahat (Cozy)' },
+                          { id: 'compact', label: 'Sıkışık (Compact)' },
+                        ] as const
+                      ).map((d) => (
                         <button
                           key={d.id}
                           type="button"
-                          onClick={() => setMessageDensity(d.id as any)}
+                          onClick={() => setMessageDensity(d.id)}
                           className={`flex-1 py-1.5 px-2.5 rounded-xl border text-xs font-semibold transition ${
                             messageDensity === d.id
                               ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -2395,15 +2215,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-xs font-semibold text-white/80 mb-2">Cam Efekti (Blur)</div>
                     <div className="flex gap-1.5">
-                      {[
-                        { id: 'low', label: 'Hafif' },
-                        { id: 'normal', label: 'Dengeli' },
-                        { id: 'high', label: 'Yoğun' },
-                      ].map((g) => (
+                      {(
+                        [
+                          { id: 'low', label: 'Hafif' },
+                          { id: 'normal', label: 'Dengeli' },
+                          { id: 'high', label: 'Yoğun' },
+                        ] as const
+                      ).map((g) => (
                         <button
                           key={g.id}
                           type="button"
-                          onClick={() => setGlassIntensity(g.id as any)}
+                          onClick={() => setGlassIntensity(g.id)}
                           className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
                             glassIntensity === g.id
                               ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -2419,14 +2241,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-xs font-semibold text-white/80 mb-2">Köşe Stili</div>
                     <div className="flex gap-1.5">
-                      {[
-                        { id: 'rounded', label: 'Yumuşak' },
-                        { id: 'sharp', label: 'Keskin' },
-                      ].map((c) => (
+                      {(
+                        [
+                          { id: 'rounded', label: 'Yumuşak' },
+                          { id: 'sharp', label: 'Keskin' },
+                        ] as const
+                      ).map((c) => (
                         <button
                           key={c.id}
                           type="button"
-                          onClick={() => setCornerStyle(c.id as any)}
+                          onClick={() => setCornerStyle(c.id)}
                           className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
                             cornerStyle === c.id
                               ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -2442,15 +2266,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-xs font-semibold text-white/80 mb-2">Arka Plan Deseni</div>
                     <div className="flex gap-1.5">
-                      {[
-                        { id: 'grid', label: 'Izgara' },
-                        { id: 'dots', label: 'Nokta' },
-                        { id: 'clean', label: 'Sade' },
-                      ].map((p) => (
+                      {(
+                        [
+                          { id: 'grid', label: 'Izgara' },
+                          { id: 'dots', label: 'Nokta' },
+                          { id: 'clean', label: 'Sade' },
+                        ] as const
+                      ).map((p) => (
                         <button
                           key={p.id}
                           type="button"
-                          onClick={() => setBgPattern(p.id as any)}
+                          onClick={() => setBgPattern(p.id)}
                           className={`flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-semibold transition ${
                             bgPattern === p.id
                               ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -2692,16 +2518,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div className="text-xs text-white/40">Oyun içi konuşanlar penceresinin ekran köşesi</div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {[
-                      { id: 'top-left', label: 'Sol Üst' },
-                      { id: 'top-right', label: 'Sağ Üst' },
-                      { id: 'bottom-left', label: 'Sol Alt' },
-                      { id: 'bottom-right', label: 'Sağ Alt' },
-                    ].map((c) => (
+                    {(
+                      [
+                        { id: 'top-left', label: 'Sol Üst' },
+                        { id: 'top-right', label: 'Sağ Üst' },
+                        { id: 'bottom-left', label: 'Sol Alt' },
+                        { id: 'bottom-right', label: 'Sağ Alt' },
+                      ] as const
+                    ).map((c) => (
                       <button
                         key={c.id}
                         type="button"
-                        onClick={() => handleOverlayCornerChange(c.id as any)}
+                        onClick={() => handleOverlayCornerChange(c.id)}
                         className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
                           overlayCorner === c.id
                             ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -2733,15 +2561,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <div>
                     <div className="text-xs font-semibold text-white mb-1.5">Overlay Pencere Boyutu</div>
                     <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { id: 'compact', label: 'Kompakt' },
-                        { id: 'standard', label: 'Standart' },
-                        { id: 'wide', label: 'Geniş' },
-                      ].map((sz) => (
+                      {(
+                        [
+                          { id: 'compact', label: 'Kompakt' },
+                          { id: 'standard', label: 'Standart' },
+                          { id: 'wide', label: 'Geniş' },
+                        ] as const
+                      ).map((sz) => (
                         <button
                           key={sz.id}
                           type="button"
-                          onClick={() => updateOverlayConfig({ size: sz.id as any })}
+                          onClick={() => updateOverlayConfig({ size: sz.id })}
                           className={`py-1.5 px-3 rounded-xl border text-xs font-semibold transition ${
                             overlayConfig.size === sz.id
                               ? 'bg-blue-500 text-white border-blue-400 shadow'
@@ -3202,15 +3032,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <span>Fısıltı (Whisper) İzinleri</span>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { id: 'everyone', label: 'Herkesten' },
-                      { id: 'friends', label: 'Sadece Arkadaşlar' },
-                      { id: 'disabled', label: 'Fısıltıyı Kapat' },
-                    ].map((opt) => (
+                    {(
+                      [
+                        { id: 'everyone', label: 'Herkesten' },
+                        { id: 'friends', label: 'Sadece Arkadaşlar' },
+                        { id: 'disabled', label: 'Fısıltıyı Kapat' },
+                      ] as const
+                    ).map((opt) => (
                       <button
                         key={opt.id}
                         type="button"
-                        onClick={() => updateAdv({ whisperMode: opt.id as any })}
+                        onClick={() => updateAdv({ whisperMode: opt.id })}
                         className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
                           advSettings.whisperMode === opt.id
                             ? 'bg-blue-500 text-white border-blue-400 shadow'

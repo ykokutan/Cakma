@@ -9,6 +9,20 @@ on:
       - main
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install Workspace Lint Dependencies
+        run: npm ci
+      - name: Run Workspace ESLint
+        run: npm run lint
+
   server:
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +38,9 @@ jobs:
       - name: Build & Run Server Tests
         working-directory: server
         run: npm test
+      - name: Security Audit (Server Prod Deps)
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
 
   client:
     runs-on: ubuntu-latest
@@ -43,6 +60,9 @@ jobs:
       - name: TypeScript & Vite Production Build
         working-directory: client
         run: npm run build
+      - name: Security Audit (Client Prod Deps)
+        working-directory: client
+        run: npm audit --omit=dev --audit-level=high
 
   dedicated-server:
     runs-on: ubuntu-latest
@@ -56,15 +76,20 @@ jobs:
       - name: Install Dedicated Server Dependencies
         working-directory: dedicated-server
         run: npm ci
-      - name: Build Dedicated Server
+      - name: Build & Run Dedicated Server Tests
         working-directory: dedicated-server
-        run: npm run build
+        run: npm test
+      - name: Security Audit (Dedicated Server Prod Deps)
+        working-directory: dedicated-server
+        run: npm audit --omit=dev --audit-level=high
 
   tauri-rust:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -73,6 +98,12 @@ jobs:
       - name: Prepare Minimal Dist Placeholder for Rust Tests
         shell: bash
         run: mkdir -p client/dist && echo "<html></html>" > client/dist/index.html
+      - name: Check Rust Formatting
+        working-directory: client/src-tauri
+        run: cargo fmt --check
+      - name: Run Clippy (-D warnings)
+        working-directory: client/src-tauri
+        run: cargo clippy -- -D warnings
       - name: Run Rust Unit Tests
         working-directory: client/src-tauri
         run: cargo test

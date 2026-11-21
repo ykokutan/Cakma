@@ -2,11 +2,11 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { hashPasswordAsync } from './authCrypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, '../data');
-const STATE_FILE = path.join(DATA_DIR, 'state.json');
+const DEFAULT_DATA_DIR = path.resolve(__dirname, '../data');
 
 export interface DedicatedStoredBadge {
   id: string;
@@ -45,17 +45,22 @@ export interface DedicatedPersistedState {
 
 export interface LoadDedicatedStateOptions {
   defaultChannels: DedicatedStoredChannel[];
-  hashPasswordScrypt: (password: string) => string;
+  hashPassword?: (password: string) => Promise<string>;
   getBadges: (role: string, username: string) => DedicatedStoredBadge[];
+  dataDir?: string;
 }
 
 const MAX_MESSAGES_PER_CHANNEL = 500;
 let saveTimer: NodeJS.Timeout | null = null;
-let pendingSnapshot: DedicatedPersistedState | null = null;
+let pendingSnapshot: { stateFile: string; snapshot: DedicatedPersistedState } | null = null;
 
-function writeStateSync(snapshot: DedicatedPersistedState) {
+function resolveStateFile(dataDir = DEFAULT_DATA_DIR): string {
+  return path.join(dataDir, 'state.json');
+}
+
+export function writeDedicatedStateSync(snapshot: DedicatedPersistedState, dataDir = DEFAULT_DATA_DIR) {
   try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.mkdirSync(dataDir, { recursive: true });
     const boundedMessages: Record<string, any[]> = {};
     for (const [chId, list] of Object.entries(snapshot.messages || {})) {
       if (Array.isArray(list)) {
@@ -68,23 +73,27 @@ function writeStateSync(snapshot: DedicatedPersistedState) {
       messages: boundedMessages,
       friendRequests: snapshot.friendRequests || [],
     };
-    const tmpPath = `${STATE_FILE}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const stateFile = resolveStateFile(dataDir);
+    const tmpPath = `${stateFile}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     fs.writeFileSync(tmpPath, JSON.stringify(cleanSnapshot, null, 2), 'utf-8');
-    fs.renameSync(tmpPath, STATE_FILE);
+    fs.renameSync(tmpPath, stateFile);
   } catch (err) {
     console.error('❌ [Dedicated Storage] state.json yazılamadı:', err);
   }
 }
 
-export function loadDedicatedState(opts: LoadDedicatedStateOptions): {
+export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promise<{
   accounts: Map<string, DedicatedStoredAccount>;
   channels: DedicatedStoredChannel[];
   messages: Record<string, any[]>;
   friendRequests: Map<string, any>;
-} {
-  if (fs.existsSync(STATE_FILE)) {
+}> {
+  const targetDir = opts.dataDir || DEFAULT_DATA_DIR;
+  const stateFile = resolveStateFile(targetDir);
+
+  if (fs.existsSync(stateFile)) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')) as Partial<DedicatedPersistedState>;
+      const parsed = JSON.parse(fs.readFileSync(stateFile, 'utf-8')) as Partial<DedicatedPersistedState>;
       const accounts = new Map<string, DedicatedStoredAccount>();
       for (const acc of parsed.accounts || []) {
         if (acc?.username) {
@@ -114,11 +123,12 @@ export function loadDedicatedState(opts: LoadDedicatedStateOptions): {
   const envPass = (process.env.DEDICATED_ADMIN_PASSWORD || '').trim();
   const usesEnvPass = envPass.length >= 8;
   const initialPassword = usesEnvPass ? envPass : crypto.randomBytes(12).toString('base64url');
+  const hasher = opts.hashPassword || hashPasswordAsync;
 
   const adminAccount: DedicatedStoredAccount = {
     username: 'admin',
     email: 'admin@dedicated.local',
-    password: opts.hashPasswordScrypt(initialPassword),
+    password: await hasher(initialPassword),
     avatar: '🛡️',
     role: 'admin',
     statusMessage: '👑 Dedicated Sunucu Aktif',
@@ -133,12 +143,15 @@ export function loadDedicatedState(opts: LoadDedicatedStateOptions): {
   const messages: Record<string, any[]> = {};
   const friendRequests = new Map<string, any>();
 
-  writeStateSync({
-    accounts: [adminAccount],
-    channels,
-    messages,
-    friendRequests: [],
-  });
+  writeDedicatedStateSync(
+    {
+      accounts: [adminAccount],
+      channels,
+      messages,
+      friendRequests: [],
+    },
+    targetDir
+  );
 
   if (usesEnvPass) {
     console.log('🔐 [Dedicated Storage] İlk kurulum admin hesabı DEDICATED_ADMIN_PASSWORD ile oluşturuldu.');
@@ -158,21 +171,25 @@ export function scheduleDedicatedStateSave(
   channels: DedicatedStoredChannel[],
   messages: Record<string, any[]>,
   friendRequests: Map<string, any>,
-  delayMs = 250
+  delayMs = 250,
+  dataDir = DEFAULT_DATA_DIR
 ) {
   pendingSnapshot = {
-    accounts: Array.from(accounts.values()),
-    channels: [...channels],
-    messages,
-    friendRequests: Array.from(friendRequests.values()),
+    stateFile: dataDir,
+    snapshot: {
+      accounts: Array.from(accounts.values()),
+      channels: [...channels],
+      messages,
+      friendRequests: Array.from(friendRequests.values()),
+    },
   };
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
     if (pendingSnapshot) {
-      const snap = pendingSnapshot;
+      const pending = pendingSnapshot;
       pendingSnapshot = null;
-      writeStateSync(snap);
+      writeDedicatedStateSync(pending.snapshot, pending.stateFile);
     }
   }, delayMs);
   saveTimer.unref?.();
@@ -184,8 +201,8 @@ export function flushDedicatedStateSync() {
     saveTimer = null;
   }
   if (pendingSnapshot) {
-    const snap = pendingSnapshot;
+    const pending = pendingSnapshot;
     pendingSnapshot = null;
-    writeStateSync(snap);
+    writeDedicatedStateSync(pending.snapshot, pending.stateFile);
   }
 }

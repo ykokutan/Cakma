@@ -58,8 +58,8 @@ export function evaluatePasswordStrength(password: string): PasswordStrengthResu
 
   const score = [checks.hasLen, checks.hasUpper, checks.hasLower, checks.hasDigit, checks.hasSymbol].filter(Boolean).length;
 
-  let level: 0 | 1 | 2 | 3 | 4 = 0;
-  let label: PasswordStrengthLabel = 'Zayıf';
+  let level: 0 | 1 | 2 | 3 | 4;
+  let label: PasswordStrengthLabel;
 
   if (safe.length === 0) {
     level = 0;

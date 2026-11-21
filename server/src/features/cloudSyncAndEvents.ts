@@ -523,9 +523,9 @@ export function registerCloudSyncAndEvents(
     let livekitReachable = false;
     let status = 0;
     let latencyMs = 0;
-    let livekitMessage = '';
+    let livekitMessage: string;
 
-    let parsedLk: URL | null = null;
+    let parsedLk: URL | null;
     try {
       parsedLk = new URL(livekitUrl);
     } catch {
@@ -716,7 +716,17 @@ export function registerCloudSyncAndEvents(
       sessionToken && context?.verifySessionToken
         ? context.verifySessionToken(sessionToken)
         : sessionToken && context?.verifySessionTokenWithMeta
-        ? context.verifySessionTokenWithMeta(sessionToken)?.username || null
+        ? (() => {
+            const meta = context.verifySessionTokenWithMeta(sessionToken);
+            if (!meta) return null;
+            if (context.getAccount) {
+              const acc = context.getAccount(meta.username.toLowerCase());
+              if (!acc) return null;
+              if (acc.isBanned && (!acc.bannedUntil || Date.now() < acc.bannedUntil)) return null;
+              if (acc.minTokenIssuedAt && meta.iat < acc.minTokenIssuedAt) return null;
+            }
+            return meta.username;
+          })()
         : null;
     const mediaUser =
       !sessionUser && queryMt && context?.verifyMediaToken

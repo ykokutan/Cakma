@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { Server, ServerCategory, ServerRole, ServerPermission } from '../types';
 import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
@@ -146,6 +147,8 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
 
   // Members Tab Search
   const [memberSearch, setMemberSearch] = useState('');
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true, onClose);
 
   const isOwner = isUserServerOwner(currentUser, server);
   const canManageServer = hasServerPermission('manage_server');
@@ -353,8 +356,15 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in"
+      onClick={onClose}
+    >
       <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${server.name} Sunucu Ayarları`}
         className="relative w-full max-w-4xl bg-[#121318]/95 border border-white/10 rounded-3xl shadow-2xl flex overflow-hidden h-[620px] text-white animate-scale-up"
         onClick={(e) => e.stopPropagation()}
       >
@@ -828,7 +838,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                   </label>
                   <select
                     value={defaultNotification}
-                    onChange={(e) => setDefaultNotification(e.target.value as any)}
+                    onChange={(e) => setDefaultNotification(e.target.value as 'all' | 'mentions')}
                     className="w-full bg-[#18191f] border border-white/15 text-white text-xs rounded-xl px-3 py-2.5 outline-none"
                   >
                     <option value="all">Tüm Yeni Mesajlar</option>
@@ -1116,15 +1126,17 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                   Doğrulama Seviyesi (Spam Önleme)
                 </label>
                 <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { id: 'none', title: 'Yok', desc: 'Herhangi bir kısıtlama yok, katılan anında yazabilir.' },
-                    { id: 'low', title: 'Düşük (Önerilen)', desc: 'Kullanıcının kayıtlı bir hesabı olması gerekir.' },
-                    { id: 'medium', title: 'Orta', desc: 'Platformda en az 5 dakikadır kayıtlı olmalıdır.' },
-                    { id: 'high', title: 'Yüksek', desc: 'Sunucuda en az 10 dakikadır üye olmalıdır.' },
-                  ].map((lvl) => (
+                  {(
+                    [
+                      { id: 'none', title: 'Yok', desc: 'Herhangi bir kısıtlama yok, katılan anında yazabilir.' },
+                      { id: 'low', title: 'Düşük (Önerilen)', desc: 'Kullanıcının kayıtlı bir hesabı olması gerekir.' },
+                      { id: 'medium', title: 'Orta', desc: 'Platformda en az 5 dakikadır kayıtlı olmalıdır.' },
+                      { id: 'high', title: 'Yüksek', desc: 'Sunucuda en az 10 dakikadır üye olmalıdır.' },
+                    ] as const
+                  ).map((lvl) => (
                     <div
                       key={lvl.id}
-                      onClick={() => setVerificationLevel(lvl.id as any)}
+                      onClick={() => setVerificationLevel(lvl.id)}
                       className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between ${
                         verificationLevel === lvl.id
                           ? 'bg-purple-600/20 border-purple-500 shadow-lg shadow-purple-500/10'

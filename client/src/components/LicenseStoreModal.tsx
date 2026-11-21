@@ -141,7 +141,7 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
 
   const calculateExtendPrice = (license: IssuedLicense, days: number) => {
     const baseMonthlyPrice = Math.round(license.maxSlots * (storeSettings?.customSlotUnitPrice || 4));
-    let rawPrice = 0;
+    let rawPrice: number;
     if (days === 30) rawPrice = baseMonthlyPrice;
     else if (days === 90) rawPrice = Math.round(baseMonthlyPrice * 2.7);
     else if (days === 180) rawPrice = Math.round(baseMonthlyPrice * 5.2);

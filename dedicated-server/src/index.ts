@@ -19,28 +19,7 @@ import {
   type DedicatedStoredAccount,
   type DedicatedStoredChannel,
 } from './storage.js';
-
-function hashPasswordScrypt(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `scrypt$${salt}$${hash}`;
-}
-
-function verifyPasswordScrypt(password: string, stored: string): boolean {
-  if (!stored || !password) return false;
-  if (stored.startsWith('scrypt$')) {
-    const parts = stored.split('$');
-    if (parts.length !== 3) return false;
-    const [, salt, originalHash] = parts;
-    const derived = crypto.scryptSync(password, salt, 64).toString('hex');
-    try {
-      return crypto.timingSafeEqual(Buffer.from(originalHash, 'hex'), Buffer.from(derived, 'hex'));
-    } catch {
-      return false;
-    }
-  }
-  return password === stored;
-}
+import { hashPasswordAsync, verifyPasswordAsync } from './authCrypto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -152,23 +131,68 @@ try {
   if (!defaultAllowedOrigins.includes(mOrigin)) defaultAllowedOrigins.push(mOrigin);
 } catch {}
 
-const envOrigins = String(process.env.ALLOWED_ORIGINS || '')
+const envOrigins = [process.env.CORS_ALLOWED_ORIGINS, process.env.ALLOWED_ORIGINS]
+  .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+  .join(',')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-const configOrigins = Array.isArray(config.allowedOrigins) ? config.allowedOrigins.map((s: any) => String(s).trim()).filter(Boolean) : [];
-const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envOrigins, ...configOrigins]));
+const configOrigins = Array.isArray(config.allowedOrigins)
+  ? config.allowedOrigins.map((s: any) => String(s).trim()).filter(Boolean)
+  : [];
+const allowedOriginsSet = new Set([...defaultAllowedOrigins, ...envOrigins, ...configOrigins]);
 const allowAllOrigins = Boolean(config.allowAllOrigins === true || process.env.ALLOW_ALL_ORIGINS === 'true');
+const corsWarnedAt = new Map<string, number>();
+
+function warnBlockedCors(origin: string, host?: string) {
+  const now = Date.now();
+  const prev = corsWarnedAt.get(origin) || 0;
+  if (now - prev < 60_000) return;
+  if (corsWarnedAt.size >= 500) {
+    const first = corsWarnedAt.keys().next().value;
+    if (first) corsWarnedAt.delete(first);
+  }
+  corsWarnedAt.set(origin, now);
+  console.warn(`⚠️ [CORS] Engellenen origin: ${origin}${host ? ` (host=${host})` : ''}`);
+}
+
+function isDedicatedOriginAllowed(origin: string | undefined, requestHost?: string): boolean {
+  if (!origin || allowAllOrigins || allowedOriginsSet.has(origin)) return true;
+  if (requestHost) {
+    try {
+      if (new URL(origin).host.toLowerCase() === requestHost.trim().toLowerCase()) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+const expressCorsDelegate: cors.CorsOptionsDelegate = (req, callback) => {
+  const rawOrigin = req.headers.origin;
+  const origin = typeof rawOrigin === 'string' ? rawOrigin : undefined;
+  const rawHost = req.headers.host;
+  const host = typeof rawHost === 'string' ? rawHost : undefined;
+  if (isDedicatedOriginAllowed(origin, host)) {
+    callback(null, { origin: true, credentials: true });
+    return;
+  }
+  if (origin) warnBlockedCors(origin, host);
+  callback(null, { origin: false, credentials: true });
+};
 
 const corsOriginValidator = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-  if (!origin || allowAllOrigins || allowedOrigins.includes(origin)) {
+  if (isDedicatedOriginAllowed(origin)) {
     callback(null, true);
   } else {
-    callback(new Error('Not allowed by CORS'));
+    if (origin) warnBlockedCors(origin);
+    callback(null, false);
   }
 };
 
-app.use(cors({ origin: corsOriginValidator, credentials: true }));
+app.use(cors(expressCorsDelegate));
 app.use(express.json({ limit: '1mb' }));
 
 const apiRateLimits = new Map<string, { count: number; resetAt: number }>();
@@ -300,9 +324,9 @@ const defaultDedicatedChannels: DedicatedStoredChannel[] = (config.defaultChanne
   serverId: 'dedicated-server-root',
 }));
 
-const initialDedicatedState = loadDedicatedState({
+const initialDedicatedState = await loadDedicatedState({
   defaultChannels: defaultDedicatedChannels,
-  hashPasswordScrypt,
+  hashPassword: hashPasswordAsync,
   getBadges: getDedicatedBadges,
 });
 
@@ -481,13 +505,13 @@ io.on('connection', (socket: Socket) => {
   socket.broadcast.emit('user_connected', user);
 
   // 1. AUTH LOGIN
-  socket.on('auth_login', ({ usernameOrEmail, password }: any) => {
+  socket.on('auth_login', async ({ usernameOrEmail, password }: any) => {
     if (isLicenseRevoked || isShuttingDown) {
       return socket.emit('auth_response', { success: false, error: 'LİSANS İPTAL: Bu sunucunun lisansı feshedilmiştir. Giriş yapılamaz!' });
     }
 
-    const query = usernameOrEmail?.trim()?.toLowerCase();
-    if (!query || !password) {
+    const query = typeof usernameOrEmail === 'string' ? usernameOrEmail.trim().toLowerCase() : '';
+    if (!query || typeof password !== 'string' || !password) {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı ve şifre zorunludur.' });
     }
 
@@ -499,12 +523,8 @@ io.on('connection', (socket: Socket) => {
       }
     }
 
-    if (!foundAccount || !verifyPasswordScrypt(password, foundAccount.password)) {
+    if (!foundAccount || !(await verifyPasswordAsync(password, foundAccount.password))) {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
-    }
-    if (!foundAccount.password.startsWith('scrypt$')) {
-      foundAccount.password = hashPasswordScrypt(password);
-      persistDedicatedState();
     }
 
     user.username = foundAccount.username;
@@ -534,9 +554,9 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 2. AUTH REGISTER
-  socket.on('auth_register', ({ username, email, password, avatar }: any) => {
-    const cleanUsername = username?.trim();
-    if (!cleanUsername || !password) {
+  socket.on('auth_register', async ({ username, email, password, avatar }: any) => {
+    const cleanUsername = typeof username === 'string' ? username.trim() : '';
+    if (!cleanUsername || typeof password !== 'string' || !password) {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı ve şifre zorunludur.' });
     }
 
@@ -547,9 +567,9 @@ io.on('connection', (socket: Socket) => {
     const role = cleanUsername.toLowerCase() === 'admin' ? 'admin' : 'user';
     const newAcc: Account = {
       username: cleanUsername,
-      email: email?.trim() || `${cleanUsername.toLowerCase()}@dedicated.local`,
-      password: hashPasswordScrypt(password),
-      avatar: avatar || '🎮',
+      email: (typeof email === 'string' ? email.trim() : '') || `${cleanUsername.toLowerCase()}@dedicated.local`,
+      password: await hashPasswordAsync(password),
+      avatar: (typeof avatar === 'string' ? avatar : '') || '🎮',
       role
     };
 
@@ -1298,6 +1318,12 @@ process.on('SIGTERM', async () => {
   flushDedicatedStateSync();
   await notifyMasterShutdown();
   process.exit(0);
+});
+
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('❌ [HTTP Error]:', err instanceof Error ? err.message : String(err));
+  if (res.headersSent) return;
+  res.status(500).json({ success: false, error: 'Sunucu içi hata oluştu.' });
 });
 
 server.listen(PORT, '0.0.0.0', () => {

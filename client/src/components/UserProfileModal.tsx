@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { t } from '../utils/i18n';
 import { isUserServerOwner } from '../utils/serverIdentity';
 import {
@@ -134,6 +135,8 @@ function renderRichBio(text: string): React.ReactNode {
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUser, onClose }) => {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true, onClose);
   const {
     currentUser,
     onlineUsers,
@@ -377,8 +380,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in"
+      onClick={onClose}
+    >
       <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${user.username} Profili`}
         className="relative w-full max-w-md max-h-[90vh] overflow-y-auto no-scrollbar rounded-3xl ios-glass shadow-2xl border border-white/15 text-white animate-scale-up"
         onClick={(e) => e.stopPropagation()}
       >

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useChat } from '../context/ChatContext';
 import { useTypingUsers, useDirectCallQuality } from '../context/PresenceStore';
 import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
@@ -7,6 +8,7 @@ import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
 import { LinkPreviewCard } from './chat/LinkPreviewCard';
+import { OfflineQueueBanner } from './chat/OfflineQueueBanner';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
@@ -30,6 +32,7 @@ const ThreadPanel = lazy(() => import('./ThreadPanel').then((m) => ({ default: m
 const RemoteAssistModal = lazy(() => import('./RemoteAssistModal').then((m) => ({ default: m.RemoteAssistModal })));
 const GlobalInboxModal = lazy(() => import('./GlobalInboxModal').then((m) => ({ default: m.GlobalInboxModal })));
 const ServerEventsModal = lazy(() => import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal })));
+const E2eeSafetyModal = lazy(() => import('./chat/E2eeSafetyModal').then((m) => ({ default: m.E2eeSafetyModal })));
 import {
   DirectScreenShareOptions,
   MessageAttachment,
@@ -172,6 +175,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   } = useSocket();
   const activeChannelTypers = useTypingUsers(activeChannel?.id);
   const directCallQuality = useDirectCallQuality();
+  const { pendingJumpTarget, clearPendingJumpTarget, jumpToMessage } = useChat();
 
   const [activeThreadMsgId, setActiveThreadMsgId] = useState<string | null>(null);
   const [isCallStageCollapsed, setIsCallStageCollapsed] = useState(false);
@@ -187,6 +191,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     annotate: true,
   });
   const [dmE2eeEnabled, setDmE2eeEnabled] = useState(false);
+  const [isSafetyModalOpen, setIsSafetyModalOpen] = useState(false);
   const [decryptedDmMap, setDecryptedDmMap] = useState<Record<string, string>>({});
   const dmScreenVideoRef = useRef<HTMLVideoElement | null>(null);
   const localCamVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -357,17 +362,49 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setScrollMetrics({ top: el.scrollTop, height: el.clientHeight || 600 });
   };
 
-  const handleJumpToMessage = (messageId: string) => {
+  const focusAndHighlightMessage = (messageId: string) => {
+    const idx = messages.findIndex((m) => m.id === messageId);
+    if (idx !== -1) {
+      const hiddenDistance = messages.length - idx;
+      if (hiddenDistance > visibleMsgCount) {
+        setVisibleMsgCount(hiddenDistance + 25);
+      }
+      const elContainer = scrollContainerRef.current;
+      if (elContainer && hiddenDistance > 0) {
+        const displayIdx = Math.max(0, idx - Math.max(0, messages.length - Math.max(visibleMsgCount, hiddenDistance + 25)));
+        const estTop = Math.max(0, displayIdx * 78 - 180);
+        elContainer.scrollTop = estTop;
+        setScrollMetrics({ top: estTop, height: elContainer.clientHeight || 600 });
+      }
+    }
+
     setHighlightedMessageId(messageId);
-    setTimeout(() => {
+    window.setTimeout(() => {
       const el = document.getElementById(`message-${messageId}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-    }, 100);
-    setTimeout(() => {
+    }, 110);
+    window.setTimeout(() => {
       setHighlightedMessageId(null);
     }, 3000);
+  };
+
+  useEffect(() => {
+    if (!pendingJumpTarget || !activeChannel?.id) return;
+    if (pendingJumpTarget.channelId !== activeChannel.id) return;
+    if (!messages.some((m) => m.id === pendingJumpTarget.messageId)) return;
+    focusAndHighlightMessage(pendingJumpTarget.messageId);
+    clearPendingJumpTarget();
+  }, [pendingJumpTarget, activeChannel?.id, messages, clearPendingJumpTarget]);
+
+  const handleJumpToMessage = (messageId: string, targetChannelId?: string) => {
+    const chId = targetChannelId || activeChannel?.id || '';
+    if (chId && (chId !== activeChannel?.id || !messages.some((m) => m.id === messageId))) {
+      void jumpToMessage(chId, messageId);
+      return;
+    }
+    focusAndHighlightMessage(messageId);
   };
 
   // Voice note recording states
@@ -435,8 +472,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             size: blob.size,
           };
           sendMessage('🎙️ Sesli Mesaj', [newAtt]);
-        } catch (err: any) {
-          appToast(err?.message || 'Sesli mesaj gönderilemedi.', 'error');
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : '';
+          appToast(msg || 'Sesli mesaj gönderilemedi.', 'error');
         }
       };
       reader.readAsDataURL(blob);
@@ -739,9 +777,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         setPendingAttachments((prev) => [...prev, uploaded]);
       }
       stream.getTracks().forEach((t) => t.stop());
-    } catch (err: any) {
-      if (err?.message && !String(err?.name || '').includes('NotAllowed')) {
-        appToast(err.message, 'error');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      const name = err instanceof Error ? err.name : '';
+      if (msg && !name.includes('NotAllowed')) {
+        appToast(msg, 'error');
       }
     } finally {
       setIsCapturingScreenshot(false);
@@ -753,8 +793,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       try {
         const newAtt = await uploadAttachmentFile(currentServerHost, file);
         setPendingAttachments((prev) => [...prev, newAtt]);
-      } catch (err: any) {
-        appToast(err?.message || `"${file.name}" okunamadı.`, 'error');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '';
+        appToast(msg || `"${file.name}" okunamadı.`, 'error');
       }
     });
   };
@@ -2417,6 +2458,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </div>
             )}
 
+            {activeChannel?.id && <OfflineQueueBanner channelId={activeChannel.id} />}
+
             <form
               onSubmit={handleSend}
               className="ios-glass-card rounded-full px-2 sm:px-3 py-1.5 sm:py-2 flex items-center gap-1.5 sm:gap-2.5 shadow-2xl border border-white/15 focus-within:border-amber-400/50 focus-within:shadow-[0_0_28px_rgba(245,158,11,0.18)] transition-all"
@@ -2450,19 +2493,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </button>
 
               {isDM && (dmPartner?.e2eePublicKey || onlineUsers.find((u) => u.id === dmPartner?.id)?.e2eePublicKey) && (
-                <button
-                  type="button"
-                  onClick={() => setDmE2eeEnabled((v) => !v)}
-                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider transition shrink-0 border flex items-center gap-1 ${
-                    dmE2eeEnabled
-                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-sm shadow-emerald-500/20'
-                      : 'bg-white/10 hover:bg-white/20 border-white/10 text-white/70 hover:text-white'
-                  }`}
-                  title={dmE2eeEnabled ? 'Uçtan Uca Şifreleme (E2EE) Aktif' : 'Uçtan Uca Şifreli Sohbeti Aç (E2EE)'}
-                >
-                  <Lock className="w-3 h-3" />
-                  <span>E2EE</span>
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setDmE2eeEnabled((v) => !v)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider transition border flex items-center gap-1 ${
+                      dmE2eeEnabled
+                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-sm shadow-emerald-500/20'
+                        : 'bg-white/10 hover:bg-white/20 border-white/10 text-white/70 hover:text-white'
+                    }`}
+                    title={dmE2eeEnabled ? 'Uçtan Uca Şifreleme (E2EE) Aktif' : 'Uçtan Uca Şifreli Sohbeti Aç (E2EE)'}
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>E2EE</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSafetyModalOpen(true)}
+                    className="w-7 h-7 rounded-full bg-white/10 hover:bg-emerald-500/20 border border-white/10 text-emerald-300 flex items-center justify-center transition"
+                    title="E2EE Güvenlik Numarasını Doğrula"
+                    aria-label="E2EE Güvenlik Numarasını Doğrula"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               )}
 
               {!isDM && (
@@ -2726,6 +2780,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             onJumpToMessage={handleJumpToMessage}
           />
         )}
+
+        {/* E2EE Safety Number Verification Modal */}
+        {isSafetyModalOpen && isDM && dmPartner && currentUser?.username && (() => {
+          const peerPub =
+            dmPartner.e2eePublicKey ||
+            onlineUsers.find((u) => u.id === dmPartner.id || u.username === dmPartner.username)?.e2eePublicKey;
+          if (!peerPub) return null;
+          return (
+            <E2eeSafetyModal
+              myUsername={currentUser.username}
+              peerUsername={dmPartner.username}
+              peerPublicKeyJson={peerPub}
+              onClose={() => setIsSafetyModalOpen(false)}
+            />
+          );
+        })()}
       </Suspense>
 
       {/* Channel Notice & Topic Edit Modal */}

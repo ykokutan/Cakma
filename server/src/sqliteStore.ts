@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { Message } from './types.js';
+import type { AuditLog, Message } from './types.js';
 
 export interface FtsSearchHit {
   id: string;
@@ -60,6 +60,20 @@ export class SqliteStore {
           channel_id UNINDEXED,
           author,
           content
+        );
+        CREATE TABLE IF NOT EXISTS read_cursors (
+          username TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          last_message_id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (username, channel_id)
+        );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id TEXT PRIMARY KEY,
+          action TEXT NOT NULL,
+          details TEXT NOT NULL,
+          type TEXT NOT NULL,
+          timestamp TEXT NOT NULL
         );
       `);
       const seqRow = this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM messages').get();
@@ -323,6 +337,150 @@ export class SqliteStore {
       };
     } catch {
       return null;
+    }
+  }
+
+  getMessagesAround(
+    channelId: string,
+    messageId: string,
+    radius = 25
+  ): { messages: Message[]; hasMoreBefore: boolean; hasMoreAfter: boolean; found: boolean } {
+    if (!this.isActive() || !channelId || !messageId) {
+      return { messages: [], hasMoreBefore: false, hasMoreAfter: false, found: false };
+    }
+    const clampedRadius = Math.min(Math.max(Number(radius) || 25, 1), 100);
+    try {
+      const target = this.db
+        .prepare('SELECT seq FROM messages WHERE channel_id = ? AND id = ?')
+        .get(channelId, messageId) as { seq?: number } | undefined;
+      if (!target || typeof target.seq !== 'number') {
+        return { messages: [], hasMoreBefore: false, hasMoreAfter: false, found: false };
+      }
+
+      const beforeRows = this.db
+        .prepare('SELECT payload FROM messages WHERE channel_id = ? AND seq <= ? ORDER BY seq DESC LIMIT ?')
+        .all(channelId, target.seq, clampedRadius + 2) as Array<{ payload: string }>;
+      const hasMoreBefore = beforeRows.length > clampedRadius + 1;
+      const beforeSlice = hasMoreBefore ? beforeRows.slice(0, clampedRadius + 1) : beforeRows;
+
+      const afterRows = this.db
+        .prepare('SELECT payload FROM messages WHERE channel_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
+        .all(channelId, target.seq, clampedRadius + 1) as Array<{ payload: string }>;
+      const hasMoreAfter = afterRows.length > clampedRadius;
+      const afterSlice = hasMoreAfter ? afterRows.slice(0, clampedRadius) : afterRows;
+
+      const result: Message[] = [];
+      for (let i = beforeSlice.length - 1; i >= 0; i--) {
+        try {
+          result.push(JSON.parse(beforeSlice[i].payload) as Message);
+        } catch {}
+      }
+      for (const row of afterSlice) {
+        try {
+          result.push(JSON.parse(row.payload) as Message);
+        } catch {}
+      }
+      return { messages: result, hasMoreBefore, hasMoreAfter, found: true };
+    } catch {
+      return { messages: [], hasMoreBefore: false, hasMoreAfter: false, found: false };
+    }
+  }
+
+  upsertReadCursor(username: string, channelId: string, lastMessageId: string): void {
+    if (!this.isActive() || !username || !channelId || !lastMessageId) return;
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO read_cursors (username, channel_id, last_message_id, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(username, channel_id)
+           DO UPDATE SET last_message_id = excluded.last_message_id, updated_at = excluded.updated_at`
+        )
+        .run(username.trim().toLowerCase(), channelId, lastMessageId, new Date().toISOString());
+    } catch {}
+  }
+
+  getReadCursorsForUser(username: string): Record<string, string> {
+    if (!this.isActive() || !username) return {};
+    const out: Record<string, string> = {};
+    try {
+      const rows = this.db
+        .prepare('SELECT channel_id as channelId, last_message_id as lastMessageId FROM read_cursors WHERE username = ?')
+        .all(username.trim().toLowerCase()) as Array<{ channelId: string; lastMessageId: string }>;
+      for (const row of rows) {
+        out[row.channelId] = row.lastMessageId;
+      }
+    } catch {}
+    return out;
+  }
+
+  getAllReadCursors(): Map<string, Record<string, string>> {
+    const out = new Map<string, Record<string, string>>();
+    if (!this.isActive()) return out;
+    try {
+      const rows = this.db
+        .prepare('SELECT username, channel_id as channelId, last_message_id as lastMessageId FROM read_cursors')
+        .all() as Array<{ username: string; channelId: string; lastMessageId: string }>;
+      for (const row of rows) {
+        const key = row.username.toLowerCase();
+        const existing = out.get(key) || {};
+        existing[row.channelId] = row.lastMessageId;
+        out.set(key, existing);
+      }
+    } catch {}
+    return out;
+  }
+
+  deleteReadCursorsForUser(username: string): void {
+    if (!this.isActive() || !username) return;
+    try {
+      this.db.prepare('DELETE FROM read_cursors WHERE username = ?').run(username.trim().toLowerCase());
+    } catch {}
+  }
+
+  insertAuditLog(entry: AuditLog): void {
+    if (!this.isActive() || !entry?.id) return;
+    try {
+      this.db
+        .prepare('INSERT OR IGNORE INTO audit_logs (id, action, details, type, timestamp) VALUES (?, ?, ?, ?, ?)')
+        .run(entry.id, entry.action, entry.details, entry.type, entry.timestamp);
+    } catch {}
+  }
+
+  importAuditLogs(entries: AuditLog[]): number {
+    if (!this.isActive() || !Array.isArray(entries) || entries.length === 0) return 0;
+    let inserted = 0;
+    try {
+      this.db.exec('BEGIN');
+      const stmt = this.db.prepare(
+        'INSERT OR IGNORE INTO audit_logs (id, action, details, type, timestamp) VALUES (?, ?, ?, ?, ?)'
+      );
+      // entries are newest-first; insert oldest-first so rowid ordering stays consistent
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const e = entries[i];
+        if (!e?.id) continue;
+        const info = stmt.run(e.id, e.action, e.details, e.type || 'info', e.timestamp || '');
+        if (info && Number(info.changes) > 0) inserted += 1;
+      }
+      this.db.exec('COMMIT');
+    } catch {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
+    }
+    return inserted;
+  }
+
+  listAuditLogs(limit = 200): AuditLog[] {
+    if (!this.isActive()) return [];
+    const clamped = Math.min(Math.max(Number(limit) || 200, 1), 1000);
+    try {
+      const rows = this.db
+        .prepare('SELECT id, action, details, type, timestamp FROM audit_logs ORDER BY rowid DESC LIMIT ?')
+        .all(clamped) as AuditLog[];
+      return Array.isArray(rows) ? rows : [];
+    } catch {
+      return [];
     }
   }
 

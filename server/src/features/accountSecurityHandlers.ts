@@ -43,6 +43,7 @@ export interface AccountSecurityDeps {
   setPushSubscriptions: (next: PushSubscriptionRecord[]) => void;
   savePushSubscriptions: (records: PushSubscriptionRecord[]) => void;
   saveAccounts: (accounts: Map<string, RegisteredAccount>) => void;
+  deleteUserReadCursors?: (username: string) => void;
   saveServers: (servers: Server[]) => void;
   saveFriendRequests: (requests: Map<string, FriendRequest>) => void;
   addAuditLog: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
@@ -498,6 +499,7 @@ export function createAccountSecurityManager(deps: AccountSecurityDeps) {
     }
 
     pendingEmailChangeOtps.delete(usernameLower);
+    deps.deleteUserReadCursors?.(usernameLower);
     deps.addAuditLog('HESAP_SILINDI', `${deletedUsername} hesabını kalıcı olarak sildi.`, 'auth');
 
     return { success: true };

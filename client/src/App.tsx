@@ -5,7 +5,7 @@ import { ChannelSidebar } from './components/ChannelSidebar';
 import { ChatArea } from './components/ChatArea';
 import { MemberList } from './components/MemberList';
 import { CreateChannelModal } from './components/CreateChannelModal';
-import { AuthModal } from './components/AuthModal';
+const AuthModal = lazy(() => import('./components/AuthModal').then((m) => ({ default: m.AuthModal })));
 import { AutoUpdater } from './components/AutoUpdater';
 import { SpeakersOverlay } from './components/SpeakersOverlay';
 import { MiniScreenSharePiP } from './components/MiniScreenSharePiP';
@@ -148,7 +148,16 @@ const MainLayout: React.FC = () => {
       <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-transparent">
         <WindowTitleBar />
         <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
-          <AuthModal forced={true} onClose={() => {}} />
+          <Suspense
+            fallback={
+              <div className="flex items-center gap-2.5 text-xs text-white/60 px-4 py-2.5 rounded-2xl ios-glass border border-white/10">
+                <span className="w-4 h-4 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
+                <span>Giriş ekranı yükleniyor...</span>
+              </div>
+            }
+          >
+            <AuthModal forced={true} onClose={() => {}} />
+          </Suspense>
         </div>
       </div>
     );

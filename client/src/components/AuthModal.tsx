@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -18,7 +18,6 @@ import {
   Monitor,
   Moon,
   RefreshCw,
-  Shield,
   ShieldCheck,
   Sparkles,
   Sun,
@@ -27,7 +26,9 @@ import {
   Wifi,
   X,
 } from 'lucide-react';
-import { LIGHT_THEMES, useSocket } from '../context/SocketContext';
+import { LIGHT_THEMES } from '../context/SocketContext';
+import { useAuth } from '../context/AuthContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useNetworkPing } from '../context/NetworkMetricsContext';
 import { AppLanguage, LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import {
@@ -37,6 +38,8 @@ import {
   validateUsername,
 } from '../utils/authValidation';
 import { OtpCodeInput } from './auth/OtpCodeInput';
+import { TwoFactorForm } from './auth/TwoFactorForm';
+import { ForgotPasswordForm } from './auth/ForgotPasswordForm';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -73,8 +76,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
     setUiTheme,
     connectionState,
     maintenanceStatus,
-  } = useSocket();
+  } = useAuth();
   const ping = useNetworkPing();
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true, forced ? undefined : onClose);
 
   const [savedInitialUser] = useState<string>(() => readSavedUsername());
   const [isRegister, setIsRegister] = useState(false);
@@ -125,8 +130,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const passwordStrength = evaluatePasswordStrength(password);
   const passwordsMismatch = isRegister && confirmPassword.length > 0 && password !== confirmPassword;
   const resetEmailValid = validateEmail(resetEmail);
-  const resetStrength = evaluatePasswordStrength(resetNewPassword);
-  const resetMismatch = resetConfirmPassword.length > 0 && resetNewPassword !== resetConfirmPassword;
   const isConnected = connectionState === 'connected';
 
   const triggerError = (msg: string) => {
@@ -553,6 +556,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
       )}
 
       <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={heroTitle}
         className={`relative my-auto w-full ${
           forced ? 'max-w-[920px]' : 'max-w-[460px]'
         } ios-glass rounded-3xl shadow-2xl overflow-hidden border border-white/15 animate-fade-in`}
@@ -574,7 +581,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-extrabold tracking-tight text-white">Çakma</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 border border-rose-500/35 text-rose-300">
-                          v0.7.1
+                          v0.8.0
                         </span>
                       </div>
                       <p className="text-[11px] text-white/50">Ses &amp; Topluluk Platformu</p>
@@ -785,287 +792,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                 )}
 
                 {pending2faToken ? (
-                  <div className="space-y-4">
-                    <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 text-xs text-white/80 leading-relaxed">
-                      Hesabınız <b>İki Faktörlü Doğrulama (2FA)</b> ile korunuyor. Google Authenticator / Authy
-                      uygulamanızdaki 6 haneli kodu veya 8 haneli yedek kurtarma kodunuzu girin.
-                    </div>
-
-                    <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTwoFaMode('totp');
-                          setTotpCode('');
-                          setErrorMessage('');
-                        }}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition ${
-                          twoFaMode === 'totp'
-                            ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white shadow-sm'
-                            : 'text-white/60 hover:text-white'
-                        }`}
-                      >
-                        Authenticator (6 Haneli)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTwoFaMode('backup');
-                          setTotpCode('');
-                          setErrorMessage('');
-                        }}
-                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition ${
-                          twoFaMode === 'backup'
-                            ? 'bg-gradient-to-r from-rose-500 to-red-600 text-white shadow-sm'
-                            : 'text-white/60 hover:text-white'
-                        }`}
-                      >
-                        Yedek Kurtarma Kodu
-                      </button>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-white/50 uppercase mb-2">
-                        {twoFaMode === 'totp' ? '6 Haneli Doğrulama Kodu' : 'Yedek Kurtarma Kodu'}
-                      </label>
-                      {twoFaMode === 'totp' ? (
-                        <OtpCodeInput
-                          value={totpCode}
-                          onChange={setTotpCode}
-                          length={6}
-                          accent="rose"
-                          autoFocus={true}
-                          disabled={loading}
-                          ariaLabel="2FA doğrulama kodu"
-                        />
-                      ) : (
-                        <input
-                          type="text"
-                          required
-                          autoFocus
-                          value={totpCode}
-                          onChange={(e) => setTotpCode(e.target.value.toUpperCase())}
-                          placeholder="XXXX-XXXX"
-                          className="w-full bg-white/5 border border-white/10 text-white text-center font-mono text-base tracking-widest rounded-xl px-3.5 py-2.5 outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-white/25"
-                        />
-                      )}
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPending2faToken(null);
-                          setTotpCode('');
-                          setErrorMessage('');
-                        }}
-                        className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white/80 transition"
-                      >
-                        {t(language, 'back')}
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={loading || !isConnected}
-                        className="flex-1 py-2.5 bg-gradient-to-r from-rose-500 via-red-500 to-rose-600 hover:brightness-110 text-white font-semibold text-xs rounded-xl transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-                        {loading ? 'Doğrulanıyor...' : t(language, 'verifyAndLogin')}
-                      </button>
-                    </div>
-                  </div>
+                  <TwoFactorForm
+                    language={language}
+                    twoFaMode={twoFaMode}
+                    setTwoFaMode={setTwoFaMode}
+                    totpCode={totpCode}
+                    setTotpCode={setTotpCode}
+                    loading={loading}
+                    isConnected={isConnected}
+                    onCancel={() => {
+                      setPending2faToken(null);
+                      setTotpCode('');
+                      setErrorMessage('');
+                    }}
+                    onClearError={() => setErrorMessage('')}
+                  />
                 ) : forgotMode ? (
-                  <div className="space-y-3.5">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                          {t(language, 'emailLabel')}
-                        </label>
-                        {resetEmail.trim().length > 0 && (
-                          <span
-                            className={`text-[10px] font-semibold ${
-                              resetEmailValid ? 'text-emerald-300' : 'text-rose-300'
-                            }`}
-                          >
-                            {resetEmailValid ? 'Geçerli' : 'Geçersiz format'}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="relative flex-1 min-w-0">
-                          <Mail className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                          <input
-                            type="email"
-                            required
-                            autoComplete="email"
-                            value={resetEmail}
-                            onChange={(e) => {
-                              setResetEmail(e.target.value);
-                              setResetFeedback(null);
-                            }}
-                            placeholder="kayitli@eposta.com"
-                            className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl pl-9 pr-3.5 py-2.5 outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-white/25"
-                          />
-                        </div>
-                        {resetCodeSent && (
-                          <button
-                            type="button"
-                            onClick={handleSendResetCode}
-                            disabled={resetSending || resetCooldown > 0 || !resetEmailValid || !isConnected}
-                            className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white/85 text-[11px] font-semibold transition disabled:opacity-50 shrink-0"
-                          >
-                            {resetSending
-                              ? t(language, 'sending')
-                              : resetCooldown > 0
-                              ? `${resetCooldown} sn`
-                              : t(language, 'sendCode')}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {resetFeedback && (
-                      <div
-                        className={`px-3 py-2 rounded-xl text-[11px] border ${
-                          resetFeedback.ok
-                            ? 'bg-emerald-400/10 border-emerald-500/30 text-emerald-300'
-                            : 'bg-rose-400/10 border-rose-500/30 text-rose-300'
-                        }`}
-                      >
-                        {resetFeedback.text}
-                      </div>
-                    )}
-
-                    {resetCodeSent && (
-                      <>
-                        <div className="p-3 rounded-2xl bg-white/[0.03] border border-rose-500/25 space-y-2">
-                          <div className="flex items-center justify-between text-[10px] font-semibold uppercase text-rose-300">
-                            <span>{t(language, 'resetCodeLabel')}</span>
-                            <span className="font-mono text-white/50">
-                              {normalizeOtpInput(resetCode, 6).length}/6
-                            </span>
-                          </div>
-                          <OtpCodeInput
-                            value={resetCode}
-                            onChange={setResetCode}
-                            length={6}
-                            accent="rose"
-                            disabled={loading}
-                            ariaLabel="Şifre sıfırlama kodu"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                                {t(language, 'newPasswordLabel')}
-                              </label>
-                              {capsLockOn && (
-                                <span className="text-[10px] font-bold text-amber-300">Caps Lock</span>
-                              )}
-                            </div>
-                            <div className="relative">
-                              <Lock className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              <input
-                                type={showResetPassword ? 'text' : 'password'}
-                                required
-                                autoComplete="new-password"
-                                value={resetNewPassword}
-                                onChange={(e) => setResetNewPassword(e.target.value)}
-                                onKeyUp={handleKeyModifiers}
-                                onKeyDown={handleKeyModifiers}
-                                placeholder="••••••••"
-                                className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl pl-9 pr-9 py-2.5 outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-white/25"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowResetPassword((v) => !v)}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/45 hover:text-white transition"
-                                aria-label={showResetPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
-                              >
-                                {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="block text-[11px] font-semibold text-white/50 uppercase">
-                                {t(language, 'newPasswordConfirmLabel')}
-                              </label>
-                              {resetConfirmPassword.length > 0 && (
-                                <span
-                                  className={`text-[10px] font-semibold ${
-                                    resetMismatch ? 'text-rose-300' : 'text-emerald-300'
-                                  }`}
-                                >
-                                  {resetMismatch ? 'Eşleşmiyor' : 'Eşleşti'}
-                                </span>
-                              )}
-                            </div>
-                            <div className="relative">
-                              <Lock className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                              <input
-                                type={showResetPassword ? 'text' : 'password'}
-                                required
-                                autoComplete="new-password"
-                                value={resetConfirmPassword}
-                                onChange={(e) => setResetConfirmPassword(e.target.value)}
-                                placeholder="••••••••"
-                                className={`w-full bg-white/5 border text-white text-xs rounded-xl pl-9 pr-3.5 py-2.5 outline-none focus:ring-2 placeholder:text-white/25 ${
-                                  resetMismatch
-                                    ? 'border-rose-500/60 focus:ring-rose-500'
-                                    : 'border-white/10 focus:ring-rose-500'
-                                }`}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {resetNewPassword.length > 0 && (
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 grid grid-cols-4 gap-1.5">
-                              {[1, 2, 3, 4].map((seg) => (
-                                <div
-                                  key={seg}
-                                  className={`h-1.5 rounded-full transition-all duration-300 ${
-                                    resetStrength.level >= seg ? strengthColors[resetStrength.level] : 'bg-white/10'
-                                  }`}
-                                />
-                              ))}
-                            </div>
-                            <span className="text-[10px] font-bold text-white/75 shrink-0">
-                              {resetStrength.label}
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={exitForgotMode}
-                        className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white/80 transition"
-                      >
-                        {t(language, 'backToLogin')}
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={loading || resetSending || !isConnected}
-                        className="flex-1 py-2.5 bg-gradient-to-r from-rose-500 via-red-500 to-rose-600 hover:brightness-110 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        {(loading || resetSending) && <Loader2 className="w-4 h-4 animate-spin" />}
-                        {!isConnected
-                          ? t(language, 'connectingServer')
-                          : resetCodeSent
-                          ? t(language, 'resetPasswordSubmit')
-                          : resetSending
-                          ? t(language, 'sending')
-                          : t(language, 'resetCodeSend')}
-                      </button>
-                    </div>
-                  </div>
+                  <ForgotPasswordForm
+                    language={language}
+                    resetEmail={resetEmail}
+                    setResetEmail={setResetEmail}
+                    resetEmailValid={resetEmailValid}
+                    resetCodeSent={resetCodeSent}
+                    resetSending={resetSending}
+                    resetCooldown={resetCooldown}
+                    resetFeedback={resetFeedback}
+                    onClearFeedback={() => setResetFeedback(null)}
+                    onSendResetCode={handleSendResetCode}
+                    resetCode={resetCode}
+                    setResetCode={setResetCode}
+                    resetNewPassword={resetNewPassword}
+                    setResetNewPassword={setResetNewPassword}
+                    resetConfirmPassword={resetConfirmPassword}
+                    setResetConfirmPassword={setResetConfirmPassword}
+                    showResetPassword={showResetPassword}
+                    setShowResetPassword={setShowResetPassword}
+                    capsLockOn={capsLockOn}
+                    onKeyModifiers={handleKeyModifiers}
+                    loading={loading}
+                    isConnected={isConnected}
+                    onExit={exitForgotMode}
+                  />
                 ) : (
                   <>
                     {/* Register: Live Avatar Preview & Grid */}

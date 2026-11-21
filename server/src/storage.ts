@@ -21,7 +21,10 @@ const DATA_DIR = getPersistentDir();
 export const messageStore = new ShardedMessageStore(DATA_DIR);
 export const sqliteStore = new SqliteStore(DATA_DIR);
 
-export async function initStorageEngine(messagesMap?: Record<string, Message[]>) {
+export async function initStorageEngine(
+  messagesMap?: Record<string, Message[]>,
+  opts?: { accounts?: Map<string, RegisteredAccount>; auditLogs?: AuditLog[] }
+) {
   const ok = await sqliteStore.init();
   if (ok && messagesMap) {
     const existingCount = sqliteStore.getMessageCount();
@@ -43,6 +46,31 @@ export async function initStorageEngine(messagesMap?: Record<string, Message[]>)
   } else {
     console.log(`💾 [Storage] Depolama motoru: ${sqliteStore.getEngineName()} (${sqliteStore.getInfo().reason})`);
   }
+
+  if (ok && opts?.accounts) {
+    const sqlCursors = sqliteStore.getAllReadCursors();
+    for (const [unameLower, acc] of opts.accounts.entries()) {
+      const sqlMap = sqlCursors.get(unameLower);
+      const jsonMap = acc.readCursors || {};
+      if (sqlMap) {
+        acc.readCursors = { ...jsonMap, ...sqlMap };
+      } else if (Object.keys(jsonMap).length > 0) {
+        for (const [chId, msgId] of Object.entries(jsonMap)) {
+          sqliteStore.upsertReadCursor(unameLower, chId, msgId);
+        }
+      }
+    }
+  }
+
+  if (ok && opts?.auditLogs) {
+    const sqlLogs = sqliteStore.listAuditLogs(200);
+    if (sqlLogs.length === 0 && opts.auditLogs.length > 0) {
+      sqliteStore.importAuditLogs(opts.auditLogs);
+    } else if (sqlLogs.length > 0) {
+      opts.auditLogs.splice(0, opts.auditLogs.length, ...sqlLogs);
+    }
+  }
+
   return sqliteStore.getInfo();
 }
 
@@ -99,6 +127,58 @@ export function getChannelMessagesPageSmart(
     }
   }
   return getChannelMessagesPage(allMessages[channelId], beforeId, limit);
+}
+
+export function getChannelMessageContextSmart(
+  allMessages: Record<string, Message[]>,
+  channelId: string,
+  messageId: string,
+  radius = 25
+): { messages: Message[]; hasMoreBefore: boolean; hasMoreAfter: boolean; found: boolean } {
+  if (sqliteStore.isActive()) {
+    const ctx = sqliteStore.getMessagesAround(channelId, messageId, radius);
+    if (ctx.found) {
+      return ctx;
+    }
+  }
+  const list = allMessages[channelId] || [];
+  const idx = list.findIndex((m) => m.id === messageId);
+  if (idx === -1) {
+    return { messages: [], hasMoreBefore: false, hasMoreAfter: false, found: false };
+  }
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(list.length, idx + radius + 1);
+  return {
+    messages: list.slice(start, end),
+    hasMoreBefore: start > 0,
+    hasMoreAfter: end < list.length,
+    found: true,
+  };
+}
+
+export function saveUserReadCursor(
+  username: string,
+  channelId: string,
+  lastMessageId: string,
+  accounts: Map<string, RegisteredAccount>
+) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.upsertReadCursor(username, channelId, lastMessageId);
+    return;
+  }
+  saveAccounts(accounts);
+}
+
+export function deleteUserReadCursors(username: string) {
+  sqliteStore.deleteReadCursorsForUser(username);
+}
+
+export function appendAuditLogRecord(entry: AuditLog, logs: AuditLog[]) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.insertAuditLog(entry);
+    return;
+  }
+  saveAuditLogs(logs);
 }
 
 const pendingWrites = new Map<string, any>();

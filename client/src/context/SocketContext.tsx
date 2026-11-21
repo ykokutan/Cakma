@@ -15,9 +15,15 @@ import { parseDeepLinkUrl } from '../utils/deepLink';
 import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
 import { authFetch } from '../utils/authFetch';
 import { getDirectScreenShareConstraints, pruneExpiredAnnotations } from '../utils/remoteAssistHelpers';
-import { buildPersistentDmChannelId } from '../utils/dmChannel';
+import { buildPersistentDmChannelId, parseDmChannelParticipants } from '../utils/dmChannel';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
 import { appToast } from '../utils/appDialogs';
+import type { MessageContextResponse, MessageSearchHit, OfflineQueuedMessage } from '../sharedContracts';
+import { useOfflineMessageQueue } from './hooks/useOfflineMessageQueue';
+import { AuthContext } from './AuthContext';
+import { ChatContext } from './ChatContext';
+import { VoiceContext } from './VoiceContext';
+import { SocialContext } from './SocialContext';
 
 export interface UserAudioEq {
   bass: number;
@@ -593,6 +599,14 @@ interface SocketContextType {
   hasMoreMessages: Record<string, boolean>;
   isLoadingOlderMessages: boolean;
   requestOlderMessages: (channelId: string) => void;
+  offlineQueue: OfflineQueuedMessage[];
+  pendingJumpTarget: { channelId: string; messageId: string } | null;
+  clearPendingJumpTarget: () => void;
+  searchServerMessages: (query: string, channelId?: string) => Promise<MessageSearchHit[]>;
+  requestMessageContext: (channelId: string, messageId: string, radius?: number) => Promise<MessageContextResponse>;
+  jumpToMessage: (channelId: string, messageId: string) => Promise<boolean>;
+  retryQueuedMessage: (localId: string) => void;
+  cancelQueuedMessage: (localId: string) => void;
   chatFontSize: 'sm' | 'base' | 'lg';
   setChatFontSize: (size: 'sm' | 'base' | 'lg') => void;
   glassIntensity: 'low' | 'normal' | 'high';
@@ -724,7 +738,16 @@ interface SocketContextType {
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
-const viteEnv = (import.meta as any).env || {};
+const viteEnv: Record<string, string | undefined> = (import.meta as { env?: Record<string, string | undefined> }).env || {};
+
+function readLiteralFromStorage<T extends string>(
+  key: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  const val = localStorage.getItem(key);
+  return val && (allowed as readonly string[]).includes(val) ? (val as T) : fallback;
+}
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -872,11 +895,33 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   readCursorsRef.current = readCursors;
   const [hasMoreMessages, setHasMoreMessages] = useState<Record<string, boolean>>({});
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState<boolean>(false);
+  const [pendingJumpTarget, setPendingJumpTarget] = useState<{ channelId: string; messageId: string } | null>(null);
+  const clearPendingJumpTarget = useCallback(() => setPendingJumpTarget(null), []);
+  const socketRef = useRef<Socket | null>(null);
+  socketRef.current = socket;
+  const emitQueuedMessagePayload = useCallback(
+    (payload: { serverId: string; channelId: string; content: string; replyTo?: { id: string; username: string; content: string } }) => {
+      const s = socketRef.current;
+      if (!s || !s.connected) return false;
+      s.emit('send_message', payload);
+      return true;
+    },
+    []
+  );
   const [connectionState, setConnectionStateState] = useState<'connected' | 'reconnecting' | 'disconnected'>('reconnecting');
   const setConnectionState = useCallback((next: 'connected' | 'reconnecting' | 'disconnected') => {
     setConnectionStateState(next);
     setNetworkConnectionState(next);
   }, []);
+  const {
+    offlineQueue,
+    enqueueMessage: enqueueOfflineMessage,
+    retryQueuedMessage,
+    cancelQueuedMessage,
+  } = useOfflineMessageQueue({
+    isConnectedAndAuthed: Boolean(socket?.connected && isAuthenticated && connectionState === 'connected'),
+    emitMessage: emitQueuedMessagePayload,
+  });
   const lastVoiceChannelIdRef = useRef<string | null>(null);
   const [notificationPrefs, setNotificationPrefsState] = useState<Record<string, NotificationLevel>>(() => {
     try {
@@ -932,27 +977,27 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch {}
     return DEFAULT_CUSTOM_THEME;
   });
-  const [chatFontSize, setChatFontSizeState] = useState<'sm' | 'base' | 'lg'>(() => {
-    return (localStorage.getItem('dc_chat_font_size') as any) || 'base';
-  });
-  const [glassIntensity, setGlassIntensityState] = useState<'low' | 'normal' | 'high'>(() => {
-    return (localStorage.getItem('dc_glass_intensity') as any) || 'normal';
-  });
-  const [messageDensity, setMessageDensityState] = useState<'cozy' | 'compact'>(() => {
-    return (localStorage.getItem('dc_message_density') as any) || 'cozy';
-  });
-  const [cornerStyle, setCornerStyleState] = useState<'rounded' | 'sharp'>(() => {
-    return (localStorage.getItem('dc_corner_style') as any) || 'rounded';
-  });
-  const [bgPattern, setBgPatternState] = useState<'grid' | 'dots' | 'clean'>(() => {
-    return (localStorage.getItem('dc_bg_pattern') as any) || 'grid';
-  });
+  const [chatFontSize, setChatFontSizeState] = useState<'sm' | 'base' | 'lg'>(() =>
+    readLiteralFromStorage('dc_chat_font_size', ['sm', 'base', 'lg'] as const, 'base')
+  );
+  const [glassIntensity, setGlassIntensityState] = useState<'low' | 'normal' | 'high'>(() =>
+    readLiteralFromStorage('dc_glass_intensity', ['low', 'normal', 'high'] as const, 'normal')
+  );
+  const [messageDensity, setMessageDensityState] = useState<'cozy' | 'compact'>(() =>
+    readLiteralFromStorage('dc_message_density', ['cozy', 'compact'] as const, 'cozy')
+  );
+  const [cornerStyle, setCornerStyleState] = useState<'rounded' | 'sharp'>(() =>
+    readLiteralFromStorage('dc_corner_style', ['rounded', 'sharp'] as const, 'rounded')
+  );
+  const [bgPattern, setBgPatternState] = useState<'grid' | 'dots' | 'clean'>(() =>
+    readLiteralFromStorage('dc_bg_pattern', ['grid', 'dots', 'clean'] as const, 'grid')
+  );
   const [reduceMotion, setReduceMotionState] = useState<boolean>(() => {
     return localStorage.getItem('dc_reduce_motion') === 'true';
   });
-  const [language, setLanguageState] = useState<'tr' | 'en' | 'de' | 'ru'>(() => {
-    return (localStorage.getItem('dc_app_language') as any) || 'tr';
-  });
+  const [language, setLanguageState] = useState<'tr' | 'en' | 'de' | 'ru'>(() =>
+    readLiteralFromStorage('dc_app_language', ['tr', 'en', 'de', 'ru'] as const, 'tr')
+  );
   const setLanguage = (lang: 'tr' | 'en' | 'de' | 'ru') => {
     setLanguageState(lang);
     try { localStorage.setItem('dc_app_language', lang); } catch {}
@@ -1028,16 +1073,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setBgPattern = (v: 'grid' | 'dots' | 'clean') => setBgPatternState(v);
   const setReduceMotion = (v: boolean) => setReduceMotionState(v);
 
-  const [overlayCorner, setOverlayCornerState] = useState<'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'>(() => {
-    return (localStorage.getItem('dc_overlay_corner') as any) || 'top-left';
-  });
+  const [overlayCorner, setOverlayCornerState] = useState<'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'>(() =>
+    readLiteralFromStorage('dc_overlay_corner', ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const, 'top-left')
+  );
   const [overlayOpacity, setOverlayOpacityState] = useState<number>(() => {
     const saved = Number(localStorage.getItem('dc_overlay_opacity'));
     return Number.isFinite(saved) && saved >= 15 && saved <= 100 ? saved : 75;
   });
-  const [ringtonePack, setRingtonePackState] = useState<'modern' | 'classic' | 'minimal' | 'silent'>(() => {
-    return (localStorage.getItem('dc_ringtone_pack') as any) || 'modern';
-  });
+  const [ringtonePack, setRingtonePackState] = useState<'modern' | 'classic' | 'minimal' | 'silent'>(() =>
+    readLiteralFromStorage('dc_ringtone_pack', ['modern', 'classic', 'minimal', 'silent'] as const, 'modern')
+  );
   const [showLinkPreviews, setShowLinkPreviewsState] = useState<boolean>(() => {
     const v = localStorage.getItem('dc_show_link_previews');
     return v === null ? true : v === 'true';
@@ -1996,8 +2041,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       voiceRecordingTimerRef.current = setInterval(() => {
         setVoiceRecordingSeconds((prev) => prev + 1);
       }, 1000);
-    } catch (err: any) {
-      appToast('Ses kaydı başlatılamadı: ' + (err?.message || err), 'error');
+    } catch (err: unknown) {
+      appToast('Ses kaydı başlatılamadı: ' + (err instanceof Error ? err.message : String(err)), 'error');
     }
   }, []);
 
@@ -2791,7 +2836,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
     setSocket(newSocket);
 
-    newSocket.on('connect_error', (err: any) => {
+    newSocket.on('connect_error', (err: Error) => {
       setConnectionState('reconnecting');
       console.warn('Socket bağlantı hatası:', err?.message);
       const errMsg = err?.message || '';
@@ -5443,8 +5488,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         attachments: [attachment],
       });
       pushDirectCallToast(`"${attachment.name}" DM üzerinden gönderildi.`, 'success');
-    } catch (err: any) {
-      pushDirectCallToast(err?.message || `"${file.name}" okunamadı.`, 'error');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      pushDirectCallToast(msg || `"${file.name}" okunamadı.`, 'error');
     }
   }, [socket, pushDirectCallToast]);
 
@@ -5467,8 +5513,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         attachments: [attachment],
       });
       pushDirectCallToast('Ekran görüntüsü DM sohbetine gönderildi.', 'success');
-    } catch (err: any) {
-      pushDirectCallToast(err?.message || 'Ekran görüntüsü gönderilemedi.', 'error');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      pushDirectCallToast(msg || 'Ekran görüntüsü gönderilemedi.', 'error');
     }
   }, [socket, pushDirectCallToast]);
 
@@ -5653,8 +5700,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       attachments,
       replyTo
     };
-    if (!socket || !socket.connected) {
-      pendingMessageQueueRef.current.push(payload);
+    if (!socket || !socket.connected || !isAuthenticated) {
+      if (attachments && attachments.length > 0) {
+        pendingMessageQueueRef.current.push(payload);
+      } else if (content.trim()) {
+        enqueueOfflineMessage(activeServer.id, activeChannel.id, content, replyTo);
+      }
       return;
     }
     socket.emit('send_message', payload);
@@ -5672,6 +5723,129 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsLoadingOlderMessages(true);
     socket.emit('request_older_messages', { channelId, beforeId, limit: 50 });
   }, [socket]);
+
+  const searchServerMessages = useCallback((query: string, channelId?: string) => {
+    return new Promise<MessageSearchHit[]>((resolve) => {
+      const cleanQuery = query.trim();
+      if (!socket || !socket.connected || !cleanQuery) {
+        resolve([]);
+        return;
+      }
+      let settled = false;
+      const done = (results: MessageSearchHit[]) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('server_search_results', handler);
+        resolve(results);
+      };
+      const handler = (res: { query?: string; results?: MessageSearchHit[] }) => {
+        if (res?.query && res.query !== cleanQuery) return;
+        done(Array.isArray(res?.results) ? res.results : []);
+      };
+      const timer = window.setTimeout(() => done([]), 6000);
+      socket.on('server_search_results', handler);
+      socket.emit('search_messages_server', { query: cleanQuery, ...(channelId ? { channelId } : {}) });
+    });
+  }, [socket]);
+
+  const requestMessageContext = useCallback((channelId: string, messageId: string, radius = 25) => {
+    return new Promise<MessageContextResponse>((resolve) => {
+      const emptyRes: MessageContextResponse = {
+        channelId,
+        targetMessageId: messageId,
+        messages: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        found: false,
+      };
+      if (!socket || !socket.connected || !channelId || !messageId) {
+        resolve(emptyRes);
+        return;
+      }
+      let settled = false;
+      const done = (res: MessageContextResponse) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        socket.off('message_context_response', handler);
+        if (res.found && Array.isArray(res.messages) && res.messages.length > 0) {
+          setMessagesMap((prev) => {
+            const existing = prev[channelId] || [];
+            const byId = new Map<string, Message>();
+            for (const m of existing) byId.set(m.id, m);
+            for (const m of res.messages as unknown as Message[]) byId.set(m.id, m);
+            const merged = Array.from(byId.values()).sort((a, b) => {
+              const orderTs = (m: Message) => {
+                const match = /^msg-(\d+)/.exec(m.id);
+                if (match) return Number(match[1]);
+                const parsed = Date.parse(m.timestamp);
+                return Number.isFinite(parsed) ? parsed : 0;
+              };
+              return orderTs(a) - orderTs(b);
+            });
+            return { ...prev, [channelId]: merged };
+          });
+          setHasMoreMessages((prev) => ({ ...prev, [channelId]: Boolean(res.hasMoreBefore) }));
+        }
+        resolve(res);
+      };
+      const handler = (res: MessageContextResponse) => {
+        if (res?.channelId === channelId && res?.targetMessageId === messageId) {
+          done(res);
+        }
+      };
+      const timer = window.setTimeout(() => done(emptyRes), 6000);
+      socket.on('message_context_response', handler);
+      socket.emit('request_message_context', { channelId, messageId, radius });
+    });
+  }, [socket]);
+
+  const jumpToMessage = useCallback(async (channelId: string, messageId: string): Promise<boolean> => {
+    if (!channelId || !messageId) return false;
+    const me = currentUserRef.current;
+
+    if (channelId.startsWith('dm-')) {
+      const pair = parseDmChannelParticipants(channelId);
+      const partnerName = pair?.find((p) => p !== me?.username.toLowerCase()) || pair?.[0];
+      if (partnerName) {
+        const onlinePartner = onlineUsersRef.current.find((u) => u.username.toLowerCase() === partnerName);
+        if (onlinePartner) {
+          openDirectMessage(onlinePartner);
+        } else {
+          setActiveDMUser({
+            id: partnerName,
+            username: partnerName,
+            role: 'user',
+            avatar: '👤',
+            status: 'offline',
+            isMuted: false,
+            isDeafened: false,
+            isSpeaking: false,
+          });
+          setActiveServerId('direct-messages');
+          setActiveChannelId(channelId);
+        }
+      } else {
+        setActiveServerId('direct-messages');
+        setActiveChannelId(channelId);
+      }
+    } else {
+      const srv = serversRef.current.find((s) => s.channels.some((c) => c.id === channelId));
+      if (srv) {
+        setActiveDMUser(null);
+        setActiveServerId(srv.id);
+        setActiveChannelId(channelId);
+      }
+    }
+
+    const loadedAlready = (messagesMapRef.current[channelId] || []).some((m) => m.id === messageId);
+    if (!loadedAlready) {
+      await requestMessageContext(channelId, messageId, 25);
+    }
+    setPendingJumpTarget({ channelId, messageId });
+    return true;
+  }, [openDirectMessage, requestMessageContext]);
 
   const toggleRaiseHand = useCallback(() => {
     if (!socket) return;
@@ -7599,6 +7773,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       hasMoreMessages,
       isLoadingOlderMessages,
       requestOlderMessages,
+      offlineQueue,
+      pendingJumpTarget,
+      clearPendingJumpTarget,
+      searchServerMessages,
+      requestMessageContext,
+      jumpToMessage,
+      retryQueuedMessage,
+      cancelQueuedMessage,
       chatFontSize,
       setChatFontSize,
       glassIntensity,
@@ -7775,12 +7957,261 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       revokeSingleSession,
       deleteMyAccount,
       markChannelRead,
+      offlineQueue,
+      pendingJumpTarget,
+      clearPendingJumpTarget,
+      searchServerMessages,
+      requestMessageContext,
+      jumpToMessage,
+      retryQueuedMessage,
+      cancelQueuedMessage,
+    ]
+  );
+
+  const authValue = useMemo(
+    () => ({
+      currentUser,
+      isAuthenticated,
+      connectionState,
+      currentServerHost,
+      isDedicatedServer: Boolean(localStorage.getItem('dc_dedicated_server_host')),
+      language,
+      setLanguage,
+      uiTheme,
+      setUiTheme,
+      maintenanceStatus,
+      login,
+      verify2faLogin,
+      register,
+      requestRegisterChallenge,
+      sendRegisterEmailCode,
+      logout,
+      changePassword,
+      requestPasswordResetCode,
+      confirmPasswordReset,
+      requestEmailChangeCode,
+      confirmEmailChange,
+      revokeSingleSession,
+      deleteMyAccount,
+      connectToDedicatedServer,
+      resetToMainServer,
+    }),
+    [
+      currentUser,
+      isAuthenticated,
+      connectionState,
+      currentServerHost,
+      language,
+      setLanguage,
+      uiTheme,
+      setUiTheme,
+      maintenanceStatus,
+      login,
+      verify2faLogin,
+      register,
+      requestRegisterChallenge,
+      sendRegisterEmailCode,
+      logout,
+      changePassword,
+      requestPasswordResetCode,
+      confirmPasswordReset,
+      requestEmailChangeCode,
+      confirmEmailChange,
+      revokeSingleSession,
+      deleteMyAccount,
+      connectToDedicatedServer,
+      resetToMainServer,
+    ]
+  );
+
+  const chatValue = useMemo(
+    () => ({
+      servers,
+      activeServer,
+      activeChannel,
+      messages,
+      messagesMap,
+      onlineUsers,
+      activeDMUser,
+      unreadCounts,
+      mentionCounts,
+      readCursors,
+      hasMoreMessages,
+      isLoadingOlderMessages,
+      dmReadReceipts,
+      offlineQueue,
+      pendingJumpTarget,
+      clearPendingJumpTarget,
+      selectServer,
+      selectChannel,
+      openDirectMessage,
+      closeDirectMessage,
+      sendMessage,
+      editMessage,
+      deleteMessage,
+      sendTyping,
+      markChannelRead,
+      markDmRead,
+      requestOlderMessages,
+      searchServerMessages,
+      requestMessageContext,
+      jumpToMessage,
+      retryQueuedMessage,
+      cancelQueuedMessage,
+      addReaction,
+      togglePinMessage,
+      sendThreadMessage,
+    }),
+    [
+      servers,
+      activeServer,
+      activeChannel,
+      messages,
+      messagesMap,
+      onlineUsers,
+      activeDMUser,
+      unreadCounts,
+      mentionCounts,
+      readCursors,
+      hasMoreMessages,
+      isLoadingOlderMessages,
+      dmReadReceipts,
+      offlineQueue,
+      pendingJumpTarget,
+      clearPendingJumpTarget,
+      openDirectMessage,
+      closeDirectMessage,
+      editMessage,
+      deleteMessage,
+      sendTyping,
+      markChannelRead,
+      markDmRead,
+      requestOlderMessages,
+      searchServerMessages,
+      requestMessageContext,
+      jumpToMessage,
+      retryQueuedMessage,
+      cancelQueuedMessage,
+      addReaction,
+      togglePinMessage,
+      sendThreadMessage,
+    ]
+  );
+
+  const voiceValue = useMemo(
+    () => ({
+      connectedVoiceChannelId,
+      isMuted,
+      isDeafened,
+      isSpeaking,
+      isScreenSharing,
+      screenStream,
+      remoteScreenStreams,
+      remoteCameraStreams,
+      inputMode,
+      pttKey,
+      isPttActive,
+      voiceTransportMode,
+      isWebcamActive,
+      webcamStream,
+      isPrioritySpeakerActive,
+      prioritySpeakerUsername,
+      ping,
+      joinVoiceChannel,
+      leaveVoiceChannel,
+      toggleMute,
+      toggleDeafen,
+      startScreenShare,
+      stopScreenShare,
+      setInputMode,
+      setPttKey,
+      toggleRaiseHand,
+      toggleWebcam,
+      togglePrioritySpeaker,
+    }),
+    [
+      connectedVoiceChannelId,
+      isMuted,
+      isDeafened,
+      isSpeaking,
+      isScreenSharing,
+      screenStream,
+      remoteScreenStreams,
+      remoteCameraStreams,
+      inputMode,
+      pttKey,
+      isPttActive,
+      voiceTransportMode,
+      isWebcamActive,
+      webcamStream,
+      isPrioritySpeakerActive,
+      prioritySpeakerUsername,
+      ping,
+      toggleRaiseHand,
+      toggleWebcam,
+      togglePrioritySpeaker,
+    ]
+  );
+
+  const socialValue = useMemo(
+    () => ({
+      friends,
+      incomingFriendRequests,
+      outgoingFriendRequests,
+      directCall,
+      directCallToasts,
+      unreadDMByUser,
+      remoteAssist,
+      dismissDirectCallToast,
+      sendFriendRequest,
+      acceptFriendRequest,
+      declineFriendRequest,
+      cancelFriendRequest,
+      removeFriend,
+      fetchFriendsData,
+      startDirectCall,
+      acceptDirectCall,
+      declineDirectCall,
+      endDirectCall,
+      blockUser,
+      unblockUser,
+      updateProfile,
+    }),
+    [
+      friends,
+      incomingFriendRequests,
+      outgoingFriendRequests,
+      directCall,
+      directCallToasts,
+      unreadDMByUser,
+      remoteAssist,
+      dismissDirectCallToast,
+      sendFriendRequest,
+      acceptFriendRequest,
+      declineFriendRequest,
+      cancelFriendRequest,
+      removeFriend,
+      fetchFriendsData,
+      startDirectCall,
+      acceptDirectCall,
+      declineDirectCall,
+      endDirectCall,
+      blockUser,
+      unblockUser,
     ]
   );
 
   return (
     <SocketContext.Provider value={contextValue}>
-      {children}
+      <AuthContext.Provider value={authValue}>
+        <ChatContext.Provider value={chatValue}>
+          <VoiceContext.Provider value={voiceValue}>
+            <SocialContext.Provider value={socialValue}>
+              {children}
+            </SocialContext.Provider>
+          </VoiceContext.Provider>
+        </ChatContext.Provider>
+      </AuthContext.Provider>
     </SocketContext.Provider>
   );
 };

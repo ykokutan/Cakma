@@ -65,6 +65,10 @@ import {
   loadMessages, saveMessages, saveChannelMessages,
   saveChannelMessageUpsert, saveChannelMessageDelete, saveChannelMessageBulkReplace,
   getChannelMessagesPageSmart,
+  getChannelMessageContextSmart,
+  saveUserReadCursor,
+  deleteUserReadCursors,
+  appendAuditLogRecord,
   loadLicenses, saveLicenses,
   loadStoreSettings, saveStoreSettings,
   loadAuditLogs, saveAuditLogs,
@@ -85,11 +89,18 @@ import { validateAttachmentSafety } from './utils/security.js';
 import { createAuthMiddlewares, validateExternalWebhookUrl } from './utils/adminAuth.js';
 import { toPublicUser } from './utils/publicUser.js';
 import { validatePasswordAgainstPolicy } from './utils/passwordPolicy.js';
+import { logger, createRequestIdMiddleware, type RequestWithId } from './utils/logger.js';
+import { createCorsOptionsDelegate, createSocketCorsOriginValidator } from './utils/corsConfig.js';
+import { createSocketEventRateLimiter, validatePayload } from './utils/socketGuard.js';
 import {
   createAccountSecurityManager,
   registerAccountSecuritySocketHandlers,
   type AccountSecurityDeps,
 } from './features/accountSecurityHandlers.js';
+import { registerFriendsSocketHandlers } from './features/friendsSocketHandlers.js';
+import { registerDirectCallSocketHandlers } from './features/directCallSocketHandlers.js';
+import { registerChatMessageHandlers } from './features/chatMessageHandlers.js';
+import { registerServerAdminSocketHandlers } from './features/serverAdminSocketHandlers.js';
 import { registerChatEnhancementsRoutes } from './features/chatEnhancementsRoutes.js';
 import {
   hashPassword,
@@ -231,6 +242,7 @@ const ALLOWED_ORIGINS = [
 ];
 
 const app = express();
+app.use(createRequestIdMiddleware());
 
 // 1. Native HTTP Security Headers (Equivalent to Helmet, zero external dependencies)
 app.use((_req, res, next) => {
@@ -268,17 +280,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// 2. Strict CORS Configuration
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
+// 2. Strict CORS Configuration (Clean non-throwing rejection + rate-limited log + same-host support)
+app.use(cors(createCorsOptionsDelegate(ALLOWED_ORIGINS)));
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
@@ -409,7 +412,7 @@ server.on('upgrade', (req, socket, head) => {
 const io = new SocketIOServer(server, {
   maxHttpBufferSize: 10 * 1024 * 1024, // 10MB packet limit to prevent memory DoS
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: createSocketCorsOriginValidator(ALLOWED_ORIGINS),
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -627,6 +630,27 @@ function emitServersUpdatedForAll() {
 function emitToAdmins(event: string, payload: unknown) {
   for (const [sId, u] of activeUsers.entries()) {
     if (u.role === 'admin') {
+      io.to(sId).emit(event, payload);
+    }
+  }
+}
+
+function emitToRelevantUsers(subjectUser: User, event: string, payload: unknown) {
+  const subjectLower = subjectUser.username.toLowerCase();
+  const subjectServers = filterServersForUser(servers, subjectUser);
+  const subjectAcc = registeredAccounts.get(subjectLower);
+  const friendSet = new Set((subjectAcc?.friends || []).map((f) => f.toLowerCase()));
+
+  for (const [sId, u] of activeUsers.entries()) {
+    const uLower = u.username.toLowerCase();
+    const sharesServer = subjectServers.some((srv) => isUserMemberOfServer(u, srv));
+    if (
+      u.id === subjectUser.id ||
+      uLower === subjectLower ||
+      u.role === 'admin' ||
+      friendSet.has(uLower) ||
+      sharesServer
+    ) {
       io.to(sId).emit(event, payload);
     }
   }
@@ -961,7 +985,7 @@ function addAuditLog(action: string, details: string, type: 'info' | 'warn' | 'v
   };
   auditLogs.unshift(newLog);
   if (auditLogs.length > 200) auditLogs.pop(); // Keep last 200 logs
-  saveAuditLogs(auditLogs);
+  appendAuditLogRecord(newLog, auditLogs);
 
   // Notify any active admin panels listening
   io.to('admins').emit('admin_new_log', newLog);
@@ -972,7 +996,7 @@ const connectionLogs: UserConnectionRecord[] = loadConnectionLogs();
 
 function extractClientIp(socket: Socket): string {
   const forwarded = socket.handshake.headers['x-forwarded-for'];
-  let ip = '';
+  let ip: string;
   if (typeof forwarded === 'string') {
     ip = forwarded.split(',')[0].trim();
   } else if (Array.isArray(forwarded) && forwarded.length > 0) {
@@ -1269,6 +1293,18 @@ export function generateMediaToken(username: string): string {
   return `${payload}.${sig}`;
 }
 
+export function isAccountSessionValid(username: string, iat: number): RegisteredAccount | null {
+  const acc = registeredAccounts.get(String(username || '').trim().toLowerCase());
+  if (!acc) return null;
+  if (acc.isBanned && (!acc.bannedUntil || Date.now() < acc.bannedUntil)) {
+    return null;
+  }
+  if (acc.minTokenIssuedAt && iat < acc.minTokenIssuedAt) {
+    return null;
+  }
+  return acc;
+}
+
 export function verifyMediaToken(token: string): string | null {
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   const parts = token.split('.');
@@ -1285,10 +1321,8 @@ export function verifyMediaToken(token: string): string | null {
     if (parsed.p !== 'media-v1' || !parsed.u || !parsed.exp || parsed.exp < Date.now()) {
       return null;
     }
-    const acc = registeredAccounts.get(String(parsed.u).toLowerCase());
-    if (!acc || acc.isBanned) return null;
-    if (acc.minTokenIssuedAt && (parsed.iat || 0) < acc.minTokenIssuedAt) return null;
-    return acc.username;
+    const acc = isAccountSessionValid(String(parsed.u), Number(parsed.iat || 0));
+    return acc ? acc.username : null;
   } catch {
     return null;
   }
@@ -1317,7 +1351,10 @@ export function verifySessionTokenWithMeta(token: string): { username: string; i
 }
 
 export function verifySessionToken(token: string): string | null {
-  return verifySessionTokenWithMeta(token)?.username ?? null;
+  const meta = verifySessionTokenWithMeta(token);
+  if (!meta) return null;
+  const acc = isAccountSessionValid(meta.username, meta.iat);
+  return acc ? acc.username : null;
 }
 
 function parseCookieValue(cookieHeader: string | undefined, name: string): string | null {
@@ -1548,6 +1585,7 @@ const pendingDirectCalls = new Map<
 const pendingDirectCallTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const remoteAssistManager = new RemoteAssistManager();
 const messageRateLimits = new Map<string, number[]>(); // userId -> timestamps
+const socketEventLimiter = createSocketEventRateLimiter();
 const pendingVoicePullInvites = new Map<
   string,
   {
@@ -1685,6 +1723,7 @@ setInterval(() => {
   for (const [reqId, inv] of pendingVoicePullInvites.entries()) {
     if (now > inv.expiresAt) pendingVoicePullInvites.delete(reqId);
   }
+  socketEventLimiter.prune();
   pruneGifCache();
 }, 10 * 60 * 1000).unref();
 
@@ -1799,6 +1838,7 @@ const accountSecurityDeps: AccountSecurityDeps = {
   },
   savePushSubscriptions,
   saveAccounts,
+  deleteUserReadCursors,
   saveServers,
   saveFriendRequests,
   addAuditLog,
@@ -1811,6 +1851,22 @@ const accountSecurityDeps: AccountSecurityDeps = {
   isIpBanned: (ip) => Boolean(findActiveIpBan(ip)),
 };
 const accountSecurityManager = createAccountSecurityManager(accountSecurityDeps);
+
+function checkServerPermission(user: User, server: Server, permission: ServerPermission): boolean {
+  if (isServerOwner(user, server)) return true;
+  if (user.role === 'admin') return true;
+  const member = findServerMember(server, user);
+  if (!member) return false;
+  if (member.isOwner) return true;
+
+  for (const rId of member.roleIds) {
+    const role = server.roles.find((r) => r.id === rId);
+    if (role && role.permissions.includes(permission)) return true;
+  }
+  const defaultRole = server.roles.find((r) => r.isDefault);
+  if (defaultRole && defaultRole.permissions.includes(permission)) return true;
+  return false;
+}
 
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket Connected] ID: ${socket.id}`);
@@ -1825,6 +1881,82 @@ io.on('connection', (socket: Socket) => {
   }
 
   registerAccountSecuritySocketHandlers(socket, accountSecurityManager, accountSecurityDeps);
+  registerChatMessageHandlers(socket, {
+    io,
+    activeUsers,
+    registeredAccounts,
+    servers,
+    messages,
+    serverLevels,
+    socketEventLimiter,
+    getSystemConfig: () => systemConfig,
+    sanitizeText,
+    isMessageFlooding,
+    hasDangerousAttachment,
+    checkServerPermission,
+    addMemberXP,
+    generateAIResponse,
+    saveAccounts,
+    saveUserReadCursor,
+    saveChannelMessageUpsert,
+    saveChannelMessageDelete,
+    getChannelMessagesPageSmart,
+    getChannelMessageContextSmart,
+    searchMessagesSmart,
+    emitToChannelAudience,
+    emitToRelevantUsers,
+    sendWebPushToUsername,
+    addAuditLog,
+  });
+  registerDirectCallSocketHandlers(socket, {
+    io,
+    activeUsers,
+    messages,
+    activeDirectCallPairs,
+    activeDirectCallStartTimes,
+    pendingDirectCalls,
+    pendingDirectCallTimers,
+    remoteAssistManager,
+    clearPendingDirectCallTimer,
+    persistAndEmitDirectCallLog,
+    sendWebPushToUsername,
+    saveChannelMessageUpsert,
+    sanitizeText,
+  });
+  registerFriendsSocketHandlers(socket, {
+    io,
+    activeUsers,
+    registeredAccounts,
+    pendingFriendRequests,
+    socketEventLimiter,
+    getFriendsData,
+    saveAccounts,
+    saveFriendRequests,
+  });
+  registerServerAdminSocketHandlers(socket, {
+    io,
+    activeUsers,
+    registeredAccounts,
+    servers,
+    messages,
+    socketEventLimiter,
+    sanitizeText,
+    isSafeImageMedia,
+    isSafeEmojiOrShortIcon,
+    checkServerPermission,
+    addUserToServer,
+    saveServers,
+    saveChannelMessageBulkReplace,
+    emitToServerMembers,
+    emitServerUpdatedToMembers,
+    emitServersUpdatedForAll,
+    emitToUserSockets,
+    emitToChannelAudience,
+    emitUserUpdated,
+    cleanupTemporaryChannels,
+    getInitialMessagesForServers,
+    addAuditLog,
+  });
 
   socket.emit('system_maintenance_status', {
     active: Boolean(systemConfig.maintenanceMode),
@@ -1833,43 +1965,6 @@ io.on('connection', (socket: Socket) => {
   socket.emit('pinned_banner_updated', systemConfig.pinnedBanner || null);
   socket.emit('store_settings_response', storeSettings);
   socket.emit('ice_servers', getEffectiveIceServers());
-
-  socket.on('request_older_messages', ({ channelId, beforeId, limit }: { channelId: string; beforeId?: string; limit?: number }) => {
-    const requester = activeUsers.get(socket.id);
-    if (!requester || !channelId) return;
-    if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) return;
-    const page = getChannelMessagesPageSmart(messages, channelId, beforeId, limit || 50);
-    socket.emit('older_messages_loaded', {
-      channelId,
-      messages: page.messages,
-      hasMore: page.hasMore,
-    });
-  });
-
-  socket.on('search_messages_server', ({ query, channelId }: { query: string; channelId?: string }) => {
-    const requester = activeUsers.get(socket.id);
-    if (!requester || typeof query !== 'string') return;
-    const allowedChannels = new Set<string>();
-    if (channelId) {
-      if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) {
-        return socket.emit('server_search_results', { query, results: [] });
-      }
-      allowedChannels.add(channelId);
-    } else {
-      for (const s of servers) {
-        if (requester.role === 'admin' || isUserMemberOfServer(requester, s)) {
-          s.channels.forEach(c => allowedChannels.add(c.id));
-        }
-      }
-      for (const key of Object.keys(messages)) {
-        if (key.startsWith('dm-') && isUserParticipantInDm(requester, key, messages[key])) {
-          allowedChannels.add(key);
-        }
-      }
-    }
-    const results = searchMessagesSmart(messages, query, allowedChannels, 50);
-    socket.emit('server_search_results', { query, results });
-  });
 
   // Real-time Ping & Network Measurement Check
   socket.on('ping_check', (_ts: number, callback: any) => {
@@ -2596,7 +2691,7 @@ io.on('connection', (socket: Socket) => {
         socket.to(user.currentVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: user.currentVoiceChannelId });
       }
       activeUsers.delete(socket.id);
-      io.emit('user_disconnected', socket.id);
+      emitToRelevantUsers(user, 'user_disconnected', socket.id);
       socket.emit('logged_out');
     }
   });
@@ -2610,434 +2705,6 @@ io.on('connection', (socket: Socket) => {
     }
     return user;
   };
-
-  // Text Messaging (Supports text, file attachments, replies & interactive polls)
-  socket.on('send_message', ({ serverId, channelId, content, attachments, poll, replyTo }: { serverId: string; channelId: string; content?: string; attachments?: MessageAttachment[]; poll?: any; replyTo?: { id: string; username: string; content: string } }) => {
-    const sender = activeUsers.get(socket.id);
-    const rawContent = (content || '').trim();
-    if (!sender || !channelId || (!rawContent && (!attachments || attachments.length === 0) && !poll)) return;
-
-    if (!canUserAccessChannel(sender, channelId, servers, serverId, messages[channelId])) {
-      return socket.emit('server_action_error', {
-        message: 'Bu kanala mesaj gönderme yetkiniz yok.'
-      });
-    }
-
-    // 0. Server Timeout Check
-    const targetSrv = servers.find(s => s.id === serverId);
-    const timeoutUntil = targetSrv?.timeouts?.[sender.username.toLowerCase()];
-    if (timeoutUntil && timeoutUntil > Date.now()) {
-      const minsLeft = Math.ceil((timeoutUntil - Date.now()) / 60000);
-      return socket.emit('chat_flood_error', {
-        message: `Bu sunucuda geçici olarak susturuldunuz. Kalan süre: ~${minsLeft} dakika.`
-      });
-    }
-
-    // 0.5 Global & Server AutoMod Filter (non-admins)
-    if (sender.role !== 'admin') {
-      const maxLen = systemConfig.maxMessageLength || 2000;
-      if (rawContent.length > maxLen) {
-        return socket.emit('chat_flood_error', {
-          message: `Mesajınız sistem mesaj uzunluğu sınırını (${maxLen} karakter) aşıyor.`
-        });
-      }
-      if (systemConfig.globalBlockLinks && /(https?:\/\/|discord\.gg\/|www\.)/i.test(rawContent)) {
-        return socket.emit('chat_flood_error', {
-          message: 'Sistem Güvenlik Filtresi: Harici bağlantı paylaşımı tüm sunucularda kapatılmıştır.'
-        });
-      }
-      if (Array.isArray(systemConfig.globalBannedWords) && systemConfig.globalBannedWords.length > 0) {
-        const lowerRawGlobal = rawContent.toLowerCase();
-        if (systemConfig.globalBannedWords.some((w) => w && lowerRawGlobal.includes(w.toLowerCase()))) {
-          return socket.emit('chat_flood_error', {
-            message: 'Sistem Güvenlik Filtresi: Mesajınız global yasaklı kelime içerdiği için engellendi.'
-          });
-        }
-      }
-    }
-
-    if (targetSrv?.autoModEnabled && sender.role !== 'admin') {
-      if (targetSrv.autoModConfig?.blockLinks && /(https?:\/\/|discord\.gg\/|www\.)/i.test(rawContent)) {
-        return socket.emit('chat_flood_error', {
-          message: 'Otomatik Moderasyon: Bu sunucuda harici bağlantı paylaşımı engellenmiştir.'
-        });
-      }
-      const bannedWords = targetSrv.autoModConfig?.bannedWords || ['amk', 'aq', 'orospu', 'piç', 'sik'];
-      const lowerRaw = rawContent.toLowerCase();
-      if (bannedWords.some((w) => w && lowerRaw.includes(w.toLowerCase()))) {
-        return socket.emit('chat_flood_error', {
-          message: 'Otomatik Moderasyon: Mesajınız yasaklı kelime içerdiği için engellendi.'
-        });
-      }
-    }
-
-    // 1. Anti-Spam / Flood Limiting Check
-    if (isMessageFlooding(sender.id)) {
-      return socket.emit('chat_flood_error', {
-        message: 'Çok hızlı mesaj gönderiyorsunuz! Lütfen birkaç saniye bekleyin.'
-      });
-    }
-
-    // 2. Malware & Executable File Attachment Blocking + Upload Size Limit
-    if (hasDangerousAttachment(attachments)) {
-      addAuditLog('GUVENLIK_ENGELI', `${sender.username} zararlı/çalıştırılabilir dosya (.exe, .bat vb.) yüklemeye çalıştı ve engellendi.`, 'warn');
-      return socket.emit('file_security_error', {
-        message: 'Güvenlik gereği çalıştırılabilir veya tehlikeli dosya türleri (.exe, .bat, .cmd, .scr vb.) yüklenemez.'
-      });
-    }
-    if (Array.isArray(attachments) && attachments.length > 0) {
-      const maxBytes = (systemConfig.maxUploadSizeMb || 5) * 1024 * 1024;
-      const oversized = attachments.some((att) => (att.size || 0) > maxBytes || (att.url && att.url.length > maxBytes * 1.4));
-      if (oversized) {
-        return socket.emit('file_security_error', {
-          message: `Dosya boyutu sistem limitini (${systemConfig.maxUploadSizeMb || 5} MB) aşıyor.`
-        });
-      }
-    }
-
-    // 3. Sanitize message content to prevent XSS / HTML injection attacks while preserving formatting
-    const textContent = sanitizeText(rawContent).slice(0, systemConfig.maxMessageLength || 2000);
-
-    const newMessage: Message = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      serverId,
-      channelId,
-      author: {
-        id: sender.id,
-        username: sender.username,
-        avatar: sender.avatar
-      },
-      content: textContent,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      attachments: attachments || [],
-      reactions: {},
-      isPinned: false,
-      poll: poll || undefined,
-      replyTo: replyTo ? { id: replyTo.id, username: sanitizeText(replyTo.username), content: sanitizeText(replyTo.content).slice(0, 140) } : undefined
-    };
-
-    if (!messages[channelId]) {
-      messages[channelId] = [];
-    }
-    messages[channelId].push(newMessage);
-    saveChannelMessageUpsert(channelId, messages[channelId], newMessage);
-
-    emitToChannelAudience(channelId, serverId, 'new_message', newMessage);
-
-    // Trigger Web Push notifications for offline DM recipients or offline @mentioned channel members
-    const pushBodyPreview = textContent.startsWith('E2EE_V1:')
-      ? '🔒 Şifreli bir mesaj gönderdi'
-      : (textContent || (attachments?.length ? '📎 Dosya eki gönderdi' : 'Yeni mesaj')).slice(0, 140);
-
-    if (channelId.startsWith('dm-') || serverId === 'direct-messages') {
-      const dmPair = parseDmChannelParticipants(channelId);
-      const senderLower = sender.username.toLowerCase();
-      const targetNames = (dmPair || []).filter((n) => n && n !== senderLower);
-      for (const targetName of targetNames) {
-        const isOnlineActive = Array.from(activeUsers.values()).some(
-          (u) => u.username.toLowerCase() === targetName && u.status !== 'offline' && u.status !== 'dnd'
-        );
-        if (!isOnlineActive) {
-          void sendWebPushToUsername(targetName, {
-            title: `${sender.username} (Direkt Mesaj)`,
-            body: pushBodyPreview,
-            url: `/?dm=${encodeURIComponent(sender.username)}`,
-            channelId,
-            dmUsername: sender.username,
-          });
-        }
-      }
-    } else if (textContent.includes('@')) {
-      const mentionMatches = textContent.match(/@([a-zA-Z0-9_.\-çğıöşüÇĞİÖŞÜ]+)/g) || [];
-      const uniqueTargets = new Set(mentionMatches.map((m) => m.slice(1).toLowerCase()));
-      uniqueTargets.delete(sender.username.toLowerCase());
-      uniqueTargets.delete('ai');
-      uniqueTargets.delete('bot');
-      for (const targetName of uniqueTargets) {
-        const acc = registeredAccounts.get(targetName);
-        if (!acc) continue;
-        if (!canUserAccessChannel({ id: acc.id, accountId: acc.id, username: acc.username, role: acc.role }, channelId, servers, serverId)) {
-          continue;
-        }
-        const isOnlineActive = Array.from(activeUsers.values()).some(
-          (u) => u.username.toLowerCase() === targetName && u.status !== 'offline'
-        );
-        if (!isOnlineActive) {
-          void sendWebPushToUsername(acc.username, {
-            title: `${sender.username} senden bahsetti`,
-            body: pushBodyPreview,
-            url: `/?channel=${encodeURIComponent(channelId)}`,
-            channelId,
-          });
-        }
-      }
-    }
-
-    // 1. Leveling & XP System (+20 XP per message)
-    const userAcc = registeredAccounts.get(sender.username.toLowerCase());
-    if (userAcc) {
-      userAcc.xp = (userAcc.xp || 0) + 20;
-      const newLevel = Math.floor(Math.sqrt(userAcc.xp / 100)) + 1;
-      const oldLevel = userAcc.level || 1;
-      userAcc.level = newLevel;
-      saveAccounts(registeredAccounts);
-
-      if (newLevel > oldLevel) {
-        addAuditLog('SEVIYE_ATLAMA', `${sender.username} Seviye ${newLevel}'e yükseldi! 🎉`, 'info');
-        io.emit('user_level_up', { username: sender.username, level: newLevel, xp: userAcc.xp });
-      }
-    }
-
-    // Award Server Member XP
-    addMemberXP(serverId, sender, 15 + Math.floor(Math.random() * 10), true);
-
-    // 2. Intelligent AI Bot Trigger (@ai / @bot / /ai)
-    const lowerContent = textContent.toLowerCase();
-    if (lowerContent.includes('@ai') || lowerContent.includes('@bot') || lowerContent.startsWith('/ai ')) {
-      setTimeout(() => {
-        const cleanPrompt = textContent.replace(/@ai|@bot|\/ai/gi, '').trim() || 'merhaba';
-        const aiAnswer = generateAIResponse(cleanPrompt, sender.username);
-        const aiMessage: Message = {
-          id: `msg-ai-${Date.now()}`,
-          serverId,
-          channelId,
-          author: {
-            id: 'bot-gemini-ai',
-            username: 'Gemini AI Asistan 🤖',
-            avatar: '✨'
-          },
-          content: aiAnswer,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          reactions: {},
-          isPinned: false
-        };
-
-        if (!messages[channelId]) messages[channelId] = [];
-        messages[channelId].push(aiMessage);
-        saveChannelMessageUpsert(channelId, messages[channelId], aiMessage);
-        emitToChannelAudience(channelId, serverId, 'new_message', aiMessage);
-      }, 600);
-    }
-
-    // 3. Fun Bot Commands (/zar, /roll, /yazitura, /coinflip, /8ball)
-    if (lowerContent === '/zar' || lowerContent === '/roll') {
-      setTimeout(() => {
-        const rollNum = Math.floor(Math.random() * 6) + 1;
-        const rollMsg: Message = {
-          id: `msg-cmd-${Date.now()}`,
-          serverId,
-          channelId,
-          author: { id: 'bot-game', username: 'Oyun Botu 🎲', avatar: '🎲' },
-          content: `🎲 **@${sender.username}** zar attı: **${rollNum}** (1-6)`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          reactions: {},
-          isPinned: false
-        };
-        if (!messages[channelId]) messages[channelId] = [];
-        messages[channelId].push(rollMsg);
-        saveChannelMessageUpsert(channelId, messages[channelId], rollMsg);
-        emitToChannelAudience(channelId, serverId, 'new_message', rollMsg);
-      }, 300);
-    } else if (lowerContent === '/yazitura' || lowerContent === '/coinflip' || lowerContent === '/yazi-tura') {
-      setTimeout(() => {
-        const result = Math.random() > 0.5 ? 'YAZI 🪙' : 'TURA 🦅';
-        const coinMsg: Message = {
-          id: `msg-cmd-${Date.now()}`,
-          serverId,
-          channelId,
-          author: { id: 'bot-game', username: 'Oyun Botu 🎲', avatar: '🪙' },
-          content: `🪙 **@${sender.username}** madeni para attı: **${result}**`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          reactions: {},
-          isPinned: false
-        };
-        if (!messages[channelId]) messages[channelId] = [];
-        messages[channelId].push(coinMsg);
-        saveChannelMessageUpsert(channelId, messages[channelId], coinMsg);
-        emitToChannelAudience(channelId, serverId, 'new_message', coinMsg);
-      }, 300);
-    } else if (lowerContent.startsWith('/8ball')) {
-      setTimeout(() => {
-        const answers = [
-          'Kesinlikle evet! ✨',
-          'Gözlerim evet diyor. 🎱',
-          'Şüphesiz öyle. 👍',
-          'Büyük ihtimalle. 🔮',
-          'Şu an kestiremiyorum, sonra tekrar sor. ⏳',
-          'Buna şimdi odaklanmasan iyi olur. 🤔',
-          'Pek olası görünmüyor. ❌',
-          'Cevabım hayır. 🛑',
-          'Yıldızlar bugün seninle değil! 🌌'
-        ];
-        const ans = answers[Math.floor(Math.random() * answers.length)];
-        const ballMsg: Message = {
-          id: `msg-cmd-${Date.now()}`,
-          serverId,
-          channelId,
-          author: { id: 'bot-game', username: 'Sihirli 8-Ball 🎱', avatar: '🎱' },
-          content: `🎱 **Soru:** "${textContent.replace(/\/8ball/gi, '').trim() || 'Geleceğim nasıl?'}"\n🔮 **Cevap:** ${ans}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          reactions: {},
-          isPinned: false
-        };
-        if (!messages[channelId]) messages[channelId] = [];
-        messages[channelId].push(ballMsg);
-        saveChannelMessageUpsert(channelId, messages[channelId], ballMsg);
-        emitToChannelAudience(channelId, serverId, 'new_message', ballMsg);
-      }, 300);
-    } else if (lowerContent === '/rank' || lowerContent === '/seviye') {
-      setTimeout(() => {
-        if (!serverLevels[serverId]) serverLevels[serverId] = {};
-        const memberData = resolveServerLevelRecord(serverLevels[serverId], sender).record;
-        const rankMsg: Message = {
-          id: `msg-cmd-${Date.now()}`,
-          serverId,
-          channelId,
-          author: { id: 'bot-rank', username: 'Seviye Botu 🏆', avatar: '⭐' },
-          content: `🏆 **@${sender.username}** Sunucu İstatistikleri:\n⭐ **Seviye:** ${memberData.level} | ⚡ **XP:** ${memberData.xp}\n💬 **Toplam Mesaj:** ${memberData.messageCount} | 🎙️ **Ses Odası Süresi:** ${memberData.voiceMinutes} dakika`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          reactions: {},
-          isPinned: false
-        };
-        if (!messages[channelId]) messages[channelId] = [];
-        messages[channelId].push(rankMsg);
-        saveChannelMessageUpsert(channelId, messages[channelId], rankMsg);
-        emitToChannelAudience(channelId, serverId, 'new_message', rankMsg);
-      }, 300);
-    } else if (lowerContent === '/liderlik' || lowerContent === '/top') {
-      setTimeout(() => {
-        const sLevels = serverLevels[serverId] || {};
-        const sorted = Object.values(sLevels).sort((a, b) => b.xp - a.xp).slice(0, 5);
-        let leaderText = '🏆 **Sunucu Liderlik Tablosu (En Aktif Üyeler):**\n';
-        if (sorted.length === 0) {
-          leaderText += 'Henüz yeterli XP kaydı bulunmuyor!';
-        } else {
-          sorted.forEach((m, idx) => {
-            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '🔹';
-            leaderText += `${medal} **${idx + 1}. ${m.username}** — Seviye ${m.level} (${m.xp} XP | ${m.messageCount} mesaj)\n`;
-          });
-        }
-        const leadMsg: Message = {
-          id: `msg-cmd-${Date.now()}`,
-          serverId,
-          channelId,
-          author: { id: 'bot-rank', username: 'Liderlik Botu 👑', avatar: '🥇' },
-          content: leaderText.trim(),
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          reactions: {},
-          isPinned: false
-        };
-        if (!messages[channelId]) messages[channelId] = [];
-        messages[channelId].push(leadMsg);
-        saveChannelMessageUpsert(channelId, messages[channelId], leadMsg);
-        emitToChannelAudience(channelId, serverId, 'new_message', leadMsg);
-      }, 300);
-    }
-  });
-
-  // Emoji Reactions
-  socket.on('add_reaction', ({ channelId, messageId, emoji }: { channelId: string; messageId: string; emoji: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const channelMsgs = messages[channelId];
-    if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
-    const msg = channelMsgs.find(m => m.id === messageId);
-    if (!msg) return;
-
-    if (!msg.reactions) msg.reactions = {};
-    if (!msg.reactions[emoji]) msg.reactions[emoji] = [];
-
-    const existingIdx = msg.reactions[emoji].indexOf(user.username);
-    if (existingIdx !== -1) {
-      msg.reactions[emoji].splice(existingIdx, 1);
-      if (msg.reactions[emoji].length === 0) {
-        delete msg.reactions[emoji];
-      }
-    } else {
-      msg.reactions[emoji].push(user.username);
-    }
-
-    saveChannelMessageUpsert(channelId, channelMsgs, msg);
-    emitToChannelAudience(channelId, msg.serverId, 'message_reaction_updated', { channelId, messageId, reactions: msg.reactions });
-  });
-
-  // Pin / Unpin Message (Requires manage_messages permission)
-  socket.on('toggle_pin_message', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const channelMsgs = messages[channelId];
-    if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
-    const msg = channelMsgs.find(m => m.id === messageId);
-    if (!msg) return;
-
-    const targetServer = servers.find(s => s.id === msg.serverId || s.channels.some(c => c.id === channelId));
-    if (targetServer && !checkServerPermission(user, targetServer, 'manage_channels')) {
-      return socket.emit('server_action_error', { message: 'Mesaj sabitlemek için Kanalları Yönet yetkiniz yok.' });
-    }
-
-    msg.isPinned = !msg.isPinned;
-    saveChannelMessageUpsert(channelId, channelMsgs, msg);
-    emitToChannelAudience(channelId, msg.serverId, 'message_pin_updated', { channelId, messageId, isPinned: msg.isPinned });
-  });
-
-  // Edit Message (Only message author)
-  socket.on('edit_message', ({ channelId, messageId, newContent }: { channelId: string; messageId: string; newContent: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const channelMsgs = messages[channelId];
-    if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
-    const msg = channelMsgs.find(m => m.id === messageId);
-    if (!msg) return;
-    if (msg.author.username.toLowerCase() !== user.username.toLowerCase()) return;
-
-    const clean = sanitizeText((newContent || '').trim()).slice(0, 4000);
-    if (!clean) return;
-    msg.content = clean;
-    msg.isEdited = true;
-    saveChannelMessageUpsert(channelId, channelMsgs, msg);
-    emitToChannelAudience(channelId, msg.serverId, 'message_edited', { channelId, messageId, content: msg.content, isEdited: true });
-  });
-
-  // Delete Message (Author or moderator/admin)
-  socket.on('delete_message', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const channelMsgs = messages[channelId];
-    if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
-    const idx = channelMsgs.findIndex(m => m.id === messageId);
-    if (idx === -1) return;
-    const msg = channelMsgs[idx];
-
-    const targetServer = servers.find(s => s.id === msg.serverId || s.channels.some(c => c.id === channelId));
-    const isAuthor = msg.author.username.toLowerCase() === user.username.toLowerCase();
-    const canManage = targetServer ? checkServerPermission(user, targetServer, 'manage_channels') : false;
-    if (!isAuthor && !canManage && user.role !== 'admin') {
-      return socket.emit('server_action_error', { message: 'Bu mesajı silmek için yetkiniz yok.' });
-    }
-
-    channelMsgs.splice(idx, 1);
-    saveChannelMessageDelete(channelId, channelMsgs, messageId);
-    emitToChannelAudience(channelId, msg.serverId, 'message_deleted', { channelId, messageId });
-  });
-
-  // Typing Indicator
-  socket.on('typing_start', ({ channelId }: { channelId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !channelId) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId])) return;
-    emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: true }, socket.id);
-  });
-
-  socket.on('typing_stop', ({ channelId }: { channelId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !channelId) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId])) return;
-    emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: false }, socket.id);
-  });
 
   // Change Password (Self-Service)
   socket.on('change_password', async ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => {
@@ -3273,39 +2940,6 @@ io.on('connection', (socket: Socket) => {
     socket.emit('user_updated', user);
   });
 
-  // Vote on Poll
-  socket.on('vote_poll', ({ channelId, messageId, optionId }: { channelId: string; messageId: string; optionId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const channelMsgs = messages[channelId];
-    if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
-    const msg = channelMsgs.find(m => m.id === messageId);
-    if (!msg || !msg.poll || msg.poll.closed) return;
-
-    msg.poll.options.forEach(opt => {
-      const voteIdx = opt.votes.indexOf(user.username);
-      if (opt.id === optionId) {
-        if (voteIdx !== -1) {
-          opt.votes.splice(voteIdx, 1);
-        } else {
-          opt.votes.push(user.username);
-        }
-      } else {
-        if (voteIdx !== -1) {
-          opt.votes.splice(voteIdx, 1);
-        }
-      }
-    });
-
-    let total = 0;
-    msg.poll.options.forEach(o => total += o.votes.length);
-    msg.poll.totalVotes = total;
-
-    saveChannelMessageUpsert(channelId, channelMsgs, msg);
-    emitToChannelAudience(channelId, msg.serverId, 'poll_updated', { channelId, messageId, poll: msg.poll });
-  });
-
   // Soundboard in Voice Channel (Scoped to active room & 2s anti-spam cooldown)
   socket.on('voice_soundboard_play', ({ channelId, soundId }: { channelId: string; soundId: string }) => {
     const user = activeUsers.get(socket.id);
@@ -3353,31 +2987,33 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Profile Update (Status message, bio, bannerColor, bannerImage, bannerPosition, avatarFrame, pinnedBadgeId, socialLinks, avatar, status - with XSS sanitization & size limits)
-  socket.on('update_profile', ({
-    statusMessage,
-    bio,
-    bannerColor,
-    bannerImage,
-    bannerPosition,
-    avatarFrame,
-    pinnedBadgeId,
-    socialLinks,
-    avatar,
-    status,
-  }: {
-    statusMessage?: string;
-    bio?: string;
-    bannerColor?: string;
-    bannerImage?: string;
-    bannerPosition?: 'top' | 'center' | 'bottom';
-    avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
-    pinnedBadgeId?: string;
-    socialLinks?: { steam?: string; github?: string; website?: string };
-    avatar?: string;
-    status?: 'online' | 'idle' | 'dnd' | 'offline';
-  }) => {
+  socket.on('update_profile', (rawPayload: unknown) => {
     const user = activeUsers.get(socket.id);
-    if (!user) return;
+    if (!user || !rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return;
+    if (!socketEventLimiter.allow(socket.id, 'update_profile', 12, 10_000)) return;
+    const {
+      statusMessage,
+      bio,
+      bannerColor,
+      bannerImage,
+      bannerPosition,
+      avatarFrame,
+      pinnedBadgeId,
+      socialLinks,
+      avatar,
+      status,
+    } = rawPayload as {
+      statusMessage?: string;
+      bio?: string;
+      bannerColor?: string;
+      bannerImage?: string;
+      bannerPosition?: 'top' | 'center' | 'bottom';
+      avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+      pinnedBadgeId?: string;
+      socialLinks?: { steam?: string; github?: string; website?: string };
+      avatar?: string;
+      status?: 'online' | 'idle' | 'dnd' | 'offline';
+    };
 
     const acc = registeredAccounts.get(user.username.toLowerCase());
 
@@ -3497,337 +3133,6 @@ io.on('connection', (socket: Socket) => {
       newBalance: senderAcc.walletBalance,
     });
     addAuditLog('BAKIYE_TRANSFER', `${senderAcc.username} -> ${receiverAcc.username}: ${transferAmount} ₺`, 'info');
-  });
-
-  // DM Read Receipt
-  socket.on('mark_dm_read', ({ partnerUsername }: { partnerUsername: string }) => {
-    const reader = activeUsers.get(socket.id);
-    if (!reader || typeof partnerUsername !== 'string') return;
-    const targetLower = partnerUsername.trim().toLowerCase();
-    for (const [sId, u] of activeUsers.entries()) {
-      if (u.username.toLowerCase() === targetLower) {
-        io.to(sId).emit('dm_read_receipt', {
-          readerUsername: reader.username,
-          readAt: new Date().toISOString(),
-        });
-      }
-    }
-  });
-
-  // Persistent Channel / DM Read Cursor
-  socket.on('mark_channel_read', ({ channelId, lastMessageId }: { channelId: string; lastMessageId: string }) => {
-    const reader = activeUsers.get(socket.id);
-    if (!reader || typeof channelId !== 'string' || typeof lastMessageId !== 'string') return;
-    const cleanCh = channelId.trim().slice(0, 120);
-    const cleanMsgId = lastMessageId.trim().slice(0, 120);
-    if (!cleanCh || !cleanMsgId) return;
-    if (!canUserAccessChannel(reader, cleanCh, servers, undefined, messages[cleanCh])) return;
-
-    const acc = registeredAccounts.get(reader.username.toLowerCase());
-    if (!acc) return;
-    const cursors = acc.readCursors || {};
-    if (cursors[cleanCh] === cleanMsgId) return;
-    cursors[cleanCh] = cleanMsgId;
-    const keys = Object.keys(cursors);
-    if (keys.length > 300) {
-      delete cursors[keys[0]];
-    }
-    acc.readCursors = cursors;
-    saveAccounts(registeredAccounts);
-  });
-
-  // Direct 1-on-1 Voice Calling Relay (multi-session, busy/DND, 40s timeout & persisted DM logs)
-  socket.on('direct_call_start', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
-    const caller = activeUsers.get(socket.id);
-    if (!caller) return;
-
-    if (activeDirectCallPairs.has(socket.id)) {
-      return socket.emit('direct_call_declined', { reason: 'Zaten aktif bir görüşmedesiniz.' });
-    }
-
-    // Resolve canonical target username from targetUsername, activeUsers, or registeredAccounts
-    let resolvedUsername = (targetUsername || '').trim().toLowerCase();
-    if (!resolvedUsername && targetUserId) {
-      const bySocket = activeUsers.get(targetUserId);
-      if (bySocket) {
-        resolvedUsername = bySocket.username.toLowerCase();
-      } else {
-        for (const u of activeUsers.values()) {
-          if (u.id === targetUserId || u.username.toLowerCase() === targetUserId.toLowerCase()) {
-            resolvedUsername = u.username.toLowerCase();
-            break;
-          }
-        }
-        if (!resolvedUsername) {
-          resolvedUsername = targetUserId.toLowerCase();
-        }
-      }
-    }
-
-    const targetSocketIds: string[] = [];
-    let isBlocked = false;
-    for (const [sId, u] of activeUsers.entries()) {
-      if (sId === socket.id) continue;
-      const matchesId = Boolean(targetUserId && u.id === targetUserId);
-      const matchesName = Boolean(resolvedUsername && u.username.toLowerCase() === resolvedUsername);
-      if (matchesId || matchesName) {
-        if (u.blockedUsers?.includes(caller.username.toLowerCase())) {
-          isBlocked = true;
-        }
-        targetSocketIds.push(sId);
-      }
-    }
-
-    if (isBlocked) {
-      return socket.emit('direct_call_declined', { reason: 'Bu kullanıcıya şu anda ulaşılamıyor.' });
-    }
-
-    if (targetSocketIds.length === 0) {
-      if (resolvedUsername) {
-        void sendWebPushToUsername(resolvedUsername, {
-          title: 'Gelen Arama',
-          body: `${caller.username} seni aramaya çalıştı 📞`,
-          url: `/?dm=${encodeURIComponent(caller.username)}`,
-          dmUsername: caller.username,
-        });
-      }
-      return socket.emit('direct_call_declined', { reason: 'Kullanıcı şu anda çevrimdışı.' });
-    }
-
-    const targetKey = resolvedUsername || (targetUserId || '').toLowerCase();
-    const targetUsers = targetSocketIds
-      .map((id) => activeUsers.get(id))
-      .filter((u): u is User => Boolean(u));
-    const primaryTarget = targetUsers[0];
-
-    const isTargetBusy =
-      targetSocketIds.some((id) => activeDirectCallPairs.has(id)) ||
-      (targetKey ? pendingDirectCalls.has(targetKey) : false);
-    if (isTargetBusy) {
-      persistAndEmitDirectCallLog(caller, primaryTarget, 'busy', 0);
-      return socket.emit('direct_call_declined', {
-        reason: 'Kullanıcı şu anda başka bir görüşmede (meşgul).',
-      });
-    }
-
-    if (targetUsers.length > 0 && targetUsers.every((u) => u.status === 'dnd')) {
-      persistAndEmitDirectCallLog(caller, primaryTarget, 'dnd', 0);
-      return socket.emit('direct_call_declined', {
-        reason: 'Kullanıcı Rahatsız Etme (DND) modunda.',
-      });
-    }
-
-    if (targetKey) {
-      clearPendingDirectCallTimer(targetKey);
-      pendingDirectCalls.set(targetKey, {
-        callerSocketId: socket.id,
-        callerUserId: caller.id,
-        callerUsername: caller.username.toLowerCase(),
-        targetUserId: primaryTarget?.id,
-        targetUsername: primaryTarget?.username,
-      });
-
-      const timer = setTimeout(() => {
-        pendingDirectCallTimers.delete(targetKey);
-        const stillPending = pendingDirectCalls.get(targetKey);
-        if (!stillPending || stillPending.callerSocketId !== socket.id) return;
-        pendingDirectCalls.delete(targetKey);
-
-        const callerNow = activeUsers.get(stillPending.callerSocketId);
-        const targetNow = stillPending.targetUserId ? activeUsers.get(stillPending.targetUserId) : undefined;
-        io.to(stillPending.callerSocketId).emit('direct_call_declined', {
-          reason: 'Arama yanıtlanmadı (zaman aşımı).',
-        });
-        for (const [sId, u] of activeUsers.entries()) {
-          if (u.username.toLowerCase() === targetKey) {
-            io.to(sId).emit('direct_call_handled');
-          }
-        }
-        persistAndEmitDirectCallLog(callerNow, targetNow, 'timeout', 0);
-      }, 40_000);
-      pendingDirectCallTimers.set(targetKey, timer);
-    }
-
-    for (const sId of targetSocketIds) {
-      io.to(sId).emit('direct_call_incoming', { callerUser: caller });
-    }
-    if (primaryTarget?.username || resolvedUsername) {
-      const dmSender = caller.username;
-      void sendWebPushToUsername(primaryTarget?.username || resolvedUsername, {
-        title: 'Gelen Arama',
-        body: `${dmSender} seni 1-e-1 arıyor...`,
-        url: `/?dm=${encodeURIComponent(dmSender)}`,
-        dmUsername: dmSender,
-      });
-    }
-  });
-
-  socket.on('direct_call_accept', ({ callerUserId, callerUsername }: { callerUserId?: string; callerUsername?: string }) => {
-    const acceptor = activeUsers.get(socket.id);
-    if (!acceptor) return;
-
-    const acceptorKey = acceptor.username.toLowerCase();
-    clearPendingDirectCallTimer(acceptorKey);
-    const pending = pendingDirectCalls.get(acceptorKey);
-    pendingDirectCalls.delete(acceptorKey);
-
-    const targetName = (callerUsername || '').trim().toLowerCase();
-    let callerSocketId: string | null = null;
-    if (pending && activeUsers.has(pending.callerSocketId)) {
-      callerSocketId = pending.callerSocketId;
-    } else {
-      for (const [sId, u] of activeUsers.entries()) {
-        if (
-          (callerUserId && u.id === callerUserId) ||
-          (targetName && u.username.toLowerCase() === targetName) ||
-          (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
-        ) {
-          callerSocketId = sId;
-          break;
-        }
-      }
-    }
-
-    if (callerSocketId) {
-      const now = Date.now();
-      activeDirectCallPairs.set(socket.id, callerSocketId);
-      activeDirectCallPairs.set(callerSocketId, socket.id);
-      activeDirectCallStartTimes.set(socket.id, now);
-      activeDirectCallStartTimes.set(callerSocketId, now);
-      io.to(callerSocketId).emit('direct_call_accepted', { targetUser: acceptor });
-    }
-
-    // Dismiss incoming ring on any other open sessions of the acceptor
-    for (const [sId, u] of activeUsers.entries()) {
-      if (sId !== socket.id && u.username.toLowerCase() === acceptorKey) {
-        io.to(sId).emit('direct_call_handled');
-      }
-    }
-  });
-
-  socket.on('direct_call_decline', ({ callerUserId, callerUsername, replyMessage }: { callerUserId?: string; callerUsername?: string; replyMessage?: string }) => {
-    const decliner = activeUsers.get(socket.id);
-    const declinerKey = decliner?.username.toLowerCase() || '';
-    if (declinerKey) {
-      clearPendingDirectCallTimer(declinerKey);
-    }
-    const pending = declinerKey ? pendingDirectCalls.get(declinerKey) : undefined;
-    if (declinerKey) {
-      pendingDirectCalls.delete(declinerKey);
-    }
-
-    const paired = activeDirectCallPairs.get(socket.id);
-    if (paired) {
-      activeDirectCallPairs.delete(paired);
-      activeDirectCallPairs.delete(socket.id);
-    }
-
-    const cleanReply = typeof replyMessage === 'string' && replyMessage.trim()
-      ? sanitizeText(replyMessage.trim()).slice(0, 240)
-      : '';
-    const declinedReason = cleanReply
-      ? `Arama reddedildi: "${cleanReply}"`
-      : 'Arama reddedildi.';
-
-    if (pending && activeUsers.has(pending.callerSocketId)) {
-      const callerUser = activeUsers.get(pending.callerSocketId);
-      activeDirectCallPairs.delete(pending.callerSocketId);
-      activeDirectCallStartTimes.delete(pending.callerSocketId);
-      activeDirectCallStartTimes.delete(socket.id);
-      io.to(pending.callerSocketId).emit('direct_call_declined', { reason: declinedReason });
-
-      if (decliner && callerUser) {
-        if (cleanReply) {
-          const dmChannelId = buildPersistentDmChannelId(callerUser.username, decliner.username);
-          const quickDm: Message = {
-            id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            serverId: 'direct-messages',
-            channelId: dmChannelId,
-            author: { id: decliner.id, username: decliner.username, avatar: decliner.avatar },
-            content: cleanReply,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            reactions: {},
-            isPinned: false,
-          };
-          if (!messages[dmChannelId]) messages[dmChannelId] = [];
-          messages[dmChannelId].push(quickDm);
-          saveChannelMessageUpsert(dmChannelId, messages[dmChannelId], quickDm);
-          io.to(pending.callerSocketId).emit('new_message', quickDm);
-          socket.emit('new_message', quickDm);
-        }
-        persistAndEmitDirectCallLog(callerUser, decliner, 'declined', 0, cleanReply || undefined);
-      }
-    } else {
-      const targetName = (callerUsername || '').trim().toLowerCase();
-      for (const [sId, u] of activeUsers.entries()) {
-        if (
-          (callerUserId && u.id === callerUserId) ||
-          (targetName && u.username.toLowerCase() === targetName) ||
-          (callerUserId && u.username.toLowerCase() === callerUserId.toLowerCase())
-        ) {
-          activeDirectCallPairs.delete(sId);
-          io.to(sId).emit('direct_call_declined', { reason: declinedReason });
-          if (decliner) {
-            persistAndEmitDirectCallLog(u, decliner, 'declined', 0, cleanReply || undefined);
-          }
-        }
-      }
-    }
-
-    if (declinerKey) {
-      for (const [sId, u] of activeUsers.entries()) {
-        if (sId !== socket.id && u.username.toLowerCase() === declinerKey) {
-          io.to(sId).emit('direct_call_handled');
-        }
-      }
-    }
-  });
-
-  socket.on('direct_call_end', ({ targetUserId, targetUsername }: { targetUserId?: string; targetUsername?: string }) => {
-    const ender = activeUsers.get(socket.id);
-    const paired = activeDirectCallPairs.get(socket.id);
-    const startedAt = activeDirectCallStartTimes.get(socket.id) || (paired ? activeDirectCallStartTimes.get(paired) : undefined);
-    const durationSeconds = startedAt ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
-    activeDirectCallStartTimes.delete(socket.id);
-
-    const endedAssist = remoteAssistManager.endSessionForSocket(socket.id);
-
-    if (paired) {
-      const partner = activeUsers.get(paired);
-      activeDirectCallPairs.delete(paired);
-      activeDirectCallPairs.delete(socket.id);
-      activeDirectCallStartTimes.delete(paired);
-      if (endedAssist) {
-        io.to(paired).emit('remote_assist_stopped', { stoppedBy: ender?.username || 'Karşı taraf' });
-      }
-      io.to(paired).emit('direct_call_ended');
-      if (ender && partner) {
-        persistAndEmitDirectCallLog(ender, partner, 'ended', durationSeconds);
-      }
-    } else if (targetUsername) {
-      const targetKey = targetUsername.trim().toLowerCase();
-      const pending = pendingDirectCalls.get(targetKey);
-      if (pending && pending.callerSocketId === socket.id) {
-        clearPendingDirectCallTimer(targetKey);
-        pendingDirectCalls.delete(targetKey);
-        const targetUser = pending.targetUserId ? activeUsers.get(pending.targetUserId) : undefined;
-        persistAndEmitDirectCallLog(ender, targetUser, 'missed', 0);
-      }
-    }
-
-    const targetName = (targetUsername || '').trim().toLowerCase();
-    for (const [sId, u] of activeUsers.entries()) {
-      if (
-        sId !== paired &&
-        ((targetUserId && u.id === targetUserId) ||
-          (targetName && u.username.toLowerCase() === targetName) ||
-          (targetUserId && u.username.toLowerCase() === targetUserId.toLowerCase()))
-      ) {
-        activeDirectCallPairs.delete(sId);
-        activeDirectCallStartTimes.delete(sId);
-        io.to(sId).emit('direct_call_ended');
-      }
-    }
   });
 
   // 1-on-1 Remote Assistance (TeamViewer/AnyDesk-style) Relay — server-authorized & rate-limited
@@ -4099,959 +3404,6 @@ io.on('connection', (socket: Socket) => {
           createdAt: Date.now(),
         },
       });
-    }
-  });
-
-  // Friends System Events
-  socket.on('get_friends_data', () => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    socket.emit('friends_data', getFriendsData(user.username));
-  });
-
-  socket.on('send_friend_request', ({ targetUsername }: { targetUsername: string }) => {
-    const sender = activeUsers.get(socket.id);
-    if (!sender) return;
-
-    const cleanTarget = targetUsername?.trim()?.toLowerCase();
-    if (!cleanTarget) {
-      return socket.emit('friend_request_response', { success: false, error: 'Lütfen bir kullanıcı adı girin.' });
-    }
-
-    if (cleanTarget === sender.username.toLowerCase()) {
-      return socket.emit('friend_request_response', { success: false, error: 'Kendinize arkadaşlık isteği gönderemezsiniz.' });
-    }
-
-    const targetAccount = registeredAccounts.get(cleanTarget);
-    if (!targetAccount) {
-      return socket.emit('friend_request_response', { success: false, error: `"${targetUsername}" adlı kullanıcı bulunamadı.` });
-    }
-
-    const senderAccount = registeredAccounts.get(sender.username.toLowerCase());
-    if (!senderAccount) return;
-
-    if (senderAccount.friends?.map(f => f.toLowerCase()).includes(targetAccount.username.toLowerCase())) {
-      return socket.emit('friend_request_response', { success: false, error: `"${targetAccount.username}" ile zaten arkadaşsınız.` });
-    }
-
-    // Check if duplicate request already exists
-    for (const req of pendingFriendRequests.values()) {
-      if (req.fromUsername.toLowerCase() === sender.username.toLowerCase() &&
-          req.toUsername.toLowerCase() === targetAccount.username.toLowerCase()) {
-        return socket.emit('friend_request_response', { success: false, error: 'Bu kullanıcıya zaten bekleyen bir istek gönderdiniz.' });
-      }
-      if (req.fromUsername.toLowerCase() === targetAccount.username.toLowerCase() &&
-          req.toUsername.toLowerCase() === sender.username.toLowerCase()) {
-        // Automatic mutual acceptance
-        if (!senderAccount.friends) senderAccount.friends = [];
-        if (!targetAccount.friends) targetAccount.friends = [];
-        senderAccount.friends.push(targetAccount.username.toLowerCase());
-        targetAccount.friends.push(sender.username.toLowerCase());
-        pendingFriendRequests.delete(req.id);
-        saveAccounts(registeredAccounts);
-        saveFriendRequests(pendingFriendRequests);
-
-        socket.emit('friend_request_response', { success: true, message: `${targetAccount.username} ile arkadaş oldunuz!` });
-        socket.emit('friends_data', getFriendsData(sender.username));
-
-        for (const [sId, u] of activeUsers.entries()) {
-          if (u.username.toLowerCase() === targetAccount.username.toLowerCase()) {
-            io.to(sId).emit('friends_data', getFriendsData(targetAccount.username));
-            io.to(sId).emit('friend_request_accepted', { friendUsername: sender.username });
-          }
-        }
-        return;
-      }
-    }
-
-    // Create new friend request
-    const newReq: FriendRequest = {
-      id: `freq-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      fromUserId: sender.id,
-      fromUsername: sender.username,
-      fromAvatar: sender.avatar,
-      toUserId: targetAccount.id,
-      toUsername: targetAccount.username,
-      createdAt: new Date().toLocaleDateString('tr-TR')
-    };
-
-    pendingFriendRequests.set(newReq.id, newReq);
-    saveFriendRequests(pendingFriendRequests);
-    socket.emit('friend_request_response', { success: true, message: `${targetAccount.username} adlı kullanıcıya arkadaşlık isteği gönderildi!` });
-    socket.emit('friends_data', getFriendsData(sender.username));
-
-    // If target is online, notify them immediately
-    for (const [sId, u] of activeUsers.entries()) {
-      if (u.username.toLowerCase() === targetAccount.username.toLowerCase()) {
-        io.to(sId).emit('friend_request_received', newReq);
-        io.to(sId).emit('friends_data', getFriendsData(targetAccount.username));
-      }
-    }
-  });
-
-  socket.on('accept_friend_request', ({ requestId }: { requestId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-
-    const req = pendingFriendRequests.get(requestId);
-    if (!req) return;
-
-    const userAccount = registeredAccounts.get(user.username.toLowerCase());
-    const senderAccount = registeredAccounts.get(req.fromUsername.toLowerCase());
-
-    if (userAccount && senderAccount) {
-      if (!userAccount.friends) userAccount.friends = [];
-      if (!senderAccount.friends) senderAccount.friends = [];
-
-      if (!userAccount.friends.map(f => f.toLowerCase()).includes(senderAccount.username.toLowerCase())) {
-        userAccount.friends.push(senderAccount.username.toLowerCase());
-      }
-      if (!senderAccount.friends.map(f => f.toLowerCase()).includes(userAccount.username.toLowerCase())) {
-        senderAccount.friends.push(userAccount.username.toLowerCase());
-      }
-
-      pendingFriendRequests.delete(requestId);
-      saveAccounts(registeredAccounts);
-      saveFriendRequests(pendingFriendRequests);
-
-      socket.emit('friends_data', getFriendsData(user.username));
-
-      for (const [sId, u] of activeUsers.entries()) {
-        if (u.username.toLowerCase() === senderAccount.username.toLowerCase()) {
-          io.to(sId).emit('friends_data', getFriendsData(senderAccount.username));
-          io.to(sId).emit('friend_request_accepted', { friendUsername: user.username });
-        }
-      }
-    }
-  });
-
-  socket.on('decline_friend_request', ({ requestId }: { requestId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-
-    const req = pendingFriendRequests.get(requestId);
-    if (req) {
-      pendingFriendRequests.delete(requestId);
-      saveFriendRequests(pendingFriendRequests);
-      socket.emit('friends_data', getFriendsData(user.username));
-
-      for (const [sId, u] of activeUsers.entries()) {
-        if (u.username.toLowerCase() === req.fromUsername.toLowerCase()) {
-          io.to(sId).emit('friends_data', getFriendsData(req.fromUsername));
-        }
-      }
-    }
-  });
-
-  socket.on('cancel_friend_request', ({ requestId }: { requestId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-
-    const req = pendingFriendRequests.get(requestId);
-    if (req) {
-      pendingFriendRequests.delete(requestId);
-      saveFriendRequests(pendingFriendRequests);
-      socket.emit('friends_data', getFriendsData(user.username));
-
-      for (const [sId, u] of activeUsers.entries()) {
-        if (u.username.toLowerCase() === req.toUsername.toLowerCase()) {
-          io.to(sId).emit('friends_data', getFriendsData(req.toUsername));
-        }
-      }
-    }
-  });
-
-  socket.on('remove_friend', ({ targetUsername }: { targetUsername: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-
-    const userAccount = registeredAccounts.get(user.username.toLowerCase());
-    const targetAccount = registeredAccounts.get(targetUsername.toLowerCase());
-
-    if (userAccount && targetAccount) {
-      userAccount.friends = (userAccount.friends || []).filter(f => f.toLowerCase() !== targetUsername.toLowerCase());
-      targetAccount.friends = (targetAccount.friends || []).filter(f => f.toLowerCase() !== user.username.toLowerCase());
-      saveAccounts(registeredAccounts);
-
-      socket.emit('friends_data', getFriendsData(user.username));
-
-      for (const [sId, u] of activeUsers.entries()) {
-        if (u.username.toLowerCase() === targetAccount.username.toLowerCase()) {
-          io.to(sId).emit('friends_data', getFriendsData(targetAccount.username));
-        }
-      }
-    }
-  });
-
-  // Channel Creation
-  socket.on('create_channel', ({ serverId, name, type, isLocked, password, topic, bitrateKbps, userLimit, isTempCreatorChannel }: { serverId: string; name: string; type: 'text' | 'voice'; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const targetServer = servers.find(s => s.id === serverId);
-    if (!targetServer) return;
-
-    if (!checkServerPermission(user, targetServer, 'manage_channels')) {
-      return socket.emit('server_action_error', { message: 'Kanal oluşturmak için Kanalları Yönet yetkiniz yok.' });
-    }
-
-    const cleanName = sanitizeText(name).toLowerCase().replace(/\s+/g, '-').slice(0, 32);
-    const cleanTopic = topic ? sanitizeText(topic.trim()).slice(0, 100) : undefined;
-
-    const newChannel: Channel = {
-      id: `ch-${type}-${Date.now()}`,
-      name: cleanName,
-      type,
-      serverId,
-      isLocked: !!isLocked,
-      password: password?.trim() || undefined,
-      topic: cleanTopic,
-      ...(type === 'voice' && bitrateKbps ? { bitrateKbps: Math.min(320, Math.max(32, Number(bitrateKbps))) } : {}),
-      ...(type === 'voice' && userLimit !== undefined ? { userLimit: Math.min(99, Math.max(0, Number(userLimit) || 0)) } : {}),
-      ...(type === 'voice' && isTempCreatorChannel ? { isTempCreatorChannel: true } : {}),
-    };
-
-    targetServer.channels.push(newChannel);
-    saveServers(servers);
-    addAuditLog('KANAL_OLUSTURULDU', `${targetServer.name} sunucusunda #${newChannel.name} (${type}${newChannel.password ? ' - Şifreli' : ''}) oluşturuldu.`);
-    emitToServerMembers(targetServer, 'channel_created', { serverId, channel: newChannel });
-    emitServersUpdatedForAll();
-  });
-
-  // Update existing voice/text channel settings (bitrate, userLimit, topic)
-  socket.on('update_channel_settings', ({ serverId, channelId, bitrateKbps, userLimit, topic }: { serverId: string; channelId: string; bitrateKbps?: number; userLimit?: number; topic?: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const targetServer = servers.find(s => s.id === serverId);
-    if (!targetServer) return;
-    if (!checkServerPermission(user, targetServer, 'manage_channels')) {
-      return socket.emit('server_action_error', { message: 'Kanal ayarlarını düzenlemek için Kanalları Yönet yetkiniz yok.' });
-    }
-    const ch = targetServer.channels.find(c => c.id === channelId);
-    if (!ch) return;
-
-    if (bitrateKbps !== undefined && ch.type === 'voice') {
-      ch.bitrateKbps = Math.min(320, Math.max(32, Number(bitrateKbps) || 128));
-    }
-    if (userLimit !== undefined && ch.type === 'voice') {
-      ch.userLimit = Math.min(99, Math.max(0, Number(userLimit) || 0));
-    }
-    if (topic !== undefined) {
-      ch.topic = topic.trim() ? sanitizeText(topic.trim()).slice(0, 100) : undefined;
-    }
-
-    saveServers(servers);
-    emitServersUpdatedForAll();
-    addAuditLog('KANAL_GUNCELLENDI', `${targetServer.name} / #${ch.name} ayarları güncellendi (${user.username}).`);
-  });
-
-  // Update Channel Notice & Topic
-  socket.on('update_channel_notice', ({ serverId, channelId, notice, topic }: { serverId: string; channelId: string; notice?: string | null; topic?: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const targetServer = servers.find(s => s.id === serverId);
-    if (!targetServer) return;
-
-    if (!checkServerPermission(user, targetServer, 'manage_channels')) {
-      return socket.emit('server_action_error', { message: 'Kanal duyurusunu düzenlemek için yetkiniz yok.' });
-    }
-
-    const ch = targetServer.channels.find(c => c.id === channelId);
-    if (!ch) return;
-
-    if (notice !== undefined) {
-      ch.stickyNotice = notice ? {
-        text: sanitizeText(notice.trim()).slice(0, 300),
-        author: user.username,
-        updatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      } : null;
-    }
-    if (topic !== undefined) {
-      ch.topic = sanitizeText(topic.trim()).slice(0, 100);
-    }
-
-    saveServers(servers);
-    emitToServerMembers(targetServer, 'channel_updated', { serverId, channel: ch });
-    emitServersUpdatedForAll();
-  });
-
-  // Server Creation
-  socket.on('create_server', ({ name, icon, template, isPublic, category }: { name: string; icon?: string; template?: 'empty' | 'gaming' | 'friends' | 'work'; isPublic?: boolean; category?: ServerCategory }) => {
-    const user = activeUsers.get(socket.id);
-    const ownerId = user ? getPersistentUserId(user) : `usr-${Date.now()}`;
-    const newServerId = `server-${Date.now()}`;
-    const roles = getDefaultRoles();
-    const members: ServerMember[] = user ? [
-      {
-        userId: getPersistentUserId(user),
-        username: user.username,
-        avatar: user.avatar,
-        roleIds: ['role-owner', 'role-admin'],
-        joinedAt: new Date().toLocaleDateString('tr-TR'),
-        isOwner: true
-      }
-    ] : [];
-
-    const now = Date.now();
-    const channels: Channel[] =
-      template === 'gaming'
-        ? [
-            { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-2`, name: 'takim-arama', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-3`, name: 'klipler-medya', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-4`, name: 'Lobi', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-5`, name: 'Rekabetçi 1', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-6`, name: 'Rekabetçi 2', type: 'voice', serverId: newServerId },
-          ]
-        : template === 'friends'
-        ? [
-            { id: `ch-text-${now}-1`, name: 'sohbet', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-2`, name: 'muzik-linkler', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-3`, name: 'Kahve Odası', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-4`, name: 'Oyun & Film', type: 'voice', serverId: newServerId },
-          ]
-        : template === 'work'
-        ? [
-            { id: `ch-text-${now}-1`, name: 'duyurular', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-2`, name: 'proje-notlari', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-3`, name: 'Toplantı Odası', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-4`, name: 'Odaklanma', type: 'voice', serverId: newServerId },
-          ]
-        : [
-            { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-2`, name: 'Genel Ses', type: 'voice', serverId: newServerId },
-          ];
-
-    const validCategories: ServerCategory[] = ['gaming', 'community', 'tech', 'music', 'education', 'other'];
-    const inferredCategory: ServerCategory =
-      category && validCategories.includes(category)
-        ? category
-        : template === 'gaming'
-        ? 'gaming'
-        : template === 'work'
-        ? 'tech'
-        : 'community';
-
-    const newServer: Server = {
-      id: newServerId,
-      name,
-      icon: icon || '⚡',
-      description: '',
-      isPublic: isPublic !== false,
-      category: inferredCategory,
-      tags: [],
-      ownerId,
-      bitrateKbps: 128,
-      roles,
-      members,
-      channels
-    };
-
-    servers.push(newServer);
-    saveServers(servers);
-    addAuditLog('SUNUCU_OLUSTURULDU', `Yeni sunucu olusturuldu: ${name} (Sahip: ${user?.username || 'Bilinmiyor'})`);
-    if (user) {
-      emitToUserSockets(user.username, 'server_created', newServer);
-    } else {
-      socket.emit('server_created', newServer);
-    }
-  });
-
-  // Helper to check user permission in server
-  function checkServerPermission(user: User, server: Server, permission: ServerPermission): boolean {
-    if (isServerOwner(user, server)) return true;
-    if (user.role === 'admin') return true;
-    const member = findServerMember(server, user);
-    if (!member) return false;
-    if (member.isOwner) return true;
-
-    for (const rId of member.roleIds) {
-      const role = server.roles.find(r => r.id === rId);
-      if (role && role.permissions.includes(permission)) return true;
-    }
-    const defaultRole = server.roles.find(r => r.isDefault);
-    if (defaultRole && defaultRole.permissions.includes(permission)) return true;
-    return false;
-  }
-
-  // Update Server Settings
-  socket.on('update_server_settings', (data: {
-    serverId: string;
-    name?: string;
-    icon?: string;
-    bannerGradient?: string;
-    bannerImage?: string;
-    description?: string;
-    afkChannelId?: string | null;
-    afkTimeoutMinutes?: number;
-    bitrateKbps?: number;
-    voiceRegion?: string;
-    sfuMode?: 'auto' | 'p2p' | 'sfu';
-    systemChannelId?: string | null;
-    verificationLevel?: 'none' | 'low' | 'medium' | 'high';
-    defaultNotification?: 'all' | 'mentions';
-    autoModEnabled?: boolean;
-    vanityCode?: string;
-    welcomeChannelId?: string | null;
-    welcomeMessage?: string;
-    welcomeEnabled?: boolean;
-    autoRoleId?: string | null;
-    isPublic?: boolean;
-    category?: ServerCategory;
-    tags?: string[];
-  }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === data.serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'manage_server')) {
-      return socket.emit('server_action_error', { message: 'Bu ayarları değiştirmek için Sunucu Yönetimi yetkiniz yok.' });
-    }
-
-    if (data.name) s.name = sanitizeText(data.name).trim().slice(0, 80);
-    if (data.icon !== undefined && typeof data.icon === 'string') {
-      const trimmedIcon = data.icon.trim();
-      if (isSafeImageMedia(trimmedIcon) || isSafeEmojiOrShortIcon(trimmedIcon)) {
-        s.icon = trimmedIcon;
-      }
-    }
-    if (data.bannerGradient !== undefined) s.bannerGradient = data.bannerGradient;
-    if (data.bannerImage !== undefined && typeof data.bannerImage === 'string') {
-      if (data.bannerImage === '' || isSafeImageMedia(data.bannerImage)) {
-        s.bannerImage = data.bannerImage;
-      }
-    }
-    if (data.description !== undefined) s.description = sanitizeText(data.description).trim().slice(0, 500);
-    if (data.afkChannelId !== undefined) s.afkChannelId = data.afkChannelId;
-    if (data.afkTimeoutMinutes !== undefined) s.afkTimeoutMinutes = data.afkTimeoutMinutes;
-    if (data.bitrateKbps !== undefined) s.bitrateKbps = data.bitrateKbps;
-    if (data.voiceRegion !== undefined) s.voiceRegion = data.voiceRegion;
-    if (data.systemChannelId !== undefined) s.systemChannelId = data.systemChannelId;
-    if (data.verificationLevel !== undefined) s.verificationLevel = data.verificationLevel;
-    if (data.defaultNotification !== undefined) s.defaultNotification = data.defaultNotification;
-    if (data.autoModEnabled !== undefined) s.autoModEnabled = data.autoModEnabled;
-    if (data.vanityCode !== undefined) s.vanityCode = data.vanityCode.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
-    if (data.welcomeChannelId !== undefined) s.welcomeChannelId = data.welcomeChannelId;
-    if (data.welcomeMessage !== undefined) s.welcomeMessage = sanitizeText(data.welcomeMessage).trim().slice(0, 500);
-    if (data.welcomeEnabled !== undefined) s.welcomeEnabled = data.welcomeEnabled;
-    if (data.autoRoleId !== undefined) s.autoRoleId = data.autoRoleId;
-    if (data.sfuMode && ['auto', 'p2p', 'sfu'].includes(data.sfuMode)) s.sfuMode = data.sfuMode;
-    if (typeof data.isPublic === 'boolean') s.isPublic = data.isPublic;
-    if (data.category && ['gaming', 'community', 'tech', 'music', 'education', 'other'].includes(data.category)) {
-      s.category = data.category;
-    }
-    if (Array.isArray(data.tags)) {
-      s.tags = data.tags.map((t) => sanitizeText(String(t)).trim().slice(0, 24)).filter(Boolean).slice(0, 6);
-    }
-
-    saveServers(servers);
-
-    addAuditLog('SUNUCU_GUNCELLENDI', `${s.name} sunucu ayarları güncellendi (Bitrate: ${s.bitrateKbps || 128}kbps, Yetkili: ${user.username})`);
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Restore Server Backup / Template
-  socket.on('restore_server_backup', ({ serverId, backupData }: { serverId: string; backupData: any }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'manage_server')) {
-      return socket.emit('server_action_error', { message: 'Sunucu yedeğini yüklemek için Sunucu Yönetimi yetkiniz yok.' });
-    }
-
-    if (backupData.name) s.name = backupData.name.trim();
-    if (backupData.icon) s.icon = backupData.icon;
-    if (backupData.bannerGradient) s.bannerGradient = backupData.bannerGradient;
-    if (backupData.description !== undefined) s.description = backupData.description;
-    if (backupData.bitrateKbps) s.bitrateKbps = backupData.bitrateKbps;
-    if (backupData.voiceRegion) s.voiceRegion = backupData.voiceRegion;
-    if (backupData.verificationLevel) s.verificationLevel = backupData.verificationLevel;
-    if (backupData.autoModEnabled !== undefined) s.autoModEnabled = backupData.autoModEnabled;
-
-    if (Array.isArray(backupData.channels) && backupData.channels.length > 0) {
-      s.channels = backupData.channels.map((ch: any, idx: number) => ({
-        id: ch.id || `ch-${ch.type || 'text'}-${Date.now() + idx}`,
-        name: ch.name || 'kanal',
-        type: ch.type === 'voice' ? 'voice' : 'text',
-        serverId: s.id,
-        topic: ch.topic || '',
-        bitrateKbps: ch.bitrateKbps || s.bitrateKbps || 128,
-        userLimit: ch.userLimit || 0,
-        isTempCreatorChannel: !!ch.isTempCreatorChannel
-      }));
-    }
-
-    if (Array.isArray(backupData.roles) && backupData.roles.length > 0) {
-      s.roles = backupData.roles.map((r: any, idx: number) => ({
-        id: r.id || `role-${Date.now() + idx}`,
-        name: r.name || 'Yeni Rol',
-        color: r.color || '#3b82f6',
-        permissions: Array.isArray(r.permissions) ? r.permissions : [],
-        isDefault: !!r.isDefault
-      }));
-    }
-
-    saveServers(servers);
-    addAuditLog('SUNUCU_YEDEKTEN_YUKLENDI', `${s.name} sunucusu şablondan/yedekten yüklendi (Yetkili: ${user.username})`);
-    emitServerUpdatedToMembers(s);
-    socket.emit('server_restore_success', { message: 'Sunucu şablonu/yedeği başarıyla geri yüklendi!' });
-  });
-
-  // Create Server Role
-  socket.on('create_server_role', ({ serverId, name, color, permissions }: {
-    serverId: string;
-    name: string;
-    color: string;
-    permissions: ServerPermission[];
-  }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'manage_roles')) {
-      return socket.emit('server_action_error', { message: 'Rol oluşturmak için Rolleri Yönet yetkiniz yok.' });
-    }
-
-    if (!s.roles) s.roles = getDefaultRoles();
-
-    const newRole: ServerRole = {
-      id: `role-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      name: name.trim() || 'Yeni Rol',
-      color: color || '#3b82f6',
-      position: s.roles.length + 1,
-      permissions: permissions || ['send_messages', 'connect_voice', 'speak_voice']
-    };
-
-    s.roles.push(newRole);
-    saveServers(servers);
-    addAuditLog('ROL_OLUSTURULDU', `${s.name} sunucusunda yeni rol olusturuldu: ${newRole.name}`);
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Update Server Role
-  socket.on('update_server_role', ({ serverId, roleId, name, color, permissions, position }: {
-    serverId: string;
-    roleId: string;
-    name: string;
-    color: string;
-    permissions: ServerPermission[];
-    position?: number;
-  }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'manage_roles')) {
-      return socket.emit('server_action_error', { message: 'Rol düzenlemek için Rolleri Yönet yetkiniz yok.' });
-    }
-
-    if (!s.roles) s.roles = getDefaultRoles();
-    const role = s.roles.find(r => r.id === roleId);
-    if (!role) return;
-
-    role.name = name.trim() || role.name;
-    role.color = color || role.color;
-    role.permissions = permissions;
-    if (position !== undefined) role.position = position;
-    saveServers(servers);
-
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Delete Server Role
-  socket.on('delete_server_role', ({ serverId, roleId }: { serverId: string; roleId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'manage_roles')) {
-      return socket.emit('server_action_error', { message: 'Rol silmek için yetkiniz yok.' });
-    }
-
-    if (!s.roles) s.roles = getDefaultRoles();
-    const role = s.roles.find(r => r.id === roleId);
-    if (!role || role.isDefault || role.id === 'role-owner') {
-      return socket.emit('server_action_error', { message: 'Bu rol korumalıdır ve silinemez.' });
-    }
-
-    s.roles = s.roles.filter(r => r.id !== roleId);
-    if (s.members) {
-      s.members.forEach(m => {
-        m.roleIds = m.roleIds.filter(id => id !== roleId);
-      });
-    }
-    saveServers(servers);
-
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Toggle Member Role
-  socket.on('toggle_member_role', ({ serverId, targetUserId, roleId }: { serverId: string; targetUserId: string; roleId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'manage_roles')) {
-      return socket.emit('server_action_error', { message: 'Üyelere rol atamak için yetkiniz yok.' });
-    }
-
-    if (!s.members) s.members = [];
-    const activeTarget = activeUsers.get(targetUserId);
-    const lookupIdentity = activeTarget
-      ? activeTarget
-      : { id: targetUserId, accountId: targetUserId, username: targetUserId };
-    let member = findServerMember(s, lookupIdentity);
-    if (!member) {
-      let targetUser: User | undefined = activeTarget;
-      if (!targetUser) {
-        for (const u of activeUsers.values()) {
-          if (u.id === targetUserId || u.accountId === targetUserId || u.username.toLowerCase() === String(targetUserId || '').toLowerCase()) {
-            targetUser = u;
-            break;
-          }
-        }
-      }
-      if (targetUser) {
-        member = {
-          userId: getPersistentUserId(targetUser),
-          username: targetUser.username,
-          avatar: targetUser.avatar,
-          roleIds: [],
-          joinedAt: new Date().toLocaleDateString('tr-TR')
-        };
-        s.members.push(member);
-      } else {
-        return;
-      }
-    }
-
-    if (member.roleIds.includes(roleId)) {
-      member.roleIds = member.roleIds.filter(id => id !== roleId);
-    } else {
-      member.roleIds.push(roleId);
-    }
-    saveServers(servers);
-
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Kick Member
-  socket.on('kick_server_member', ({ serverId, targetUserId }: { serverId: string; targetUserId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'kick_members')) {
-      return socket.emit('server_action_error', { message: 'Üyeyi atmak için yetkiniz yok.' });
-    }
-
-    const activeTarget = activeUsers.get(targetUserId);
-    const lookupIdentity = activeTarget
-      ? activeTarget
-      : { id: targetUserId, accountId: targetUserId, username: targetUserId };
-    const kickedMember = findServerMember(s, lookupIdentity);
-    if (
-      targetUserId === s.ownerId ||
-      (kickedMember && kickedMember.isOwner) ||
-      isServerOwner(lookupIdentity, s)
-    ) {
-      return socket.emit('server_action_error', { message: 'Sunucu sahibini atamazsınız!' });
-    }
-
-    if (s.members) {
-      const targetLower = String(lookupIdentity.username || '').toLowerCase();
-      s.members = s.members.filter(
-        m =>
-          m.userId !== targetUserId &&
-          (!lookupIdentity.accountId || m.userId !== lookupIdentity.accountId) &&
-          (!targetLower || m.username.toLowerCase() !== targetLower)
-      );
-    }
-    saveServers(servers);
-    addAuditLog('UYE_ATILDI', `${kickedMember?.username || targetUserId} sunucudan atildi (Yetkili: ${user.username})`, 'warn');
-    emitServerUpdatedToMembers(s);
-    const kickedName = kickedMember?.username || activeTarget?.username;
-    if (kickedName) {
-      emitToUserSockets(kickedName, 'server_removed', { serverId });
-    }
-  });
-
-  // Timeout / Mute Member Temporarily
-  socket.on('timeout_server_member', ({ serverId, targetUsername, durationMinutes }: { serverId: string; targetUsername: string; durationMinutes: number }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-    if (!checkServerPermission(user, s, 'kick_members') && !checkServerPermission(user, s, 'mute_members')) {
-      return socket.emit('server_action_error', { message: 'Üyeyi susturmak için yetkiniz yok.' });
-    }
-    const targetLower = targetUsername.toLowerCase();
-    const targetAcc = registeredAccounts.get(targetLower);
-    if (targetAcc?.role === 'admin' || isServerOwner({ id: targetAcc?.id, accountId: targetAcc?.id, username: targetAcc?.username || targetUsername }, s)) {
-      return socket.emit('server_action_error', { message: 'Yöneticilere veya sunucu sahibine zaman aşımı uygulanamaz.' });
-    }
-
-    if (!s.timeouts) s.timeouts = {};
-    if (durationMinutes <= 0) {
-      delete s.timeouts[targetLower];
-      addAuditLog('ZAMAN_ASIMI_KALDIRILDI', `${targetUsername} kullanıcısının susturması kaldırıldı (Yetkili: ${user.username})`, 'info');
-    } else {
-      s.timeouts[targetLower] = Date.now() + durationMinutes * 60 * 1000;
-      addAuditLog('ZAMAN_ASIMI_UYGULANDI', `${targetUsername} ${durationMinutes} dakika susturuldu (Yetkili: ${user.username})`, 'warn');
-    }
-    saveServers(servers);
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Create Server Invite Link
-  socket.on('create_server_invite', ({ serverId, maxUses, expireMinutes }: { serverId: string; maxUses?: number; expireMinutes?: number }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s) return;
-
-    if (!s.invites) s.invites = [];
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const newInvite = {
-      code,
-      serverId,
-      createdBy: user.username,
-      createdAt: new Date().toISOString(),
-      expiresAt: expireMinutes && expireMinutes > 0 ? Date.now() + expireMinutes * 60 * 1000 : null,
-      maxUses: maxUses && maxUses > 0 ? maxUses : undefined,
-      uses: 0
-    };
-    s.invites.unshift(newInvite);
-    if (s.invites.length > 20) s.invites = s.invites.slice(0, 20);
-    saveServers(servers);
-    emitServerUpdatedToMembers(s);
-    socket.emit('server_invite_created', newInvite);
-  });
-
-  // Preview Server via Invite Code (for Invite Card Banner/Icon Preview)
-  socket.on('preview_server_invite', ({ code }: { code: string }) => {
-    const cleanCode = (code || '').trim().toUpperCase();
-    if (!cleanCode) {
-      return socket.emit('preview_invite_response', { success: false, error: 'Davet kodu boş olamaz.' });
-    }
-
-    for (const s of servers) {
-      const inv = s.invites?.find(i => i.code === cleanCode);
-      if (inv) {
-        if (inv.expiresAt && inv.expiresAt < Date.now()) {
-          return socket.emit('preview_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
-        }
-        if (inv.maxUses && inv.uses >= inv.maxUses) {
-          return socket.emit('preview_invite_response', { success: false, error: 'Bu davet linki maksimum kullanım sınırına ulaşmış.' });
-        }
-        return socket.emit('preview_invite_response', {
-          success: true,
-          server: {
-            id: s.id,
-            name: s.name,
-            icon: s.icon,
-            bannerGradient: s.bannerGradient,
-            bannerImage: s.bannerImage,
-            description: s.description,
-            memberCount: s.members?.length || 0,
-          },
-        });
-      }
-    }
-
-    socket.emit('preview_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
-  });
-
-  // Join Server via Invite Code
-  socket.on('join_server_by_invite', ({ code }: { code: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !code) return;
-    const cleanCode = code.trim().toUpperCase();
-
-    for (const s of servers) {
-      const inv = s.invites?.find(i => i.code === cleanCode);
-      if (inv) {
-        if (inv.expiresAt && inv.expiresAt < Date.now()) {
-          return socket.emit('join_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
-        }
-        if (inv.maxUses && inv.uses >= inv.maxUses) {
-          return socket.emit('join_invite_response', { success: false, error: 'Bu davet linki maksimum kullanım sınırına ulaşmış.' });
-        }
-
-        addUserToServer(user, s);
-        inv.uses += 1;
-        saveServers(servers);
-        emitServerUpdatedToMembers(s);
-        const srvMsgs = getInitialMessagesForServers([s], user.username);
-        return socket.emit('join_invite_response', {
-          success: true,
-          serverId: s.id,
-          serverName: s.name,
-          server: s,
-          messages: srvMsgs.initialMessages,
-          hasMoreMessages: srvMsgs.hasMoreMessages,
-        });
-      }
-    }
-
-    socket.emit('join_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
-  });
-
-  // Reorder Channels within a server (up / down within same type)
-  socket.on('reorder_channels', ({ serverId, channelId, direction }: { serverId: string; channelId: string; direction: 'up' | 'down' }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s || !checkServerPermission(user, s, 'manage_channels')) return;
-
-    const idx = s.channels.findIndex(c => c.id === channelId);
-    if (idx === -1) return;
-
-    const targetType = s.channels[idx].type;
-    const sameTypeIndices: number[] = [];
-    s.channels.forEach((ch, i) => {
-      if (ch.type === targetType) sameTypeIndices.push(i);
-    });
-
-    const posInType = sameTypeIndices.indexOf(idx);
-    if (posInType === -1) return;
-
-    const swapPosInType = direction === 'up' ? posInType - 1 : posInType + 1;
-    if (swapPosInType < 0 || swapPosInType >= sameTypeIndices.length) return;
-
-    const swapIdx = sameTypeIndices[swapPosInType];
-    const temp = s.channels[idx];
-    s.channels[idx] = s.channels[swapIdx];
-    s.channels[swapIdx] = temp;
-
-    saveServers(servers);
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Message Threads (Alt Konu Yanıtı)
-  socket.on('send_thread_message', ({ channelId, parentMessageId, content }: { channelId: string; parentMessageId: string; content: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !channelId || !parentMessageId) return;
-    const clean = sanitizeText(content).trim().slice(0, 2000);
-    if (!clean) return;
-
-    const channelMsgs = messages[channelId];
-    if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
-    const parent = channelMsgs.find(m => m.id === parentMessageId);
-    if (!parent) return;
-
-    if (!parent.threadMessages) parent.threadMessages = [];
-    const threadMsg = {
-      id: `thr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      author: {
-        id: user.id,
-        username: user.username,
-        avatar: user.avatar,
-      },
-      content: clean,
-      timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-    };
-    parent.threadMessages.push(threadMsg);
-    saveChannelMessageUpsert(channelId, channelMsgs, parent);
-    emitToChannelAudience(channelId, parent.serverId, 'thread_message_added', { channelId, parentMessageId, threadMessage: threadMsg });
-  });
-
-  // Clear last N messages in a channel (Slash Command /temizle)
-  socket.on('clear_channel_messages', ({ serverId, channelId, count }: { serverId: string; channelId: string; count: number }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !serverId || !channelId) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s || !checkServerPermission(user, s, 'manage_channels')) {
-      return socket.emit('server_action_error', { message: 'Mesaj temizlemek için Kanal/Sunucu Yönetimi yetkiniz yok.' });
-    }
-    const safeCount = Math.min(Math.max(Number(count) || 10, 1), 100);
-    const list = messages[channelId] || [];
-    if (list.length === 0) return;
-    messages[channelId] = list.slice(0, Math.max(0, list.length - safeCount));
-    saveChannelMessageBulkReplace(channelId, messages[channelId]);
-    emitToChannelAudience(channelId, serverId, 'channel_messages_cleared', { channelId, messages: messages[channelId] });
-  });
-
-  // Server Events (Etkinlik Takvimi)
-  socket.on('create_server_event', ({ serverId, title, description, startTime, voiceChannelId }: { serverId: string; title: string; description?: string; startTime: string; voiceChannelId?: string | null }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !serverId) return;
-    const s = servers.find(srv => srv.id === serverId);
-    if (!s || !checkServerPermission(user, s, 'manage_channels')) {
-      return socket.emit('server_action_error', { message: 'Etkinlik oluşturmak için yetkiniz yok.' });
-    }
-    const cleanTitle = sanitizeText(title).trim().slice(0, 100);
-    if (!cleanTitle || !startTime) return;
-    if (!s.events) s.events = [];
-    s.events.unshift({
-      id: `evt-${Date.now()}`,
-      title: cleanTitle,
-      description: sanitizeText(description || '').trim().slice(0, 400),
-      startTime: sanitizeText(startTime).trim().slice(0, 64),
-      voiceChannelId: voiceChannelId || null,
-      createdBy: user.username,
-      rsvps: [user.username],
-    });
-    if (s.events.length > 30) s.events = s.events.slice(0, 30);
-    saveServers(servers);
-    emitServerUpdatedToMembers(s);
-  });
-
-  socket.on('rsvp_server_event', ({ serverId, eventId }: { serverId: string; eventId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !serverId || !eventId) return;
-    const s = servers.find(srv => srv.id === serverId);
-    const ev = s?.events?.find(e => e.id === eventId);
-    if (!s || !ev) return;
-    const idx = ev.rsvps.findIndex(u => u.toLowerCase() === user.username.toLowerCase());
-    if (idx === -1) {
-      ev.rsvps.push(user.username);
-    } else {
-      ev.rsvps.splice(idx, 1);
-    }
-    saveServers(servers);
-    emitServerUpdatedToMembers(s);
-  });
-
-  socket.on('delete_server_event', ({ serverId, eventId }: { serverId: string; eventId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !serverId || !eventId) return;
-    const s = servers.find(srv => srv.id === serverId);
-    const ev = s?.events?.find(e => e.id === eventId);
-    if (!s || !ev) return;
-    const canDelete = ev.createdBy.toLowerCase() === user.username.toLowerCase() || checkServerPermission(user, s, 'manage_server');
-    if (!canDelete) return;
-    s.events = (s.events || []).filter(e => e.id !== eventId);
-    saveServers(servers);
-    emitServerUpdatedToMembers(s);
-  });
-
-  // Delete Server
-  socket.on('delete_server', ({ serverId }: { serverId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user) return;
-    const sIdx = servers.findIndex(srv => srv.id === serverId);
-    if (sIdx === -1) return;
-    const s = servers[sIdx];
-
-    if (!isServerOwner(user, s) && user.role !== 'admin') {
-      return socket.emit('server_action_error', { message: 'Yalnızca sunucu sahibi veya Sistem Yöneticisi sunucuyu silebilir!' });
-    }
-
-    const sName = s.name;
-    const recipientSocketIds = new Set<string>();
-    for (const [sId, u] of activeUsers.entries()) {
-      if (u.role === 'admin' || isUserMemberOfServer(u, s)) {
-        recipientSocketIds.add(sId);
-      }
-    }
-    servers.splice(sIdx, 1);
-    saveServers(servers);
-    addAuditLog('SUNUCU_SILINDI', `${sName} sunucusu silindi (Silen: ${user.username})`, 'warn');
-    for (const sId of recipientSocketIds) {
-      io.to(sId).emit('server_deleted', { serverId });
     }
   });
 
@@ -6673,49 +5025,6 @@ io.on('connection', (socket: Socket) => {
     });
   });
 
-  // Voluntary Leave Server
-  socket.on('leave_server', ({ serverId }: { serverId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || !serverId) {
-      return socket.emit('leave_server_response', { success: false, error: 'Geçersiz istek.' });
-    }
-    const srv = servers.find((s) => s.id === serverId);
-    if (!srv) {
-      return socket.emit('leave_server_response', { success: false, error: 'Sunucu bulunamadı.' });
-    }
-    const isOwner = isServerOwner(user, srv);
-    if (isOwner) {
-      return socket.emit('leave_server_response', {
-        success: false,
-        error: 'Sunucu sahibi kendi sunucusundan ayrılamaz. Sunucuyu silebilirsiniz.',
-      });
-    }
-
-    if (srv.members) {
-      srv.members = srv.members.filter(
-        (m) =>
-          m.userId !== user.id &&
-          (!user.accountId || m.userId !== user.accountId) &&
-          m.username.toLowerCase() !== user.username.toLowerCase()
-      );
-    }
-
-    if (user.currentVoiceChannelId && srv.channels.some((c) => c.id === user.currentVoiceChannelId)) {
-      const prevCh = user.currentVoiceChannelId;
-      socket.leave(prevCh);
-      user.currentVoiceChannelId = undefined;
-      io.to(prevCh).emit('user_left_voice', { userId: socket.id, channelId: prevCh });
-      emitUserUpdated(user);
-      cleanupTemporaryChannels();
-    }
-
-    saveServers(servers);
-    emitServerUpdatedToMembers(srv);
-    emitToUserSockets(user.username, 'server_removed', { serverId });
-    addAuditLog('SUNUCUDAN_AYRILDI', `${user.username}, "${srv.name}" sunucusundan ayrıldı.`, 'info');
-    socket.emit('leave_server_response', { success: true, serverId });
-  });
-
   // Store: Lisans Satın Alma (Dinamik Fiyat, Kampanya & Çoklu Ödeme Yöntemi)
   socket.on('store_purchase_license', ({ serverName, maxSlots, expireDays, tier, paymentMethod }: any) => {
     const user = activeUsers.get(socket.id);
@@ -6748,7 +5057,7 @@ io.on('connection', (socket: Socket) => {
     const cleanName = sanitizeText((serverName || `${user.username} Sunucusu`).trim()).slice(0, 64);
 
     // Dynamic Price calculation based on storeSettings
-    let basePrice = 99;
+    let basePrice: number;
     if (selectedTier === 'Starter') {
       if (storeSettings.packages.starter.enabled === false) {
         return socket.emit('store_purchase_response', { success: false, error: 'Starter paketi şu anda satışa kapalıdır.' });
@@ -6887,7 +5196,7 @@ io.on('connection', (socket: Socket) => {
     }
     const days = rawDays === -1 ? -1 : Math.floor(rawDays);
     const baseMonthlyPrice = Math.round(lic.maxSlots * (storeSettings.customSlotUnitPrice || 4));
-    let rawPrice = 0;
+    let rawPrice: number;
     if (days === 30) rawPrice = baseMonthlyPrice;
     else if (days === 90) rawPrice = Math.round(baseMonthlyPrice * 2.7);
     else if (days === 180) rawPrice = Math.round(baseMonthlyPrice * 5.2);
@@ -7001,6 +5310,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     messageRateLimits.delete(socket.id);
+    socketEventLimiter.clearSocket(socket.id);
 
     recordUserDisconnection(socket.id);
     if (user) {
@@ -7011,7 +5321,7 @@ io.on('connection', (socket: Socket) => {
         });
       }
       activeUsers.delete(socket.id);
-      io.emit('user_disconnected', socket.id);
+      emitToRelevantUsers(user, 'user_disconnected', socket.id);
       cleanupTemporaryChannels();
       activeSessions.delete(socket.id);
       userVoiceActivity.delete(socket.id);
@@ -7145,9 +5455,26 @@ if (activeStaticDir) {
   });
 }
 
+// Central Express Error Handler (prevents stack trace leaks & 500 spam on malformed/CORS requests)
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const reqId = (req as RequestWithId).requestId;
+  logger.error('UNHANDLED_HTTP_ERROR', {
+    requestId: reqId,
+    method: req.method,
+    path: req.path,
+    error: err instanceof Error ? err.message : String(err),
+  });
+  if (res.headersSent) return;
+  res.status(500).json({
+    success: false,
+    error: 'Sunucu içi hata oluştu.',
+    ...(reqId ? { requestId: reqId } : {}),
+  });
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 [Backend Server] Discord/TeamSpeak Clone running on http://127.0.0.1:${PORT}`);
-  void initStorageEngine(messages);
+  void initStorageEngine(messages, { accounts: registeredAccounts, auditLogs });
 });
 
 function handleGracefulShutdown(signal: string) {

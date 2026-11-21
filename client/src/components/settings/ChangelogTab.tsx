@@ -15,20 +15,35 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v0.7.1 - Latest */}
+        {/* v0.8.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v0.7.1 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v0.8.0 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
-            <li>Sunucu PII filtrelemesi (<code className="text-emerald-200">toPublicUser</code>) ile diğer kullanıcılara yayınlanan gereksiz alanlar temizlendi.</li>
-            <li>Yüklenen medya dosyalarına (<code className="text-emerald-200">/uploads</code>) oturum/mediaToken doğrulaması ve <code className="text-emerald-200">no-referrer</code> koruması eklendi.</li>
+            <li><strong className="text-white">CORS &amp; Hata İzleme Sertleştirme:</strong> Hata fırlatmayan CORS yönetimi (<code className="text-emerald-200">corsConfig</code>, <code className="text-emerald-200">CORS_ALLOWED_ORIGINS</code>, same-host desteği), merkezi Express hata yakalayıcı, hassas alan maskelemeli yapısal JSON loglayıcı ve <code className="text-emerald-200">X-Request-Id</code> izleme eklendi.</li>
+            <li><strong className="text-white">Oturum, Socket &amp; Dedicated Güvenlik:</strong> Oturum/medya token iptal (<code className="text-emerald-200">minTokenIssuedAt</code>) ve ban kontrolü birleştirildi; Socket.IO çalışma zamanı şema doğrulayıcı + olay bazlı hız sınırlayıcı (<code className="text-emerald-200">socketGuard</code>) ile dedicated sunucuda asenkron <code className="text-emerald-200">scrypt</code> doğrulama eklendi.</li>
+            <li><strong className="text-white">SQLite Kalıcılık, Oda Yayını &amp; Modüler Mimari:</strong> Kalıcı <code className="text-emerald-200">read_cursors</code> / <code className="text-emerald-200">audit_logs</code> tabloları, hedef mesaj çevresi bağlam yükleme (<code className="text-emerald-200">getMessagesAround</code> / <code className="text-emerald-200">request_message_context</code>), oda kapsamlı yayın (<code className="text-emerald-200">emitToRelevantUsers</code>), ortak protokol kontratları (<code className="text-emerald-200">shared/contracts.ts</code>) ve ayrıştırılmış soket modülleri devreye alındı.</li>
+            <li><strong className="text-white">DM E2EE v2:</strong> IndexedDB tabanlı <code className="text-emerald-200">CryptoKey</code> depolama (eski <code className="text-emerald-200">localStorage</code> anahtar göçü), simetrik 60 haneli Güvenlik Numarası doğrulama penceresi ve PBKDF2 + AES-GCM şifreli anahtar yedekleme/geri yükleme eklendi.</li>
+            <li><strong className="text-white">Çevrimdışı Kuyruk, Çoklu Kanal FTS5 Arama &amp; Arayüz:</strong> Kalıcı çevrimdışı mesaj kuyruğu ve banner, tüm kanallarda sunucu FTS5 arama + <strong>Mesaja Atla (Jump-to-Message)</strong>, granüler React bağlamları (<code className="text-emerald-200">Auth/Chat/Voice/Social</code>), tembel yüklenen <code className="text-emerald-200">AuthModal</code> ve modal erişilebilirlik (<code className="text-emerald-200">useFocusTrap</code>, <code className="text-emerald-200">role=&quot;dialog&quot;</code>, <code className="text-emerald-200">aria-modal</code>) tamamlandı.</li>
+            <li><strong className="text-white">Modüler Rust &amp; Kalite Güvencesi:</strong> Tauri arka ucu <code className="text-emerald-200">window_state</code>, <code className="text-emerald-200">overlay</code>, <code className="text-emerald-200">remote_assist</code> ve <code className="text-emerald-200">platform</code> (<code className="text-emerald-200">get_platform_capabilities</code>) modüllerine ayrıldı; ESLint/Prettier, uçtan uca Socket.IO/HTTP testleri ve <code className="text-emerald-200">clippy</code>/<code className="text-emerald-200">audit</code> destekli CI hattı kuruldu.</li>
+          </ul>
+        </div>
+
+        {/* v0.7.1 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v0.7.1 — Önceki Sürüm</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li>Sunucu PII filtrelemesi (<code className="text-cyan-300">toPublicUser</code>) ile diğer kullanıcılara yayınlanan gereksiz alanlar temizlendi.</li>
+            <li>Yüklenen medya dosyalarına (<code className="text-cyan-300">/uploads</code>) oturum/mediaToken doğrulaması ve <code className="text-cyan-300">no-referrer</code> koruması eklendi.</li>
             <li>Şifremi Unuttum (e-posta OTP ile şifre sıfırlama), OTP doğrulamalı e-posta değişikliği, tekil oturum sonlandırma ve kalıcı hesap silme akışları eklendi.</li>
             <li>Tüm şifre belirleme/değiştirme adımları ortak şifre politikası ve canlı güç göstergesi ile birleştirildi.</li>
-            <li>Kalıcı kanal okunma işaretçileri (<code className="text-emerald-200">readCursors</code>) ve SSRF korumalı OpenGraph bağlantı önizleme kartları eklendi.</li>
-            <li>Dedicated sunucuya atomik kalıcılık (<code className="text-emerald-200">state.json</code>) eklendi ve sabit test hesapları kaldırıldı.</li>
-            <li>PWA önbellekleme (<code className="text-emerald-200">cakma-pwa-v3</code>), bildirim tıklama derin bağlantıları ve 4 dilli (TR/EN/DE/RU) giriş &amp; ayar çevirileri tamamlandı.</li>
+            <li>Kalıcı kanal okunma işaretçileri (<code className="text-cyan-300">readCursors</code>) ve SSRF korumalı OpenGraph bağlantı önizleme kartları eklendi.</li>
+            <li>Dedicated sunucuya atomik kalıcılık (<code className="text-cyan-300">state.json</code>) eklendi ve sabit test hesapları kaldırıldı.</li>
+            <li>PWA önbellekleme (<code className="text-cyan-300">cakma-pwa-v3</code>), bildirim tıklama derin bağlantıları ve 4 dilli (TR/EN/DE/RU) giriş &amp; ayar çevirileri tamamlandı.</li>
           </ul>
         </div>
 
