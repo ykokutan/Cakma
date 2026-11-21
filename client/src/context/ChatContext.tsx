@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Channel, Message, MessageAttachment, Server, User } from '../types';
+import type { Channel, ForumPostMeta, GroupDmRoom, Message, MessageAttachment, Server, User } from '../types';
 import type { MessageContextResponse, MessageSearchHit, OfflineQueuedMessage } from '../sharedContracts';
 
 export type ChatLayoutMode = 'auto' | 'classic' | 'bubble';
@@ -12,6 +12,8 @@ export interface ChatContextValue {
   messagesMap: Record<string, Message[]>;
   onlineUsers: User[];
   activeDMUser: User | null;
+  groupDms: GroupDmRoom[];
+  activeGroupDm: GroupDmRoom | null;
   unreadCounts: Record<string, number>;
   mentionCounts: Record<string, number>;
   readCursors: Record<string, string>;
@@ -25,10 +27,23 @@ export interface ChatContextValue {
   selectChannel: (channelId: string) => void;
   openDirectMessage: (user: User) => void;
   closeDirectMessage: () => void;
+  openGroupDm: (groupId: string) => void;
+  createGroupDm: (name: string, memberUsernames: string[], icon?: string) => void;
+  addGroupDmMember: (groupId: string, username: string) => void;
+  removeGroupDmMember: (groupId: string, username: string) => void;
+  leaveGroupDm: (groupId: string) => void;
+  renameGroupDm: (groupId: string, name: string, icon?: string) => void;
   sendMessage: (
     content: string,
     attachments?: MessageAttachment[],
-    replyTo?: { id: string; username: string; content: string }
+    replyTo?: { id: string; username: string; content: string },
+    options?: { forumPost?: ForumPostMeta }
+  ) => void;
+  forwardMessage: (
+    sourceChannelId: string,
+    messageId: string,
+    targetChannelId: string,
+    targetServerId?: string
   ) => void;
   editMessage: (messageId: string, newContent: string) => void;
   deleteMessage: (messageId: string) => void;

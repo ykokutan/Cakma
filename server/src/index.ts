@@ -20,12 +20,13 @@ import {
 } from './utils/mailDelivery.js';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData } from './types.js';
+import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook } from './types.js';
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
 import {
   buildPersistentDmChannelId,
   parseDmChannelParticipants,
   isUserParticipantInDm,
+  isUserMemberOfGroupDm,
   findServerByChannelId,
   canUserAccessChannel,
 } from './utils/channelAccess.js';
@@ -78,6 +79,8 @@ import {
   loadSystemConfig, saveSystemConfig, SystemConfig,
   loadBannedIps, saveBannedIps, BannedIpRecord,
   loadPushSubscriptions, savePushSubscriptions,
+  loadGroupDms, saveGroupDms,
+  loadWebhooks, saveWebhooks,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   searchMessagesSmart, initStorageEngine, getStorageEngineInfo, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
@@ -102,6 +105,9 @@ import { registerDirectCallSocketHandlers } from './features/directCallSocketHan
 import { registerChatMessageHandlers } from './features/chatMessageHandlers.js';
 import { registerServerAdminSocketHandlers } from './features/serverAdminSocketHandlers.js';
 import { registerChatEnhancementsRoutes } from './features/chatEnhancementsRoutes.js';
+import { registerGroupDmSocketHandlers, getGroupDmsForUser } from './features/groupDmSocketHandlers.js';
+import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTemplatesRoutes.js';
+import { MaintenanceService, registerMaintenanceRoutes } from './features/maintenanceService.js';
 import {
   hashPassword,
   verifyPassword,
@@ -516,6 +522,8 @@ function getFriendsData(username: string): { friends: FriendUser[]; incomingRequ
 const activeUsers = new Map<string, User>();
 const servers: Server[] = loadServers(initialServers);
 const messages: Record<string, Message[]> = loadMessages(initialMessages);
+const groupDms: GroupDmRoom[] = loadGroupDms();
+const webhooks: ServerWebhook[] = loadWebhooks();
 
 // Dedicated Servers Registry (Reported by standalone licensed servers)
 const dedicatedServersRegistry = new Map<string, DedicatedServerInfo>();
@@ -607,6 +615,13 @@ function emitToVoiceChannelAudience(
   event: string,
   payload: unknown
 ) {
+  if (channelId && channelId.startsWith('voice-gdm-')) {
+    const room = groupDms.find((g) => g.voiceChannelId === channelId || g.id === channelId);
+    if (room) {
+      room.members.forEach((m) => emitToUserSockets(m, event, payload));
+      return;
+    }
+  }
   const srv = channelId ? findServerByChannelId(servers, channelId) : undefined;
   if (srv) {
     emitToServerMembers(srv, event, payload);
@@ -664,6 +679,15 @@ function emitToChannelAudience(
   excludeSocketId?: string
 ) {
   if (!channelId) return;
+  if (channelId.startsWith('gdm-')) {
+    for (const [sId, u] of activeUsers.entries()) {
+      if (excludeSocketId && sId === excludeSocketId) continue;
+      if (isUserMemberOfGroupDm(u, channelId, groupDms)) {
+        io.to(sId).emit(event, payload);
+      }
+    }
+    return;
+  }
   if (channelId.startsWith('dm-') || serverId === 'direct-messages') {
     const channelMsgs = messages[channelId];
     for (const [sId, u] of activeUsers.entries()) {
@@ -694,7 +718,9 @@ function getInitialMessagesForServers(userServers: Server[], username: string, u
     const isAllowedServerCh = allowedChannelIds.has(chId);
     const isAllowedDmCh =
       chId.startsWith('dm-') && isUserParticipantInDm({ id: userId, username }, chId, msgs);
-    if (isAllowedServerCh || isAllowedDmCh) {
+    const isAllowedGroupDmCh =
+      chId.startsWith('gdm-') && isUserMemberOfGroupDm({ username }, chId, groupDms);
+    if (isAllowedServerCh || isAllowedDmCh || isAllowedGroupDmCh) {
       scopedMessages[chId] = msgs;
       if (hasMoreMessages[chId]) scopedHasMore[chId] = true;
     }
@@ -1545,6 +1571,38 @@ const apiAuthMiddlewares = createAuthMiddlewares({
 });
 registerChatEnhancementsRoutes(app, { authMiddlewares: apiAuthMiddlewares });
 
+const maintenanceService = new MaintenanceService({
+  dataDir: getPersistentDir(),
+  buildRuntimeMetrics,
+  messages,
+  registeredAccounts,
+  servers,
+  addAuditLog,
+});
+registerMaintenanceRoutes(app, {
+  maintenance: maintenanceService,
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  isMasterRequest,
+});
+registerWebhooksAndTemplatesRoutes(app, {
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  servers,
+  messages,
+  webhooks,
+  activeUsers,
+  sanitizeText,
+  checkServerPermission,
+  saveServers,
+  saveWebhooks,
+  saveChannelMessageUpsert,
+  emitToChannelAudience,
+  emitToUserSockets,
+  addAuditLog,
+  onMessageCreated: () => maintenanceService.incrementMessageCount(),
+});
+
 // Intelligent AI Assistant Response Generator
 function generateAIResponse(prompt: string, senderName: string): string {
   const p = prompt.toLowerCase();
@@ -1815,6 +1873,7 @@ function emitInitData(targetSocket: Socket, currentUser: User) {
   const userServers = filterServersForUser(servers, currentUser);
   const { initialMessages, hasMoreMessages } = getInitialMessagesForServers(userServers, currentUser.username, currentUser.id);
   const foundAcc = registeredAccounts.get(currentUser.username.toLowerCase());
+  const userGroupDms = getGroupDmsForUser(groupDms, currentUser.username);
   targetSocket.emit('init_data', {
     currentUser,
     servers: userServers,
@@ -1822,7 +1881,9 @@ function emitInitData(targetSocket: Socket, currentUser: User) {
     messages: initialMessages,
     hasMoreMessages,
     readCursors: foundAcc?.readCursors || {},
+    groupDms: userGroupDms,
   });
+  targetSocket.emit('group_dms_updated', userGroupDms);
 }
 
 const accountSecurityDeps: AccountSecurityDeps = {
@@ -1887,6 +1948,8 @@ io.on('connection', (socket: Socket) => {
     registeredAccounts,
     servers,
     messages,
+    groupDms,
+    onMessageCreated: () => maintenanceService.incrementMessageCount(),
     serverLevels,
     socketEventLimiter,
     getSystemConfig: () => systemConfig,
@@ -1955,6 +2018,17 @@ io.on('connection', (socket: Socket) => {
     emitUserUpdated,
     cleanupTemporaryChannels,
     getInitialMessagesForServers,
+    addAuditLog,
+  });
+  registerGroupDmSocketHandlers(socket, {
+    activeUsers,
+    registeredAccounts,
+    groupDms,
+    socketEventLimiter,
+    sanitizeText,
+    isSafeEmojiOrShortIcon,
+    saveGroupDms,
+    emitToUserSockets,
     addAuditLog,
   });
 
@@ -3411,6 +3485,12 @@ io.on('connection', (socket: Socket) => {
   socket.on('join_voice', ({ channelId, password }: { channelId: string; password?: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
+
+    if (channelId.startsWith('voice-gdm-') && !isUserMemberOfGroupDm(user, channelId, groupDms)) {
+      return socket.emit('server_action_error', {
+        message: 'Bu grup ses odasına erişim yetkiniz yok.',
+      });
+    }
 
     let targetChannelId = channelId;
     const targetChannel = servers.flatMap(s => s.channels).find(c => c.id === channelId);
@@ -5474,12 +5554,15 @@ app.use((err: unknown, req: express.Request, res: express.Response, _next: expre
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 [Backend Server] Discord/TeamSpeak Clone running on http://127.0.0.1:${PORT}`);
-  void initStorageEngine(messages, { accounts: registeredAccounts, auditLogs });
+  void initStorageEngine(messages, { accounts: registeredAccounts, auditLogs }).then(() => {
+    maintenanceService.startSchedulers();
+  });
 });
 
 function handleGracefulShutdown(signal: string) {
   console.log(`🛑 [Shutdown] ${signal} alındı, bekleyen veriler diske yazılıyor...`);
   try {
+    maintenanceService.stopSchedulers();
     flushPendingWritesSync();
     closeStorageEngine();
   } catch (err) {

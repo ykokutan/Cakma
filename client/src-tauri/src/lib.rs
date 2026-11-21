@@ -52,6 +52,7 @@ pub fn run() {
                 platform::set_taskbar_badge,
                 platform::set_global_ptt,
                 platform::get_platform_capabilities,
+                platform::update_tray_state,
                 overlay::toggle_overlay_window,
                 overlay::set_overlay_window,
                 overlay::get_overlay_window_state,

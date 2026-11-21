@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { X, Globe, Plus, RotateCcw, UserPlus, Users } from 'lucide-react';
+import { X, Globe, Plus, RotateCcw, UserPlus, Users, Upload, Loader2 } from 'lucide-react';
 import { isImageAvatar } from './AvatarView';
+import { authFetch } from '../utils/authFetch';
+import { appToast } from '../utils/appDialogs';
+import { t } from '../utils/i18n';
 
 interface CreateServerModalProps {
   onClose: () => void;
@@ -25,11 +28,13 @@ function extractInviteCode(rawInput: string): string {
 }
 
 export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose }) => {
-  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer, joinServerByInvite, previewServerInvite } = useSocket();
+  const { createServer, connectToDedicatedServer, resetToMainServer, currentServerHost, isDedicatedServer, joinServerByInvite, previewServerInvite, language } = useSocket();
   const [tab, setTab] = useState<'create' | 'invite' | 'direct'>('create');
   const [serverName, setServerName] = useState('');
   const [serverIcon, setServerIcon] = useState('🎮');
-  const [serverTemplate, setServerTemplate] = useState<'empty' | 'gaming' | 'friends' | 'work'>('gaming');
+  const [serverTemplate, setServerTemplate] = useState<'empty' | 'gaming' | 'friends' | 'work' | 'community' | 'study'>('gaming');
+  const [isImportingTemplate, setIsImportingTemplate] = useState(false);
+  const templateFileInputRef = useRef<HTMLInputElement>(null);
   const [isPublic, setIsPublic] = useState<boolean>(true);
   const [directHost, setDirectHost] = useState('');
   const [inviteInput, setInviteInput] = useState('');
@@ -87,6 +92,37 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
     if (!serverName.trim()) return;
     createServer(serverName.trim(), serverIcon, serverTemplate, { isPublic });
     onClose();
+  };
+
+  const handleImportTemplateFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setIsImportingTemplate(true);
+    try {
+      const rawText = await file.text();
+      const parsed = JSON.parse(rawText);
+      if (!parsed || typeof parsed !== 'object') {
+        appToast('Geçersiz JSON şablon dosyası.', 'error');
+        return;
+      }
+      const resp = await authFetch(currentServerHost, '/api/servers/import-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed),
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        appToast(data?.error || 'Şablon sunucu oluşturulamadı.', 'error');
+        return;
+      }
+      appToast(`"${data.server?.name || 'Sunucu'}" JSON şablondan oluşturuldu!`, 'success');
+      onClose();
+    } catch {
+      appToast('JSON şablon dosyası okunamadı.', 'error');
+    } finally {
+      setIsImportingTemplate(false);
+    }
   };
 
   const handleConnectDirect = (e: React.FormEvent) => {
@@ -197,25 +233,48 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({ onClose })
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { id: 'gaming', label: '🎮 Oyun Topluluğu', desc: 'lobi, oyun-içi-ses, duyurular' },
+                  { id: 'community', label: `🌐 ${t(language, 'templateCommunity')}`, desc: 'duyurular, forum, sohbet, ses' },
                   { id: 'friends', label: '☕ Arkadaş Grubu', desc: 'sohbet, müzik-paylaşım, muhabbet' },
                   { id: 'work', label: '💼 Çalışma / Ekip', desc: 'duyurular, toplantı-odası, genel' },
+                  { id: 'study', label: `📚 ${t(language, 'templateStudy')}`, desc: 'ders-notları, soru-cevap, çalışma' },
                   { id: 'empty', label: '📄 Boş Sunucu', desc: 'Sadece #genel ve Genel Ses' },
                 ].map((tpl) => (
                   <button
                     key={tpl.id}
                     type="button"
-                    onClick={() => setServerTemplate(tpl.id as 'empty' | 'gaming' | 'friends' | 'work')}
+                    onClick={() => setServerTemplate(tpl.id as 'empty' | 'gaming' | 'friends' | 'work' | 'community' | 'study')}
                     className={`p-2 rounded-xl border text-left transition ${
                       serverTemplate === tpl.id
                         ? 'bg-blue-500/20 border-blue-400 text-white'
                         : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
                     }`}
                   >
-                    <div className="text-[11px] font-bold">{tpl.label}</div>
+                    <div className="text-[11px] font-bold truncate">{tpl.label}</div>
                     <div className="text-[10px] text-white/45 truncate mt-0.5">{tpl.desc}</div>
                   </button>
                 ))}
               </div>
+
+              <input
+                ref={templateFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleImportTemplateFile}
+              />
+              <button
+                type="button"
+                onClick={() => templateFileInputRef.current?.click()}
+                disabled={isImportingTemplate}
+                className="mt-2.5 w-full py-2 px-3 rounded-xl bg-white/[0.04] hover:bg-emerald-500/15 border border-dashed border-white/15 hover:border-emerald-400/40 text-[11px] font-semibold text-white/75 hover:text-emerald-200 flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+              >
+                {isImportingTemplate ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                )}
+                <span>{t(language, 'importJsonTemplate')}</span>
+              </button>
             </div>
 
             <label className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-white/[0.04] border border-white/10 cursor-pointer text-xs">

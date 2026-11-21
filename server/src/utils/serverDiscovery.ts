@@ -15,7 +15,7 @@ export interface DiscoverableServerSummary {
   voiceActiveCount: number;
   textChannelCount: number;
   voiceChannelCount: number;
-  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' }>;
+  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' }>;
   bitrateKbps: number;
   sfuMode: 'auto' | 'p2p' | 'sfu';
   isJoined: boolean;
@@ -81,7 +81,7 @@ export function buildDiscoverableServerSummaries(
         }
       }
 
-      const textChannels = channels.filter((c) => c.type === 'text');
+      const textChannels = channels.filter((c) => c.type !== 'voice');
       const voiceChannels = channels.filter((c) => c.type === 'voice' && !c.isTempCreatorChannel);
 
       const channelPreview = [

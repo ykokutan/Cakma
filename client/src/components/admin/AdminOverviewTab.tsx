@@ -24,6 +24,8 @@ interface MetricSnapshot {
   memoryRssMb: number;
   onlineUsers: number;
   activeVoiceRooms: number;
+  messagesPerMin?: number;
+  eventLoopLagMs?: number;
   storageEngine?: string;
   pendingStorageWrites?: number;
 }
@@ -172,6 +174,27 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
 
   useEffect(() => {
     let active = true;
+
+    const seedHistory = async () => {
+      try {
+        const res = await authFetch(currentServerHost, '/api/admin/metrics-history?limit=60');
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (!active || !Array.isArray(data?.points) || data.points.length === 0) return;
+        setMetricHistory(
+          data.points.slice(-60).map((p: Record<string, unknown>) => ({
+            ts: Number(p.ts) || Date.now(),
+            memoryHeapUsedMb: Number(p.memoryHeapUsedMb) || 0,
+            memoryRssMb: Number(p.memoryRssMb) || 0,
+            onlineUsers: Number(p.onlineUsers) || 0,
+            activeVoiceRooms: Number(p.activeVoiceRooms) || 0,
+            messagesPerMin: Number(p.messagesPerMin) || 0,
+            eventLoopLagMs: Number(p.eventLoopLagMs) || 0,
+          }))
+        );
+      } catch {}
+    };
+
     const pollMetrics = async () => {
       try {
         const res = await authFetch(currentServerHost, '/api/metrics');
@@ -179,21 +202,28 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
         const data = await res.json();
         if (!active || typeof data?.memoryHeapUsedMb !== 'number') return;
         setMetricHistory((prev) => [
-          ...prev.slice(-23),
+          ...prev.slice(-59),
           {
             ts: Date.now(),
             memoryHeapUsedMb: Number(data.memoryHeapUsedMb) || 0,
             memoryRssMb: Number(data.memoryRssMb) || 0,
             onlineUsers: Number(data.onlineUsers) || 0,
             activeVoiceRooms: Number(data.activeVoiceRooms) || 0,
+            messagesPerMin: typeof data.messagesPerMin === 'number' ? data.messagesPerMin : undefined,
+            eventLoopLagMs: typeof data.eventLoopLagMs === 'number' ? data.eventLoopLagMs : undefined,
             storageEngine: typeof data.storageEngine === 'string' ? data.storageEngine : undefined,
             pendingStorageWrites: Number(data.pendingStorageWrites) || 0,
           },
         ]);
       } catch {}
     };
-    pollMetrics();
-    const timer = window.setInterval(pollMetrics, 5000);
+
+    void seedHistory().then(() => {
+      if (active) void pollMetrics();
+    });
+    const timer = window.setInterval(() => {
+      void pollMetrics();
+    }, 5000);
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -209,6 +239,10 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
     metricHistory.length > 0 ? metricHistory.map((m) => m.onlineUsers) : [stats?.activeSocketsCount || 0];
   const voiceSeries =
     metricHistory.length > 0 ? metricHistory.map((m) => m.activeVoiceRooms) : [stats?.activeVoiceRoomsCount || 0];
+  const msgRateSeries =
+    metricHistory.length > 0 ? metricHistory.map((m) => m.messagesPerMin ?? 0) : [0];
+  const lagSeries =
+    metricHistory.length > 0 ? metricHistory.map((m) => m.eventLoopLagMs ?? 0) : [0];
 
   const storageEngineLabel =
     latestMetric?.storageEngine || adminData?.storageEngine || 'json-sharded';
@@ -314,7 +348,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
       </div>
 
       {/* Live Rolling Metrics Sparklines */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SparklineCard
           title="Bellek Kullanımı Trendi (Heap & RSS)"
           valueLabel={`${heapSeries[heapSeries.length - 1]} MB Heap`}
@@ -335,6 +369,17 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
           strokeColor="#34d399"
           secondaryStrokeColor="#a78bfa"
           unit=""
+        />
+
+        <SparklineCard
+          title="Mesaj Hızı & Event Loop"
+          valueLabel={`${msgRateSeries[msgRateSeries.length - 1]} msg/dk`}
+          subLabel={`Kesikli çizgi: Event Loop ${lagSeries[lagSeries.length - 1]} ms`}
+          values={msgRateSeries}
+          secondaryValues={lagSeries}
+          strokeColor="#a78bfa"
+          secondaryStrokeColor="#fb7185"
+          unit="msg/dk"
         />
       </div>
 

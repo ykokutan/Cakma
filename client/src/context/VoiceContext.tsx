@@ -1,5 +1,12 @@
 import { createContext, useContext } from 'react';
-import type { ScreenShareSettings } from '../types';
+import type { GroupDmRoom, ScreenShareSettings } from '../types';
+
+export interface AudioWorkletTelemetry {
+  db: number;
+  noiseFloorDb: number;
+  gateOpen: boolean;
+  gainReductionDb: number;
+}
 
 export interface VoiceContextValue {
   connectedVoiceChannelId: string | null;
@@ -19,7 +26,19 @@ export interface VoiceContextValue {
   isPrioritySpeakerActive: boolean;
   prioritySpeakerUsername: string | null;
   ping: number;
+  voiceGateDb: number;
+  setVoiceGateDb: (db: number) => void;
+  noiseAggressiveness: number;
+  setNoiseAggressiveness: (val: number) => void;
+  liveAudioTelemetry: AudioWorkletTelemetry;
+  globalMuteShortcut: string;
+  setGlobalMuteShortcut: (key: string) => void;
+  globalDeafenShortcut: string;
+  setGlobalDeafenShortcut: (key: string) => void;
+  soundboardShortcut: string;
+  setSoundboardShortcut: (key: string) => void;
   joinVoiceChannel: (channelId: string, password?: string) => void;
+  joinGroupDmVoice: (group: GroupDmRoom) => void;
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;

@@ -16,6 +16,7 @@ pub struct PlatformCapabilities {
     pub os: String,
     pub arch: String,
     pub global_ptt: bool,
+    pub global_shortcuts: bool,
     pub game_detection: bool,
     pub remote_assist_input: bool,
     pub autostart: bool,
@@ -26,10 +27,12 @@ pub struct PlatformCapabilities {
 pub(crate) fn current_platform_capabilities() -> PlatformCapabilities {
     let is_windows = cfg!(target_os = "windows");
     let is_macos = cfg!(target_os = "macos");
+    let is_desktop = cfg!(desktop);
     PlatformCapabilities {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         global_ptt: is_windows,
+        global_shortcuts: is_desktop,
         game_detection: is_windows || is_macos,
         remote_assist_input: is_windows,
         autostart: is_windows,
@@ -387,9 +390,125 @@ pub fn set_global_ptt(app: tauri::AppHandle, enabled: bool, key: String) -> Resu
     }
 }
 
+pub(crate) fn format_tray_tooltip(
+    in_voice: bool,
+    is_muted: bool,
+    is_deafened: bool,
+    status: &str,
+    channel_name: Option<&str>,
+) -> String {
+    if in_voice {
+        let ch = channel_name
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Ses Odası");
+        let audio_state = if is_deafened {
+            "Sağırlaştırıldı"
+        } else if is_muted {
+            "Mikrofon Kapalı"
+        } else {
+            "Ses Aktif"
+        };
+        return format!("Çakma — #{} ({})", ch, audio_state);
+    }
+
+    let status_label = match status.trim().to_ascii_lowercase().as_str() {
+        "idle" => "Boşta",
+        "dnd" => "Rahatsız Etme",
+        "offline" => "Çevrimdışı",
+        _ => "Çevrimiçi",
+    };
+    format!("Çakma ({})", status_label)
+}
+
+pub(crate) fn render_tray_badge_rgba(
+    base_rgba: &[u8],
+    width: u32,
+    height: u32,
+    dot_rgba: [u8; 4],
+) -> Vec<u8> {
+    let expected_len = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
+    let mut out = base_rgba.to_vec();
+    if out.len() < expected_len || width < 8 || height < 8 {
+        return out;
+    }
+
+    let w = width as f32;
+    let h = height as f32;
+    let r = (w.min(h) * 0.24).max(3.0);
+    let cx = w - r - 1.0;
+    let cy = h - r - 1.0;
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= r + 1.1 {
+                let idx = ((y * width + x) * 4) as usize;
+                if dist >= r - 0.8 {
+                    // Crisp dark outline ring around the status badge
+                    out[idx] = 15;
+                    out[idx + 1] = 18;
+                    out[idx + 2] = 28;
+                    out[idx + 3] = 255;
+                } else {
+                    out[idx] = dot_rgba[0];
+                    out[idx + 1] = dot_rgba[1];
+                    out[idx + 2] = dot_rgba[2];
+                    out[idx + 3] = dot_rgba[3];
+                }
+            }
+        }
+    }
+
+    out
+}
+
+#[tauri::command]
+pub fn update_tray_state(
+    app: tauri::AppHandle,
+    in_voice: bool,
+    is_muted: bool,
+    is_deafened: bool,
+    status: String,
+    channel_name: Option<String>,
+) -> Result<(), String> {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let tip = format_tray_tooltip(
+            in_voice,
+            is_muted,
+            is_deafened,
+            &status,
+            channel_name.as_deref(),
+        );
+        let _ = tray.set_tooltip(Some(tip));
+
+        if in_voice {
+            let dot = if is_deafened {
+                [245, 158, 11, 255] // Amber: deafened
+            } else if is_muted {
+                [239, 68, 68, 255] // Rose/Red: muted
+            } else {
+                [16, 185, 129, 255] // Emerald: active mic
+            };
+            if let Some(base) = app.default_window_icon() {
+                let badged = render_tray_badge_rgba(base.rgba(), base.width(), base.height(), dot);
+                let img = tauri::image::Image::new_owned(badged, base.width(), base.height());
+                let _ = tray.set_icon(Some(img));
+            }
+        } else if let Some(base) = app.default_window_icon() {
+            let _ = tray.set_icon(Some(base.clone()));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::current_platform_capabilities;
+    use super::{current_platform_capabilities, format_tray_tooltip, render_tray_badge_rgba};
 
     #[test]
     fn reports_consistent_platform_capabilities() {
@@ -397,11 +516,49 @@ mod tests {
         assert!(!caps.os.is_empty());
         assert!(!caps.arch.is_empty());
         assert_eq!(caps.global_ptt, cfg!(target_os = "windows"));
+        assert_eq!(caps.global_shortcuts, cfg!(desktop));
         assert_eq!(caps.remote_assist_input, cfg!(target_os = "windows"));
         assert_eq!(caps.autostart, cfg!(target_os = "windows"));
         assert_eq!(
             caps.game_detection,
             cfg!(target_os = "windows") || cfg!(target_os = "macos")
         );
+    }
+
+    #[test]
+    fn formats_tray_tooltip_states() {
+        assert_eq!(
+            format_tray_tooltip(true, false, false, "online", Some("Lobi")),
+            "Çakma — #Lobi (Ses Aktif)"
+        );
+        assert_eq!(
+            format_tray_tooltip(true, true, false, "online", Some("Lobi")),
+            "Çakma — #Lobi (Mikrofon Kapalı)"
+        );
+        assert_eq!(
+            format_tray_tooltip(true, true, true, "online", None),
+            "Çakma — #Ses Odası (Sağırlaştırıldı)"
+        );
+        assert_eq!(
+            format_tray_tooltip(false, false, false, "dnd", None),
+            "Çakma (Rahatsız Etme)"
+        );
+    }
+
+    #[test]
+    fn renders_tray_badge_dot_in_corner() {
+        let base = vec![0u8; 32 * 32 * 4];
+        let dot = [16, 185, 129, 255];
+        let out = render_tray_badge_rgba(&base, 32, 32, dot);
+        assert_eq!(out.len(), base.len());
+        // Corner badge center area (~x=23, y=23) should receive the emerald dot pixels
+        let mut found_dot = false;
+        for chunk in out.chunks_exact(4) {
+            if chunk == dot {
+                found_dot = true;
+                break;
+            }
+        }
+        assert!(found_dot);
     }
 }

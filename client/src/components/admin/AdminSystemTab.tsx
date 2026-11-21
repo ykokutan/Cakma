@@ -4,6 +4,7 @@ import type { AdminDashboardData, RequestAdminDialogFn } from './adminTypes';
 import type { AdminSystemFormController, SystemConfigUpdatePayload } from './useAdminSystemForm';
 import { authFetch } from '../../utils/authFetch';
 import { downloadTextFile } from '../../utils/adminHelpers';
+import { AdminMaintenanceCard } from './AdminMaintenanceCard';
 
 type SystemSectionId = 'all' | 'general' | 'security' | 'email' | 'media' | 'backup';
 
@@ -1445,6 +1446,12 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
               </button>
             </div>
           </div>
+
+          <AdminMaintenanceCard
+            currentServerHost={currentServerHost}
+            onRequestDialog={onRequestDialog}
+            onNotify={onNotify}
+          />
         </>
       )}
 

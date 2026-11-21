@@ -15,14 +15,27 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v0.8.2 - Latest */}
+        {/* v0.9.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v0.8.2 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v0.9.0 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
-            <li><strong className="text-white">Üst Menü &amp; Katman Düzeltmesi:</strong> Sohbet başlığındaki <strong>Bildirim Tercihi</strong> ve <strong>Kanal Araçları</strong> açılır menülerinin sabit duyuru çubuğunun altında kalmasına yol açan CSS stacking-context çakışması giderildi (<code className="text-emerald-200">&lt;header&gt;</code> <code className="text-emerald-200">z-30</code>, DM görüşme alanı &amp; mesaj giriş alanı <code className="text-emerald-200">z-20</code>, duyuru çubuğu <code className="text-emerald-200">z-10</code>, mesaj listesi <code className="text-emerald-200">z-0</code>); mesaj satırı taşma menüleri ve gizli hover araç çubuğu etkileşimleri izole edildi.</li>
+            <li><strong className="text-white">Topluluk &amp; İletişim:</strong> Sürükle-bırak <strong>Kanal Kategorileri</strong>, yönetici korumalı <strong>Duyuru</strong> ve etiketli <strong>Forum</strong> kanalları, <strong>Grup DM + Grup Sesli Arama</strong> eklendi.</li>
+            <li><strong className="text-white">Webhook, Şablon &amp; E2EE Ekler:</strong> Forgejo/GitHub/Discord uyumlu <strong>Gelen Webhook&apos;lar</strong>, 6 sunucu şablonu &amp; JSON şablondan sunucu kurma, <strong>Mesaj İletme</strong> ve istemci tarafı <strong>AES-256-GCM E2EE şifreli dosya/resim</strong> paylaşımı eklendi.</li>
+            <li><strong className="text-white">Ses DSP &amp; Masaüstü (Tauri):</strong> 80 Hz HPF ve klavye filtreli <code className="text-emerald-200">AudioWorklet</code> canlı dB/geçit telemetrisi, dinamik sistem tepsisi rozeti/tooltip&apos;i, özelleştirilebilir <strong>Global Kısayollar</strong> ve Linux/Android CI iş akışları eklendi.</li>
+            <li><strong className="text-white">Operasyon &amp; Kalite:</strong> Canlı <strong>SQLite Sıcak Yedekleme (<code className="text-emerald-200">VACUUM INTO</code>)</strong>, sahipsiz <code className="text-emerald-200">/uploads</code> medya temizleyici, 120 noktalı metrik geçmişi grafiği ve Playwright tarayıcı E2E test paketi tamamlandı.</li>
+          </ul>
+        </div>
+
+        {/* v0.8.2 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v0.8.2 — Önceki Sürüm</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Üst Menü &amp; Katman Düzeltmesi:</strong> Sohbet başlığındaki <strong>Bildirim Tercihi</strong> ve <strong>Kanal Araçları</strong> açılır menülerinin sabit duyuru çubuğunun altında kalmasına yol açan CSS stacking-context çakışması giderildi (<code className="text-cyan-300">&lt;header&gt;</code> <code className="text-cyan-300">z-30</code>, DM görüşme alanı &amp; mesaj giriş alanı <code className="text-cyan-300">z-20</code>, duyuru çubuğu <code className="text-cyan-300">z-10</code>, mesaj listesi <code className="text-cyan-300">z-0</code>); mesaj satırı taşma menüleri ve gizli hover araç çubuğu etkileşimleri izole edildi.</li>
           </ul>
         </div>
 

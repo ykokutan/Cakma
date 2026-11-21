@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { useVoice } from '../context/VoiceContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useMicVolumeLevel } from '../context/VoiceMetricsContext';
 import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } from '../utils/tsSoundEffects';
@@ -13,6 +14,7 @@ import { AccountSecuritySection } from './settings/AccountSecuritySection';
 import { ActiveSessionsCard } from './settings/ActiveSessionsCard';
 import { PasswordChangeCard } from './settings/PasswordChangeCard';
 import { ChangelogTab } from './settings/ChangelogTab';
+import { AudioNoiseGatePanel } from './settings/AudioNoiseGatePanel';
 import {
   X,
   Mic,
@@ -140,6 +142,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setLanguage,
     updateProfileDetails,
   } = useSocket();
+  const {
+    globalMuteShortcut,
+    setGlobalMuteShortcut,
+    globalDeafenShortcut,
+    setGlobalDeafenShortcut,
+    soundboardShortcut,
+    setSoundboardShortcut,
+  } = useVoice();
   const micVolumeLevel = useMicVolumeLevel();
 
   const [username, setUsername] = useState(currentUser?.username || '');
@@ -242,10 +252,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [recordingShortcutFor, setRecordingShortcutFor] = useState<
     null | 'muteShortcut' | 'deafenShortcut' | 'screenShareShortcut'
   >(null);
+  const [recordingGlobalFor, setRecordingGlobalFor] = useState<
+    null | 'mute' | 'deafen' | 'soundboard'
+  >(null);
+
+  useEffect(() => {
+    if (!recordingGlobalFor) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        setRecordingGlobalFor(null);
+        return;
+      }
+      const modifierOnly = new Set(['Control', 'Shift', 'Alt', 'Meta', 'CapsLock', 'Tab']);
+      if (modifierOnly.has(e.key)) return;
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push('Ctrl');
+      if (e.altKey) mods.push('Alt');
+      if (e.shiftKey) mods.push('Shift');
+      if (e.metaKey) mods.push('Super');
+      if (mods.length === 0) return;
+
+      let keyName = e.code || e.key;
+      if (e.code.startsWith('Key') && e.code.length === 4) {
+        keyName = e.code.slice(3).toUpperCase();
+      } else if (e.code.startsWith('Digit') && e.code.length === 6) {
+        keyName = e.code.slice(5);
+      } else if (e.code === 'Space') {
+        keyName = 'Space';
+      } else if (e.key.length === 1) {
+        keyName = e.key.toUpperCase();
+      }
+      const combo = [...mods, keyName].join('+');
+      if (recordingGlobalFor === 'mute') setGlobalMuteShortcut(combo);
+      else if (recordingGlobalFor === 'deafen') setGlobalDeafenShortcut(combo);
+      else setSoundboardShortcut(combo);
+      setRecordingGlobalFor(null);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [recordingGlobalFor, setGlobalMuteShortcut, setGlobalDeafenShortcut, setSoundboardShortcut]);
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.8.2');
+  const [appVersion, setAppVersion] = useState<string>('0.9.0');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -1212,6 +1263,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     />
                   </div>
                 </div>
+
+                {/* Live AudioWorklet Spectral Noise Gate & dB Meter */}
+                <AudioNoiseGatePanel />
 
                 {/* Echo Cancellation */}
                 <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-between">
@@ -2973,24 +3027,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
-                <div className="text-sm font-semibold text-white">Masaüstü &amp; Hızlı Kullanım Kısayolları</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Global Mikrofon Sustur</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + M</kbd>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-white">Masaüstü Global Kısayolları</div>
+                    <div className="text-[11px] text-white/45">
+                      Uygulama arka plandayken bile çalışır (En az bir yardımcı tuş + harf/sayı kombinasyonu girin).
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Global Sağırlaştır</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + D</kbd>
-                  </div>
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Üyeyi Odaya Taşıma</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Sürükle &amp; Bırak</kbd>
-                  </div>
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Uzaktan Yardım Klavye/Kısayol</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">1-e-1 Görüşme</kbd>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGlobalMuteShortcut('Ctrl+Shift+M');
+                      setGlobalDeafenShortcut('Ctrl+Shift+D');
+                      setSoundboardShortcut('Ctrl+Shift+B');
+                      setRecordingGlobalFor(null);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-white/60 hover:text-white transition shrink-0"
+                  >
+                    Varsayılana Sıfırla
+                  </button>
+                </div>
+
+                <div className="space-y-2.5 text-xs">
+                  {(
+                    [
+                      { id: 'mute' as const, label: 'Global Mikrofon Sustur', value: globalMuteShortcut },
+                      { id: 'deafen' as const, label: 'Global Sağırlaştır', value: globalDeafenShortcut },
+                      { id: 'soundboard' as const, label: 'Global Soundboard Aç/Kapat', value: soundboardShortcut },
+                    ]
+                  ).map((item) => {
+                    const isRecording = recordingGlobalFor === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3.5 py-2.5"
+                      >
+                        <span className="text-white/80 font-medium">{item.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => setRecordingGlobalFor(isRecording ? null : item.id)}
+                          className={`px-3 py-1 rounded-lg font-mono font-bold border transition ${
+                            isRecording
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300 animate-pulse'
+                              : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
+                          }`}
+                        >
+                          {isRecording ? 'Kombinasyon Bekleniyor (Esc: İptal)' : item.value}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -3350,28 +3436,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     ))}
                   </div>
                 )}
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
-                <div className="text-sm font-semibold text-white">Masaüstü &amp; Hızlı Kullanım Kısayolları</div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Global Mikrofon Sustur</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + M</kbd>
-                  </div>
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Global Sağırlaştır</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Ctrl + Shift + D</kbd>
-                  </div>
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Üyeyi Odaya Taşıma</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">Sürükle &amp; Bırak</kbd>
-                  </div>
-                  <div className="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
-                    <span className="text-white/70">Uzaktan Yardım Klavye/Kısayol</span>
-                    <kbd className="px-2 py-0.5 rounded bg-white/10 font-mono text-white">1-e-1 Görüşme</kbd>
-                  </div>
-                </div>
               </div>
             </div>
           )}

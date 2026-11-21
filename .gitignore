@@ -38,3 +38,8 @@ dedicated-server/dist/
 client/public/downloads/
 bin/
 
+# Playwright E2E
+playwright-report/
+test-results/
+blob-report/
+

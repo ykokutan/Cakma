@@ -1,5 +1,9 @@
+import crypto from 'crypto';
 import type { Server as SocketIOServer, Socket } from 'socket.io';
 import type {
+  ForumPostMeta,
+  ForwardedFromMeta,
+  GroupDmRoom,
   MemberLevelData,
   Message,
   MessageAttachment,
@@ -9,7 +13,13 @@ import type {
   User,
 } from '../types.js';
 import type { SystemConfig } from '../storage.js';
-import { canUserAccessChannel, isUserParticipantInDm, parseDmChannelParticipants } from '../utils/channelAccess.js';
+import {
+  canUserAccessChannel,
+  findServerByChannelId,
+  isUserMemberOfGroupDm,
+  isUserParticipantInDm,
+  parseDmChannelParticipants,
+} from '../utils/channelAccess.js';
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
 import { resolveServerLevelRecord } from '../utils/serverIdentity.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
@@ -20,6 +30,8 @@ export interface ChatMessageHandlerDeps {
   registeredAccounts: Map<string, RegisteredAccount>;
   servers: Server[];
   messages: Record<string, Message[]>;
+  groupDms?: GroupDmRoom[];
+  onMessageCreated?: () => void;
   serverLevels: Record<string, Record<string, MemberLevelData>>;
   socketEventLimiter: SocketEventRateLimiter;
   getSystemConfig: () => SystemConfig;
@@ -78,6 +90,8 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     registeredAccounts,
     servers,
     messages,
+    groupDms,
+    onMessageCreated,
     serverLevels,
     socketEventLimiter,
     getSystemConfig,
@@ -103,7 +117,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
   socket.on('request_older_messages', ({ channelId, beforeId, limit }: { channelId: string; beforeId?: string; limit?: number }) => {
     const requester = activeUsers.get(socket.id);
     if (!requester || !channelId) return;
-    if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) return;
+    if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId], groupDms)) return;
     const page = getChannelMessagesPageSmart(messages, channelId, beforeId, limit || 50);
     socket.emit('older_messages_loaded', {
       channelId,
@@ -123,7 +137,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     });
     if (!check.ok) return;
     const { channelId, messageId, radius } = check.data;
-    if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) {
+    if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId], groupDms)) {
       return socket.emit('message_context_response', {
         channelId,
         targetMessageId: messageId,
@@ -156,7 +170,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     const { query, channelId } = check.data;
     const allowedChannels = new Set<string>();
     if (channelId) {
-      if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId])) {
+      if (!canUserAccessChannel(requester, channelId, servers, undefined, messages[channelId], groupDms)) {
         return socket.emit('server_search_results', { query, results: [] });
       }
       allowedChannels.add(channelId);
@@ -168,6 +182,9 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       }
       for (const key of Object.keys(messages)) {
         if (key.startsWith('dm-') && isUserParticipantInDm(requester, key, messages[key])) {
+          allowedChannels.add(key);
+        }
+        if (key.startsWith('gdm-') && isUserMemberOfGroupDm(requester, key, groupDms)) {
           allowedChannels.add(key);
         }
       }
@@ -184,26 +201,40 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
         message: 'Çok hızlı mesaj gönderiyorsunuz. Lütfen bir saniye bekleyin.',
       });
     }
-    const { serverId, channelId, content, attachments, poll, replyTo } = rawPayload as {
+    const { serverId, channelId, content, attachments, poll, replyTo, forumPost, forwardedFrom } = rawPayload as {
       serverId: string;
       channelId: string;
       content?: string;
       attachments?: MessageAttachment[];
       poll?: any;
       replyTo?: { id: string; username: string; content: string };
+      forumPost?: ForumPostMeta;
+      forwardedFrom?: ForwardedFromMeta;
     };
     if (typeof channelId !== 'string' || !channelId.trim()) return;
     const rawContent = typeof content === 'string' ? content.trim() : '';
     if (!rawContent && (!Array.isArray(attachments) || attachments.length === 0) && !poll) return;
 
-    if (!canUserAccessChannel(sender, channelId, servers, serverId, messages[channelId])) {
+    if (!canUserAccessChannel(sender, channelId, servers, serverId, messages[channelId], groupDms)) {
       return socket.emit('server_action_error', {
         message: 'Bu kanala mesaj gönderme yetkiniz yok.',
       });
     }
 
     const systemConfig = getSystemConfig();
-    const targetSrv = servers.find((s) => s.id === serverId);
+    const targetSrv = findServerByChannelId(servers, channelId, serverId);
+    const targetChannel = targetSrv?.channels.find((c) => c.id === channelId);
+
+    if (
+      targetChannel?.type === 'announcement' &&
+      targetSrv &&
+      !checkServerPermission(sender, targetSrv, 'manage_channels')
+    ) {
+      return socket.emit('server_action_error', {
+        message: 'Bu duyuru kanalında yalnızca yetkililer paylaşım yapabilir.',
+      });
+    }
+
     const timeoutUntil = targetSrv?.timeouts?.[sender.username.toLowerCase()];
     if (timeoutUntil && timeoutUntil > Date.now()) {
       const minsLeft = Math.ceil((timeoutUntil - Date.now()) / 60000);
@@ -277,6 +308,60 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
 
     const textContent = sanitizeText(rawContent).slice(0, systemConfig.maxMessageLength || 2000);
 
+    let cleanForumPost: ForumPostMeta | undefined;
+    if (forumPost && typeof forumPost === 'object' && typeof forumPost.title === 'string') {
+      const fTitle = sanitizeText(forumPost.title).trim().slice(0, 120);
+      if (fTitle) {
+        const fTags = Array.isArray(forumPost.tags)
+          ? forumPost.tags
+              .map((t) => sanitizeText(String(t || '')).trim().slice(0, 24))
+              .filter(Boolean)
+              .slice(0, 5)
+          : undefined;
+        cleanForumPost = {
+          title: fTitle,
+          ...(fTags && fTags.length > 0 ? { tags: fTags } : {}),
+        };
+      }
+    }
+
+    let cleanForwarded: ForwardedFromMeta | undefined;
+    if (forwardedFrom && typeof forwardedFrom === 'object' && typeof forwardedFrom.authorUsername === 'string') {
+      cleanForwarded = {
+        authorUsername: sanitizeText(forwardedFrom.authorUsername).trim().slice(0, 48),
+        ...(typeof forwardedFrom.channelName === 'string'
+          ? { channelName: sanitizeText(forwardedFrom.channelName).trim().slice(0, 48) }
+          : {}),
+        ...(typeof forwardedFrom.serverName === 'string'
+          ? { serverName: sanitizeText(forwardedFrom.serverName).trim().slice(0, 64) }
+          : {}),
+        ...(typeof forwardedFrom.timestamp === 'string'
+          ? { timestamp: sanitizeText(forwardedFrom.timestamp).trim().slice(0, 24) }
+          : {}),
+      };
+    }
+
+    const sanitizedAttachments = Array.isArray(attachments)
+      ? attachments.map((att) => ({
+          id: att.id,
+          name: att.name,
+          size: att.size,
+          type: att.type,
+          url: att.url,
+          ...(att.e2ee && att.e2ee.v === 1 && typeof att.e2ee.iv === 'string'
+            ? {
+                e2ee: {
+                  iv: att.e2ee.iv,
+                  origName: String(att.e2ee.origName || '').slice(0, 140),
+                  origType: String(att.e2ee.origType || 'application/octet-stream').slice(0, 80),
+                  origSize: Number(att.e2ee.origSize) || 0,
+                  v: 1 as const,
+                },
+              }
+            : {}),
+        }))
+      : [];
+
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       serverId,
@@ -288,13 +373,15 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       },
       content: textContent,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      attachments: attachments || [],
+      attachments: sanitizedAttachments,
       reactions: {},
       isPinned: false,
       poll: poll || undefined,
       replyTo: replyTo
         ? { id: replyTo.id, username: sanitizeText(replyTo.username), content: sanitizeText(replyTo.content).slice(0, 140) }
         : undefined,
+      ...(cleanForumPost ? { forumPost: cleanForumPost } : {}),
+      ...(cleanForwarded ? { forwardedFrom: cleanForwarded } : {}),
     };
 
     if (!messages[channelId]) {
@@ -302,6 +389,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     }
     messages[channelId].push(newMessage);
     saveChannelMessageUpsert(channelId, messages[channelId], newMessage);
+    onMessageCreated?.();
 
     emitToChannelAudience(channelId, serverId, 'new_message', newMessage);
 
@@ -336,7 +424,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       for (const targetName of uniqueTargets) {
         const acc = registeredAccounts.get(targetName);
         if (!acc) continue;
-        if (!canUserAccessChannel({ id: acc.id, accountId: acc.id, username: acc.username, role: acc.role }, channelId, servers, serverId)) {
+        if (!canUserAccessChannel({ id: acc.id, accountId: acc.id, username: acc.username, role: acc.role }, channelId, servers, serverId, messages[channelId], groupDms)) {
           continue;
         }
         const isOnlineActive = Array.from(activeUsers.values()).some(
@@ -519,7 +607,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     const { channelId, messageId, emoji } = check.data;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
     const msg = channelMsgs.find((m) => m.id === messageId);
     if (!msg) return;
 
@@ -549,7 +637,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     if (!user || !channelId || !messageId) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
     const msg = channelMsgs.find((m) => m.id === messageId);
     if (!msg) return;
 
@@ -572,7 +660,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     if (!user || !channelId || !messageId) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
     const msg = channelMsgs.find((m) => m.id === messageId);
     if (!msg) return;
     if (msg.author.username.toLowerCase() !== user.username.toLowerCase()) return;
@@ -595,7 +683,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     if (!user || !channelId || !messageId) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
     const idx = channelMsgs.findIndex((m) => m.id === messageId);
     if (idx === -1) return;
     const msg = channelMsgs[idx];
@@ -612,17 +700,95 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     emitToChannelAudience(channelId, msg.serverId, 'message_deleted', { channelId, messageId });
   });
 
+  socket.on('forward_message', (rawPayload: unknown) => {
+    const sender = activeUsers.get(socket.id);
+    if (!sender) return;
+    if (sender.role !== 'admin' && !socketEventLimiter.allow(socket.id, 'forward_message', 10, 30_000)) {
+      return socket.emit('chat_flood_error', { message: 'Çok sık mesaj iletiyorsunuz. Lütfen bekleyin.' });
+    }
+    const check = validatePayload<{
+      sourceChannelId: string;
+      messageId: string;
+      targetChannelId: string;
+      targetServerId?: string;
+    }>(rawPayload, {
+      sourceChannelId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      messageId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      targetChannelId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      targetServerId: { type: 'string', required: false, maxLen: 120 },
+    });
+    if (!check.ok) return;
+
+    const { sourceChannelId, messageId, targetChannelId, targetServerId } = check.data;
+    const sourceMsgs = messages[sourceChannelId];
+    if (!sourceMsgs) return;
+    if (!canUserAccessChannel(sender, sourceChannelId, servers, undefined, sourceMsgs, groupDms)) {
+      return socket.emit('server_action_error', { message: 'Kaynak mesaja erişim yetkiniz yok.' });
+    }
+    const srcMsg = sourceMsgs.find((m) => m.id === messageId);
+    if (!srcMsg) return;
+
+    if (!canUserAccessChannel(sender, targetChannelId, servers, targetServerId, messages[targetChannelId], groupDms)) {
+      return socket.emit('server_action_error', { message: 'Hedef kanala mesaj gönderme yetkiniz yok.' });
+    }
+
+    const destServer = findServerByChannelId(servers, targetChannelId, targetServerId);
+    const destChannel = destServer?.channels.find((c) => c.id === targetChannelId);
+    if (
+      destChannel?.type === 'announcement' &&
+      destServer &&
+      !checkServerPermission(sender, destServer, 'manage_channels')
+    ) {
+      return socket.emit('server_action_error', {
+        message: 'Duyuru kanalına yalnızca yetkililer mesaj iletebilir.',
+      });
+    }
+
+    const srcServer = findServerByChannelId(servers, sourceChannelId, srcMsg.serverId);
+    const srcChannel = srcServer?.channels.find((c) => c.id === sourceChannelId);
+    const destSrvId =
+      destServer?.id || (targetChannelId.startsWith('dm-') || targetChannelId.startsWith('gdm-') ? 'direct-messages' : targetServerId || 'direct-messages');
+
+    const forwardedMsg: Message = {
+      id: `msg-fwd-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      serverId: destSrvId,
+      channelId: targetChannelId,
+      author: {
+        id: sender.id,
+        username: sender.username,
+        avatar: sender.avatar,
+      },
+      content: srcMsg.content,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      attachments: Array.isArray(srcMsg.attachments) ? srcMsg.attachments.map((a) => ({ ...a })) : [],
+      reactions: {},
+      isPinned: false,
+      forwardedFrom: {
+        authorUsername: srcMsg.author.username,
+        channelName: srcChannel?.name,
+        serverName: srcServer?.name,
+        timestamp: srcMsg.timestamp,
+      },
+    };
+
+    if (!messages[targetChannelId]) messages[targetChannelId] = [];
+    messages[targetChannelId].push(forwardedMsg);
+    saveChannelMessageUpsert(targetChannelId, messages[targetChannelId], forwardedMsg);
+    onMessageCreated?.();
+    emitToChannelAudience(targetChannelId, destSrvId, 'new_message', forwardedMsg);
+  });
+
   socket.on('typing_start', ({ channelId }: { channelId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user || !channelId) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId])) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId], groupDms)) return;
     emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: true }, socket.id);
   });
 
   socket.on('typing_stop', ({ channelId }: { channelId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user || !channelId) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId])) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, messages[channelId], groupDms)) return;
     emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: false }, socket.id);
   });
 
@@ -631,7 +797,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     if (!user || !channelId || !messageId) return;
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
     const msg = channelMsgs.find((m) => m.id === messageId);
     if (!msg || !msg.poll || msg.poll.closed) return;
 
@@ -666,7 +832,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
 
     const channelMsgs = messages[channelId];
     if (!channelMsgs) return;
-    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs)) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
     const parent = channelMsgs.find((m) => m.id === parentMessageId);
     if (!parent) return;
 
@@ -715,7 +881,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     if (!check.ok) return;
     const cleanCh = check.data.channelId;
     const cleanMsgId = check.data.lastMessageId;
-    if (!canUserAccessChannel(reader, cleanCh, servers, undefined, messages[cleanCh])) return;
+    if (!canUserAccessChannel(reader, cleanCh, servers, undefined, messages[cleanCh], groupDms)) return;
 
     const acc = registeredAccounts.get(reader.username.toLowerCase());
     if (!acc) return;

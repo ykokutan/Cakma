@@ -1,10 +1,11 @@
-import React, { useRef, useState } from 'react';
+import React, { Suspense, lazy, useRef, useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { Server, ServerCategory, ServerRole, ServerPermission } from '../types';
 import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
 import { appConfirm, appPrompt, appToast } from '../utils/appDialogs';
+import { t } from '../utils/i18n';
 import {
   X,
   Settings,
@@ -25,7 +26,12 @@ import {
   FileJson,
   Bot,
   Image as ImageIcon,
+  Webhook,
 } from 'lucide-react';
+
+const WebhooksTab = lazy(() =>
+  import('./server/WebhooksTab').then((m) => ({ default: m.WebhooksTab }))
+);
 
 interface ServerSettingsModalProps {
   server: Server;
@@ -88,9 +94,10 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     hasServerPermission,
     addServerEmoji,
     deleteServerEmoji,
+    language,
   } = useSocket();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'welcome' | 'backup' | 'danger'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'voice' | 'security' | 'roles' | 'members' | 'welcome' | 'webhooks' | 'backup' | 'danger'>('overview');
 
   // Overview Form State
   const [name, setName] = useState(server.name);
@@ -233,12 +240,14 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
 
   const handleExportBackup = () => {
     const backup = {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       name: server.name,
       icon: server.icon,
       bannerGradient: server.bannerGradient,
       description: server.description,
+      category: server.category,
+      tags: server.tags,
       bitrateKbps: server.bitrateKbps,
       voiceRegion: server.voiceRegion,
       verificationLevel: server.verificationLevel,
@@ -247,9 +256,16 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       welcomeChannelId,
       welcomeMessage,
       autoRoleId,
+      categories: (server.categories || []).map((cat) => ({
+        id: cat.id,
+        name: cat.name,
+        position: cat.position,
+      })),
       channels: (server.channels || []).map((c) => ({
         name: c.name,
         type: c.type,
+        categoryId: c.categoryId ?? null,
+        position: c.position,
         topic: c.topic,
         bitrateKbps: c.bitrateKbps,
         userLimit: c.userLimit,
@@ -478,6 +494,19 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
               >
                 <Bot className="w-4 h-4 text-amber-400" />
                 <span>Karşılama & Auto-Rol</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('webhooks')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  activeTab === 'webhooks'
+                    ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <Webhook className="w-4 h-4 text-cyan-400" />
+                <span>{t(language, 'tabWebhooks')}</span>
               </button>
 
               <button
@@ -1558,6 +1587,16 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                 </button>
               )}
             </form>
+          )}
+
+          {/* 6b. WEBHOOKS TAB */}
+          {activeTab === 'webhooks' && (
+            <Suspense fallback={<div className="text-xs text-white/40 py-8">Yükleniyor...</div>}>
+              <WebhooksTab
+                server={server}
+                canManage={canManageServer || hasServerPermission('manage_channels')}
+              />
+            </Suspense>
           )}
 
           {/* 7. BACKUP & TEMPLATE TAB */}

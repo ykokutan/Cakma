@@ -1,6 +1,7 @@
 import type { Server as SocketIOServer, Socket } from 'socket.io';
 import type {
   Channel,
+  ChannelCategory,
   Message,
   RegisteredAccount,
   Server,
@@ -11,6 +12,7 @@ import type {
   User,
 } from '../types.js';
 import { getDefaultRoles } from '../mockData.js';
+import { SERVER_TEMPLATES } from './webhooksAndTemplatesRoutes.js';
 import { findServerMember, getPersistentUserId, isServerOwner } from '../utils/serverIdentity.js';
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
@@ -85,7 +87,8 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     const check = validatePayload<{
       serverId: string;
       name: string;
-      type: 'text' | 'voice';
+      type: 'text' | 'voice' | 'announcement' | 'forum';
+      categoryId?: string | null;
       isLocked?: boolean;
       password?: string;
       topic?: string;
@@ -95,7 +98,8 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     }>(rawPayload, {
       serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
       name: { type: 'string', required: true, minLen: 1, maxLen: 48 },
-      type: { type: 'string', required: true, enum: ['text', 'voice'] },
+      type: { type: 'string', required: true, enum: ['text', 'voice', 'announcement', 'forum'] },
+      categoryId: { type: 'string', required: false, maxLen: 120 },
       isLocked: { type: 'boolean', required: false },
       password: { type: 'string', required: false, maxLen: 64 },
       topic: { type: 'string', required: false, maxLen: 120 },
@@ -106,7 +110,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     if (!check.ok) {
       return socket.emit('server_action_error', { message: check.error });
     }
-    const { serverId, name, type, isLocked, password, topic, bitrateKbps, userLimit, isTempCreatorChannel } = check.data;
+    const { serverId, name, type, categoryId, isLocked, password, topic, bitrateKbps, userLimit, isTempCreatorChannel } = check.data;
     const targetServer = servers.find((s) => s.id === serverId);
     if (!targetServer) return;
 
@@ -119,12 +123,16 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       return socket.emit('server_action_error', { message: 'Geçerli bir kanal adı girin.' });
     }
     const cleanTopic = topic ? sanitizeText(topic.trim()).slice(0, 100) : undefined;
+    const validCatId =
+      categoryId && targetServer.categories?.some((c) => c.id === categoryId) ? categoryId : null;
 
     const newChannel: Channel = {
       id: `ch-${type}-${Date.now()}`,
       name: cleanName,
       type,
       serverId,
+      categoryId: validCatId,
+      position: targetServer.channels.length,
       isLocked: !!isLocked,
       password: password?.trim() || undefined,
       topic: cleanTopic,
@@ -229,13 +237,13 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     const check = validatePayload<{
       name: string;
       icon?: string;
-      template?: 'empty' | 'gaming' | 'friends' | 'work';
+      template?: 'empty' | 'gaming' | 'friends' | 'work' | 'community' | 'study';
       isPublic?: boolean;
       category?: ServerCategory;
     }>(rawPayload, {
       name: { type: 'string', required: true, minLen: 1, maxLen: 64 },
       icon: { type: 'string', required: false, maxLen: 16 },
-      template: { type: 'string', required: false, enum: ['empty', 'gaming', 'friends', 'work'] },
+      template: { type: 'string', required: false, enum: ['empty', 'gaming', 'friends', 'work', 'community', 'study'] },
       isPublic: { type: 'boolean', required: false },
       category: { type: 'string', required: false, maxLen: 32 },
     });
@@ -258,50 +266,45 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     ];
 
     const now = Date.now();
-    const channels: Channel[] =
-      template === 'gaming'
-        ? [
-            { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-2`, name: 'takim-arama', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-3`, name: 'klipler-medya', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-4`, name: 'Lobi', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-5`, name: 'Rekabetçi 1', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-6`, name: 'Rekabetçi 2', type: 'voice', serverId: newServerId },
-          ]
-        : template === 'friends'
-        ? [
-            { id: `ch-text-${now}-1`, name: 'sohbet', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-2`, name: 'muzik-linkler', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-3`, name: 'Kahve Odası', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-4`, name: 'Oyun & Film', type: 'voice', serverId: newServerId },
-          ]
-        : template === 'work'
-        ? [
-            { id: `ch-text-${now}-1`, name: 'duyurular', type: 'text', serverId: newServerId },
-            { id: `ch-text-${now}-2`, name: 'proje-notlari', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-3`, name: 'Toplantı Odası', type: 'voice', serverId: newServerId },
-            { id: `ch-voice-${now}-4`, name: 'Odaklanma', type: 'voice', serverId: newServerId },
-          ]
-        : [
-            { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId },
-            { id: `ch-voice-${now}-2`, name: 'Genel Ses', type: 'voice', serverId: newServerId },
-          ];
+    const tplDef = template && template !== 'empty' ? SERVER_TEMPLATES.find((t) => t.id === template) : undefined;
+    const categories: ChannelCategory[] = [];
+    let channels: Channel[];
+
+    if (tplDef) {
+      const keyToId = new Map<string, string>();
+      tplDef.categories.forEach((cat, idx) => {
+        const cid = `cat-${now}-${idx}`;
+        keyToId.set(cat.key, cid);
+        categories.push({ id: cid, name: cat.name, position: cat.position });
+      });
+      channels = tplDef.channels.map((ch, idx) => ({
+        id: `ch-${ch.type}-${now}-${idx}`,
+        name: ch.name,
+        type: ch.type,
+        serverId: newServerId,
+        categoryId: ch.categoryKey ? keyToId.get(ch.categoryKey) ?? null : null,
+        position: idx,
+        topic: ch.topic,
+        ...(ch.isTempCreatorChannel ? { isTempCreatorChannel: true } : {}),
+      }));
+    } else {
+      channels = [
+        { id: `ch-text-${now}-1`, name: 'genel', type: 'text', serverId: newServerId, position: 0 },
+        { id: `ch-voice-${now}-2`, name: 'Genel Ses', type: 'voice', serverId: newServerId, position: 1 },
+      ];
+    }
 
     const validCategories: ServerCategory[] = ['gaming', 'community', 'tech', 'music', 'education', 'other'];
     const inferredCategory: ServerCategory =
       category && validCategories.includes(category)
         ? category
-        : template === 'gaming'
-        ? 'gaming'
-        : template === 'work'
-        ? 'tech'
-        : 'community';
+        : tplDef?.category || 'community';
 
     const newServer: Server = {
       id: newServerId,
       name,
-      icon: icon || '⚡',
-      description: '',
+      icon: icon || tplDef?.icon || '⚡',
+      description: tplDef?.description || '',
       isPublic: isPublic !== false,
       category: inferredCategory,
       tags: [],
@@ -309,7 +312,9 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       bitrateKbps: 128,
       roles,
       members,
+      categories,
       channels,
+      ...(tplDef?.rules?.length ? { rules: tplDef.rules } : {}),
     };
 
     servers.push(newServer);
@@ -421,12 +426,23 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     if (backupData.verificationLevel) s.verificationLevel = backupData.verificationLevel;
     if (backupData.autoModEnabled !== undefined) s.autoModEnabled = backupData.autoModEnabled;
 
+    if (Array.isArray(backupData.categories)) {
+      s.categories = backupData.categories.slice(0, 20).map((cat: any, idx: number) => ({
+        id: cat.id || `cat-${Date.now()}-${idx}`,
+        name: sanitizeText(String(cat.name || 'Kategori')).trim().slice(0, 48) || 'Kategori',
+        position: typeof cat.position === 'number' ? cat.position : idx,
+        collapsedByDefault: Boolean(cat.collapsedByDefault),
+      }));
+    }
+
     if (Array.isArray(backupData.channels) && backupData.channels.length > 0) {
       s.channels = backupData.channels.map((ch: any, idx: number) => ({
         id: ch.id || `ch-${ch.type || 'text'}-${Date.now() + idx}`,
         name: ch.name || 'kanal',
-        type: ch.type === 'voice' ? 'voice' : 'text',
+        type: ch.type === 'voice' || ch.type === 'announcement' || ch.type === 'forum' ? ch.type : 'text',
         serverId: s.id,
+        categoryId: ch.categoryId || null,
+        position: typeof ch.position === 'number' ? ch.position : idx,
         topic: ch.topic || '',
         bitrateKbps: ch.bitrateKbps || s.bitrateKbps || 128,
         userLimit: ch.userLimit || 0,
@@ -762,39 +778,141 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     socket.emit('join_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
   });
 
-  socket.on(
-    'reorder_channels',
-    ({ serverId, channelId, direction }: { serverId: string; channelId: string; direction: 'up' | 'down' }) => {
-      const user = activeUsers.get(socket.id);
-      if (!user) return;
+  socket.on('create_category', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    if (!socketEventLimiter.allow(socket.id, 'create_category', 15, 30_000)) return;
+    const check = validatePayload<{ serverId: string; name: string }>(rawPayload, {
+      serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      name: { type: 'string', required: true, minLen: 1, maxLen: 48 },
+    });
+    if (!check.ok) return socket.emit('server_action_error', { message: check.error });
+    const s = servers.find((srv) => srv.id === check.data.serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) {
+      return socket.emit('server_action_error', { message: 'Kategori oluşturmak için Kanalları Yönet yetkiniz yok.' });
+    }
+    const cleanName = sanitizeText(check.data.name).trim().slice(0, 40);
+    if (!cleanName) return;
+    if (!s.categories) s.categories = [];
+    if (s.categories.length >= 25) {
+      return socket.emit('server_action_error', { message: 'Sunucu başına en fazla 25 kategori eklenebilir.' });
+    }
+    s.categories.push({
+      id: `cat-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: cleanName,
+      position: s.categories.length,
+    });
+    saveServers(servers);
+    emitServerUpdatedToMembers(s);
+  });
 
-      const s = servers.find((srv) => srv.id === serverId);
-      if (!s || !checkServerPermission(user, s, 'manage_channels')) return;
+  socket.on('rename_category', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const check = validatePayload<{ serverId: string; categoryId: string; name: string }>(rawPayload, {
+      serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      categoryId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      name: { type: 'string', required: true, minLen: 1, maxLen: 48 },
+    });
+    if (!check.ok) return;
+    const s = servers.find((srv) => srv.id === check.data.serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) return;
+    const cat = s.categories?.find((c) => c.id === check.data.categoryId);
+    if (!cat) return;
+    const cleanName = sanitizeText(check.data.name).trim().slice(0, 40);
+    if (!cleanName) return;
+    cat.name = cleanName;
+    saveServers(servers);
+    emitServerUpdatedToMembers(s);
+  });
 
-      const idx = s.channels.findIndex((c) => c.id === channelId);
-      if (idx === -1) return;
+  socket.on('delete_category', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    const check = validatePayload<{ serverId: string; categoryId: string }>(rawPayload, {
+      serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      categoryId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+    });
+    if (!check.ok) return;
+    const s = servers.find((srv) => srv.id === check.data.serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) return;
+    if (!s.categories) return;
+    s.categories = s.categories.filter((c) => c.id !== check.data.categoryId);
+    s.channels.forEach((ch) => {
+      if (ch.categoryId === check.data.categoryId) ch.categoryId = null;
+    });
+    saveServers(servers);
+    emitServerUpdatedToMembers(s);
+  });
 
-      const targetType = s.channels[idx].type;
-      const sameTypeIndices: number[] = [];
-      s.channels.forEach((ch, i) => {
-        if (ch.type === targetType) sameTypeIndices.push(i);
-      });
+  socket.on('reorder_channels', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return;
+    const payload = rawPayload as {
+      serverId?: string;
+      channelId?: string;
+      direction?: 'up' | 'down';
+      updates?: Array<{ channelId: string; categoryId?: string | null; position: number }>;
+      categoryOrder?: string[];
+    };
+    if (!payload.serverId) return;
 
-      const posInType = sameTypeIndices.indexOf(idx);
-      if (posInType === -1) return;
+    const s = servers.find((srv) => srv.id === payload.serverId);
+    if (!s || !checkServerPermission(user, s, 'manage_channels')) return;
 
-      const swapPosInType = direction === 'up' ? posInType - 1 : posInType + 1;
-      if (swapPosInType < 0 || swapPosInType >= sameTypeIndices.length) return;
-
-      const swapIdx = sameTypeIndices[swapPosInType];
-      const temp = s.channels[idx];
-      s.channels[idx] = s.channels[swapIdx];
-      s.channels[swapIdx] = temp;
-
+    if (Array.isArray(payload.updates)) {
+      const validCatSet = new Set((s.categories || []).map((c) => c.id));
+      for (const upd of payload.updates) {
+        if (!upd || typeof upd.channelId !== 'string') continue;
+        const ch = s.channels.find((c) => c.id === upd.channelId);
+        if (!ch) continue;
+        if (upd.categoryId === null || upd.categoryId === '') {
+          ch.categoryId = null;
+        } else if (typeof upd.categoryId === 'string' && validCatSet.has(upd.categoryId)) {
+          ch.categoryId = upd.categoryId;
+        }
+        if (typeof upd.position === 'number' && Number.isFinite(upd.position)) {
+          ch.position = Math.max(0, Math.floor(upd.position));
+        }
+      }
+      s.channels.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      if (Array.isArray(payload.categoryOrder) && Array.isArray(s.categories)) {
+        const orderMap = new Map<string, number>();
+        payload.categoryOrder.forEach((cid, i) => orderMap.set(cid, i));
+        s.categories.forEach((cat) => {
+          if (orderMap.has(cat.id)) cat.position = orderMap.get(cat.id)!;
+        });
+        s.categories.sort((a, b) => a.position - b.position);
+      }
       saveServers(servers);
       emitServerUpdatedToMembers(s);
+      return;
     }
-  );
+
+    if (!payload.channelId || !payload.direction) return;
+    const idx = s.channels.findIndex((c) => c.id === payload.channelId);
+    if (idx === -1) return;
+
+    const targetType = s.channels[idx].type;
+    const sameTypeIndices: number[] = [];
+    s.channels.forEach((ch, i) => {
+      if (ch.type === targetType) sameTypeIndices.push(i);
+    });
+
+    const posInType = sameTypeIndices.indexOf(idx);
+    if (posInType === -1) return;
+
+    const swapPosInType = payload.direction === 'up' ? posInType - 1 : posInType + 1;
+    if (swapPosInType < 0 || swapPosInType >= sameTypeIndices.length) return;
+
+    const swapIdx = sameTypeIndices[swapPosInType];
+    const temp = s.channels[idx];
+    s.channels[idx] = s.channels[swapIdx];
+    s.channels[swapIdx] = temp;
+
+    saveServers(servers);
+    emitServerUpdatedToMembers(s);
+  });
 
   socket.on('clear_channel_messages', ({ serverId, channelId, count }: { serverId: string; channelId: string; count: number }) => {
     const user = activeUsers.get(socket.id);

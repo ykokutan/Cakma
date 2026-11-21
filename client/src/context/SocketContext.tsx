@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
+import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, GroupDmRoom, ForumPostMeta, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -20,11 +20,13 @@ import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAt
 import { appToast } from '../utils/appDialogs';
 import type { MessageContextResponse, MessageSearchHit, OfflineQueuedMessage } from '../sharedContracts';
 import { useOfflineMessageQueue } from './hooks/useOfflineMessageQueue';
+import { useDesktopTrayAndShortcuts } from '../hooks/useDesktopTrayAndShortcuts';
 import { AuthContext } from './AuthContext';
 import { ChatContext } from './ChatContext';
 import type { ChatLayoutMode } from './ChatContext';
 export type { ChatLayoutMode };
-import { VoiceContext } from './VoiceContext';
+import { VoiceContext, type AudioWorkletTelemetry } from './VoiceContext';
+export type { AudioWorkletTelemetry };
 import { SocialContext } from './SocialContext';
 
 export interface UserAudioEq {
@@ -97,10 +99,19 @@ interface SocketContextType {
   removeFriend: (targetUsername: string) => void;
   fetchFriendsData: () => void;
 
-  // Direct Messaging & 1-on-1 Voice Calling
+  // Direct Messaging, Group DMs & 1-on-1 Voice Calling
   activeDMUser: User | null;
   openDirectMessage: (user: User) => void;
   closeDirectMessage: () => void;
+  groupDms: GroupDmRoom[];
+  activeGroupDm: GroupDmRoom | null;
+  openGroupDm: (groupId: string) => void;
+  createGroupDm: (name: string, memberUsernames: string[], icon?: string) => void;
+  addGroupDmMember: (groupId: string, username: string) => void;
+  removeGroupDmMember: (groupId: string, username: string) => void;
+  leaveGroupDm: (groupId: string) => void;
+  renameGroupDm: (groupId: string, name: string, icon?: string) => void;
+  joinGroupDmVoice: (group: GroupDmRoom) => void;
   directCall: DirectCallState | null;
   directCallToasts: DirectCallToast[];
   dismissDirectCallToast: (id: string) => void;
@@ -193,7 +204,8 @@ interface SocketContextType {
 
   selectServer: (serverId: string) => void;
   selectChannel: (channelId: string) => void;
-  sendMessage: (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }) => void;
+  sendMessage: (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }, options?: { forumPost?: ForumPostMeta }) => void;
+  forwardMessage: (sourceChannelId: string, messageId: string, targetChannelId: string, targetServerId?: string) => void;
   toggleRaiseHand: () => void;
   addServerEmoji: (serverId: string, name: string, url: string) => void;
   deleteServerEmoji: (serverId: string, emojiId: string) => void;
@@ -228,13 +240,17 @@ interface SocketContextType {
   sendScreenShareLaser: (presenterId: string, x: number, y: number) => void;
   setInputMode: (mode: 'vad' | 'ptt') => void;
   setPttKey: (key: string) => void;
-  createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work', options?: { isPublic?: boolean; category?: ServerCategory }) => void;
+  createServer: (name: string, icon?: string, template?: 'empty' | 'gaming' | 'friends' | 'work' | 'community' | 'study', options?: { isPublic?: boolean; category?: ServerCategory }) => void;
   shouldAutoOpenExplore: boolean;
   consumeAutoOpenExplore: () => void;
   fetchDiscoverableServers: () => Promise<DiscoverableServerSummary[]>;
   joinPublicServer: (serverId: string) => Promise<{ success: boolean; server?: Server; error?: string }>;
   leaveServer: (serverId: string) => Promise<{ success: boolean; error?: string }>;
-  createChannel: (name: string, type: 'text' | 'voice', options?: { isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
+  createChannel: (name: string, type: 'text' | 'voice' | 'announcement' | 'forum', options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
+  createCategory: (serverId: string, name: string) => void;
+  renameCategory: (serverId: string, categoryId: string, name: string) => void;
+  deleteCategory: (serverId: string, categoryId: string) => void;
+  reorderChannelsBatch: (serverId: string, updates: Array<{ channelId: string; categoryId?: string | null; position: number }>, categoryOrder?: string[]) => void;
   updateChannelSettings: (serverId: string, channelId: string, patch: { bitrateKbps?: number; userLimit?: number; topic?: string }) => void;
   serverMuteUser: (targetUserId: string, muted?: boolean, deafened?: boolean) => void;
   muteAllVoiceChannel: (channelId: string, muted: boolean) => void;
@@ -598,6 +614,17 @@ interface SocketContextType {
   setCustomTheme: (patch: Partial<CustomThemeConfig>) => void;
   aiNoiseSuppression: boolean;
   setAiNoiseSuppression: (val: boolean) => void;
+  voiceGateDb: number;
+  setVoiceGateDb: (db: number) => void;
+  noiseAggressiveness: number;
+  setNoiseAggressiveness: (val: number) => void;
+  liveAudioTelemetry: AudioWorkletTelemetry;
+  globalMuteShortcut: string;
+  setGlobalMuteShortcut: (key: string) => void;
+  globalDeafenShortcut: string;
+  setGlobalDeafenShortcut: (key: string) => void;
+  soundboardShortcut: string;
+  setSoundboardShortcut: (key: string) => void;
   hasMoreMessages: Record<string, boolean>;
   isLoadingOlderMessages: boolean;
   requestOlderMessages: (channelId: string) => void;
@@ -964,6 +991,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     content: string;
     attachments?: MessageAttachment[];
     replyTo?: { id: string; username: string; content: string };
+    forumPost?: ForumPostMeta;
   }>>([]);
   const [adminFeedback, setAdminFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uiTheme, setUiThemeState] = useState<UiThemeId>(() => {
@@ -1333,6 +1361,31 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_aiNoiseSuppression') : null;
     return val !== null ? val === 'true' : true;
   });
+  const [voiceGateDb, setVoiceGateDbState] = useState<number>(() => {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('dc_voice_gate_db') : null;
+    const num = raw !== null ? Number(raw) : -52;
+    return Number.isFinite(num) ? Math.max(-80, Math.min(-20, num)) : -52;
+  });
+  const [noiseAggressiveness, setNoiseAggressivenessState] = useState<number>(() => {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('dc_noise_agg') : null;
+    const num = raw !== null ? Number(raw) : 0.85;
+    return Number.isFinite(num) ? Math.max(0.2, Math.min(1.0, num)) : 0.85;
+  });
+  const [liveAudioTelemetry, setLiveAudioTelemetry] = useState<AudioWorkletTelemetry>({
+    db: -90,
+    noiseFloorDb: -60,
+    gateOpen: false,
+    gainReductionDb: 0,
+  });
+  const [globalMuteShortcut, setGlobalMuteShortcutState] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('dc_global_mute_shortcut')) || 'Ctrl+Shift+M';
+  });
+  const [globalDeafenShortcut, setGlobalDeafenShortcutState] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('dc_global_deafen_shortcut')) || 'Ctrl+Shift+D';
+  });
+  const [soundboardShortcut, setSoundboardShortcutState] = useState<string>(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('dc_soundboard_shortcut')) || 'Ctrl+Shift+B';
+  });
   const noiseWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   const noiseWorkletLoadedCtxRef = useRef<WeakSet<AudioContext>>(new WeakSet());
   const [lowLatencyAudio, setLowLatencyAudioState] = useState<boolean>(() => {
@@ -1406,8 +1459,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const animationFrameRef = useRef<number | null>(null);
   const micTestAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Direct Messaging & 1-on-1 Voice Calling State
+  // Direct Messaging, Group DMs & 1-on-1 Voice Calling State
   const [activeDMUser, setActiveDMUser] = useState<User | null>(null);
+  const [groupDms, setGroupDms] = useState<GroupDmRoom[]>([]);
+  const [activeGroupDmId, setActiveGroupDmId] = useState<string | null>(null);
   const [directCall, setDirectCall] = useState<DirectCallState | null>(null);
   const directCallRef = useRef<DirectCallState | null>(null);
   const directCallTimerRef = useRef<any>(null);
@@ -2321,11 +2376,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('get_server_leaderboard', { serverId });
   }, [socket]);
 
-  // Derived state (supports virtual Direct Messages server)
+  // Derived state (supports virtual Direct Messages & Group DMs server)
   const isDMMode = activeServerId === 'direct-messages';
-  const dmChannelId = (activeDMUser && currentUser)
-    ? buildPersistentDmChannelId(currentUser.username, activeDMUser.username)
-    : 'dm-general';
+  const activeGroupDm = useMemo(
+    () => (activeGroupDmId ? groupDms.find((g) => g.id === activeGroupDmId) || null : null),
+    [groupDms, activeGroupDmId]
+  );
+  const dmChannelId = activeGroupDm
+    ? activeGroupDm.id
+    : (activeDMUser && currentUser)
+      ? buildPersistentDmChannelId(currentUser.username, activeDMUser.username)
+      : 'dm-general';
 
   const virtualDMServer: Server | null = isDMMode ? {
     id: 'direct-messages',
@@ -2337,9 +2398,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     channels: [
       {
         id: dmChannelId,
-        name: activeDMUser ? activeDMUser.username : 'Sohbet',
+        name: activeGroupDm ? activeGroupDm.name : activeDMUser ? activeDMUser.username : 'Sohbet',
         type: 'text',
-        serverId: 'direct-messages'
+        serverId: 'direct-messages',
+        ...(activeGroupDm ? { topic: `${activeGroupDm.members.length} üye: ${activeGroupDm.members.join(', ')}` } : {}),
       }
     ]
   } : null;
@@ -2351,8 +2413,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [activeServer]);
   const activeChannel = isDMMode
     ? virtualDMServer?.channels[0] || null
-    : (activeServer?.channels.find(c => c.id === activeChannelId) || 
-       activeServer?.channels.find(c => c.type === 'text') || null);
+    : (activeServer?.channels.find(c => c.id === activeChannelId) ||
+       activeServer?.channels.find(c => c.type !== 'voice') || null);
   const activeChannelRef = useRef<Channel | null>(null);
   useEffect(() => {
     activeChannelRef.current = activeChannel;
@@ -2476,7 +2538,22 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 noiseWorkletLoadedCtxRef.current.add(ctx);
               }
               const workletNode = new AudioWorkletNode(ctx, 'spectral-noise-suppressor');
-              workletNode.port.postMessage({ enabled: true });
+              workletNode.port.postMessage({
+                enabled: true,
+                aggressiveness: noiseAggressiveness,
+                voiceGateDb,
+              });
+              workletNode.port.onmessage = (ev) => {
+                const msg = ev?.data;
+                if (msg && msg.type === 'level') {
+                  setLiveAudioTelemetry({
+                    db: Number(msg.db) || -90,
+                    noiseFloorDb: Number(msg.noiseFloorDb) || -60,
+                    gateOpen: Boolean(msg.gateOpen),
+                    gainReductionDb: Number(msg.gainReductionDb) || 0,
+                  });
+                }
+              };
               noiseWorkletNodeRef.current = workletNode;
               lastStage.connect(workletNode);
               lastStage = workletNode;
@@ -2598,12 +2675,45 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try { localStorage.setItem('dsp_aiNoiseSuppression', String(val)); } catch {}
     if (noiseWorkletNodeRef.current) {
       try {
-        noiseWorkletNodeRef.current.port.postMessage({ enabled: val });
+        noiseWorkletNodeRef.current.port.postMessage({ enabled: val, aggressiveness: noiseAggressiveness, voiceGateDb });
         return;
       } catch {}
     }
     if (localStreamRef.current) await getLocalAudioStream(true);
   };
+
+  const setVoiceGateDb = useCallback((db: number) => {
+    const clamped = Math.max(-80, Math.min(-20, Math.round(db)));
+    setVoiceGateDbState(clamped);
+    try { localStorage.setItem('dc_voice_gate_db', String(clamped)); } catch {}
+    try {
+      noiseWorkletNodeRef.current?.port.postMessage({ voiceGateDb: clamped });
+    } catch {}
+  }, []);
+
+  const setNoiseAggressiveness = useCallback((val: number) => {
+    const clamped = Math.max(0.2, Math.min(1.0, Math.round(val * 100) / 100));
+    setNoiseAggressivenessState(clamped);
+    try { localStorage.setItem('dc_noise_agg', String(clamped)); } catch {}
+    try {
+      noiseWorkletNodeRef.current?.port.postMessage({ aggressiveness: clamped });
+    } catch {}
+  }, []);
+
+  const setGlobalMuteShortcut = useCallback((key: string) => {
+    setGlobalMuteShortcutState(key);
+    try { localStorage.setItem('dc_global_mute_shortcut', key); } catch {}
+  }, []);
+
+  const setGlobalDeafenShortcut = useCallback((key: string) => {
+    setGlobalDeafenShortcutState(key);
+    try { localStorage.setItem('dc_global_deafen_shortcut', key); } catch {}
+  }, []);
+
+  const setSoundboardShortcut = useCallback((key: string) => {
+    setSoundboardShortcutState(key);
+    try { localStorage.setItem('dc_soundboard_shortcut', key); } catch {}
+  }, []);
 
   const setLowLatencyAudio = (val: boolean) => {
     setLowLatencyAudioState(val);
@@ -3091,10 +3201,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       messages: Record<string, Message[]>;
       hasMoreMessages?: Record<string, boolean>;
       readCursors?: Record<string, string>;
+      groupDms?: GroupDmRoom[];
     }) => {
       setCurrentUser(data.currentUser);
       setIsAuthenticated(data.currentUser.role === 'admin' || !!data.currentUser.email || !!savedAuth);
       setServers(data.servers);
+      if (Array.isArray(data.groupDms)) {
+        setGroupDms(data.groupDms);
+      }
       setOnlineUsers(data.onlineUsers);
       setMessagesMap(data.messages);
       if (data.hasMoreMessages) {
@@ -3122,12 +3236,27 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (data.servers.length > 0) {
         setActiveServerId(data.servers[0].id);
-        const firstTextCh = data.servers[0].channels.find(c => c.type === 'text');
+        const firstTextCh = data.servers[0].channels.find(c => c.type !== 'voice');
         if (firstTextCh) setActiveChannelId(firstTextCh.id);
       } else {
         setActiveServerId('direct-messages');
         setActiveChannelId('');
       }
+    });
+
+    newSocket.on('group_dms_updated', (rooms: GroupDmRoom[]) => {
+      if (!Array.isArray(rooms)) return;
+      setGroupDms(rooms);
+      setActiveGroupDmId((curr) => (curr && !rooms.some((r) => r.id === curr) ? null : curr));
+    });
+
+    newSocket.on('group_dm_created', ({ room }: { room?: GroupDmRoom }) => {
+      if (!room) return;
+      setGroupDms((prev) => (prev.some((g) => g.id === room.id) ? prev : [...prev, room]));
+      setActiveDMUser(null);
+      setActiveGroupDmId(room.id);
+      setActiveServerId('direct-messages');
+      setActiveChannelId(room.id);
     });
 
     newSocket.on('older_messages_loaded', ({ channelId, messages: olderMsgs, hasMore }: { channelId: string; messages: Message[]; hasMore: boolean }) => {
@@ -3356,8 +3485,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('server_created', (newServer: Server) => {
       setServers(prev => (prev.some(s => s.id === newServer.id) ? prev : [...prev, newServer]));
       setActiveDMUser(null);
+      setActiveGroupDmId(null);
       setActiveServerId(newServer.id);
-      const firstText = newServer.channels.find(c => c.type === 'text');
+      const firstText = newServer.channels.find(c => c.type !== 'voice');
       if (firstText) setActiveChannelId(firstText.id);
     });
 
@@ -3379,7 +3509,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           if (curr !== removedId) return curr;
           if (remaining.length > 0) {
             const nextSrv = remaining[0];
-            const firstText = nextSrv.channels.find(c => c.type === 'text');
+            const firstText = nextSrv.channels.find(c => c.type !== 'voice');
             setActiveChannelId(firstText?.id || '');
             return nextSrv.id;
           }
@@ -5127,8 +5257,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setSystemAnnouncement(null);
   };
 
-  // Direct Messaging Handlers
+  // Direct Messaging & Group DM Handlers
   const openDirectMessage = useCallback((user: User) => {
+    setActiveGroupDmId(null);
     setActiveDMUser(user);
     setActiveServerId('direct-messages');
     setUnreadDMByUser(prev => {
@@ -5152,14 +5283,53 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const closeDirectMessage = useCallback(() => {
     setActiveDMUser(null);
+    setActiveGroupDmId(null);
     if (servers[0]) {
       setActiveServerId(servers[0].id);
-      const firstTextChannel = servers[0].channels.find(c => c.type === 'text');
+      const firstTextChannel = servers[0].channels.find(c => c.type !== 'voice');
       if (firstTextChannel) {
         setActiveChannelId(firstTextChannel.id);
       }
     }
   }, [servers]);
+
+  const openGroupDm = useCallback((groupId: string) => {
+    setActiveDMUser(null);
+    setActiveGroupDmId(groupId);
+    setActiveServerId('direct-messages');
+    setActiveChannelId(groupId);
+    setUnreadCounts(prev => {
+      if (!prev[groupId]) return prev;
+      const next = { ...prev };
+      delete next[groupId];
+      return next;
+    });
+  }, []);
+
+  const createGroupDm = useCallback((name: string, memberUsernames: string[], icon?: string) => {
+    if (!socket) return;
+    socket.emit('group_dm_create', { name, memberUsernames, icon });
+  }, [socket]);
+
+  const addGroupDmMember = useCallback((groupId: string, username: string) => {
+    if (!socket) return;
+    socket.emit('group_dm_add_member', { groupId, username });
+  }, [socket]);
+
+  const removeGroupDmMember = useCallback((groupId: string, username: string) => {
+    if (!socket) return;
+    socket.emit('group_dm_remove_member', { groupId, username });
+  }, [socket]);
+
+  const leaveGroupDm = useCallback((groupId: string) => {
+    if (!socket) return;
+    socket.emit('group_dm_leave', { groupId });
+  }, [socket]);
+
+  const renameGroupDm = useCallback((groupId: string, name: string, icon?: string) => {
+    if (!socket) return;
+    socket.emit('group_dm_rename', { groupId, name, icon });
+  }, [socket]);
 
   const startDirectCall = useCallback(async (targetUser: User) => {
     if (!socket || !currentUser) return;
@@ -5679,11 +5849,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const selectServer = (serverId: string) => {
     if (serverId !== 'direct-messages') {
       setActiveDMUser(null);
+      setActiveGroupDmId(null);
     }
     setActiveServerId(serverId);
     const server = servers.find(s => s.id === serverId) || serversRef.current.find(s => s.id === serverId);
     if (server) {
-      const firstTextCh = server.channels.find(c => c.type === 'text');
+      const firstTextCh = server.channels.find(c => c.type !== 'voice');
       if (firstTextCh) setActiveChannelId(firstTextCh.id);
     }
   };
@@ -5704,14 +5875,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
-  const sendMessage = (content: string, attachments?: MessageAttachment[], replyTo?: { id: string; username: string; content: string }) => {
+  const sendMessage = (
+    content: string,
+    attachments?: MessageAttachment[],
+    replyTo?: { id: string; username: string; content: string },
+    options?: { forumPost?: ForumPostMeta }
+  ) => {
     if (!activeServer || !activeChannel) return;
     const payload = {
       serverId: activeServer.id,
       channelId: activeChannel.id,
       content,
       attachments,
-      replyTo
+      replyTo,
+      ...(options?.forumPost ? { forumPost: options.forumPost } : {}),
     };
     if (!socket || !socket.connected || !isAuthenticated) {
       if (attachments && attachments.length > 0) {
@@ -5723,6 +5900,16 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     socket.emit('send_message', payload);
   };
+
+  const forwardMessage = useCallback((
+    sourceChannelId: string,
+    messageId: string,
+    targetChannelId: string,
+    targetServerId?: string
+  ) => {
+    if (!socket || !sourceChannelId || !messageId || !targetChannelId) return;
+    socket.emit('forward_message', { sourceChannelId, messageId, targetChannelId, targetServerId });
+  }, [socket]);
 
   const markDmRead = useCallback((partnerUsername: string) => {
     if (!socket || !socket.connected || !partnerUsername) return;
@@ -6419,7 +6606,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const createServer = (
     name: string,
     icon?: string,
-    template?: 'empty' | 'gaming' | 'friends' | 'work',
+    template?: 'empty' | 'gaming' | 'friends' | 'work' | 'community' | 'study',
     options?: { isPublic?: boolean; category?: ServerCategory }
   ) => {
     if (!socket || !name.trim()) return;
@@ -6512,14 +6699,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const createChannel = (
     name: string,
-    type: 'text' | 'voice',
-    options?: { isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }
+    type: 'text' | 'voice' | 'announcement' | 'forum',
+    options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }
   ) => {
     if (!socket || !activeServer || !name.trim()) return;
     socket.emit('create_channel', {
       serverId: activeServer.id,
       name: name.trim(),
       type,
+      categoryId: options?.categoryId ?? undefined,
       isLocked: options?.isLocked,
       password: options?.password,
       topic: options?.topic,
@@ -6528,6 +6716,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isTempCreatorChannel: options?.isTempCreatorChannel,
     });
   };
+
+  const createCategory = useCallback((serverId: string, name: string) => {
+    if (!socket || !serverId || !name.trim()) return;
+    socket.emit('create_category', { serverId, name: name.trim() });
+  }, [socket]);
+
+  const renameCategory = useCallback((serverId: string, categoryId: string, name: string) => {
+    if (!socket || !serverId || !categoryId || !name.trim()) return;
+    socket.emit('rename_category', { serverId, categoryId, name: name.trim() });
+  }, [socket]);
+
+  const deleteCategory = useCallback((serverId: string, categoryId: string) => {
+    if (!socket || !serverId || !categoryId) return;
+    socket.emit('delete_category', { serverId, categoryId });
+  }, [socket]);
+
+  const reorderChannelsBatch = useCallback((
+    serverId: string,
+    updates: Array<{ channelId: string; categoryId?: string | null; position: number }>,
+    categoryOrder?: string[]
+  ) => {
+    if (!socket || !serverId || !Array.isArray(updates)) return;
+    socket.emit('reorder_channels', { serverId, updates, categoryOrder });
+  }, [socket]);
+
+  const joinGroupDmVoice = useCallback((group: GroupDmRoom) => {
+    if (!socket || !group?.voiceChannelId) return;
+    if (connectedVoiceChannelId === group.voiceChannelId) return;
+    lastVoiceChannelIdRef.current = group.voiceChannelId;
+    setVoicePasswordError(null);
+    cleanupWebRTC();
+    setConnectedVoiceChannelId(group.voiceChannelId);
+    socket.emit('join_voice', { channelId: group.voiceChannelId });
+  }, [socket, connectedVoiceChannelId]);
 
   const serverMuteUser = useCallback((targetUserId: string, muted?: boolean, deafened?: boolean) => {
     if (!socket || !targetUserId) return;
@@ -7208,33 +7430,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (cancelled) return;
 
       try {
-        const { register, unregisterAll } = await import('@tauri-apps/plugin-global-shortcut');
-        await unregisterAll().catch(() => {});
-        await register('CommandOrControl+Shift+M', (e) => {
-          if (e.state === 'Pressed') toggleMuteRef.current();
-        }).catch(() => {});
-        await register('CommandOrControl+Shift+D', (e) => {
-          if (e.state === 'Pressed') toggleDeafenRef.current();
-        }).catch(() => {});
-        await register('CommandOrControl+Shift+O', async (e) => {
-          if (e.state === 'Pressed') {
-            try {
-              const nextLocked = localStorage.getItem('dc_overlay_locked') !== '1';
-              localStorage.setItem('dc_overlay_locked', nextLocked ? '1' : '0');
-              const { invoke } = await import('@tauri-apps/api/core');
-              const { emit } = await import('@tauri-apps/api/event');
-              await invoke('set_overlay_ignore_cursor', { ignore: nextLocked });
-              await emit('overlay-lock-changed', nextLocked);
-            } catch {}
-          }
-        }).catch(() => {});
-      } catch {
-        // ignore
-      }
-
-      if (cancelled) return;
-
-      try {
         const { invoke } = await import('@tauri-apps/api/core');
         if (localStorage.getItem('dc_overlay_enabled') === 'true' && isAuthenticated) {
           invoke('set_overlay_window', { enabled: true }).catch(() => {});
@@ -7273,11 +7468,39 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cancelled = true;
       unlistenTrayFns.forEach((fn) => fn());
       if (gameTimer) clearInterval(gameTimer);
-      import('@tauri-apps/plugin-global-shortcut')
-        .then(({ unregisterAll }) => unregisterAll())
-        .catch(() => {});
     };
   }, [socket, isAuthenticated]);
+
+  const activeTrayVoiceChannelName = useMemo(() => {
+    if (!connectedVoiceChannelId) return undefined;
+    const srvCh = servers.flatMap((s) => s.channels).find((c) => c.id === connectedVoiceChannelId)?.name;
+    if (srvCh) return srvCh;
+    const gdm = groupDms.find((g) => g.voiceChannelId === connectedVoiceChannelId);
+    return gdm ? gdm.name : undefined;
+  }, [connectedVoiceChannelId, servers, groupDms]);
+
+  useDesktopTrayAndShortcuts({
+    isTauri:
+      typeof window !== 'undefined' &&
+      ('__TAURI_INTERNALS__' in window ||
+        window.location.hostname === 'tauri.localhost' ||
+        window.location.protocol === 'tauri:') &&
+      !window.location.search.includes('overlay=1'),
+    isAuthenticated,
+    inVoice: Boolean(connectedVoiceChannelId),
+    isMuted,
+    isDeafened,
+    status: currentUser?.status || 'online',
+    voiceChannelName: activeTrayVoiceChannelName,
+    globalMuteShortcut,
+    globalDeafenShortcut,
+    soundboardShortcut,
+    onToggleMute: toggleMute,
+    onToggleDeafen: toggleDeafen,
+    onTriggerSoundboard: () => {
+      window.dispatchEvent(new CustomEvent('cakma-open-soundboard'));
+    },
+  });
 
   // Emit speaker updates to Tauri Overlay window & handle overlay actions
   const emitOverlayStateRef = useRef<() => void>(() => {});
@@ -7461,10 +7684,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       removeFriend,
       fetchFriendsData,
 
-      // Direct Messaging & 1-on-1 Voice Calling
+      // Direct Messaging, Group DMs & 1-on-1 Voice Calling
       activeDMUser,
       openDirectMessage,
       closeDirectMessage,
+      groupDms,
+      activeGroupDm,
+      openGroupDm,
+      createGroupDm,
+      addGroupDmMember,
+      removeGroupDmMember,
+      leaveGroupDm,
+      renameGroupDm,
+      joinGroupDmVoice,
       directCall,
       directCallToasts,
       dismissDirectCallToast,
@@ -7526,6 +7758,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       selectServer,
       selectChannel,
       sendMessage,
+      forwardMessage,
       toggleRaiseHand,
       addServerEmoji,
       deleteServerEmoji,
@@ -7554,6 +7787,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setPttKey,
       createServer,
       createChannel,
+      createCategory,
+      renameCategory,
+      deleteCategory,
+      reorderChannelsBatch,
       updateProfile,
 
       // Server Roles & Detailed Settings
@@ -7586,6 +7823,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setStudioAudioDsp,
       aiNoiseSuppression,
       setAiNoiseSuppression,
+      voiceGateDb,
+      setVoiceGateDb,
+      noiseAggressiveness,
+      setNoiseAggressiveness,
+      liveAudioTelemetry,
+      globalMuteShortcut,
+      setGlobalMuteShortcut,
+      globalDeafenShortcut,
+      setGlobalDeafenShortcut,
+      soundboardShortcut,
+      setSoundboardShortcut,
       lowLatencyAudio,
       setLowLatencyAudio,
       userAudioEq,
@@ -7967,6 +8215,31 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       dmReadReceipts,
       shouldAutoOpenExplore,
       readCursors,
+      groupDms,
+      activeGroupDm,
+      openGroupDm,
+      createGroupDm,
+      addGroupDmMember,
+      removeGroupDmMember,
+      leaveGroupDm,
+      renameGroupDm,
+      joinGroupDmVoice,
+      forwardMessage,
+      createCategory,
+      renameCategory,
+      deleteCategory,
+      reorderChannelsBatch,
+      voiceGateDb,
+      setVoiceGateDb,
+      noiseAggressiveness,
+      setNoiseAggressiveness,
+      liveAudioTelemetry,
+      globalMuteShortcut,
+      setGlobalMuteShortcut,
+      globalDeafenShortcut,
+      setGlobalDeafenShortcut,
+      soundboardShortcut,
+      setSoundboardShortcut,
       requestPasswordResetCode,
       confirmPasswordReset,
       requestEmailChangeCode,
@@ -8050,6 +8323,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       messagesMap,
       onlineUsers,
       activeDMUser,
+      groupDms,
+      activeGroupDm,
       unreadCounts,
       mentionCounts,
       readCursors,
@@ -8063,7 +8338,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       selectChannel,
       openDirectMessage,
       closeDirectMessage,
+      openGroupDm,
+      createGroupDm,
+      addGroupDmMember,
+      removeGroupDmMember,
+      leaveGroupDm,
+      renameGroupDm,
       sendMessage,
+      forwardMessage,
       editMessage,
       deleteMessage,
       sendTyping,
@@ -8089,6 +8371,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       messagesMap,
       onlineUsers,
       activeDMUser,
+      groupDms,
+      activeGroupDm,
       unreadCounts,
       mentionCounts,
       readCursors,
@@ -8100,6 +8384,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       clearPendingJumpTarget,
       openDirectMessage,
       closeDirectMessage,
+      openGroupDm,
+      createGroupDm,
+      addGroupDmMember,
+      removeGroupDmMember,
+      leaveGroupDm,
+      renameGroupDm,
+      forwardMessage,
       editMessage,
       deleteMessage,
       sendTyping,
@@ -8138,7 +8429,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isPrioritySpeakerActive,
       prioritySpeakerUsername,
       ping,
+      voiceGateDb,
+      setVoiceGateDb,
+      noiseAggressiveness,
+      setNoiseAggressiveness,
+      liveAudioTelemetry,
+      globalMuteShortcut,
+      setGlobalMuteShortcut,
+      globalDeafenShortcut,
+      setGlobalDeafenShortcut,
+      soundboardShortcut,
+      setSoundboardShortcut,
       joinVoiceChannel,
+      joinGroupDmVoice,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
@@ -8168,6 +8471,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isPrioritySpeakerActive,
       prioritySpeakerUsername,
       ping,
+      voiceGateDb,
+      setVoiceGateDb,
+      noiseAggressiveness,
+      setNoiseAggressiveness,
+      liveAudioTelemetry,
+      globalMuteShortcut,
+      setGlobalMuteShortcut,
+      globalDeafenShortcut,
+      setGlobalDeafenShortcut,
+      soundboardShortcut,
+      setSoundboardShortcut,
+      joinGroupDmVoice,
       toggleRaiseHand,
       toggleWebcam,
       togglePrioritySpeaker,

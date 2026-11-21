@@ -1,4 +1,4 @@
-import type { Message, Server } from '../types.js';
+import type { GroupDmRoom, Message, Server } from '../types.js';
 import { isUserMemberOfServer } from './serverDiscovery.js';
 
 /** Encode a username segment into a reversible, separator-safe token for DM IDs. */
@@ -91,15 +91,34 @@ export function findServerByChannelId(
   return servers.find((s) => s.channels?.some((c) => c.id === channelId));
 }
 
+/** Determine whether a user belongs to a Group DM room (text `gdm-*` or voice `voice-gdm-*`). */
+export function isUserMemberOfGroupDm(
+  user: { username: string },
+  channelId: string,
+  groupDms?: GroupDmRoom[]
+): boolean {
+  if (!channelId || !Array.isArray(groupDms)) return false;
+  if (!channelId.startsWith('gdm-') && !channelId.startsWith('voice-gdm-')) return false;
+  const uname = String(user.username || '').trim().toLowerCase();
+  if (!uname) return false;
+  const room = groupDms.find((g) => g.id === channelId || g.voiceChannelId === channelId);
+  if (!room) return false;
+  return Array.isArray(room.members) && room.members.some((m) => m.toLowerCase() === uname);
+}
+
 /** Check whether a user is authorized to read/post/search inside a given channel. */
 export function canUserAccessChannel(
   user: { id?: string; accountId?: string; username: string; role?: string },
   channelId: string,
   servers: Server[],
   serverId?: string,
-  channelMessages?: Message[]
+  channelMessages?: Message[],
+  groupDms?: GroupDmRoom[]
 ): boolean {
   if (!channelId) return false;
+  if (channelId.startsWith('gdm-') || channelId.startsWith('voice-gdm-')) {
+    return isUserMemberOfGroupDm(user, channelId, groupDms);
+  }
   if (channelId.startsWith('dm-') || serverId === 'direct-messages') {
     return isUserParticipantInDm(user, channelId, channelMessages);
   }

@@ -558,6 +558,57 @@ export class SqliteStore {
     }
   }
 
+  backupToFile(destPath: string): { ok: boolean; bytes?: number; error?: string } {
+    if (!this.isActive() || !this.db) {
+      return { ok: false, error: 'SQLite depolama motoru aktif değil.' };
+    }
+    try {
+      const dir = path.dirname(destPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      if (fs.existsSync(destPath)) {
+        fs.unlinkSync(destPath);
+      }
+      const escaped = destPath.replace(/'/g, "''");
+      this.db.exec(`VACUUM INTO '${escaped}'`);
+      const st = fs.statSync(destPath);
+      return { ok: true, bytes: st.size };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'SQLite yedekleme başarısız.' };
+    }
+  }
+
+  getAllReferencedAttachmentUrls(): string[] {
+    if (!this.isActive() || !this.db) return [];
+    const out = new Set<string>();
+    const urlRegex = /(?:\/api\/sounds\/|\/uploads\/)([a-zA-Z0-9._-]+)/g;
+    try {
+      const rows = this.db
+        .prepare("SELECT payload FROM messages WHERE payload LIKE '%/uploads/%' OR payload LIKE '%/api/sounds/%'")
+        .all() as Array<{ payload?: string }>;
+      for (const row of rows) {
+        if (!row?.payload) continue;
+        try {
+          const msg = JSON.parse(row.payload) as Message;
+          if (Array.isArray(msg.attachments)) {
+            for (const att of msg.attachments) {
+              if (typeof att?.url === 'string' && att.url) out.add(att.url);
+            }
+          }
+          if (typeof msg.content === 'string' && msg.content) {
+            urlRegex.lastIndex = 0;
+            let m: RegExpExecArray | null;
+            while ((m = urlRegex.exec(msg.content)) !== null) {
+              if (m[0]) out.add(m[0]);
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+    return Array.from(out);
+  }
+
   close(): void {
     if (this.db) {
       try {

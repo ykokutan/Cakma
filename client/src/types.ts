@@ -76,12 +76,21 @@ export interface User {
   e2eePublicKey?: string;
 }
 
+export interface EncryptedAttachmentMeta {
+  iv: string;
+  origName: string;
+  origType: string;
+  origSize: number;
+  v: 1;
+}
+
 export interface MessageAttachment {
   id: string;
   name: string;
   size: number;
   type: string;
   url: string;
+  e2ee?: EncryptedAttachmentMeta;
 }
 
 export interface DirectCallState {
@@ -249,6 +258,60 @@ export interface PollData {
   totalVotes?: number;
 }
 
+export interface ChannelCategory {
+  id: string;
+  name: string;
+  position: number;
+  collapsedByDefault?: boolean;
+}
+
+export interface ServerWebhook {
+  id: string;
+  serverId: string;
+  channelId: string;
+  name: string;
+  avatar?: string;
+  token: string;
+  createdBy: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface GroupDmRoom {
+  id: string;
+  name: string;
+  icon?: string;
+  ownerUsername: string;
+  members: string[];
+  createdAt: string;
+  voiceChannelId?: string;
+}
+
+export interface ForwardedFromMeta {
+  authorUsername: string;
+  channelName?: string;
+  serverName?: string;
+  timestamp?: string;
+}
+
+export interface ForumPostMeta {
+  title: string;
+  tags?: string[];
+  pinned?: boolean;
+  locked?: boolean;
+}
+
+export interface MetricsHistoryPoint {
+  ts: number;
+  memoryRssMb: number;
+  memoryHeapUsedMb: number;
+  onlineUsers: number;
+  activeVoiceRooms: number;
+  messagesPerMin: number;
+  eventLoopLagMs: number;
+  pendingStorageWrites: number;
+}
+
 export interface ChannelStickyNotice {
   text: string;
   author: string;
@@ -258,8 +321,10 @@ export interface ChannelStickyNotice {
 export interface Channel {
   id: string;
   name: string;
-  type: 'text' | 'voice';
+  type: 'text' | 'voice' | 'announcement' | 'forum';
   serverId: string;
+  categoryId?: string | null;
+  position?: number;
   topic?: string;
   bitrateKbps?: number;
   userLimit?: number;
@@ -299,7 +364,7 @@ export interface DiscoverableServerSummary {
   voiceActiveCount: number;
   textChannelCount: number;
   voiceChannelCount: number;
-  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' }>;
+  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' }>;
   bitrateKbps: number;
   sfuMode: 'auto' | 'p2p' | 'sfu';
   isJoined: boolean;
@@ -317,6 +382,7 @@ export interface Server {
   category?: ServerCategory;
   tags?: string[];
   ownerId: string;
+  categories?: ChannelCategory[];
   channels: Channel[];
   roles: ServerRole[];
   members: ServerMember[];
@@ -399,6 +465,8 @@ export interface Message {
   isEdited?: boolean;
   poll?: PollData;
   replyTo?: { id: string; username: string; content: string };
+  forwardedFrom?: ForwardedFromMeta;
+  forumPost?: ForumPostMeta;
   threadMessages?: ThreadMessage[];
 }
 

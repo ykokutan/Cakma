@@ -13,13 +13,14 @@ import { MessageSkeletonList } from './chat/MessageSkeletonList';
 import { extractMessageEpochMs, formatDateDividerLabel, getLocalDayKey } from '../utils/chatDateHelpers';
 import { isE2eeCiphertext, encryptDmMessage, decryptDmMessage } from '../utils/e2ee';
 import { t } from '../utils/i18n';
-import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
+import { uploadAttachmentFile, uploadDataUrlAttachment, uploadEncryptedAttachmentFile } from '../utils/uploadAttachment';
 import { resolveMediaUrl } from '../utils/authFetch';
 import { appConfirm, appToast } from '../utils/appDialogs';
 import { ChatLightbox } from './ChatLightbox';
 import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
 import { computeVirtualWindow } from '../utils/virtualWindow';
 import { classifyConnectionQuality, formatCallDuration } from '../utils/remoteAssistHelpers';
+import { EncryptedAttachmentView } from './chat/EncryptedAttachmentView';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -35,8 +36,11 @@ const RemoteAssistModal = lazy(() => import('./RemoteAssistModal').then((m) => (
 const GlobalInboxModal = lazy(() => import('./GlobalInboxModal').then((m) => ({ default: m.GlobalInboxModal })));
 const ServerEventsModal = lazy(() => import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal })));
 const E2eeSafetyModal = lazy(() => import('./chat/E2eeSafetyModal').then((m) => ({ default: m.E2eeSafetyModal })));
+const ForumChannelView = lazy(() => import('./chat/ForumChannelView').then((m) => ({ default: m.ForumChannelView })));
+const ForwardMessageModal = lazy(() => import('./chat/ForwardMessageModal').then((m) => ({ default: m.ForwardMessageModal })));
 import {
   DirectScreenShareOptions,
+  Message,
   MessageAttachment,
   RemoteAssistPermissions,
   User,
@@ -100,6 +104,11 @@ import {
   BellOff,
   LayoutGrid,
   MoreHorizontal,
+  Megaphone,
+  MessagesSquare,
+  Forward,
+  UserPlus,
+  LogOut,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -131,6 +140,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     currentUser,
     currentServerHost,
     activeDMUser,
+    activeGroupDm,
+    addGroupDmMember,
+    leaveGroupDm,
+    joinGroupDmVoice,
+    friends,
+    connectedVoiceChannelId,
+    leaveVoiceChannel,
     startDirectCall,
     directCall,
     acceptDirectCall,
@@ -315,8 +331,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [remoteAssist.status]);
 
-  const activeDraftKey = activeChannel?.id || (activeDMUser ? `dm:${activeDMUser.username.toLowerCase()}` : null);
+  const activeDraftKey =
+    activeChannel?.id ||
+    (activeGroupDm
+      ? activeGroupDm.id
+      : activeDMUser
+      ? `dm:${activeDMUser.username.toLowerCase()}`
+      : null);
   const [inputText, setInputText] = useState(() => getDraft(activeDraftKey));
+  const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
+  const [isAddGroupMemberOpen, setIsAddGroupMemberOpen] = useState(false);
+  const [newGroupMemberName, setNewGroupMemberName] = useState('');
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -337,6 +362,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setVisibleMsgCount(80);
     setInputText(getDraft(activeDraftKey));
     setEditingMsgId(null);
+    setIsAddGroupMemberOpen(false);
   }, [activeDraftKey]);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
@@ -363,11 +389,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   showScrollBottomRef.current = showScrollBottom;
 
   useEffect(() => {
-    if (!isNotifMenuOpen && !isToolsMenuOpen && !openActionMsgId) return;
+    if (!isNotifMenuOpen && !isToolsMenuOpen && !openActionMsgId && !isAddGroupMemberOpen) return;
     const handleClose = () => {
       setIsNotifMenuOpen(false);
       setIsToolsMenuOpen(false);
       setOpenActionMsgId(null);
+      setIsAddGroupMemberOpen(false);
     };
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') handleClose();
@@ -378,7 +405,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       window.removeEventListener('click', handleClose);
       window.removeEventListener('keydown', handleEsc);
     };
-  }, [isNotifMenuOpen, isToolsMenuOpen, openActionMsgId]);
+  }, [isNotifMenuOpen, isToolsMenuOpen, openActionMsgId, isAddGroupMemberOpen]);
 
   useEffect(() => {
     const el = composerRef.current;
@@ -658,7 +685,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     prevMsgCountRef.current = messages.length;
   }, [messages, activeChannel?.id, currentUser?.id]);
 
-  if (activeServer?.id === 'direct-messages' && !activeDMUser) {
+  if (activeServer?.id === 'direct-messages' && !activeDMUser && !activeGroupDm) {
     return (
       <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/40 text-xs">Yükleniyor...</div>}>
         <FriendsDashboard
@@ -715,12 +742,35 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     );
   }
 
-  const isDM = activeServer.id === 'direct-messages';
+  const isDirectSpace = activeServer.id === 'direct-messages';
+  const isGroupDM = Boolean(isDirectSpace && activeGroupDm);
+  const isDM = isDirectSpace && !isGroupDM;
 
-  // Find partner for DM
+  // Find partner for 1-on-1 DM
   const dmPartner = isDM
     ? activeDMUser || onlineUsers.find((u) => u.id !== currentUser?.id)
     : null;
+  const dmPeerPublicKey = isDM
+    ? dmPartner?.e2eePublicKey ||
+      onlineUsers.find((u) => u.id === dmPartner?.id || u.username === dmPartner?.username)?.e2eePublicKey
+    : undefined;
+
+  const canManageChannels = Boolean(
+    !isDirectSpace &&
+    currentUser &&
+    (
+      isUserServerOwner(currentUser, activeServer) ||
+      currentUser.role === 'admin' ||
+      activeServer.members?.some((m) => {
+        if (m.username.toLowerCase() !== currentUser.username.toLowerCase()) return false;
+        return m.roleIds.some((rid) => {
+          const role = activeServer.roles?.find((r) => r.id === rid);
+          return role?.permissions.includes('manage_server') || role?.permissions.includes('manage_channels');
+        });
+      })
+    )
+  );
+  const isAnnouncementReadOnly = !isDirectSpace && activeChannel.type === 'announcement' && !canManageChannels;
 
   const getAuthorColor = (authorUsername: string): string => {
     if (!activeServer || !activeServer.roles || !activeServer.members) return '#94a3b8';
@@ -735,6 +785,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const submitCurrentMessage = async () => {
+    if (isAnnouncementReadOnly) return;
     if (slowmodeRemaining > 0) return;
     if (!inputText.trim() && pendingAttachments.length === 0) return;
     const finalMessage = inputText.trim();
@@ -754,18 +805,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         setInputText('');
         return;
       }
-      if (cmd === '/anket' && !isDM) {
+      if (cmd === '/anket' && !isDirectSpace) {
         setInputText('');
         setIsPollModalOpen(true);
         return;
       }
-      if (cmd === '/temizle' && activeServer && activeChannel && !isDM) {
+      if (cmd === '/temizle' && activeServer && activeChannel && !isDirectSpace) {
         const count = Math.min(Math.max(parseInt(args[0] || '10', 10) || 10, 1), 100);
         clearChannelMessages(activeServer.id, activeChannel.id, count);
         setInputText('');
         return;
       }
-      if (cmd === '/davet' && activeServer && !isDM) {
+      if (cmd === '/davet' && activeServer && !isDirectSpace) {
         setInputText('');
         const inv = await createServerInvite(activeServer.id, 0, 0);
         if (inv?.code) {
@@ -842,11 +893,25 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         const useWebp = webpUrl.startsWith('data:image/webp');
         const dataUrl = useWebp ? webpUrl : canvas.toDataURL('image/png');
         const ext = useWebp ? 'webp' : 'png';
-        const uploaded = await uploadDataUrlAttachment(currentServerHost, {
-          name: `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.${ext}`,
-          type: useWebp ? 'image/webp' : 'image/png',
-          dataUrl,
-        });
+        const mime = useWebp ? 'image/webp' : 'image/png';
+        const shotName = `ekran-goruntusu-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.${ext}`;
+        let uploaded: MessageAttachment;
+        if (isDM && dmE2eeEnabled && dmPeerPublicKey && currentUser?.username) {
+          const blob = await (await fetch(dataUrl)).blob();
+          const shotFile = new File([blob], shotName, { type: mime });
+          uploaded = await uploadEncryptedAttachmentFile(
+            currentServerHost,
+            shotFile,
+            currentUser.username,
+            dmPeerPublicKey
+          );
+        } else {
+          uploaded = await uploadDataUrlAttachment(currentServerHost, {
+            name: shotName,
+            type: mime,
+            dataUrl,
+          });
+        }
         setPendingAttachments((prev) => [...prev, uploaded]);
       }
       stream.getTracks().forEach((t) => t.stop());
@@ -862,9 +927,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const processFiles = (files: FileList | File[]) => {
+    const useE2ee = Boolean(isDM && dmE2eeEnabled && dmPeerPublicKey && currentUser?.username);
     Array.from(files).forEach(async (file) => {
       try {
-        const newAtt = await uploadAttachmentFile(currentServerHost, file);
+        const newAtt =
+          useE2ee && currentUser?.username && dmPeerPublicKey
+            ? await uploadEncryptedAttachmentFile(
+                currentServerHost,
+                file,
+                currentUser.username,
+                dmPeerPublicKey
+              )
+            : await uploadAttachmentFile(currentServerHost, file);
         setPendingAttachments((prev) => [...prev, newAtt]);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : '';
@@ -1004,13 +1078,50 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 </span>
               </div>
             </button>
+          ) : isGroupDM && activeGroupDm ? (
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-400/35 flex items-center justify-center text-sm shrink-0">
+                {activeGroupDm.icon || '👥'}
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-semibold text-white text-sm tracking-tight truncate">
+                    {activeGroupDm.name}
+                  </h3>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/25 text-indigo-200 font-mono shrink-0">
+                    GRUP
+                  </span>
+                </div>
+                <span className="text-[11px] text-white/45 block truncate max-w-xs">
+                  {activeGroupDm.members.length} {t(language, 'membersCount')}: {activeGroupDm.members.join(', ')}
+                </span>
+              </div>
+            </div>
           ) : (
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/60 shrink-0">
-                <Hash className="w-4 h-4" />
+                {activeChannel.type === 'announcement' ? (
+                  <Megaphone className="w-4 h-4 text-amber-400" />
+                ) : activeChannel.type === 'forum' ? (
+                  <MessagesSquare className="w-4 h-4 text-cyan-400" />
+                ) : (
+                  <Hash className="w-4 h-4" />
+                )}
               </div>
               <div className="min-w-0">
-                <h3 className="font-semibold text-white text-sm tracking-tight truncate">{activeChannel.name}</h3>
+                <div className="flex items-center gap-1.5">
+                  <h3 className="font-semibold text-white text-sm tracking-tight truncate">{activeChannel.name}</h3>
+                  {activeChannel.type === 'announcement' && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-amber-500/20 border border-amber-400/30 text-amber-300 font-bold shrink-0">
+                      Duyuru
+                    </span>
+                  )}
+                  {activeChannel.type === 'forum' && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 border border-cyan-400/30 text-cyan-300 font-bold shrink-0">
+                      Forum
+                    </span>
+                  )}
+                </div>
                 <span className="text-[11px] text-white/40 hidden sm:inline">
                   {activeServer.name}
                 </span>
@@ -1021,6 +1132,137 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
         {/* Header Action Icons (Primary + Clean Tools Overflow) */}
         <div className="flex items-center gap-1 sm:gap-1.5 text-white/60 shrink-0">
+          {isGroupDM && activeGroupDm && (() => {
+            const gdmVoiceId = activeGroupDm.voiceChannelId || `voice-${activeGroupDm.id}`;
+            const inThisGroupVoice = connectedVoiceChannelId === gdmVoiceId;
+            const addCandidates = Array.from(
+              new Set([
+                ...friends.map((f) => f.username),
+                ...onlineUsers.map((u) => u.username),
+              ])
+            ).filter(
+              (uname) =>
+                uname.toLowerCase() !== currentUser?.username?.toLowerCase() &&
+                !activeGroupDm.members.some((m) => m.toLowerCase() === uname.toLowerCase())
+            );
+            return (
+              <div className="flex items-center gap-1.5 mr-1">
+                {inThisGroupVoice ? (
+                  <button
+                    type="button"
+                    onClick={leaveVoiceChannel}
+                    className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-red-500/20 hover:bg-red-500 border border-red-400/40 text-red-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                    title="Grup Sesli Aramadan Ayrıl"
+                  >
+                    <PhoneOff className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Aramada</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => joinGroupDmVoice(activeGroupDm)}
+                    className="px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500 border border-emerald-400/30 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                    title={t(language, 'groupVoiceCall')}
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{t(language, 'groupVoiceCall')}</span>
+                  </button>
+                )}
+
+                <div className="relative" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddGroupMemberOpen((v) => !v);
+                      setIsNotifMenuOpen(false);
+                      setIsToolsMenuOpen(false);
+                      setOpenActionMsgId(null);
+                    }}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+                      isAddGroupMemberOpen ? 'ui-accent-soft text-white' : 'hover:bg-white/10 text-indigo-300'
+                    }`}
+                    title={t(language, 'addMember')}
+                    aria-label={t(language, 'addMember')}
+                  >
+                    <UserPlus className="w-4 h-4" />
+                  </button>
+                  {isAddGroupMemberOpen && (
+                    <div className="absolute right-0 top-11 z-50 w-64 rounded-2xl ios-glass border border-white/15 bg-[#12141e]/95 shadow-2xl p-2.5 text-xs text-white space-y-2 animate-fade-in">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-white/55 px-1">
+                        {t(language, 'addMember')}
+                      </div>
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const trimmed = newGroupMemberName.trim();
+                          if (!trimmed) return;
+                          addGroupDmMember(activeGroupDm.id, trimmed);
+                          setNewGroupMemberName('');
+                          setIsAddGroupMemberOpen(false);
+                        }}
+                        className="flex items-center gap-1.5"
+                      >
+                        <input
+                          type="text"
+                          value={newGroupMemberName}
+                          onChange={(e) => setNewGroupMemberName(e.target.value)}
+                          placeholder="Kullanıcı adı..."
+                          className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-400"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!newGroupMemberName.trim()}
+                          className="px-2.5 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold disabled:opacity-40"
+                        >
+                          Ekle
+                        </button>
+                      </form>
+                      {addCandidates.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1 pt-1 border-t border-white/10">
+                          {addCandidates.slice(0, 8).map((uname) => (
+                            <button
+                              key={uname}
+                              type="button"
+                              onClick={() => {
+                                addGroupDmMember(activeGroupDm.id, uname);
+                                setIsAddGroupMemberOpen(false);
+                              }}
+                              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition"
+                            >
+                              <span className="truncate font-medium">@{uname}</span>
+                              <Plus className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      await appConfirm({
+                        title: t(language, 'leaveGroup'),
+                        message: `"${activeGroupDm.name}" grubundan ayrılmak istediğinize emin misiniz?`,
+                        danger: true,
+                        confirmLabel: t(language, 'leaveGroup'),
+                      })
+                    ) {
+                      leaveGroupDm(activeGroupDm.id);
+                    }
+                  }}
+                  className="w-8 h-8 rounded-full hover:bg-rose-500/20 text-rose-400 flex items-center justify-center transition"
+                  title={t(language, 'leaveGroup')}
+                  aria-label={t(language, 'leaveGroup')}
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          })()}
+
           {isDM && dmPartner && (
             directCall &&
             (directCall.partner.id === dmPartner.id ||
@@ -1057,6 +1299,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 setIsNotifMenuOpen((v) => !v);
                 setIsToolsMenuOpen(false);
                 setOpenActionMsgId(null);
+                setIsAddGroupMemberOpen(false);
               }}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
                 isNotifMenuOpen
@@ -1165,6 +1408,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 setIsToolsMenuOpen((v) => !v);
                 setIsNotifMenuOpen(false);
                 setOpenActionMsgId(null);
+                setIsAddGroupMemberOpen(false);
               }}
               className={`relative w-8 h-8 rounded-full flex items-center justify-center transition ${
                 isToolsMenuOpen ? 'ui-accent-soft text-white border' : 'hover:bg-white/10'
@@ -1222,7 +1466,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   <Gamepad2 className="w-4 h-4 text-purple-400 shrink-0" />
                   <span>Aktiviteler &amp; Mini Oyunlar</span>
                 </button>
-                {activeServer && !isDM && (
+                {activeServer && !isDirectSpace && (
                   <>
                     <button
                       type="button"
@@ -1846,7 +2090,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       </Suspense>
 
       {/* Channel Sticky Notice & Topic Bar */}
-      {activeServer.id !== 'direct-messages' && activeChannel.type === 'text' && (
+      {activeServer.id !== 'direct-messages' && (
         <div className="relative z-10 border-b border-white/[0.06] bg-[#141418]/90 backdrop-blur-md px-6 py-2 flex items-center justify-between text-xs transition select-none">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {activeChannel.stickyNotice ? (
@@ -1907,6 +2151,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
+      {!isDirectSpace && activeChannel.type === 'forum' ? (
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center text-white/40 text-xs">
+              Forum yükleniyor...
+            </div>
+          }
+        >
+          <ForumChannelView
+            channel={activeChannel}
+            messages={filteredMessages}
+            onOpenThread={(msgId) => setActiveThreadMsgId(msgId)}
+            onAuthorClick={handleAuthorClick}
+          />
+        </Suspense>
+      ) : (
+        <>
       {/* Messages Scroll Area */}
       <div
         ref={scrollContainerRef}
@@ -1918,17 +2179,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         {/* Welcome Banner & Guided Empty State */}
         <div className="pt-2 pb-6 border-b border-white/[0.06] space-y-2.5 select-none max-w-lg">
           <div className="w-14 h-14 rounded-2xl ui-accent-soft border flex items-center justify-center">
-            {isDM ? <MessageCircle className="w-7 h-7" /> : <Hash className="w-7 h-7" />}
+            {isGroupDM && activeGroupDm ? (
+              <span className="text-2xl">{activeGroupDm.icon || '👥'}</span>
+            ) : isDM ? (
+              <MessageCircle className="w-7 h-7" />
+            ) : activeChannel.type === 'announcement' ? (
+              <Megaphone className="w-7 h-7 text-amber-300" />
+            ) : (
+              <Hash className="w-7 h-7" />
+            )}
           </div>
           <h2 className="text-2xl font-bold text-white tracking-tight">
-            {isDM ? `${dmPartner?.username || 'Sohbet'}` : `#${activeChannel.name}`}
+            {isGroupDM && activeGroupDm
+              ? activeGroupDm.name
+              : isDM
+              ? `${dmPartner?.username || 'Sohbet'}`
+              : `#${activeChannel.name}`}
           </h2>
           <p className="text-white/50 text-xs leading-relaxed">
-            {isDM
+            {isGroupDM && activeGroupDm
+              ? `${activeGroupDm.members.length} üyeli özel grup sohbeti: ${activeGroupDm.members.join(', ')}`
+              : isDM
               ? `Bu, ${dmPartner?.username || 'bu kullanıcı'} ile olan özel direkt mesajlaşma geçmişiniz. Mesaj gönderip dosya ve resim paylaşabilirsiniz.`
+              : activeChannel.type === 'announcement'
+              ? 'Bu bir duyuru kanalıdır. Önemli güncellemeler ve duyurular burada yayınlanır.'
               : 'Bu kanalın başlangıcındasınız. Sohbet etmek ve düşüncelerinizi paylaşmak için bir mesaj yazın.'}
           </p>
-          {filteredMessages.length === 0 && !searchQuery.trim() && (
+          {filteredMessages.length === 0 && !searchQuery.trim() && !isAnnouncementReadOnly && (
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <button
                 type="button"
@@ -1937,7 +2214,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               >
                 {t(language, 'writeFirstMessage')}
               </button>
-              {!isDM && (
+              {!isDirectSpace && (
                 <button
                   type="button"
                   onClick={() => setIsPollModalOpen(true)}
@@ -2115,7 +2392,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                               </button>
                             ))}
                           </div>
-                          {!isDM && (
+                          {!isDirectSpace && (
                             <button
                               type="button"
                               onClick={() => {
@@ -2128,6 +2405,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                               <span>Alt Konu Aç</span>
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setForwardingMessage(msg);
+                              setOpenActionMsgId(null);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left text-indigo-300"
+                          >
+                            <Forward className="w-3.5 h-3.5" />
+                            <span>{t(language, 'forwardMessage')}</span>
+                          </button>
                           {msg.content && (
                             <button
                               type="button"
@@ -2204,6 +2492,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
                 const bodyInnerNode = (
                   <>
+                    {msg.forwardedFrom && (
+                      <div className="mb-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-500/15 border border-indigo-400/25 text-[10px] font-semibold text-indigo-200 select-none">
+                        <Forward className="w-3 h-3 shrink-0" />
+                        <span>
+                          {t(language, 'forwardedFrom')} · @{msg.forwardedFrom.authorUsername}
+                          {msg.forwardedFrom.channelName ? ` (#${msg.forwardedFrom.channelName})` : ''}
+                        </span>
+                      </div>
+                    )}
                     {/* Text Content with Code Block Formatting or Inline Edit */}
                     {editingMsgId === msg.id ? (
                       <form
@@ -2341,6 +2638,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="space-y-2 pt-1">
                         {msg.attachments.map((att) => {
+                          if (att.e2ee) {
+                            return (
+                              <EncryptedAttachmentView
+                                key={att.id}
+                                attachment={att}
+                                currentServerHost={currentServerHost}
+                                myUsername={currentUser?.username || ''}
+                                peerPublicKeyJson={dmPeerPublicKey}
+                                onOpenLightbox={(url) => setLightboxImage(url)}
+                                language={language}
+                              />
+                            );
+                          }
                           const resolvedUrl = resolveMediaUrl(att.url, currentServerHost);
                           if (att.type.startsWith('audio/')) {
                             return (
@@ -2433,7 +2743,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       </div>
                     )}
 
-                    {!isDM && msg.threadMessages && msg.threadMessages.length > 0 && (
+                    {!isDirectSpace && msg.threadMessages && msg.threadMessages.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setActiveThreadMsgId(msg.id)}
@@ -2631,7 +2941,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               key={att.id}
               className="relative group shrink-0 flex items-center gap-2 p-1.5 pl-2.5 rounded-xl bg-white/10 border border-white/15 text-xs text-white max-w-[200px]"
             >
-              {att.type.startsWith('image/') ? (
+              {att.e2ee ? (
+                <Lock className="w-4 h-4 shrink-0 text-emerald-400" />
+              ) : att.type.startsWith('image/') ? (
                 <img
                   src={resolveMediaUrl(att.url, currentServerHost)}
                   alt={att.name}
@@ -2665,7 +2977,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           className="hidden"
         />
 
-        {isVoiceRecording ? (
+        {isAnnouncementReadOnly ? (
+          <div className="ios-glass-card rounded-2xl px-4 py-3 flex items-center justify-center gap-2.5 border border-amber-500/25 bg-amber-500/[0.06] text-xs text-amber-200/90">
+            <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{t(language, 'announcementReadOnlyHint')}</span>
+          </div>
+        ) : isVoiceRecording ? (
           <div className="ios-glass-card rounded-full px-5 py-2.5 flex items-center justify-between shadow-2xl border border-red-500/30 bg-red-950/30 animate-pulse">
             <div className="flex items-center gap-3">
               <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
@@ -2939,7 +3256,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 </div>
               )}
 
-              {!isDM && (
+              {!isDirectSpace && (
                 <button
                   type="button"
                   onClick={() => setIsPollModalOpen(true)}
@@ -3020,7 +3337,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     }
                   }}
                   placeholder={
-                    isDM
+                    isGroupDM && activeGroupDm
+                      ? `${activeGroupDm.name} — ${t(language, 'messagePlaceholder')}`
+                      : isDM
                       ? `@${dmPartner?.username || 'Sohbet'} — ${t(language, 'messagePlaceholder')}`
                       : `#${activeChannel.name} — ${t(language, 'messagePlaceholder')}`
                   }
@@ -3071,6 +3390,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* GIF Picker Modal */}
       <Suspense fallback={null}>
@@ -3317,6 +3638,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           isOpen={isEventsModalOpen}
           onClose={() => setIsEventsModalOpen(false)}
         />
+        {forwardingMessage && activeChannel && (
+          <ForwardMessageModal
+            sourceChannelId={activeChannel.id}
+            message={forwardingMessage}
+            onClose={() => setForwardingMessage(null)}
+          />
+        )}
       </Suspense>
     </main>
   );

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
-import { appConfirm } from '../utils/appDialogs';
+import { appConfirm, appPrompt } from '../utils/appDialogs';
 import { isUserServerOwner } from '../utils/serverIdentity';
 import { User, Channel } from '../types';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
@@ -41,6 +41,10 @@ import {
   Pencil,
   Bell,
   BellOff,
+  Megaphone,
+  MessagesSquare,
+  FolderPlus,
+  GripVertical,
 } from 'lucide-react';
 import { useChannelDrafts } from '../utils/channelDrafts';
 import type { NotificationLevel } from '../utils/notificationPrefs';
@@ -52,9 +56,12 @@ import { AvatarView, isImageAvatar } from './AvatarView';
 const ServerEventsModal = lazy(() =>
   import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal }))
 );
+const CreateGroupDmModal = lazy(() =>
+  import('./chat/CreateGroupDmModal').then((m) => ({ default: m.CreateGroupDmModal }))
+);
 
 interface ChannelSidebarProps {
-  onOpenCreateChannel: (type: 'text' | 'voice') => void;
+  onOpenCreateChannel: (type: 'text' | 'voice' | 'announcement' | 'forum', categoryId?: string | null) => void;
   onOpenSettings: () => void;
   onOpenServerSettings: () => void;
   onOpenAuth: () => void;
@@ -79,6 +86,18 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
   const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; x: number; y: number } | null>(null);
   const [editingChannel, setEditingChannel] = useState<{ channel: Channel; bitrateKbps: number; userLimit: number } | null>(null);
+  const [isCreateGroupDmOpen, setIsCreateGroupDmOpen] = useState(false);
+  const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
+  const [dragOverChannelTargetId, setDragOverChannelTargetId] = useState<string | null>(null);
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null | undefined>(undefined);
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem('dc_collapsed_categories');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
 
   useEffect(() => {
     if (!channelMenu) return;
@@ -112,6 +131,10 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     isAuthenticated,
     logout,
     activeDMUser,
+    groupDms,
+    activeGroupDm,
+    openGroupDm,
+    joinGroupDmVoice,
     openDirectMessage,
     closeDirectMessage,
     startDirectCall,
@@ -130,6 +153,10 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     createServerInvite,
     storeSettings,
     reorderChannel,
+    reorderChannelsBatch,
+    createCategory,
+    renameCategory,
+    deleteCategory,
     adminDeleteChannel,
     updateProfileDetails,
     updateChannelSettings,
@@ -220,6 +247,91 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     setPasswordModalChannel(null);
   };
 
+  const toggleCategoryCollapsed = (categoryId: string) => {
+    setCollapsedCategories((prev) => {
+      const next = { ...prev, [categoryId]: !prev[categoryId] };
+      try {
+        localStorage.setItem('dc_collapsed_categories', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const renderChannelTypeIcon = (channel: Channel, isConnectedHere = false, isMutedPref = false) => {
+    if (channel.type === 'voice') {
+      return (
+        <Volume2
+          className={`w-4 h-4 shrink-0 ${isConnectedHere ? 'text-emerald-400' : 'opacity-70'}`}
+        />
+      );
+    }
+    if (channel.type === 'announcement') {
+      return (
+        <Megaphone
+          className={`w-4 h-4 shrink-0 text-amber-400 ${isMutedPref ? 'opacity-40' : ''}`}
+        />
+      );
+    }
+    if (channel.type === 'forum') {
+      return (
+        <MessagesSquare
+          className={`w-4 h-4 shrink-0 text-cyan-400 ${isMutedPref ? 'opacity-40' : ''}`}
+        />
+      );
+    }
+    return <Hash className={`w-4 h-4 shrink-0 ${isMutedPref ? 'opacity-40' : 'opacity-70'}`} />;
+  };
+
+  const handleChannelReorderDrop = (
+    targetChannelId: string | null,
+    targetCategoryId: string | null
+  ) => {
+    const draggedId = draggingChannelId;
+    setDraggingChannelId(null);
+    setDragOverChannelTargetId(null);
+    setDragOverCategoryId(undefined);
+    if (!draggedId || !activeServer || draggedId === targetChannelId) return;
+
+    const sorted = [...activeServer.channels].sort(
+      (a, b) => (a.position ?? 0) - (b.position ?? 0)
+    );
+    const dragged = sorted.find((c) => c.id === draggedId);
+    if (!dragged) return;
+
+    const remaining = sorted.filter((c) => c.id !== draggedId);
+    const updatedDragged: Channel = { ...dragged, categoryId: targetCategoryId };
+
+    let insertAt = remaining.length;
+    if (targetChannelId) {
+      const targetIdx = remaining.findIndex((c) => c.id === targetChannelId);
+      if (targetIdx !== -1) {
+        insertAt = targetIdx;
+        updatedDragged.categoryId = remaining[targetIdx].categoryId ?? null;
+      }
+    } else if (targetCategoryId) {
+      let lastInCat = -1;
+      remaining.forEach((c, idx) => {
+        if ((c.categoryId ?? null) === targetCategoryId) lastInCat = idx;
+      });
+      if (lastInCat !== -1) {
+        insertAt = lastInCat + 1;
+      }
+    }
+
+    const reordered = [
+      ...remaining.slice(0, insertAt),
+      updatedDragged,
+      ...remaining.slice(insertAt),
+    ];
+
+    const updates = reordered.map((ch, idx) => ({
+      channelId: ch.id,
+      categoryId: ch.categoryId ?? null,
+      position: idx,
+    }));
+    reorderChannelsBatch(activeServer.id, updates);
+  };
+
   if (!activeServer) {
     return (
       <div className="w-72 ios-glass-sidebar flex flex-col items-center justify-center p-4 text-white/40 text-xs">
@@ -228,12 +340,387 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     );
   }
 
-  const textChannels = activeServer.channels.filter((c) => c.type === 'text');
-  const voiceChannels = activeServer.channels.filter((c) => c.type === 'voice');
+  const sortedCategories = [...(activeServer.categories || [])].sort(
+    (a, b) => a.position - b.position
+  );
+  const categoryIdSet = new Set(sortedCategories.map((c) => c.id));
+  const sortedChannels = [...activeServer.channels].sort(
+    (a, b) => (a.position ?? 0) - (b.position ?? 0)
+  );
+  const textChannels = sortedChannels.filter((c) => c.type !== 'voice');
+  const voiceChannels = sortedChannels.filter((c) => c.type === 'voice');
 
   const connectedVoiceChannel = activeServer.channels.find(
     (c) => c.id === connectedVoiceChannelId
   );
+  const connectedGroupVoice =
+    !connectedVoiceChannel && connectedVoiceChannelId
+      ? groupDms.find((g) => (g.voiceChannelId || `voice-${g.id}`) === connectedVoiceChannelId)
+      : undefined;
+
+  const renderNonVoiceRow = (channel: Channel, siblings: Channel[], idx: number) => {
+    const isActive = activeChannel?.id === channel.id;
+    const unread = !isActive ? (unreadCounts[channel.id] || 0) : 0;
+    const mentions = !isActive ? (mentionCounts[channel.id] || 0) : 0;
+    const isMutedPref = notificationPrefs[channel.id] === 'muted';
+    const isDropTarget = dragOverChannelTargetId === channel.id && draggingChannelId !== channel.id;
+
+    return (
+      <div
+        key={channel.id}
+        draggable={canManageChannels && !channel.isTempCreatorChannel}
+        onDragStart={(e) => {
+          if (!canManageChannels || channel.isTempCreatorChannel) return;
+          e.dataTransfer.setData('application/x-cakma-channel', channel.id);
+          e.dataTransfer.effectAllowed = 'move';
+          setDraggingChannelId(channel.id);
+        }}
+        onDragOver={(e) => {
+          if (!draggingChannelId || draggingChannelId === channel.id) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          if (dragOverChannelTargetId !== channel.id) setDragOverChannelTargetId(channel.id);
+        }}
+        onDragLeave={() => {
+          if (dragOverChannelTargetId === channel.id) setDragOverChannelTargetId(null);
+        }}
+        onDrop={(e) => {
+          if (!draggingChannelId || draggingChannelId === channel.id) return;
+          e.preventDefault();
+          handleChannelReorderDrop(channel.id, channel.categoryId ?? null);
+        }}
+        onDragEnd={() => {
+          setDraggingChannelId(null);
+          setDragOverChannelTargetId(null);
+          setDragOverCategoryId(undefined);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setChannelMenu({
+            channel,
+            x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
+            y: Math.max(8, Math.min(e.clientY, window.innerHeight - 200)),
+          });
+        }}
+        className={`group w-full flex items-center justify-between gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+          isDropTarget
+            ? 'border-t-2 border-indigo-400 bg-indigo-500/15 text-white'
+            : isActive
+            ? 'bg-gradient-to-r from-amber-500/20 via-teal-500/12 to-transparent text-white border border-amber-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(245,158,11,0.14)]'
+            : unread > 0
+            ? 'text-white font-bold hover:bg-white/[0.06]'
+            : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => selectChannel(channel.id)}
+          className="flex-1 flex items-center gap-2 min-w-0 text-left"
+        >
+          {canManageChannels && (
+            <GripVertical className="w-3 h-3 text-white/25 opacity-0 group-hover:opacity-100 shrink-0 -ml-1 cursor-grab" />
+          )}
+          {renderChannelTypeIcon(channel, false, isMutedPref)}
+          <span className={`truncate ${isMutedPref ? 'opacity-55' : ''}`}>
+            {channel.name}
+          </span>
+        </button>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {isMutedPref && (
+            <span title="Kanal bildirimleri sessize alındı" className="text-white/40 shrink-0">
+              <BellOff className="w-3 h-3" />
+            </span>
+          )}
+          {Boolean(drafts[channel.id]) && (
+            <span title="Kaydedilmiş mesaj taslağı" className="text-amber-300/85 shrink-0">
+              <Pencil className="w-3 h-3" />
+            </span>
+          )}
+          {canManageChannels && siblings.length > 1 && (
+            <div className="hidden group-hover:flex items-center gap-0.5 mr-0.5">
+              {idx > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    reorderChannel(activeServer.id, channel.id, 'up');
+                  }}
+                  className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                  title="Yukarı Taşı"
+                >
+                  <ChevronUp className="w-3 h-3" />
+                </button>
+              )}
+              {idx < siblings.length - 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    reorderChannel(activeServer.id, channel.id, 'down');
+                  }}
+                  className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                  title="Aşağı Taşı"
+                >
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+          {mentions > 0 ? (
+            <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold shrink-0 shadow">
+              @{mentions > 99 ? '99+' : mentions}
+            </span>
+          ) : unread > 0 ? (
+            <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/80 text-white text-[10px] font-bold shrink-0">
+              {unread > 99 ? '99+' : unread}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const renderVoiceRow = (channel: Channel, siblings: Channel[], idx: number) => {
+    const isConnectedHere = connectedVoiceChannelId === channel.id;
+    const isViewingHere = activeChannel?.id === channel.id;
+    const usersInChannel = onlineUsers.filter(
+      (u) => u.currentVoiceChannelId === channel.id
+    );
+
+    const isLocked = Boolean(channel.password || channel.isLocked);
+    const isTempCreator = Boolean(channel.isTempCreatorChannel || channel.name.includes('➕ Oda Kur'));
+    const isUserDropTarget = dragOverChannelId === channel.id && !isTempCreator;
+    const isChannelDropTarget =
+      !isUserDropTarget && dragOverChannelTargetId === channel.id && draggingChannelId !== channel.id;
+    const canMoveOthers = currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer);
+
+    return (
+      <div
+        key={channel.id}
+        draggable={canManageChannels && !isTempCreator}
+        onDragStart={(e) => {
+          if (draggingUserId || !canManageChannels || isTempCreator) return;
+          e.dataTransfer.setData('application/x-cakma-channel', channel.id);
+          e.dataTransfer.effectAllowed = 'move';
+          setDraggingChannelId(channel.id);
+        }}
+        onDragOver={(e) => {
+          if (draggingUserId && !isTempCreator) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (dragOverChannelId !== channel.id) setDragOverChannelId(channel.id);
+            return;
+          }
+          if (draggingChannelId && draggingChannelId !== channel.id) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (dragOverChannelTargetId !== channel.id) setDragOverChannelTargetId(channel.id);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (dragOverChannelId === channel.id && !e.currentTarget.contains(e.relatedTarget as Node)) {
+            setDragOverChannelId(null);
+          }
+          if (dragOverChannelTargetId === channel.id) {
+            setDragOverChannelTargetId(null);
+          }
+        }}
+        onDrop={(e) => {
+          const uid = e.dataTransfer.getData('text/plain') || draggingUserId;
+          if (uid) {
+            e.preventDefault();
+            setDraggingUserId(null);
+            setDragOverChannelId(null);
+            if (!isTempCreator) {
+              moveVoiceUser(uid, channel.id);
+            }
+            return;
+          }
+          if (draggingChannelId && draggingChannelId !== channel.id) {
+            e.preventDefault();
+            handleChannelReorderDrop(channel.id, channel.categoryId ?? null);
+          }
+        }}
+        onDragEnd={() => {
+          setDraggingChannelId(null);
+          setDragOverChannelTargetId(null);
+          setDragOverCategoryId(undefined);
+        }}
+        className="space-y-1"
+      >
+        <div
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setChannelMenu({
+              channel,
+              x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
+              y: Math.max(8, Math.min(e.clientY, window.innerHeight - 200)),
+            });
+          }}
+          className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+            isUserDropTarget
+              ? 'bg-indigo-500/20 text-white border border-indigo-400/60 ring-2 ring-indigo-400/30 shadow-[0_0_16px_rgba(99,102,241,0.28)]'
+              : isChannelDropTarget
+              ? 'border-t-2 border-indigo-400 bg-indigo-500/15 text-white'
+              : isConnectedHere
+              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+              : isViewingHere
+              ? 'bg-white/10 text-white'
+              : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => handleVoiceChannelClick(channel)}
+            className="flex-1 flex items-center gap-2 truncate text-left"
+          >
+            {canManageChannels && !isTempCreator && (
+              <GripVertical className="w-3 h-3 text-white/25 opacity-0 group-hover:opacity-100 shrink-0 -ml-1 cursor-grab" />
+            )}
+            <Volume2
+              className={`w-4 h-4 shrink-0 ${
+                isConnectedHere ? 'text-emerald-400' : 'opacity-70'
+              }`}
+            />
+            <span className="truncate">{channel.name}</span>
+            {isLocked && (
+              <span title="Korumalı Ses Odası">
+                <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+              </span>
+            )}
+          </button>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {canManageChannels && siblings.length > 1 && (
+              <div className="hidden group-hover:flex items-center gap-0.5">
+                {idx > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      reorderChannel(activeServer.id, channel.id, 'up');
+                    }}
+                    className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                    title="Yukarı Taşı"
+                  >
+                    <ChevronUp className="w-3 h-3" />
+                  </button>
+                )}
+                {idx < siblings.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      reorderChannel(activeServer.id, channel.id, 'down');
+                    }}
+                    className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+                    title="Aşağı Taşı"
+                  >
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+            {usersInChannel.some((u) => u.isScreenSharing) && (
+              <Tv className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+            )}
+            {(usersInChannel.length > 0 || (channel.userLimit && channel.userLimit > 0)) && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  channel.userLimit && channel.userLimit > 0 && usersInChannel.length >= channel.userLimit
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold'
+                    : 'bg-white/10 text-white/80'
+                }`}
+                title={channel.userLimit && channel.userLimit > 0 ? `Oda Limiti: ${usersInChannel.length}/${channel.userLimit}` : undefined}
+              >
+                {channel.userLimit && channel.userLimit > 0
+                  ? `${usersInChannel.length}/${channel.userLimit}`
+                  : usersInChannel.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Connected Users Tree with Halo Effect */}
+        {usersInChannel.length > 0 && (
+          <div className="pl-6 pr-1 space-y-1">
+            {usersInChannel.map((user) => {
+              const isThisMe = user.id === currentUser?.id;
+              const speaking = isThisMe ? isSpeaking : user.isSpeaking;
+              const canDragUser = isThisMe || canMoveOthers;
+
+              return (
+                <div
+                  key={user.id}
+                  draggable={canDragUser}
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    if (!canDragUser) return;
+                    e.dataTransfer.setData('text/plain', user.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    setDraggingUserId(user.id);
+                  }}
+                  onDragEnd={(e) => {
+                    e.stopPropagation();
+                    setDraggingUserId(null);
+                    setDragOverChannelId(null);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setVoiceUserMenu({
+                      user,
+                      x: Math.max(8, Math.min(e.clientX, window.innerWidth - 270)),
+                      y: Math.max(8, Math.min(e.clientY, window.innerHeight - 340)),
+                    });
+                  }}
+                  className={`flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition ${
+                    canDragUser ? 'cursor-grab active:cursor-grabbing' : 'cursor-context-menu'
+                  } ${
+                    draggingUserId === user.id ? 'opacity-45 scale-95' : ''
+                  } ${
+                    speaking
+                      ? 'bg-emerald-500/10 text-emerald-400 font-medium'
+                      : 'text-white/70 hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <div
+                      className={`w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[11px] transition overflow-hidden shrink-0 ${
+                        speaking ? 'ios-halo-subtle' : ''
+                      }`}
+                    >
+                      <AvatarView avatar={user.avatar} alt={user.username} fallback="👤" className="w-full h-full object-cover" />
+                    </div>
+                    <span className="truncate">{user.username}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {(isThisMe ? isScreenSharing : user.isScreenSharing) && (
+                      <span className="text-[9px] bg-blue-500 text-white px-1 rounded font-bold">
+                        YAYIN
+                      </span>
+                    )}
+                    {user.isMuted && (
+                      <span title={user.isServerMuted ? 'Sunucudan Susturuldu' : 'Mikrofon Kapalı'}>
+                        <MicOff className={`w-3 h-3 ${user.isServerMuted ? 'text-rose-500 animate-pulse' : 'text-red-400'}`} />
+                      </span>
+                    )}
+                    {user.isDeafened && (
+                      <VolumeX className="w-3 h-3 text-red-400" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <aside className="w-72 ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col shrink-0 select-none overflow-hidden">
@@ -329,6 +816,30 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             </div>
           </button>
 
+          {canManageChannels && (
+            <button
+              type="button"
+              onClick={async () => {
+                setIsDropdownOpen(false);
+                const catName = await appPrompt({
+                  title: t(language, 'createCategory'),
+                  message: 'Yeni kategori adını girin:',
+                  placeholder: 'Örn: Sohbet & Topluluk',
+                  confirmLabel: 'Oluştur',
+                });
+                if (catName && catName.trim()) {
+                  createCategory(activeServer.id, catName.trim());
+                }
+              }}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+            >
+              <div className="flex items-center gap-2">
+                <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
+                <span>{t(language, 'createCategory')}</span>
+              </div>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={async () => {
@@ -400,7 +911,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           <button
             onClick={() => closeDirectMessage()}
             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition ${
-              !activeDMUser
+              !activeDMUser && !activeGroupDm
                 ? 'bg-gradient-to-r from-indigo-500/30 via-blue-500/20 to-transparent text-white border border-indigo-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(59,130,246,0.18)]'
                 : 'text-white/70 hover:bg-white/[0.06] hover:text-white'
             }`}
@@ -415,6 +926,85 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               </span>
             )}
           </button>
+
+          {/* Group DMs Section */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between px-2 pt-1 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+              <span>{t(language, 'groupDms')}</span>
+              <button
+                type="button"
+                onClick={() => setIsCreateGroupDmOpen(true)}
+                className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+                title={t(language, 'newGroupDm')}
+                aria-label={t(language, 'newGroupDm')}
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {groupDms.length === 0 ? (
+              <button
+                type="button"
+                onClick={() => setIsCreateGroupDmOpen(true)}
+                className="w-full px-3 py-2 rounded-xl border border-dashed border-white/10 hover:border-indigo-400/35 text-[11px] text-white/45 hover:text-indigo-200 transition text-left flex items-center gap-2"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{t(language, 'newGroupDm')}</span>
+              </button>
+            ) : (
+              groupDms.map((group) => {
+                const isSelected = activeGroupDm?.id === group.id;
+                const gUnread = !isSelected ? (unreadCounts[group.id] || 0) : 0;
+                const voiceRoomId = group.voiceChannelId || `voice-${group.id}`;
+                const voiceCount = onlineUsers.filter(
+                  (u) => u.currentVoiceChannelId === voiceRoomId
+                ).length;
+                return (
+                  <div
+                    key={group.id}
+                    onClick={() => openGroupDm(group.id)}
+                    className={`group w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-500/20 text-white border border-indigo-400/40'
+                        : 'text-white/75 hover:bg-white/[0.06] hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-400/25 flex items-center justify-center text-sm shrink-0">
+                        {group.icon || '👥'}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-white">{group.name}</div>
+                        <div className="truncate text-[10px] text-white/45">
+                          {group.members.length} {t(language, 'membersCount')}
+                          {voiceCount > 0 ? ` · 🔊 ${voiceCount}` : ''}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {gUnread > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                          {gUnread > 9 ? '9+' : gUnread}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          joinGroupDmVoice(group);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 w-7 h-7 rounded-lg hover:bg-white/20 text-emerald-400 flex items-center justify-center transition"
+                        title={t(language, 'groupVoiceCall')}
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
 
           <div className="flex items-center justify-between px-2 pt-1 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
             <span>{t(language, 'directMessages')}</span>
@@ -572,360 +1162,226 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           </button>
         )}
 
-        {/* Text Channels */}
-        <div>
-          <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-            <button
-              type="button"
-              onClick={() => setIsTextCollapsed((p) => !p)}
-              className="flex items-center gap-1 hover:text-white/80 transition"
-            >
-              {isTextCollapsed ? (
-                <ChevronRight className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
-              )}
-              <span>{t(language, 'textChannels')}</span>
-            </button>
-            <button
-              onClick={() => onOpenCreateChannel('text')}
-              className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
-              title="Kanal Ekle"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {!isTextCollapsed && (
-            <div className="space-y-0.5">
-              {textChannels.map((channel, idx) => {
-                const isActive = activeChannel?.id === channel.id;
-                const unread = !isActive ? (unreadCounts[channel.id] || 0) : 0;
-                const mentions = !isActive ? (mentionCounts[channel.id] || 0) : 0;
-                return (
-                  <div
-                    key={channel.id}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setChannelMenu({
-                        channel,
-                        x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
-                        y: Math.max(8, Math.min(e.clientY, window.innerHeight - 200)),
-                      });
-                    }}
-                    className={`group w-full flex items-center justify-between gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                      isActive
-                        ? 'bg-gradient-to-r from-amber-500/20 via-teal-500/12 to-transparent text-white border border-amber-400/35 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_4px_16px_rgba(245,158,11,0.14)]'
-                        : unread > 0
-                        ? 'text-white font-bold hover:bg-white/[0.06]'
-                        : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => selectChannel(channel.id)}
-                      className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
-                    >
-                      <Hash className={`w-4 h-4 shrink-0 ${notificationPrefs[channel.id] === 'muted' ? 'opacity-40' : 'opacity-70'}`} />
-                      <span className={`truncate ${notificationPrefs[channel.id] === 'muted' ? 'opacity-55' : ''}`}>
-                        {channel.name}
-                      </span>
-                    </button>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      {notificationPrefs[channel.id] === 'muted' && (
-                        <span title="Kanal bildirimleri sessize alındı" className="text-white/40 shrink-0">
-                          <BellOff className="w-3 h-3" />
-                        </span>
-                      )}
-                      {Boolean(drafts[channel.id]) && (
-                        <span title="Kaydedilmiş mesaj taslağı" className="text-amber-300/85 shrink-0">
-                          <Pencil className="w-3 h-3" />
-                        </span>
-                      )}
-                      {canManageChannels && activeServer && textChannels.length > 1 && (
-                        <div className="hidden group-hover:flex items-center gap-0.5 mr-0.5">
-                          {idx > 0 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                reorderChannel(activeServer.id, channel.id, 'up');
-                              }}
-                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
-                              title="Yukarı Taşı"
-                            >
-                              <ChevronUp className="w-3 h-3" />
-                            </button>
-                          )}
-                          {idx < textChannels.length - 1 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                reorderChannel(activeServer.id, channel.id, 'down');
-                              }}
-                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
-                              title="Aşağı Taşı"
-                            >
-                              <ChevronDown className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      {mentions > 0 ? (
-                        <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[10px] font-bold shrink-0 shadow">
-                          @{mentions > 99 ? '99+' : mentions}
-                        </span>
-                      ) : unread > 0 ? (
-                        <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/80 text-white text-[10px] font-bold shrink-0">
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Voice Channels */}
-        <div>
-          <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
-            <button
-              type="button"
-              onClick={() => setIsVoiceCollapsed((p) => !p)}
-              className="flex items-center gap-1 hover:text-white/80 transition"
-            >
-              {isVoiceCollapsed ? (
-                <ChevronRight className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5" />
-              )}
-              <span>{t(language, 'voiceChannels')}</span>
-            </button>
-            <button
-              onClick={() => onOpenCreateChannel('voice')}
-              className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
-              title="Ses Odası Ekle"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {!isVoiceCollapsed && (
-            <div className="space-y-1">
-            {voiceChannels.map((channel, idx) => {
-              const isConnectedHere = connectedVoiceChannelId === channel.id;
-              const isViewingHere = activeChannel?.id === channel.id;
-              const usersInChannel = onlineUsers.filter(
-                (u) => u.currentVoiceChannelId === channel.id
+        {sortedCategories.length > 0 ? (
+          <>
+            {/* Uncategorized channels (always shown above categories if any exist) */}
+            {(() => {
+              const uncatText = textChannels.filter(
+                (c) => !c.categoryId || !categoryIdSet.has(c.categoryId)
               );
-
-              const isLocked = Boolean(channel.password || channel.isLocked);
-              const isTempCreator = Boolean(channel.isTempCreatorChannel || channel.name.includes('➕ Oda Kur'));
-              const isDropTarget = dragOverChannelId === channel.id && !isTempCreator;
-              const canMoveOthers = currentUser?.role === 'admin' || isUserServerOwner(currentUser, activeServer);
-
+              const uncatVoice = voiceChannels.filter(
+                (c) => !c.categoryId || !categoryIdSet.has(c.categoryId)
+              );
+              if (uncatText.length === 0 && uncatVoice.length === 0) return null;
               return (
                 <div
-                  key={channel.id}
                   onDragOver={(e) => {
-                    if (!draggingUserId || isTempCreator) return;
+                    if (!draggingChannelId) return;
                     e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    if (dragOverChannelId !== channel.id) setDragOverChannelId(channel.id);
-                  }}
-                  onDragLeave={(e) => {
-                    if (dragOverChannelId === channel.id && !e.currentTarget.contains(e.relatedTarget as Node)) {
-                      setDragOverChannelId(null);
-                    }
+                    setDragOverCategoryId(null);
                   }}
                   onDrop={(e) => {
+                    if (!draggingChannelId) return;
                     e.preventDefault();
-                    const uid = e.dataTransfer.getData('text/plain') || draggingUserId;
-                    setDraggingUserId(null);
-                    setDragOverChannelId(null);
-                    if (uid && !isTempCreator) {
-                      moveVoiceUser(uid, channel.id);
-                    }
+                    handleChannelReorderDrop(null, null);
                   }}
-                  className="space-y-1"
+                  className={`space-y-1.5 rounded-xl transition ${
+                    dragOverCategoryId === null ? 'ring-1 ring-indigo-400/50 bg-indigo-500/5 p-1' : ''
+                  }`}
                 >
+                  <div className="flex items-center justify-between px-2 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+                    <span>{t(language, 'uncategorized')}</span>
+                    <button
+                      type="button"
+                      onClick={() => onOpenCreateChannel('text', null)}
+                      className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+                      title="Kanal Ekle"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="space-y-0.5">
+                    {uncatText.map((ch, idx) => renderNonVoiceRow(ch, uncatText, idx))}
+                    {uncatVoice.map((ch, idx) => renderVoiceRow(ch, uncatVoice, idx))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Custom Channel Categories */}
+            {sortedCategories.map((cat) => {
+              const catChannels = sortedChannels.filter((c) => c.categoryId === cat.id);
+              const isCatCollapsed = Boolean(collapsedCategories[cat.id]);
+              return (
+                <div key={cat.id} className="space-y-1">
                   <div
-                    onContextMenu={(e) => {
+                    onDragOver={(e) => {
+                      if (!draggingChannelId) return;
                       e.preventDefault();
-                      e.stopPropagation();
-                      setChannelMenu({
-                        channel,
-                        x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
-                        y: Math.max(8, Math.min(e.clientY, window.innerHeight - 200)),
-                      });
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dragOverCategoryId !== cat.id) setDragOverCategoryId(cat.id);
                     }}
-                    className={`group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                      isDropTarget
-                        ? 'bg-indigo-500/20 text-white border border-indigo-400/60 ring-2 ring-indigo-400/30 shadow-[0_0_16px_rgba(99,102,241,0.28)]'
-                        : isConnectedHere
-                        ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                        : isViewingHere
-                        ? 'bg-white/10 text-white'
-                        : 'text-white/60 hover:bg-white/[0.06] hover:text-white'
+                    onDragLeave={() => {
+                      if (dragOverCategoryId === cat.id) setDragOverCategoryId(undefined);
+                    }}
+                    onDrop={(e) => {
+                      if (!draggingChannelId) return;
+                      e.preventDefault();
+                      handleChannelReorderDrop(null, cat.id);
+                    }}
+                    className={`group flex items-center justify-between px-2 py-0.5 rounded-lg text-[11px] font-semibold text-white/45 uppercase tracking-wider transition ${
+                      dragOverCategoryId === cat.id ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-400/50' : ''
                     }`}
                   >
                     <button
                       type="button"
-                      onClick={() => handleVoiceChannelClick(channel)}
-                      className="flex-1 flex items-center gap-2.5 truncate text-left"
+                      onClick={() => toggleCategoryCollapsed(cat.id)}
+                      className="flex items-center gap-1 hover:text-white/85 transition min-w-0 flex-1 text-left"
                     >
-                      <Volume2
-                        className={`w-4 h-4 shrink-0 ${
-                          isConnectedHere ? 'text-emerald-400' : 'opacity-70'
-                        }`}
-                      />
-                      <span className="truncate">{channel.name}</span>
-                      {isLocked && (
-                        <span title="Korumalı Ses Odası">
-                          <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-                        </span>
+                      {isCatCollapsed ? (
+                        <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 shrink-0" />
                       )}
+                      <span className="truncate">{cat.name}</span>
                     </button>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {canManageChannels && activeServer && voiceChannels.length > 1 && (
-                        <div className="hidden group-hover:flex items-center gap-0.5">
-                          {idx > 0 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                reorderChannel(activeServer.id, channel.id, 'up');
-                              }}
-                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
-                              title="Yukarı Taşı"
-                            >
-                              <ChevronUp className="w-3 h-3" />
-                            </button>
-                          )}
-                          {idx < voiceChannels.length - 1 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                reorderChannel(activeServer.id, channel.id, 'down');
-                              }}
-                              className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
-                              title="Aşağı Taşı"
-                            >
-                              <ChevronDown className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {canManageChannels && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const nextName = await appPrompt({
+                                title: 'Kategoriyi Yeniden Adlandır',
+                                message: 'Yeni kategori adını girin:',
+                                defaultValue: cat.name,
+                                confirmLabel: 'Kaydet',
+                              });
+                              if (nextName && nextName.trim() && nextName.trim() !== cat.name) {
+                                renameCategory(activeServer.id, cat.id, nextName.trim());
+                              }
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 text-white/50 hover:text-white transition"
+                            title="Kategoriyi Yeniden Adlandır"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (
+                                await appConfirm({
+                                  title: 'Kategoriyi Sil',
+                                  message: `"${cat.name}" kategorisini silmek istediğinize emin misiniz? Kanallar kategorisiz kalacaktır.`,
+                                  danger: true,
+                                  confirmLabel: 'Sil',
+                                })
+                              ) {
+                                deleteCategory(activeServer.id, cat.id);
+                              }
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-rose-500/20 text-white/50 hover:text-rose-300 transition"
+                            title="Kategoriyi Sil"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </>
                       )}
-                      {usersInChannel.some((u) => u.isScreenSharing) && (
-                        <Tv className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
-                      )}
-                      {(usersInChannel.length > 0 || (channel.userLimit && channel.userLimit > 0)) && (
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                            channel.userLimit && channel.userLimit > 0 && usersInChannel.length >= channel.userLimit
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold'
-                              : 'bg-white/10 text-white/80'
-                          }`}
-                          title={channel.userLimit && channel.userLimit > 0 ? `Oda Limiti: ${usersInChannel.length}/${channel.userLimit}` : undefined}
-                        >
-                          {channel.userLimit && channel.userLimit > 0
-                            ? `${usersInChannel.length}/${channel.userLimit}`
-                            : usersInChannel.length}
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => onOpenCreateChannel('text', cat.id)}
+                        className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+                        title="Bu Kategoriye Kanal Ekle"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
 
-                  {/* Connected Users Tree with Halo Effect */}
-                  {usersInChannel.length > 0 && (
-                    <div className="pl-6 pr-1 space-y-1">
-                      {usersInChannel.map((user) => {
-                        const isThisMe = user.id === currentUser?.id;
-                        const speaking = isThisMe ? isSpeaking : user.isSpeaking;
-                        const canDragUser = isThisMe || canMoveOthers;
-
-                        return (
-                          <div
-                            key={user.id}
-                            draggable={canDragUser}
-                            onDragStart={(e) => {
-                              if (!canDragUser) return;
-                              e.dataTransfer.setData('text/plain', user.id);
-                              e.dataTransfer.effectAllowed = 'move';
-                              setDraggingUserId(user.id);
-                            }}
-                            onDragEnd={() => {
-                              setDraggingUserId(null);
-                              setDragOverChannelId(null);
-                            }}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setVoiceUserMenu({
-                                user,
-                                x: Math.max(8, Math.min(e.clientX, window.innerWidth - 270)),
-                                y: Math.max(8, Math.min(e.clientY, window.innerHeight - 340)),
-                              });
-                            }}
-                            className={`flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition ${
-                              canDragUser ? 'cursor-grab active:cursor-grabbing' : 'cursor-context-menu'
-                            } ${
-                              draggingUserId === user.id ? 'opacity-45 scale-95' : ''
-                            } ${
-                              speaking
-                                ? 'bg-emerald-500/10 text-emerald-400 font-medium'
-                                : 'text-white/70 hover:bg-white/5'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 truncate">
-                              <div
-                                className={`w-5 h-5 rounded-full bg-white/10 flex items-center justify-center text-[11px] transition overflow-hidden shrink-0 ${
-                                  speaking ? 'ios-halo-subtle' : ''
-                                }`}
-                              >
-                                <AvatarView avatar={user.avatar} alt={user.username} fallback="👤" className="w-full h-full object-cover" />
-                              </div>
-                              <span className="truncate">{user.username}</span>
-                            </div>
-
-                            <div className="flex items-center gap-1">
-                              {(isThisMe ? isScreenSharing : user.isScreenSharing) && (
-                                <span className="text-[9px] bg-blue-500 text-white px-1 rounded font-bold">
-                                  YAYIN
-                                </span>
-                              )}
-                              {user.isMuted && (
-                                <span title={user.isServerMuted ? 'Sunucudan Susturuldu' : 'Mikrofon Kapalı'}>
-                                  <MicOff className={`w-3 h-3 ${user.isServerMuted ? 'text-rose-500 animate-pulse' : 'text-red-400'}`} />
-                                </span>
-                              )}
-                              {user.isDeafened && (
-                                <VolumeX className="w-3 h-3 text-red-400" />
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+                  {!isCatCollapsed && (
+                    <div className="space-y-0.5">
+                      {catChannels.map((channel, idx) =>
+                        channel.type === 'voice'
+                          ? renderVoiceRow(channel, catChannels, idx)
+                          : renderNonVoiceRow(channel, catChannels, idx)
+                      )}
                     </div>
                   )}
                 </div>
               );
             })}
-          </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <>
+            {/* Text / Announcement / Forum Channels */}
+            <div>
+              <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+                <button
+                  type="button"
+                  onClick={() => setIsTextCollapsed((p) => !p)}
+                  className="flex items-center gap-1 hover:text-white/80 transition"
+                >
+                  {isTextCollapsed ? (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                  <span>{t(language, 'textChannels')}</span>
+                </button>
+                <button
+                  onClick={() => onOpenCreateChannel('text')}
+                  className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+                  title="Kanal Ekle"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {!isTextCollapsed && (
+                <div className="space-y-0.5">
+                  {textChannels.map((channel, idx) => renderNonVoiceRow(channel, textChannels, idx))}
+                </div>
+              )}
+            </div>
+
+            {/* Voice Channels */}
+            <div>
+              <div className="flex items-center justify-between px-2 mb-1.5 text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+                <button
+                  type="button"
+                  onClick={() => setIsVoiceCollapsed((p) => !p)}
+                  className="flex items-center gap-1 hover:text-white/80 transition"
+                >
+                  {isVoiceCollapsed ? (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                  <span>{t(language, 'voiceChannels')}</span>
+                </button>
+                <button
+                  onClick={() => onOpenCreateChannel('voice')}
+                  className="w-5 h-5 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+                  title="Ses Odası Ekle"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {!isVoiceCollapsed && (
+                <div className="space-y-1">
+                  {voiceChannels.map((channel, idx) => renderVoiceRow(channel, voiceChannels, idx))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
       )}
 
       {/* Connected Voice Capsule (Compact) */}
-      {connectedVoiceChannel && (
+      {(connectedVoiceChannel || connectedGroupVoice) && (
         <div
           onClick={openDiagnostics}
           className="mx-3 mb-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-between gap-2 cursor-pointer transition group"
@@ -933,7 +1389,9 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         >
           <div className="flex items-center gap-2 min-w-0">
             <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
-            <span className="text-xs font-semibold text-emerald-300 truncate">{connectedVoiceChannel.name}</span>
+            <span className="text-xs font-semibold text-emerald-300 truncate">
+              {connectedVoiceChannel?.name || connectedGroupVoice?.name}
+            </span>
             <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-md font-mono font-bold shrink-0">
               {ping}ms
             </span>
@@ -1301,6 +1759,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
         </Suspense>
       )}
 
+      {isCreateGroupDmOpen && (
+        <Suspense fallback={null}>
+          <CreateGroupDmModal onClose={() => setIsCreateGroupDmOpen(false)} />
+        </Suspense>
+      )}
+
       <VoiceUserContextMenu
         menu={voiceUserMenu}
         onClose={() => setVoiceUserMenu(null)}
@@ -1314,11 +1778,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             className="fixed z-[9999] w-52 rounded-2xl bg-[#13151d]/95 border border-white/15 shadow-2xl backdrop-blur-2xl p-1.5 text-xs text-white animate-fade-in"
           >
             <div className="px-2.5 py-1.5 border-b border-white/10 mb-1 flex items-center gap-2 text-[11px] font-bold text-white/80 truncate">
-              {channelMenu.channel.type === 'voice' ? (
-                <Volume2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              ) : (
-                <Hash className="w-3.5 h-3.5 text-white/50 shrink-0" />
-              )}
+              {renderChannelTypeIcon(channelMenu.channel)}
               <span className="truncate">{channelMenu.channel.name}</span>
             </div>
 

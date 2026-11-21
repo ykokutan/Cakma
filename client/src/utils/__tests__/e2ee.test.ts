@@ -2,7 +2,9 @@ import { beforeEach, describe, it, expect } from 'vitest';
 import {
   clearMemoryE2eeCache,
   computeSafetyNumber,
+  decryptBinaryFromPeer,
   decryptDmMessage,
+  encryptBinaryForPeer,
   encryptDmMessage,
   exportEncryptedE2eeBackup,
   getOrCreateE2eeKeyPair,
@@ -68,5 +70,29 @@ describe('e2ee v2', () => {
 
     const plainAfterRestore = await decryptDmMessage(cipher!, 'alice_backup', bobPub);
     expect(plainAfterRestore).toBe('Yeni Cihaz Testi');
+  });
+
+  it('encrypts and decrypts binary attachments symmetrically and blocks unauthorized peers', async () => {
+    const alice = await getOrCreateE2eeKeyPair('alice_bin');
+    const bob = await getOrCreateE2eeKeyPair('bob_bin');
+    const eve = await getOrCreateE2eeKeyPair('eve_bin');
+    expect(alice).not.toBeNull();
+    expect(bob).not.toBeNull();
+    expect(eve).not.toBeNull();
+
+    const alicePub = JSON.stringify(alice!.publicKeyJwk);
+    const bobPub = JSON.stringify(bob!.publicKeyJwk);
+    const payload = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 255]);
+
+    const enc = await encryptBinaryForPeer(payload, 'alice_bin', bobPub);
+    expect(enc).not.toBeNull();
+    expect(enc!.ciphertext.byteLength).toBeGreaterThan(payload.byteLength);
+
+    const dec = await decryptBinaryFromPeer(enc!.ciphertext, enc!.ivBase64, 'bob_bin', alicePub);
+    expect(dec).not.toBeNull();
+    expect(Array.from(new Uint8Array(dec!))).toEqual(Array.from(payload));
+
+    const blocked = await decryptBinaryFromPeer(enc!.ciphertext, enc!.ivBase64, 'eve_bin', alicePub);
+    expect(blocked).toBeNull();
   });
 });

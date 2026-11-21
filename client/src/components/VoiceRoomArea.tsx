@@ -427,6 +427,12 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [spotlightUserId, setSpotlightUserId] = useState<string | null>(null);
 
   const [isSoundboardOpen, setIsSoundboardOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setIsSoundboardOpen((prev) => !prev);
+    window.addEventListener('cakma-open-soundboard', handler);
+    return () => window.removeEventListener('cakma-open-soundboard', handler);
+  }, []);
   const [isWhisperListsOpen, setIsWhisperListsOpen] = useState(false);
   const [showRadioBot, setShowRadioBot] = useState(false);
   const [showVoiceChat, setShowVoiceChat] = useState(false);

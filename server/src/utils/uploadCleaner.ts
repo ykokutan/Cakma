@@ -34,9 +34,16 @@ export function collectReferencedMediaUrls(params: {
   messagesMap?: Record<string, Message[]>;
   accounts?: Map<string, RegisteredAccount>;
   servers?: Server[];
+  extraReferencedUrls?: Iterable<string>;
 }): Set<string> {
   const refs = new Set<string>();
-  const { dataDir, messagesMap, accounts, servers } = params;
+  const { dataDir, messagesMap, accounts, servers, extraReferencedUrls } = params;
+
+  if (extraReferencedUrls) {
+    for (const url of extraReferencedUrls) {
+      collectFromString(url, refs);
+    }
+  }
 
   // 1. User preferences (customSoundboard)
   try {

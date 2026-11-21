@@ -16,6 +16,9 @@ import {
   Server as ServerIcon,
   CornerDownLeft,
   X,
+  Megaphone,
+  MessagesSquare,
+  Users,
 } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
@@ -55,6 +58,8 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
     joinVoiceChannel,
     leaveVoiceChannel,
     openDirectMessage,
+    groupDms,
+    openGroupDm,
     toggleMute,
     toggleDeafen,
     setIsDiagnosticsOpen,
@@ -80,17 +85,31 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
       srv.channels.forEach((ch) => {
         if (ch.isTempCreatorChannel) return;
         const isVoice = ch.type === 'voice';
+        const typeLabel =
+          ch.type === 'voice'
+            ? 'Ses Odası'
+            : ch.type === 'announcement'
+            ? 'Duyuru Kanalı'
+            : ch.type === 'forum'
+            ? 'Forum Kanalı'
+            : 'Metin Kanalı';
+        const icon =
+          ch.type === 'voice' ? (
+            <Volume2 className="w-4 h-4 text-emerald-400" />
+          ) : ch.type === 'announcement' ? (
+            <Megaphone className="w-4 h-4 text-amber-400" />
+          ) : ch.type === 'forum' ? (
+            <MessagesSquare className="w-4 h-4 text-cyan-400" />
+          ) : (
+            <Hash className="w-4 h-4 text-white/60" />
+          );
         items.push({
           id: `ch-${ch.id}`,
           category: 'channel',
           title: isVoice ? ch.name : `#${ch.name}`,
-          subtitle: `${srv.name} · ${isVoice ? 'Ses Odası' : 'Metin Kanalı'}`,
-          keywords: `${ch.name} ${srv.name} ${isVoice ? 'ses voice' : 'metin text'}`,
-          icon: isVoice ? (
-            <Volume2 className="w-4 h-4 text-emerald-400" />
-          ) : (
-            <Hash className="w-4 h-4 text-white/60" />
-          ),
+          subtitle: `${srv.name} · ${typeLabel}`,
+          keywords: `${ch.name} ${srv.name} ${typeLabel} ${ch.type}`,
+          icon,
           onSelect: () => {
             selectServer(srv.id);
             if (isVoice) {
@@ -101,6 +120,22 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
             onClose();
           },
         });
+      });
+    });
+
+    // 1b. Group DMs
+    groupDms.forEach((g) => {
+      items.push({
+        id: `gdm-${g.id}`,
+        category: 'user',
+        title: `${g.icon || '👥'} ${g.name}`,
+        subtitle: `Grup Sohbeti · ${g.members.length} üye`,
+        keywords: `${g.name} ${g.members.join(' ')} grup dm group`,
+        icon: <Users className="w-4 h-4 text-indigo-400" />,
+        onSelect: () => {
+          openGroupDm(g.id);
+          onClose();
+        },
       });
     });
 
@@ -253,6 +288,8 @@ export const QuickSwitcherModal: React.FC<QuickSwitcherModalProps> = ({
     joinVoiceChannel,
     leaveVoiceChannel,
     openDirectMessage,
+    groupDms,
+    openGroupDm,
     toggleMute,
     toggleDeafen,
     setIsDiagnosticsOpen,

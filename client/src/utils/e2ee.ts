@@ -312,6 +312,59 @@ export async function decryptDmMessage(
   }
 }
 
+export async function encryptBinaryForPeer(
+  data: ArrayBuffer | Uint8Array,
+  myUsername: string,
+  peerPublicKeyJson: string
+): Promise<{ ciphertext: Uint8Array; ivBase64: string } | null> {
+  const subtle = getWebCrypto();
+  if (!subtle) return null;
+  const pair = await getOrCreateE2eeKeyPair(myUsername);
+  if (!pair) return null;
+  const aesKey = await deriveSharedAesKey(pair.privateKey, peerPublicKeyJson);
+  if (!aesKey) return null;
+  try {
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const rawBytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const cipherBuf = await subtle.encrypt(
+      { name: 'AES-GCM', iv: iv as BufferSource },
+      aesKey,
+      rawBytes as BufferSource
+    );
+    return {
+      ciphertext: new Uint8Array(cipherBuf),
+      ivBase64: bufToBase64(iv),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function decryptBinaryFromPeer(
+  ciphertext: ArrayBuffer | Uint8Array,
+  ivBase64: string,
+  myUsername: string,
+  peerPublicKeyJson: string
+): Promise<ArrayBuffer | null> {
+  const subtle = getWebCrypto();
+  if (!subtle || !ivBase64) return null;
+  const pair = await getOrCreateE2eeKeyPair(myUsername);
+  if (!pair) return null;
+  const aesKey = await deriveSharedAesKey(pair.privateKey, peerPublicKeyJson);
+  if (!aesKey) return null;
+  try {
+    const iv = base64ToBuf(ivBase64);
+    const cipherBytes = ciphertext instanceof Uint8Array ? ciphertext : new Uint8Array(ciphertext);
+    return await subtle.decrypt(
+      { name: 'AES-GCM', iv: iv as BufferSource },
+      aesKey,
+      cipherBytes as BufferSource
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Computes a symmetric, deterministic 60-digit Safety Number (12 groups of 5 digits)
  * from two ECDH P-256 public keys so both DM participants verify identical fingerprints.

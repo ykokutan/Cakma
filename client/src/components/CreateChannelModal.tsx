@@ -1,18 +1,24 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
-import { X, Hash, Volume2, Lock, Tag } from 'lucide-react';
+import { t } from '../utils/i18n';
+import { X, Hash, Volume2, Lock, Tag, Megaphone, MessagesSquare, Folder } from 'lucide-react';
+
+type CreatableChannelType = 'text' | 'voice' | 'announcement' | 'forum';
 
 interface CreateChannelModalProps {
-  initialType: 'text' | 'voice';
+  initialType: CreatableChannelType;
+  initialCategoryId?: string | null;
   onClose: () => void;
 }
 
 export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
   initialType,
+  initialCategoryId = null,
   onClose,
 }) => {
-  const { createChannel } = useSocket();
-  const [channelType, setChannelType] = useState<'text' | 'voice'>(initialType);
+  const { activeServer, createChannel, language } = useSocket();
+  const [channelType, setChannelType] = useState<CreatableChannelType>(initialType);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(initialCategoryId || '');
   const [channelName, setChannelName] = useState('');
   const [topic, setTopic] = useState('');
   const [isLocked, setIsLocked] = useState(false);
@@ -21,10 +27,15 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
   const [userLimit, setUserLimit] = useState<number>(0);
   const [isTempCreatorChannel, setIsTempCreatorChannel] = useState<boolean>(false);
 
+  const categories = [...(activeServer?.categories || [])].sort(
+    (a, b) => a.position - b.position
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!channelName.trim()) return;
     createChannel(channelName.trim(), channelType, {
+      categoryId: selectedCategoryId || null,
       topic: topic.trim() || undefined,
       isLocked,
       password: isLocked ? password.trim() : undefined,
@@ -35,17 +46,57 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
     onClose();
   };
 
+  const typeOptions: Array<{
+    id: CreatableChannelType;
+    label: string;
+    desc: string;
+    icon: React.ReactNode;
+  }> = [
+    {
+      id: 'text',
+      label: t(language, 'channelTypeText'),
+      desc: 'Mesaj, dosya ve emoji paylaşımı',
+      icon: <Hash className="w-4 h-4 text-white" />,
+    },
+    {
+      id: 'announcement',
+      label: t(language, 'channelTypeAnnouncement'),
+      desc: 'Yalnızca yöneticiler paylaşım yapar',
+      icon: <Megaphone className="w-4 h-4 text-amber-400" />,
+    },
+    {
+      id: 'forum',
+      label: t(language, 'channelTypeForum'),
+      desc: 'Başlık & etiket bazlı konu başlıkları',
+      icon: <MessagesSquare className="w-4 h-4 text-cyan-400" />,
+    },
+    {
+      id: 'voice',
+      label: t(language, 'channelTypeVoice'),
+      desc: 'Canlı konuşma ve ekran yayını',
+      icon: <Volume2 className="w-4 h-4 text-emerald-400" />,
+    },
+  ];
+
+  const subtitleLabel =
+    channelType === 'voice'
+      ? 'Ses odası ekleyin.'
+      : channelType === 'announcement'
+      ? 'Yönetici duyuru kanalı ekleyin.'
+      : channelType === 'forum'
+      ? 'Etiketli tartışma forumu ekleyin.'
+      : 'Metin kanalı ekleyin.';
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xl flex items-center justify-center p-4">
-      <div className="w-full max-w-md ios-glass rounded-3xl shadow-2xl overflow-hidden border border-white/10">
-        <div className="p-6 flex items-center justify-between border-b border-white/[0.06]">
+      <div className="w-full max-w-lg ios-glass rounded-3xl shadow-2xl overflow-hidden border border-white/10 max-h-[90vh] flex flex-col">
+        <div className="p-6 flex items-center justify-between border-b border-white/[0.06] shrink-0">
           <div>
             <h3 className="text-base font-bold text-white tracking-tight">Kanal Oluştur</h3>
-            <p className="text-xs text-white/50">
-              {channelType === 'text' ? 'Metin kanalı' : 'Ses odası'} ekleyin.
-            </p>
+            <p className="text-xs text-white/50">{subtitleLabel}</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition"
           >
@@ -53,53 +104,55 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           <div>
             <label className="block text-[11px] font-semibold text-white/40 uppercase mb-2">
               Kanal Türü
             </label>
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => setChannelType('text')}
-                className={`w-full flex items-center gap-3 p-3 rounded-2xl border text-left transition ${
-                  channelType === 'text'
-                    ? 'border-blue-500 bg-blue-500/15 text-white shadow-sm'
-                    : 'border-white/10 text-white/60 hover:border-white/20'
-                }`}
-              >
-                <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center text-white">
-                  <Hash className="w-4 h-4 shrink-0" />
-                </div>
-                <div>
-                  <div className="font-semibold text-xs text-white">Metin Kanalı</div>
-                  <div className="text-[11px] text-white/40">
-                    Mesaj, dosya ve emoji paylaşımı
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {typeOptions.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setChannelType(opt.id)}
+                  className={`flex items-center gap-2.5 p-2.5 rounded-2xl border text-left transition ${
+                    channelType === opt.id
+                      ? 'border-blue-500 bg-blue-500/15 text-white shadow-sm'
+                      : 'border-white/10 text-white/60 hover:border-white/20'
+                  }`}
+                >
+                  <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+                    {opt.icon}
                   </div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setChannelType('voice')}
-                className={`w-full flex items-center gap-3 p-3 rounded-2xl border text-left transition ${
-                  channelType === 'voice'
-                    ? 'border-blue-500 bg-blue-500/15 text-white shadow-sm'
-                    : 'border-white/10 text-white/60 hover:border-white/20'
-                }`}
-              >
-                <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center text-emerald-400">
-                  <Volume2 className="w-4 h-4 shrink-0" />
-                </div>
-                <div>
-                  <div className="font-semibold text-xs text-white">Ses & Ekran Odası</div>
-                  <div className="text-[11px] text-white/40">
-                    Canlı konuşma ve ekran yayını
+                  <div className="min-w-0">
+                    <div className="font-semibold text-xs text-white truncate">{opt.label}</div>
+                    <div className="text-[10px] text-white/45 truncate">{opt.desc}</div>
                   </div>
-                </div>
-              </button>
+                </button>
+              ))}
             </div>
           </div>
+
+          {categories.length > 0 && (
+            <div>
+              <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1 flex items-center gap-1">
+                <Folder className="w-3.5 h-3.5 text-amber-400" />
+                <span>Kategori (İsteğe bağlı)</span>
+              </label>
+              <select
+                value={selectedCategoryId}
+                onChange={(e) => setSelectedCategoryId(e.target.value)}
+                className="w-full bg-black/40 border border-white/10 text-white text-xs rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Kategorisiz</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1">
@@ -107,7 +160,13 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
             </label>
             <div className="relative flex items-center">
               <span className="absolute left-3 text-white/40 text-xs">
-                {channelType === 'text' ? '#' : '🔊'}
+                {channelType === 'voice'
+                  ? '🔊'
+                  : channelType === 'announcement'
+                  ? '📣'
+                  : channelType === 'forum'
+                  ? '💬'
+                  : '#'}
               </span>
               <input
                 type="text"
@@ -146,7 +205,7 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
                   />
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
                     <Lock className="w-3.5 h-3.5" />
-                    <span>Şifreli & Kilitli Özel Oda</span>
+                    <span>Şifreli &amp; Kilitli Özel Oda</span>
                   </div>
                 </label>
               </div>

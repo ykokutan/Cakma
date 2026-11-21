@@ -65,7 +65,7 @@ const MainLayout: React.FC = () => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
       // Alt + ArrowUp / ArrowDown (and Alt + Shift for unread-only channels)
       if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        const textChs = (activeServer?.channels || []).filter((c) => c.type === 'text');
+        const textChs = (activeServer?.channels || []).filter((c) => c.type !== 'voice');
         if (textChs.length > 0) {
           const candidates = e.shiftKey
             ? textChs.filter((c) => c.id === activeChannel?.id || (unreadCounts[c.id] || 0) > 0)
@@ -156,8 +156,9 @@ const MainLayout: React.FC = () => {
   }, [isAuthenticated, shouldAutoOpenExplore, consumeAutoOpenExplore]);
   const [createChannelModal, setCreateChannelModal] = useState<{
     isOpen: boolean;
-    type: 'text' | 'voice';
-  }>({ isOpen: false, type: 'text' });
+    type: 'text' | 'voice' | 'announcement' | 'forum';
+    categoryId?: string | null;
+  }>({ isOpen: false, type: 'text', categoryId: null });
 
   // Mandatory Authentication Wall: Kayıt / Giriş yapılmadan platform açılamaz
   if (!isAuthenticated) {
@@ -285,8 +286,8 @@ const MainLayout: React.FC = () => {
 
         {(!isChannelsCollapsed || isMobileNavOpen) && (
           <ChannelSidebar
-            onOpenCreateChannel={(type) => {
-              setCreateChannelModal({ isOpen: true, type });
+            onOpenCreateChannel={(type, categoryId) => {
+              setCreateChannelModal({ isOpen: true, type, categoryId: categoryId ?? null });
               setIsMobileNavOpen(false);
             }}
             onOpenSettings={() => { setIsSettingsOpen(true); setIsMobileNavOpen(false); }}
@@ -393,8 +394,9 @@ const MainLayout: React.FC = () => {
         {createChannelModal.isOpen && (
           <CreateChannelModal
             initialType={createChannelModal.type}
+            initialCategoryId={createChannelModal.categoryId}
             onClose={() =>
-              setCreateChannelModal({ isOpen: false, type: 'text' })
+              setCreateChannelModal({ isOpen: false, type: 'text', categoryId: null })
             }
           />
         )}

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData } from './types.js';
+import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData, GroupDmRoom, ServerWebhook } from './types.js';
 import { ShardedMessageStore, getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages } from './messageStore.js';
 import { SqliteStore } from './sqliteStore.js';
 
@@ -10,6 +10,10 @@ export { getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages };
 
 // Resolve persistent data directory
 export function getPersistentDir(): string {
+  const override = process.env.CAKMA_DATA_DIR?.trim();
+  if (override) {
+    return path.resolve(override);
+  }
   const cwd = process.cwd();
   if (path.basename(cwd) === 'server' && fs.existsSync(path.resolve(cwd, '..', 'package.json'))) {
     return path.resolve(cwd, '..', 'data');
@@ -782,4 +786,21 @@ export function loadPushSubscriptions(): PushSubscriptionRecord[] {
 
 export function savePushSubscriptions(records: PushSubscriptionRecord[]) {
   scheduleWriteJson('push_subscriptions.json', records);
+}
+
+// 15. GROUP DMs & WEBHOOKS
+export function loadGroupDms(): GroupDmRoom[] {
+  return safeReadJson<GroupDmRoom[]>('group-dms.json', []);
+}
+
+export function saveGroupDms(rooms: GroupDmRoom[]): void {
+  scheduleWriteJson('group-dms.json', rooms);
+}
+
+export function loadWebhooks(): ServerWebhook[] {
+  return safeReadJson<ServerWebhook[]>('webhooks.json', []);
+}
+
+export function saveWebhooks(webhooks: ServerWebhook[]): void {
+  scheduleWriteJson('webhooks.json', webhooks);
 }
