@@ -948,7 +948,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* iOS Translucent Header */}
-      <header className="h-14 px-3 sm:px-5 border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 bg-[#101218]/75 backdrop-blur-xl shadow-sm select-none">
+      <header className="relative z-30 h-14 px-3 sm:px-5 border-b border-white/[0.07] flex items-center justify-between gap-2 shrink-0 bg-[#101218]/75 backdrop-blur-xl shadow-sm select-none">
         <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
           {onOpenMobileNav && (
             <button
@@ -1077,8 +1077,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               )}
             </button>
             {isNotifMenuOpen && (
-              <div className="absolute right-0 top-10 z-50 w-52 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
-                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/45 border-b border-white/10 mb-1">
+              <div className="absolute right-0 top-11 z-50 w-52 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/55 border-b border-white/10 mb-1">
                   Bildirim Tercihi
                 </div>
                 {(
@@ -1178,8 +1178,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               )}
             </button>
             {isToolsMenuOpen && (
-              <div className="absolute right-0 top-10 z-50 w-56 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
-                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/45 border-b border-white/10 mb-1">
+              <div className="absolute right-0 top-11 z-50 w-56 rounded-2xl ios-glass border border-white/15 shadow-2xl p-1.5 text-xs text-white animate-fade-in">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/55 border-b border-white/10 mb-1">
                   {t(language, 'channelTools')}
                 </div>
                 <button
@@ -1287,7 +1287,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             ? classifyConnectionQuality(directCallQuality.rttMs, directCallQuality.packetLossPct)
             : null;
           return (
-            <div className="border-b border-emerald-500/20 bg-gradient-to-b from-[#131d19] via-[#10141d] to-[#0c0e14] backdrop-blur-md select-none transition-all">
+            <div className="relative z-20 border-b border-emerald-500/20 bg-gradient-to-b from-[#131d19] via-[#10141d] to-[#0c0e14] backdrop-blur-md select-none transition-all">
               {isCallStageCollapsed ? (
                 <div className="px-5 py-2.5 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -1847,7 +1847,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
       {/* Channel Sticky Notice & Topic Bar */}
       {activeServer.id !== 'direct-messages' && activeChannel.type === 'text' && (
-        <div className="border-b border-white/[0.06] bg-[#141418]/90 backdrop-blur-md px-6 py-2 flex items-center justify-between text-xs transition select-none">
+        <div className="relative z-10 border-b border-white/[0.06] bg-[#141418]/90 backdrop-blur-md px-6 py-2 flex items-center justify-between text-xs transition select-none">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {activeChannel.stickyNotice ? (
               <div className="flex items-center gap-2 truncate">
@@ -1911,7 +1911,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       <div
         ref={scrollContainerRef}
         onScroll={handleMessagesScroll}
-        className={`relative flex-1 overflow-y-auto px-4 sm:px-6 py-5 chat-msg-list ${
+        className={`relative z-0 flex-1 overflow-y-auto px-4 sm:px-6 py-5 chat-msg-list ${
           messageDensity === 'compact' ? 'space-y-1.5' : 'space-y-3.5'
         }`}
       >
@@ -2059,9 +2059,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     onClick={(e) => e.stopPropagation()}
                     className={`absolute -top-3.5 right-2 ${
                       isActionOpen
-                        ? 'opacity-100'
-                        : 'opacity-0 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100'
-                    } transition-opacity z-20 flex items-center gap-0.5 bg-slate-900/95 border border-white/15 rounded-full px-1.5 py-0.5 shadow-xl backdrop-blur-md select-none`}
+                        ? 'opacity-100 pointer-events-auto z-30'
+                        : 'opacity-0 pointer-events-none group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto group-focus-within/msg:opacity-100 group-focus-within/msg:pointer-events-auto z-20'
+                    } transition-opacity flex items-center gap-0.5 bg-slate-900/95 border border-white/15 rounded-full px-1.5 py-0.5 shadow-xl backdrop-blur-md select-none`}
                   >
                     {['👍', '❤️', '🔥'].map((emoji) => (
                       <button
@@ -2463,6 +2463,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       <div
                         id={`message-${msg.id}`}
                         className={`relative group/msg chat-msg-row flex items-start ${
+                          isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
+                        } ${
                           isCompact ? 'gap-2.5 py-0.5' : 'gap-3 py-1'
                         } px-2.5 rounded-xl hover:bg-white/[0.03] transition-colors ${
                           isSameAuthorAsPrev ? 'mt-0.5' : 'mt-3'
@@ -2532,7 +2534,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     ) : (
                       <div
                         id={`message-${msg.id}`}
-                        className={`flex gap-3 items-end group chat-msg-row ${
+                        className={`relative flex gap-3 items-end group chat-msg-row ${
+                          isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
+                        } ${
                           isMe ? 'justify-end' : 'justify-start'
                         } ${isSameAuthorAsPrev ? 'mt-1' : 'mt-4'} ${
                           highlightedMessageId === msg.id
@@ -2651,7 +2655,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Message Input Box - iOS Messages Capsule Bar */}
-      <div className="px-3 sm:px-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-6 pt-2 shrink-0 select-none">
+      <div className="relative z-20 px-3 sm:px-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-6 pt-2 shrink-0 select-none">
         {/* Hidden File Input */}
         <input
           type="file"

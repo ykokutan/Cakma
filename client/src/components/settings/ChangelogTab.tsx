@@ -15,17 +15,27 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v0.8.1 - Latest */}
+        {/* v0.8.2 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v0.8.1 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v0.8.2 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
-            <li><strong className="text-white">Tema Tokenları &amp; Performans:</strong> Tüm temalara uyumlu aksan değişkenleri (<code className="text-emerald-200">--ui-accent</code>, <code className="text-emerald-200">.ui-accent-bg</code>, <code className="text-emerald-200">.ui-accent-bar</code>), dengelenmiş cam/bulanıklık (<code className="text-emerald-200">backdrop-filter</code>) performansı ve gerçek <code className="text-emerald-200">compact</code> mesaj yoğunluğu desteği eklendi.</li>
-            <li><strong className="text-white">Sohbet Düzeni (chatLayout) &amp; Tarih Ayırıcıları:</strong> Ayarlar&apos;dan seçilebilen <strong>Otomatik / Klasik Akış / Balon</strong> görünüm modu, yerelleştirilmiş tarih ayırıcıları (<code className="text-emerald-200">Bugün</code> / <code className="text-emerald-200">Dün</code> / tarih), iskelet yükleyici (<code className="text-emerald-200">MessageSkeletonList</code>) ve 4 dilli arayüz anahtarları eklendi.</li>
-            <li><strong className="text-white">Sohbet Ergonomisi &amp; Çok Satırlı Giriş:</strong> Çalışır bildirim zili menüsü, sadeleştirilmiş başlık + <strong>Kanal Araçları</strong> menüsü, alıntıya tıklayarak mesaja atlama, akıllı kaydırma/yeni mesaj rozeti, sadeleştirilmiş mesaj eylem çubuğu ve büyüyen çok satırlı mesaj kutusu (<code className="text-emerald-200">Shift+Enter</code>) eklendi.</li>
-            <li><strong className="text-white">Birleşik Banner Yığını &amp; Masaüstü/Web Yerleşimi:</strong> Çakışmayan <code className="text-emerald-200">AppBannerStack</code>, masaüstü web&apos;de üst araç çubuğu (<code className="text-emerald-200">WindowTitleBar</code>), daraltılabilir kanal kenar çubuğu, <code className="text-emerald-200">xl:</code> üye listesi düzeni ve seçilebilir profil metinleri tamamlandı.</li>
+            <li><strong className="text-white">Üst Menü &amp; Katman Düzeltmesi:</strong> Sohbet başlığındaki <strong>Bildirim Tercihi</strong> ve <strong>Kanal Araçları</strong> açılır menülerinin sabit duyuru çubuğunun altında kalmasına yol açan CSS stacking-context çakışması giderildi (<code className="text-emerald-200">&lt;header&gt;</code> <code className="text-emerald-200">z-30</code>, DM görüşme alanı &amp; mesaj giriş alanı <code className="text-emerald-200">z-20</code>, duyuru çubuğu <code className="text-emerald-200">z-10</code>, mesaj listesi <code className="text-emerald-200">z-0</code>); mesaj satırı taşma menüleri ve gizli hover araç çubuğu etkileşimleri izole edildi.</li>
+          </ul>
+        </div>
+
+        {/* v0.8.1 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v0.8.1 — Önceki Sürüm</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Tema Tokenları &amp; Performans:</strong> Tüm temalara uyumlu aksan değişkenleri (<code className="text-cyan-300">--ui-accent</code>, <code className="text-cyan-300">.ui-accent-bg</code>, <code className="text-cyan-300">.ui-accent-bar</code>), dengelenmiş cam/bulanıklık (<code className="text-cyan-300">backdrop-filter</code>) performansı ve gerçek <code className="text-cyan-300">compact</code> mesaj yoğunluğu desteği eklendi.</li>
+            <li><strong className="text-white">Sohbet Düzeni (chatLayout) &amp; Tarih Ayırıcıları:</strong> Ayarlar&apos;dan seçilebilen <strong>Otomatik / Klasik Akış / Balon</strong> görünüm modu, yerelleştirilmiş tarih ayırıcıları (<code className="text-cyan-300">Bugün</code> / <code className="text-cyan-300">Dün</code> / tarih), iskelet yükleyici (<code className="text-cyan-300">MessageSkeletonList</code>) ve 4 dilli arayüz anahtarları eklendi.</li>
+            <li><strong className="text-white">Sohbet Ergonomisi &amp; Çok Satırlı Giriş:</strong> Çalışır bildirim zili menüsü, sadeleştirilmiş başlık + <strong>Kanal Araçları</strong> menüsü, alıntıya tıklayarak mesaja atlama, akıllı kaydırma/yeni mesaj rozeti, sadeleştirilmiş mesaj eylem çubuğu ve büyüyen çok satırlı mesaj kutusu (<code className="text-cyan-300">Shift+Enter</code>) eklendi.</li>
+            <li><strong className="text-white">Birleşik Banner Yığını &amp; Masaüstü/Web Yerleşimi:</strong> Çakışmayan <code className="text-cyan-300">AppBannerStack</code>, masaüstü web&apos;de üst araç çubuğu (<code className="text-cyan-300">WindowTitleBar</code>), daraltılabilir kanal kenar çubuğu, <code className="text-cyan-300">xl:</code> üye listesi düzeni ve seçilebilir profil metinleri tamamlandı.</li>
           </ul>
         </div>
 

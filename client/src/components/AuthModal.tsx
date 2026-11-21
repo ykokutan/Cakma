@@ -581,7 +581,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       <div className="flex items-center gap-2">
                         <span className="text-lg font-extrabold tracking-tight text-white">Çakma</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 border border-rose-500/35 text-rose-300">
-                          v0.8.1
+                          v0.8.2
                         </span>
                       </div>
                       <p className="text-[11px] text-white/50">Ses &amp; Topluluk Platformu</p>

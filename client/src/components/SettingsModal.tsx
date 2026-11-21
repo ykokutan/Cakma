@@ -245,7 +245,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('0.8.1');
+  const [appVersion, setAppVersion] = useState<string>('0.8.2');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
