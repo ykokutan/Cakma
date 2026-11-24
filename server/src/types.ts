@@ -35,6 +35,7 @@ export interface FriendUser {
   role: UserRole;
   currentVoiceChannelId?: string;
   addedAt?: string;
+  e2eePublicKey?: string;
 }
 
 export interface User {

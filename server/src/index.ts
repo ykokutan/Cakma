@@ -528,7 +528,8 @@ function getFriendsData(username: string): { friends: FriendUser[]; incomingRequ
       statusMessage: onlineUser?.statusMessage || fAcc?.statusMessage,
       role: fAcc?.role || 'user',
       currentVoiceChannelId: onlineUser?.currentVoiceChannelId,
-      addedAt: 'Arkadaş'
+      addedAt: 'Arkadaş',
+      e2eePublicKey: onlineUser?.e2eePublicKey || fAcc?.e2eePublicKey,
     };
   });
 

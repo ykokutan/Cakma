@@ -304,9 +304,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
   useEffect(() => {
     if (activeServer?.id !== 'direct-messages' || !currentUser?.username) return;
+    const unameLower = activeDMUser?.username?.toLowerCase();
     const peerPub =
       activeDMUser?.e2eePublicKey ||
-      onlineUsers.find((u) => u.id === activeDMUser?.id || u.username === activeDMUser?.username)?.e2eePublicKey;
+      onlineUsers.find((u) => u.id === activeDMUser?.id || (unameLower && u.username.toLowerCase() === unameLower))?.e2eePublicKey ||
+      friends.find((f) => unameLower && f.username.toLowerCase() === unameLower)?.e2eePublicKey;
     if (!peerPub) return;
     const encryptedMsgs = messages.filter((m) => isE2eeCiphertext(m.content) && !decryptedDmMap[m.id]);
     if (encryptedMsgs.length === 0) return;
@@ -329,7 +331,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeServer?.id, activeDMUser, onlineUsers, currentUser?.username, messages, decryptedDmMap]);
+  }, [activeServer?.id, activeDMUser, onlineUsers, friends, currentUser?.username, messages, decryptedDmMap]);
 
   useEffect(() => {
     if (activeServer?.id !== 'direct-messages' || !activeGroupDm?.e2eeEnabled) return;
@@ -931,9 +933,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const dmPartner = isDM
     ? activeDMUser || onlineUsers.find((u) => u.id !== currentUser?.id)
     : null;
+  const dmPartnerLower = dmPartner?.username?.toLowerCase();
   const dmPeerPublicKey = isDM
     ? dmPartner?.e2eePublicKey ||
-      onlineUsers.find((u) => u.id === dmPartner?.id || u.username === dmPartner?.username)?.e2eePublicKey
+      onlineUsers.find(
+        (u) => u.id === dmPartner?.id || (dmPartnerLower && u.username.toLowerCase() === dmPartnerLower)
+      )?.e2eePublicKey ||
+      friends.find((f) => dmPartnerLower && f.username.toLowerCase() === dmPartnerLower)?.e2eePublicKey
     : undefined;
 
   const canManageChannels = Boolean(
@@ -1056,11 +1062,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
     let outgoingText = finalMessage;
     if (isDM && dmE2eeEnabled && outgoingText && currentUser?.username) {
-      const peerPub =
-        dmPartner?.e2eePublicKey ||
-        onlineUsers.find((u) => u.id === dmPartner?.id || u.username === dmPartner?.username)?.e2eePublicKey;
-      if (peerPub) {
-        const cipher = await encryptDmMessage(outgoingText, currentUser.username, peerPub);
+      if (dmPeerPublicKey) {
+        const cipher = await encryptDmMessage(outgoingText, currentUser.username, dmPeerPublicKey);
         if (cipher) outgoingText = cipher;
       }
     }
@@ -3695,31 +3698,50 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 GIF
               </button>
 
-              {isDM && (dmPartner?.e2eePublicKey || onlineUsers.find((u) => u.id === dmPartner?.id)?.e2eePublicKey) && (
+              {isDM && (
                 <div className="flex items-center gap-1 shrink-0 h-8">
                   <button
                     type="button"
-                    onClick={() => setDmE2eeEnabled((v) => !v)}
+                    onClick={() => {
+                      if (!dmPeerPublicKey) {
+                        appToast(
+                          `${dmPartner?.username || 'Kullanıcı'} henüz bir E2EE anahtarı oluşturmadı; uygulamaya giriş yaptığında otomatik aktif olur.`,
+                          'info'
+                        );
+                        return;
+                      }
+                      setDmE2eeEnabled((v) => !v);
+                    }}
                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider transition border flex items-center gap-1 ${
-                      dmE2eeEnabled
+                      !dmPeerPublicKey
+                        ? 'bg-white/5 border-white/10 text-white/40 opacity-55 hover:opacity-85'
+                        : dmE2eeEnabled
                         ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-sm shadow-emerald-500/20'
                         : 'bg-white/10 hover:bg-white/20 border-white/10 text-white/70 hover:text-white'
                     }`}
-                    title={dmE2eeEnabled ? 'Uçtan Uca Şifreleme (E2EE) Aktif' : 'Uçtan Uca Şifreli Sohbeti Aç (E2EE)'}
+                    title={
+                      !dmPeerPublicKey
+                        ? 'Karşı tarafın E2EE anahtarı henüz yok (giriş yaptığında otomatik oluşur)'
+                        : dmE2eeEnabled
+                        ? 'Uçtan Uca Şifreleme (E2EE) Aktif'
+                        : 'Uçtan Uca Şifreli Sohbeti Aç (E2EE)'
+                    }
                     aria-label="Uçtan Uca Şifreleme (E2EE)"
                   >
                     <Lock className="w-3 h-3" />
                     <span>E2EE</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsSafetyModalOpen(true)}
-                    className="w-7 h-7 rounded-full bg-white/10 hover:bg-emerald-500/20 border border-white/10 text-emerald-300 flex items-center justify-center transition"
-                    title="E2EE Güvenlik Numarasını Doğrula"
-                    aria-label="E2EE Güvenlik Numarasını Doğrula"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                  </button>
+                  {dmPeerPublicKey && (
+                    <button
+                      type="button"
+                      onClick={() => setIsSafetyModalOpen(true)}
+                      className="w-7 h-7 rounded-full bg-white/10 hover:bg-emerald-500/20 border border-white/10 text-emerald-300 flex items-center justify-center transition"
+                      title="E2EE Güvenlik Numarasını Doğrula"
+                      aria-label="E2EE Güvenlik Numarasını Doğrula"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -4015,20 +4037,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         )}
 
         {/* E2EE Safety Number Verification Modal */}
-        {isSafetyModalOpen && isDM && dmPartner && currentUser?.username && (() => {
-          const peerPub =
-            dmPartner.e2eePublicKey ||
-            onlineUsers.find((u) => u.id === dmPartner.id || u.username === dmPartner.username)?.e2eePublicKey;
-          if (!peerPub) return null;
-          return (
-            <E2eeSafetyModal
-              myUsername={currentUser.username}
-              peerUsername={dmPartner.username}
-              peerPublicKeyJson={peerPub}
-              onClose={() => setIsSafetyModalOpen(false)}
-            />
-          );
-        })()}
+        {isSafetyModalOpen && isDM && dmPartner && currentUser?.username && dmPeerPublicKey && (
+          <E2eeSafetyModal
+            myUsername={currentUser.username}
+            peerUsername={dmPartner.username}
+            peerPublicKeyJson={dmPeerPublicKey}
+            onClose={() => setIsSafetyModalOpen(false)}
+          />
+        )}
       </Suspense>
 
       {/* Channel Notice & Topic Edit Modal */}

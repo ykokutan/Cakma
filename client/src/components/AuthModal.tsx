@@ -41,6 +41,8 @@ import { OtpCodeInput } from './auth/OtpCodeInput';
 import { TwoFactorForm } from './auth/TwoFactorForm';
 import { ForgotPasswordForm } from './auth/ForgotPasswordForm';
 import { isWebAuthnSupported, loginWithPasskey } from '../utils/webauthn';
+import { LegalDocumentsModal } from './LegalDocumentsModal';
+import type { LegalDocumentId } from '../data/legalDocuments';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -81,7 +83,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   } = useAuth();
   const ping = useNetworkPing();
   const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, true, forced ? undefined : onClose);
+  const [legalModalDoc, setLegalModalDoc] = useState<LegalDocumentId | null>(null);
+  useFocusTrap(modalRef, true, forced || legalModalDoc ? undefined : onClose);
 
   const [savedInitialUser] = useState<string>(() => readSavedUsername());
   const [isRegister, setIsRegister] = useState(false);
@@ -126,6 +129,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const [resetSuccessNotice, setResetSuccessNotice] = useState('');
   const [showServerSwitch, setShowServerSwitch] = useState(false);
   const [customServerInput, setCustomServerInput] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const isLightTheme = uiTheme !== 'custom' && LIGHT_THEMES.has(uiTheme);
   const usernameCheck = validateUsername(username);
@@ -376,6 +380,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
       }
       if (password !== confirmPassword) {
         triggerError('Girdiğiniz şifreler eşleşmiyor. Lütfen kontrol edin.');
+        return;
+      }
+      if (!acceptedTerms) {
+        triggerError('Kayıt olmak için Kullanıcı Sözleşmesi, Gizlilik Politikası ve KVKK Aydınlatma Metni\'ni kabul etmelisiniz.');
         return;
       }
       if (requireEmailVerif && normalizeOtpInput(emailCode, 6).length !== 6) {
@@ -1230,6 +1238,53 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                       </div>
                     )}
 
+                    {/* Register: Required Legal Consent Checkbox */}
+                    {isRegister && (
+                      <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-[11px] text-white/75 leading-relaxed cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={acceptedTerms}
+                          onChange={(e) => setAcceptedTerms(e.target.checked)}
+                          className="mt-0.5 rounded border-white/25 bg-white/10 text-emerald-500 focus:ring-emerald-500 shrink-0"
+                        />
+                        <span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setLegalModalDoc('terms');
+                            }}
+                            className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                          >
+                            Kullanıcı Sözleşmesi
+                          </button>
+                          ,{' '}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setLegalModalDoc('privacy');
+                            }}
+                            className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                          >
+                            Gizlilik Politikası
+                          </button>{' '}
+                          ve{' '}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setLegalModalDoc('kvkk');
+                            }}
+                            className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                          >
+                            KVKK Aydınlatma Metni
+                          </button>
+                          &apos;ni okudum ve kabul ediyorum.
+                        </span>
+                      </label>
+                    )}
+
                     <button
                       type="submit"
                       disabled={loading || !isConnected}
@@ -1288,6 +1343,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                   </>
                 )}
               </form>
+
+              {/* Legal Links Footer */}
+              <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[10px] text-white/45">
+                {[
+                  { id: 'terms' as const, label: 'Kullanıcı Sözleşmesi' },
+                  { id: 'privacy' as const, label: 'Gizlilik Politikası' },
+                  { id: 'kvkk' as const, label: 'KVKK' },
+                  { id: 'community' as const, label: 'Topluluk Kuralları' },
+                  { id: 'cookies' as const, label: 'Çerezler' },
+                ].map((item, idx) => (
+                  <React.Fragment key={item.id}>
+                    {idx > 0 && <span aria-hidden="true">·</span>}
+                    <button
+                      type="button"
+                      onClick={() => setLegalModalDoc(item.id)}
+                      className="hover:text-white transition underline-offset-2 hover:underline"
+                    >
+                      {item.label}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </div>
             </div>
 
             {/* Compact Mobile / Modal Server Status Bar */}
@@ -1297,6 +1374,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
           </div>
         </div>
       </div>
+
+      <LegalDocumentsModal
+        isOpen={Boolean(legalModalDoc)}
+        initialDocId={legalModalDoc || 'terms'}
+        onClose={() => setLegalModalDoc(null)}
+        onAccept={
+          isRegister
+            ? () => {
+                setAcceptedTerms(true);
+                setLegalModalDoc(null);
+              }
+            : undefined
+        }
+      />
     </div>
   );
 };

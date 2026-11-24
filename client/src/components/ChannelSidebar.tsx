@@ -1234,6 +1234,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                   isDeafened: false,
                   isSpeaking: false,
                   role: 'user' as const,
+                  e2eePublicKey: friend.e2eePublicKey,
                 };
                 const isSelected = activeDMUser?.username.toLowerCase() === friend.username.toLowerCase();
                 const dmUnread = unreadDMByUser[friend.username.toLowerCase()] || 0;

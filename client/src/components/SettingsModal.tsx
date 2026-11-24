@@ -15,6 +15,8 @@ import { ActiveSessionsCard } from './settings/ActiveSessionsCard';
 import { PasswordChangeCard } from './settings/PasswordChangeCard';
 import { ChangelogTab } from './settings/ChangelogTab';
 import { AudioNoiseGatePanel } from './settings/AudioNoiseGatePanel';
+import { LegalDocumentsModal } from './LegalDocumentsModal';
+import { LEGAL_DOCUMENTS, LEGAL_DOCUMENTS_VERSION, LEGAL_LAST_UPDATED, type LegalDocumentId } from '../data/legalDocuments';
 import {
   X,
   Mic,
@@ -303,6 +305,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
   const [appVersion, setAppVersion] = useState<string>('1.1.0');
+  const [legalModalDoc, setLegalModalDoc] = useState<LegalDocumentId | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -616,7 +619,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     }
   };
   const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, true, onClose);
+  useFocusTrap(modalRef, true, legalModalDoc ? undefined : onClose);
   const [recordingKey, setRecordingKey] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [notifPermission, setNotifPermission] = useState(
@@ -697,6 +700,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     { label: 'Sohbet & Fısıltı', tab: 'chats' as const, kw: 'sohbet fısıltı link gif' },
                     { label: 'Bildirimler & Ses Paketi', tab: 'notifications' as const, kw: 'bildirim zil ses paketi' },
                     { label: 'Hakkında & Güncelleme', tab: 'about' as const, kw: 'hakkında sürüm güncelleme' },
+                    { label: 'Yasal Bilgiler & Sözleşmeler', tab: 'about' as const, kw: 'yasal sözleşme gizlilik kvkk çerez topluluk kuralları' },
                   ]
                     .filter((item) => {
                       const q = settingsSearch.trim().toLowerCase();
@@ -704,7 +708,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     })
                     .map((item) => (
                       <button
-                        key={item.tab}
+                        key={item.label}
                         type="button"
                         onClick={() => {
                           setActiveTab(item.tab);
@@ -3633,11 +3637,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
+              <div className="rounded-2xl border border-white/10 bg-black/25 p-5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-bold text-white">Yasal Sayfalar &amp; Kullanıcı Sözleşmesi</div>
+                    <div className="text-[11px] text-white/45 mt-0.5">
+                      Sürüm v{LEGAL_DOCUMENTS_VERSION} · Son güncelleme: {LEGAL_LAST_UPDATED}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {LEGAL_DOCUMENTS.map((doc) => (
+                    <button
+                      key={doc.id}
+                      type="button"
+                      onClick={() => setLegalModalDoc(doc.id)}
+                      className="p-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/10 hover:border-rose-400/35 text-left transition group"
+                    >
+                      <div className="text-xs font-bold text-white group-hover:text-rose-200 transition">
+                        {doc.shortTitle}
+                      </div>
+                      <div className="text-[10px] text-white/45 mt-0.5 line-clamp-2">
+                        {doc.subtitle}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <ChangelogTab appVersion={appVersion} />
             </div>
           )}
         </div>
       </div>
+
+      <LegalDocumentsModal
+        isOpen={Boolean(legalModalDoc)}
+        initialDocId={legalModalDoc || 'terms'}
+        onClose={() => setLegalModalDoc(null)}
+      />
     </div>
   );
 };

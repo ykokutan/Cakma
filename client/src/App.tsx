@@ -25,6 +25,8 @@ const LicenseStoreModal = lazy(() => import('./components/LicenseStoreModal').th
 const ServerSettingsModal = lazy(() => import('./components/ServerSettingsModal').then((m) => ({ default: m.ServerSettingsModal })));
 const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDiagnosticsModal').then((m) => ({ default: m.ConnectionDiagnosticsModal })));
 const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
+const LegalDocumentsModal = lazy(() => import('./components/LegalDocumentsModal').then((m) => ({ default: m.LegalDocumentsModal })));
+import { resolveLegalDocFromLocation, type LegalDocumentId } from './data/legalDocuments';
 import { User } from './types';
 import { X, Volume2, Check, ShieldAlert } from 'lucide-react';
 
@@ -449,6 +451,12 @@ const MainLayout: React.FC = () => {
 };
 
 export function App() {
+  const [urlLegalDoc, setUrlLegalDoc] = useState<LegalDocumentId | null>(() =>
+    typeof window !== 'undefined'
+      ? resolveLegalDocFromLocation(window.location.pathname, window.location.search)
+      : null
+  );
+
   if (
     typeof window !== 'undefined' &&
     ((window as any).__CAKMA_OVERLAY__ || window.location.search.includes('overlay=1'))
@@ -461,6 +469,15 @@ export function App() {
       <MainLayout />
       <AutoUpdater />
       <AppDialogHost />
+      {urlLegalDoc && (
+        <Suspense fallback={null}>
+          <LegalDocumentsModal
+            isOpen={Boolean(urlLegalDoc)}
+            initialDocId={urlLegalDoc}
+            onClose={() => setUrlLegalDoc(null)}
+          />
+        </Suspense>
+      )}
     </SocketProvider>
   );
 }
