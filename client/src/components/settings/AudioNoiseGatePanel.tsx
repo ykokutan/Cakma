@@ -100,8 +100,25 @@ export const AudioNoiseGatePanel: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-white/55">
           <span>Anlık Giriş: <b className="text-white">{Math.round(liveAudioTelemetry.db)} dB</b></span>
           <span>Taban: <b className="text-cyan-300">{Math.round(liveAudioTelemetry.noiseFloorDb)} dB</b></span>
-          <span>Zayıflatma: <b className="text-amber-300">-{liveAudioTelemetry.gainReductionDb.toFixed(1)} dB</b></span>
+          <span>Zayıflatma: <b className="text-amber-300">{liveAudioTelemetry.gainReductionDb.toFixed(1)} dB</b></span>
         </div>
+
+        {liveAudioTelemetry.bandSuppression && (
+          <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono pt-1">
+            <div className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/10 flex items-center justify-between text-white/65">
+              <span>Alt &lt;300Hz</span>
+              <b className="text-sky-300">{liveAudioTelemetry.bandSuppression.low.toFixed(1)} dB</b>
+            </div>
+            <div className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/10 flex items-center justify-between text-white/65">
+              <span>Konuşma</span>
+              <b className="text-emerald-300">{liveAudioTelemetry.bandSuppression.mid.toFixed(1)} dB</b>
+            </div>
+            <div className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/10 flex items-center justify-between text-white/65">
+              <span>Üst &gt;3.4kHz</span>
+              <b className="text-amber-300">{liveAudioTelemetry.bandSuppression.high.toFixed(1)} dB</b>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Voice Gate dB Threshold Slider */}

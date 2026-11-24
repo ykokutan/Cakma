@@ -6,6 +6,7 @@ export interface AudioWorkletTelemetry {
   noiseFloorDb: number;
   gateOpen: boolean;
   gainReductionDb: number;
+  bandSuppression?: { low: number; mid: number; high: number };
 }
 
 export interface VoiceContextValue {
@@ -30,6 +31,8 @@ export interface VoiceContextValue {
   setVoiceGateDb: (db: number) => void;
   noiseAggressiveness: number;
   setNoiseAggressiveness: (val: number) => void;
+  globalLoudnessNormalize: boolean;
+  setGlobalLoudnessNormalize: (enabled: boolean) => void;
   liveAudioTelemetry: AudioWorkletTelemetry;
   globalMuteShortcut: string;
   setGlobalMuteShortcut: (key: string) => void;

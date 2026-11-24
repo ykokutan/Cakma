@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useRef, useEffect, useCallback, Suspense, lazy } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { useChat } from '../context/ChatContext';
 import { useTypingUsers, useDirectCallQuality } from '../context/PresenceStore';
@@ -26,16 +26,17 @@ import {
   parseSmartSearchQuery,
 } from '../utils/chatExportAndFilters';
 import { t } from '../utils/i18n';
-import { uploadAttachmentFile, uploadDataUrlAttachment, uploadEncryptedAttachmentFile } from '../utils/uploadAttachment';
+import { uploadAttachmentFile, uploadDataUrlAttachment, uploadEncryptedAttachmentFile, uploadGroupEncryptedAttachmentFile } from '../utils/uploadAttachment';
 import { resolveMediaUrl } from '../utils/authFetch';
 import { appConfirm, appToast } from '../utils/appDialogs';
 import { ChatLightbox } from './ChatLightbox';
 import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
-import { computeVirtualWindow } from '../utils/virtualWindow';
+import { computeVariableVirtualWindow } from '../utils/virtualWindow';
 import { classifyConnectionQuality, formatCallDuration } from '../utils/remoteAssistHelpers';
 import { EncryptedAttachmentView } from './chat/EncryptedAttachmentView';
 import { SmartSearchFilterBar } from './chat/SmartSearchFilterBar';
 import { EmojiAndStickerPicker } from './chat/EmojiAndStickerPicker';
+import { ImagePreSendModal } from './chat/ImagePreSendModal';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -202,6 +203,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     updateChannelNotice,
     editMessage,
     deleteMessage,
+    bulkDeleteMessages,
     sendTyping,
     chatFontSize,
     messageDensity,
@@ -436,12 +438,82 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isGlobalInboxOpen, setIsGlobalInboxOpen] = useState(false);
   const [isEventsModalOpen, setIsEventsModalOpen] = useState(false);
   const [visibleMsgCount, setVisibleMsgCount] = useState(80);
+  const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
+  const [activeUploads, setActiveUploads] = useState<
+    { id: string; name: string; progress: number; controller: AbortController }[]
+  >([]);
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
+
+  const measuredHeightsRef = useRef<Map<string, number>>(new Map());
+  const rowElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const observedNodesRef = useRef<WeakMap<Element, string>>(new WeakMap());
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const heightBumpRafRef = useRef<number | null>(null);
+  const [, setHeightVersion] = useState(0);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      let changed = false;
+      for (const entry of entries) {
+        const msgId = observedNodesRef.current.get(entry.target);
+        if (!msgId) continue;
+        const measured = Math.round(
+          entry.borderBoxSize?.[0]?.blockSize ?? (entry.target as HTMLElement).offsetHeight
+        );
+        if (measured > 0 && Math.abs((measuredHeightsRef.current.get(msgId) ?? 0) - measured) >= 2) {
+          measuredHeightsRef.current.set(msgId, measured);
+          changed = true;
+        }
+      }
+      if (changed && heightBumpRafRef.current === null) {
+        heightBumpRafRef.current = window.requestAnimationFrame(() => {
+          heightBumpRafRef.current = null;
+          setHeightVersion((v) => v + 1);
+        });
+      }
+    });
+    resizeObserverRef.current = ro;
+    rowElsRef.current.forEach((el, id) => {
+      observedNodesRef.current.set(el, id);
+      ro.observe(el);
+    });
+    return () => {
+      ro.disconnect();
+      resizeObserverRef.current = null;
+      if (heightBumpRafRef.current !== null) {
+        window.cancelAnimationFrame(heightBumpRafRef.current);
+        heightBumpRafRef.current = null;
+      }
+    };
+  }, []);
+
+  const bindMeasuredRow = useCallback((msgId: string, el: HTMLDivElement | null) => {
+    const prev = rowElsRef.current.get(msgId);
+    if (prev === el) return;
+    if (prev && resizeObserverRef.current) {
+      try {
+        resizeObserverRef.current.unobserve(prev);
+      } catch {}
+    }
+    if (!el) {
+      rowElsRef.current.delete(msgId);
+      return;
+    }
+    rowElsRef.current.set(msgId, el);
+    observedNodesRef.current.set(el, msgId);
+    resizeObserverRef.current?.observe(el);
+  }, []);
 
   useEffect(() => {
     setVisibleMsgCount(80);
     setInputText(getDraft(activeDraftKey));
     setEditingMsgId(null);
     setIsAddGroupMemberOpen(false);
+    setBulkSelectMode(false);
+    setSelectedBulkIds(new Set());
+    measuredHeightsRef.current.clear();
   }, [activeDraftKey]);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
@@ -881,16 +953,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   );
   const isAnnouncementReadOnly = !isDirectSpace && activeChannel.type === 'announcement' && !canManageChannels;
 
-  const getAuthorColor = (authorUsername: string): string => {
-    if (!activeServer || !activeServer.roles || !activeServer.members) return '#94a3b8';
-    const member = activeServer.members.find(
+  const canBulkDelete = Boolean(!isDirectSpace && activeChannel && canManageChannels);
+
+  const getAuthorRoleAndNick = (
+    authorUsername: string
+  ): { color: string; icon?: string; nickname?: string } => {
+    if (!activeServer) return { color: '#94a3b8' };
+    const member = activeServer.members?.find(
       (m) => m.username.toLowerCase() === authorUsername.toLowerCase()
     );
-    if (!member || !member.roleIds || member.roleIds.length === 0) return '#94a3b8';
+    if (!member) return { color: '#94a3b8' };
+    if (!activeServer.roles || !member.roleIds || member.roleIds.length === 0) {
+      return { color: '#94a3b8', nickname: member.nickname };
+    }
     const userRoles = activeServer.roles
       .filter((r) => member.roleIds.includes(r.id) && !r.isDefault)
       .sort((a, b) => a.position - b.position);
-    return userRoles.length > 0 ? userRoles[0].color : '#94a3b8';
+    return {
+      color: userRoles.length > 0 ? userRoles[0].color : '#94a3b8',
+      icon: userRoles.length > 0 ? userRoles[0].icon : undefined,
+      nickname: member.nickname,
+    };
   };
 
   const submitCurrentMessage = async () => {
@@ -1046,24 +1129,67 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   };
 
-  const processFiles = (files: FileList | File[]) => {
+  const uploadSingleFile = async (file: File) => {
     const useE2ee = Boolean(isDM && dmE2eeEnabled && dmPeerPublicKey && currentUser?.username);
-    Array.from(files).forEach(async (file) => {
-      try {
-        const newAtt =
-          useE2ee && currentUser?.username && dmPeerPublicKey
-            ? await uploadEncryptedAttachmentFile(
-                currentServerHost,
-                file,
-                currentUser.username,
-                dmPeerPublicKey
-              )
-            : await uploadAttachmentFile(currentServerHost, file);
-        setPendingAttachments((prev) => [...prev, newAtt]);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : '';
-        appToast(msg || `"${file.name}" okunamadı.`, 'error');
+    const useGroupE2ee = Boolean(activeGroupDm?.e2eeEnabled && activeGroupDm.e2eeEpoch);
+    const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const controller = new AbortController();
+    setActiveUploads((prev) => [...prev, { id: uploadId, name: file.name, progress: 0, controller }]);
+    const opts = {
+      onProgress: (progress: number) => {
+        setActiveUploads((prev) =>
+          prev.map((item) => (item.id === uploadId ? { ...item, progress } : item))
+        );
+      },
+      signal: controller.signal,
+    };
+    try {
+      let newAtt: MessageAttachment;
+      if (useGroupE2ee && activeGroupDm?.e2eeEpoch) {
+        const groupKey = getCachedGroupSenderKey(activeGroupDm.id, activeGroupDm.e2eeEpoch);
+        if (!groupKey) {
+          throw new Error('Grup E2EE gönderim anahtarı henüz yüklenmedi.');
+        }
+        newAtt = await uploadGroupEncryptedAttachmentFile(
+          currentServerHost,
+          file,
+          activeGroupDm.id,
+          activeGroupDm.e2eeEpoch,
+          groupKey,
+          opts
+        );
+      } else if (useE2ee && currentUser?.username && dmPeerPublicKey) {
+        newAtt = await uploadEncryptedAttachmentFile(
+          currentServerHost,
+          file,
+          currentUser.username,
+          dmPeerPublicKey,
+          opts
+        );
+      } else {
+        newAtt = await uploadAttachmentFile(currentServerHost, file, opts);
       }
+      setPendingAttachments((prev) => [...prev, newAtt]);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      const msg = err instanceof Error ? err.message : '';
+      appToast(msg || `"${file.name}" okunamadı.`, 'error');
+    } finally {
+      setActiveUploads((prev) => prev.filter((item) => item.id !== uploadId));
+    }
+  };
+
+  const processFiles = (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (
+      list.length === 1 &&
+      ['image/png', 'image/jpeg', 'image/webp'].includes(list[0].type)
+    ) {
+      setPendingCropFile(list[0]);
+      return;
+    }
+    list.forEach((file) => {
+      void uploadSingleFile(file);
     });
   };
 
@@ -1541,6 +1667,23 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           >
             <Search className="w-4 h-4" />
           </button>
+
+          {canBulkDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                setBulkSelectMode((prev) => !prev);
+                setSelectedBulkIds(new Set());
+              }}
+              className={`w-8 h-8 rounded-full flex items-center justify-center transition ${
+                bulkSelectMode ? 'bg-rose-500/25 text-rose-300 border border-rose-400/40' : 'hover:bg-white/10 text-white/75'
+              }`}
+              title={bulkSelectMode ? 'Toplu Silmeyi Kapat' : 'Mesajları Toplu Seç ve Sil'}
+              aria-label="Mesajları Toplu Sil"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
 
           <button
             type="button"
@@ -2464,11 +2607,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           const displayedMessages = filteredMessages.slice(-visibleMsgCount);
           const useClassicLayout = chatLayout === 'classic' || (chatLayout === 'auto' && !isDM);
           const isCompact = messageDensity === 'compact';
-          const vWin = computeVirtualWindow({
-            totalCount: displayedMessages.length,
+          const defaultRowHeight = useClassicLayout ? (isCompact ? 54 : 68) : isCompact ? 64 : 78;
+          const itemHeights = displayedMessages.map(
+            (m) => measuredHeightsRef.current.get(m.id) ?? defaultRowHeight
+          );
+          const vWin = computeVariableVirtualWindow({
+            itemHeights,
             scrollTop: scrollMetrics.top,
             viewportHeight: scrollMetrics.height,
-            estimatedRowHeight: useClassicLayout ? (isCompact ? 54 : 68) : isCompact ? 64 : 78,
             overscan: 12,
           });
           const slicedMessages = vWin.virtualized
@@ -2841,7 +2987,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="space-y-2 pt-1">
                         {msg.attachments.map((att) => {
-                          if (att.e2ee) {
+                          if (att.e2ee || att.groupE2ee) {
                             return (
                               <EncryptedAttachmentView
                                 key={att.id}
@@ -2849,6 +2995,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                                 currentServerHost={currentServerHost}
                                 myUsername={currentUser?.username || ''}
                                 peerPublicKeyJson={dmPeerPublicKey}
+                                groupId={activeGroupDm?.id}
+                                groupE2eeVersion={groupE2eeVersion}
                                 onOpenLightbox={(url) => setLightboxImage(url)}
                                 language={language}
                               />
@@ -3003,160 +3151,210 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       </div>
                     )}
 
-                    {useClassicLayout ? (
-                      <div
-                        id={`message-${msg.id}`}
-                        className={`relative group/msg chat-msg-row flex items-start ${
-                          isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
-                        } ${
-                          isCompact ? 'gap-2.5 py-0.5' : 'gap-3 py-1'
-                        } px-2.5 rounded-xl hover:bg-white/[0.03] transition-colors ${
-                          isSameAuthorAsPrev ? 'mt-0.5' : 'mt-3'
-                        } ${
-                          highlightedMessageId === msg.id
-                            ? 'ring-2 ring-amber-400 bg-amber-500/15'
-                            : ''
-                        }`}
-                      >
-                        {actionToolbarNode}
-                        <div className={`shrink-0 flex justify-center ${isCompact ? 'w-7' : 'w-9'}`}>
-                          {!isSameAuthorAsPrev ? (
+                    {(() => {
+                      const authorInfo = getAuthorRoleAndNick(msg.author.username);
+                      const authorDisplayName = authorInfo.nickname || msg.author.username;
+                      const toggleBulkSelect = () => {
+                        setSelectedBulkIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(msg.id)) next.delete(msg.id);
+                          else next.add(msg.id);
+                          return next;
+                        });
+                      };
+                      const isBulkChecked = selectedBulkIds.has(msg.id);
+
+                      return useClassicLayout ? (
+                        <div
+                          ref={(el) => bindMeasuredRow(msg.id, el)}
+                          id={`message-${msg.id}`}
+                          className={`relative group/msg chat-msg-row flex items-start ${
+                            isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
+                          } ${
+                            isCompact ? 'gap-2.5 py-0.5' : 'gap-3 py-1'
+                          } px-2.5 rounded-xl hover:bg-white/[0.03] transition-colors ${
+                            isSameAuthorAsPrev ? 'mt-0.5' : 'mt-3'
+                          } ${
+                            highlightedMessageId === msg.id
+                              ? 'ring-2 ring-amber-400 bg-amber-500/15'
+                              : isBulkChecked
+                              ? 'bg-rose-500/15 ring-1 ring-rose-400/40'
+                              : ''
+                          }`}
+                        >
+                          {bulkSelectMode && (
+                            <input
+                              type="checkbox"
+                              checked={isBulkChecked}
+                              onChange={toggleBulkSelect}
+                              aria-label="Mesajı toplu silme için seç"
+                              className="mt-2 shrink-0 accent-rose-500 cursor-pointer"
+                            />
+                          )}
+                          {actionToolbarNode}
+                          <div className={`shrink-0 flex justify-center ${isCompact ? 'w-7' : 'w-9'}`}>
+                            {!isSameAuthorAsPrev ? (
+                              <button
+                                type="button"
+                                onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                                className={`${
+                                  isCompact ? 'w-7 h-7' : 'w-9 h-9'
+                                } chat-msg-avatar rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden`}
+                                title={`${msg.author.username} profilini görüntüle`}
+                                aria-label={`${msg.author.username} profilini görüntüle`}
+                              >
+                                <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
+                              </button>
+                            ) : (
+                              <span className="text-[9px] text-white/25 opacity-0 group-hover/msg:opacity-100 transition pt-1 font-mono select-none">
+                                {msg.timestamp}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            {!isSameAuthorAsPrev && (
+                              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                {authorInfo.icon && (
+                                  <span className="text-xs select-none" title="Rol İkonu">
+                                    {authorInfo.icon}
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                                  style={{ color: authorInfo.color }}
+                                  title={authorInfo.nickname ? `@${msg.author.username}` : undefined}
+                                  className="text-xs font-bold hover:underline cursor-pointer transition"
+                                >
+                                  {isMe ? `${authorDisplayName} (Sen)` : authorDisplayName}
+                                </button>
+                                {msg.author.username === 'AI Asistan' && (
+                                  <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
+                                    <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-white/35 select-none">
+                                  {msg.timestamp}
+                                  {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
+                                </span>
+                                {msg.isPinned && (
+                                  <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                                    <Pin className="w-2.5 h-2.5" /> Sabitlendi
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <div
+                              className={`space-y-1.5 ${
+                                chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
+                              } leading-relaxed break-words text-white/90`}
+                            >
+                              {bodyInnerNode}
+                            </div>
+                            {reactionsAndThreadsNode}
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          ref={(el) => bindMeasuredRow(msg.id, el)}
+                          id={`message-${msg.id}`}
+                          className={`relative flex gap-3 items-end group chat-msg-row ${
+                            isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
+                          } ${
+                            isMe ? 'justify-end' : 'justify-start'
+                          } ${isSameAuthorAsPrev ? 'mt-1' : 'mt-4'} ${
+                            highlightedMessageId === msg.id
+                              ? 'ring-2 ring-amber-400 bg-amber-500/15 p-2 rounded-2xl shadow-xl shadow-amber-500/20 transition-all duration-300'
+                              : isBulkChecked
+                              ? 'bg-rose-500/15 ring-1 ring-rose-400/40 p-1.5 rounded-2xl'
+                              : 'transition-all duration-200'
+                          }`}
+                        >
+                          {bulkSelectMode && (
+                            <input
+                              type="checkbox"
+                              checked={isBulkChecked}
+                              onChange={toggleBulkSelect}
+                              aria-label="Mesajı toplu silme için seç"
+                              className="self-center shrink-0 accent-rose-500 cursor-pointer"
+                            />
+                          )}
+                          {!isMe && (
                             <button
                               type="button"
                               onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                              className={`${
-                                isCompact ? 'w-7 h-7' : 'w-9 h-9'
-                              } chat-msg-avatar rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden`}
+                              className="w-8 h-8 chat-msg-avatar rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shrink-0 shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden"
                               title={`${msg.author.username} profilini görüntüle`}
                               aria-label={`${msg.author.username} profilini görüntüle`}
                             >
                               <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
                             </button>
-                          ) : (
-                            <span className="text-[9px] text-white/25 opacity-0 group-hover/msg:opacity-100 transition pt-1 font-mono select-none">
-                              {msg.timestamp}
-                            </span>
                           )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          {!isSameAuthorAsPrev && (
-                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                              <button
-                                type="button"
-                                onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                                style={{ color: getAuthorColor(msg.author.username) }}
-                                className="text-xs font-bold hover:underline cursor-pointer transition"
-                              >
-                                {isMe ? `${msg.author.username} (Sen)` : msg.author.username}
-                              </button>
-                              {msg.author.username === 'AI Asistan' && (
-                                <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
-                                  <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
+
+                          <div className={`relative group/msg flex flex-col max-w-[75%] sm:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+                            {actionToolbarNode}
+
+                            {!isSameAuthorAsPrev && (
+                              <div className="flex items-center gap-1.5 mb-1 px-1">
+                                {authorInfo.icon && (
+                                  <span className="text-[11px] select-none" title="Rol İkonu">
+                                    {authorInfo.icon}
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
+                                  style={{ color: authorInfo.color }}
+                                  title={authorInfo.nickname ? `@${msg.author.username}` : undefined}
+                                  className="text-[11px] font-bold hover:underline cursor-pointer transition"
+                                >
+                                  {isMe ? 'Sen' : authorDisplayName}
+                                </button>
+                                {msg.author.username === 'AI Asistan' && (
+                                  <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
+                                    <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
+                                  </span>
+                                )}
+                                <span className="text-[10px] text-white/30 select-none">
+                                  {msg.timestamp}
+                                  {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
+                                  {activeServer?.id === 'direct-messages' &&
+                                    isMe &&
+                                    msg.id === lastMyMessageId &&
+                                    activeDMUser?.username &&
+                                    dmReadReceipts[activeDMUser.username] && (
+                                      <span className="ml-1.5 text-emerald-400 font-semibold" title="Okundu">
+                                        ✓✓ Görüldü
+                                      </span>
+                                    )}
                                 </span>
-                              )}
-                              <span className="text-[10px] text-white/35 select-none">
-                                {msg.timestamp}
-                                {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
-                              </span>
-                              {msg.isPinned && (
-                                <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
-                                  <Pin className="w-2.5 h-2.5" /> Sabitlendi
-                                </span>
-                              )}
+                                {msg.isPinned && (
+                                  <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                                    <Pin className="w-2.5 h-2.5" /> Sabitlendi
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            <div
+                              className={`space-y-2 chat-msg-bubble ${
+                                isCompact ? 'px-3 py-1.5' : 'px-4 py-2.5'
+                              } ${
+                                chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
+                              } leading-relaxed break-words shadow-md transition-all ${
+                                isMe
+                                  ? 'ui-accent-bg rounded-2xl rounded-br-sm'
+                                  : 'chat-bubble-incoming rounded-2xl rounded-bl-sm'
+                              }`}
+                            >
+                              {bodyInnerNode}
                             </div>
-                          )}
-                          <div
-                            className={`space-y-1.5 ${
-                              chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
-                            } leading-relaxed break-words text-white/90`}
-                          >
-                            {bodyInnerNode}
+
+                            {reactionsAndThreadsNode}
                           </div>
-                          {reactionsAndThreadsNode}
                         </div>
-                      </div>
-                    ) : (
-                      <div
-                        id={`message-${msg.id}`}
-                        className={`relative flex gap-3 items-end group chat-msg-row ${
-                          isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
-                        } ${
-                          isMe ? 'justify-end' : 'justify-start'
-                        } ${isSameAuthorAsPrev ? 'mt-1' : 'mt-4'} ${
-                          highlightedMessageId === msg.id
-                            ? 'ring-2 ring-amber-400 bg-amber-500/15 p-2 rounded-2xl shadow-xl shadow-amber-500/20 transition-all duration-300'
-                            : 'transition-all duration-200'
-                        }`}
-                      >
-                        {!isMe && (
-                          <button
-                            type="button"
-                            onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                            className="w-8 h-8 chat-msg-avatar rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-sm shrink-0 shadow select-none cursor-pointer transition hover:scale-105 overflow-hidden"
-                            title={`${msg.author.username} profilini görüntüle`}
-                            aria-label={`${msg.author.username} profilini görüntüle`}
-                          >
-                            <AvatarView avatar={msg.author.avatar} alt={msg.author.username} />
-                          </button>
-                        )}
-
-                        <div className={`relative group/msg flex flex-col max-w-[75%] sm:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                          {actionToolbarNode}
-
-                          {!isSameAuthorAsPrev && (
-                            <div className="flex items-center gap-2 mb-1 px-1">
-                              <button
-                                type="button"
-                                onClick={() => handleAuthorClick(msg.author.id, msg.author.username, msg.author.avatar)}
-                                style={{ color: getAuthorColor(msg.author.username) }}
-                                className="text-[11px] font-bold hover:underline cursor-pointer transition"
-                              >
-                                {isMe ? 'Sen' : msg.author.username}
-                              </button>
-                              {msg.author.username === 'AI Asistan' && (
-                                <span className="flex items-center gap-1 text-[9px] font-bold text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded-full border border-indigo-500/30">
-                                  <Sparkles className="w-2.5 h-2.5 text-indigo-400" /> AI BOT
-                                </span>
-                              )}
-                              <span className="text-[10px] text-white/30 select-none">
-                                {msg.timestamp}
-                                {msg.isEdited && <span className="ml-1 italic text-white/40">(düzenlendi)</span>}
-                                {activeServer?.id === 'direct-messages' &&
-                                  isMe &&
-                                  msg.id === lastMyMessageId &&
-                                  activeDMUser?.username &&
-                                  dmReadReceipts[activeDMUser.username] && (
-                                    <span className="ml-1.5 text-emerald-400 font-semibold" title="Okundu">
-                                      ✓✓ Görüldü
-                                    </span>
-                                  )}
-                              </span>
-                              {msg.isPinned && (
-                                <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-300 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
-                                  <Pin className="w-2.5 h-2.5" /> Sabitlendi
-                                </span>
-                              )}
-                            </div>
-                          )}
-
-                          <div
-                            className={`space-y-2 chat-msg-bubble ${
-                              isCompact ? 'px-3 py-1.5' : 'px-4 py-2.5'
-                            } ${
-                              chatFontSize === 'sm' ? 'text-xs' : chatFontSize === 'lg' ? 'text-base' : 'text-sm'
-                            } leading-relaxed break-words shadow-md transition-all ${
-                              isMe
-                                ? 'ui-accent-bg rounded-2xl rounded-br-sm'
-                                : 'chat-bubble-incoming rounded-2xl rounded-bl-sm'
-                            }`}
-                          >
-                            {bodyInnerNode}
-                          </div>
-
-                          {reactionsAndThreadsNode}
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </React.Fragment>
                 );
               })}
@@ -3167,6 +3365,77 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Moderator Multi-Select Bulk Delete Bar */}
+      {bulkSelectMode && activeChannel && (
+        <div className="px-6 py-2 bg-rose-950/70 border-t border-rose-500/30 flex items-center justify-between gap-3 text-xs text-white select-none">
+          <span className="font-semibold text-rose-200">
+            {selectedBulkIds.size} mesaj seçildi
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={selectedBulkIds.size === 0}
+              onClick={async () => {
+                if (selectedBulkIds.size === 0) return;
+                if (
+                  await appConfirm({
+                    title: 'Seçilen Mesajları Sil',
+                    message: `${selectedBulkIds.size} adet mesaj kalıcı olarak silinsin mi?`,
+                    danger: true,
+                    confirmLabel: 'Toplu Sil',
+                  })
+                ) {
+                  bulkDeleteMessages(activeChannel.id, Array.from(selectedBulkIds));
+                  setSelectedBulkIds(new Set());
+                  setBulkSelectMode(false);
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-400 disabled:opacity-40 text-white font-bold transition flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Seçilenleri Sil</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedBulkIds(new Set());
+                setBulkSelectMode(false);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 font-semibold transition"
+            >
+              İptal
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active XHR Binary Upload Progress Strip */}
+      {activeUploads.length > 0 && (
+        <div className="px-6 py-2 bg-slate-900/80 border-t border-cyan-500/25 space-y-1.5 select-none">
+          {activeUploads.map((up) => (
+            <div key={up.id} className="flex items-center gap-3 text-xs text-white">
+              <span className="truncate max-w-[200px] font-medium text-cyan-200">{up.name}</span>
+              <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-150"
+                  style={{ width: `${up.progress}%` }}
+                />
+              </div>
+              <span className="font-mono text-[11px] text-cyan-300 w-9 text-right">
+                %{up.progress}
+              </span>
+              <button
+                type="button"
+                onClick={() => up.controller.abort()}
+                className="px-2 py-0.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-200 text-[10px] font-semibold transition"
+              >
+                İptal
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Pending Attachments Preview Shelf */}
       {pendingAttachments.length > 0 && (
         <div className="px-6 py-2 bg-neutral-900/80 border-t border-white/10 flex items-center gap-2 overflow-x-auto no-scrollbar select-none animate-fade-in">
@@ -3175,7 +3444,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               key={att.id}
               className="relative group shrink-0 flex items-center gap-2 p-1.5 pl-2.5 rounded-xl bg-white/10 border border-white/15 text-xs text-white max-w-[200px]"
             >
-              {att.e2ee ? (
+              {att.e2ee || att.groupE2ee ? (
                 <Lock className="w-4 h-4 shrink-0 text-emerald-400" />
               ) : att.type.startsWith('image/') ? (
                 <img
@@ -3862,6 +4131,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           />
         )}
       </Suspense>
+
+      <ImagePreSendModal
+        file={pendingCropFile}
+        initialCaption={inputText}
+        onCancel={() => setPendingCropFile(null)}
+        onConfirm={(processedFile, caption) => {
+          setPendingCropFile(null);
+          if (caption.trim()) {
+            setInputText(caption);
+          }
+          void uploadSingleFile(processedFile);
+        }}
+      />
     </main>
   );
 };

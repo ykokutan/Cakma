@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download, KeyRound, Loader2, Mail, MailCheck, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, KeyRound, Loader2, Mail, MailCheck, QrCode, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { t } from '../../utils/i18n';
@@ -7,9 +7,10 @@ import { normalizeOtpInput, validateEmail } from '../../utils/authValidation';
 import { exportEncryptedE2eeBackup, importEncryptedE2eeBackup } from '../../utils/e2ee';
 import { OtpCodeInput } from '../auth/OtpCodeInput';
 import { PasskeySettingsCard } from './PasskeySettingsCard';
+import { E2eeQrPairingModal } from './E2eeQrPairingModal';
 
 export const AccountSecuritySection: React.FC = () => {
-  const { socket } = useSocket();
+  const { socket, currentServerHost } = useSocket();
   const {
     currentUser,
     isAuthenticated,
@@ -25,6 +26,7 @@ export const AccountSecuritySection: React.FC = () => {
   const [e2eeImportJson, setE2eeImportJson] = useState('');
   const [e2eeBusy, setE2eeBusy] = useState(false);
   const [e2eeStatus, setE2eeStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isQrPairingOpen, setIsQrPairingOpen] = useState(false);
 
   // Email change state
   const [emailPassword, setEmailPassword] = useState('');
@@ -256,14 +258,24 @@ export const AccountSecuritySection: React.FC = () => {
 
       {/* E2EE Key Encrypted Backup & Restore */}
       <div className="p-4 rounded-2xl bg-white/[0.04] border border-emerald-500/20 space-y-3">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
-            <KeyRound className="w-4 h-4 text-emerald-400" />
-            <span>E2EE Anahtar Yedeği (Çoklu Cihaz Kurtarma)</span>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
+              <KeyRound className="w-4 h-4 text-emerald-400" />
+              <span>E2EE Anahtar Yedeği (Çoklu Cihaz Kurtarma)</span>
+            </div>
+            <p className="text-[11px] text-white/55 mt-0.5">
+              DM şifreleme anahtarınız IndexedDB içinde saklanır. Başka bir cihazda eski şifreli mesajlarınızı okumak için PBKDF2 + AES-GCM ile şifreli yedek indirebilir, QR ile cihaz eşleştirebilirsiniz.
+            </p>
           </div>
-          <p className="text-[11px] text-white/55 mt-0.5">
-            DM şifreleme anahtarınız IndexedDB içinde saklanır. Başka bir cihazda eski şifreli mesajlarınızı okumak için PBKDF2 + AES-GCM ile şifreli yedek indirebilir veya içe aktarabilirsiniz.
-          </p>
+          <button
+            type="button"
+            onClick={() => setIsQrPairingOpen(true)}
+            className="px-3 py-1.5 rounded-full bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition"
+          >
+            <QrCode className="w-3.5 h-3.5" />
+            <span>QR / Kod ile Cihaz Eşleştir</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -391,6 +403,22 @@ export const AccountSecuritySection: React.FC = () => {
       </div>
 
       <PasskeySettingsCard />
+
+      {currentUser?.username && (
+        <E2eeQrPairingModal
+          isOpen={isQrPairingOpen}
+          onClose={() => setIsQrPairingOpen(false)}
+          username={currentUser.username}
+          currentServerHost={currentServerHost}
+          onKeyImported={(publicKeyJwk) => {
+            socket?.emit('e2ee_publish_key', { publicKey: JSON.stringify(publicKeyJwk) });
+            setE2eeStatus({
+              type: 'success',
+              text: 'E2EE anahtarı QR cihaz eşleştirme ile aktarıldı ve sunucuda güncellendi.',
+            });
+          }}
+        />
+      )}
     </div>
   );
 };

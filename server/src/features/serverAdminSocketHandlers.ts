@@ -475,7 +475,19 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
 
   socket.on(
     'create_server_role',
-    ({ serverId, name, color, permissions }: { serverId: string; name: string; color: string; permissions: ServerPermission[] }) => {
+    ({
+      serverId,
+      name,
+      color,
+      icon,
+      permissions,
+    }: {
+      serverId: string;
+      name: string;
+      color: string;
+      icon?: string;
+      permissions: ServerPermission[];
+    }) => {
       const user = activeUsers.get(socket.id);
       if (!user) return;
       const s = servers.find((srv) => srv.id === serverId);
@@ -485,11 +497,13 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       }
 
       if (!s.roles) s.roles = getDefaultRoles();
+      const cleanIcon = typeof icon === 'string' && icon.trim() ? icon.trim().slice(0, 8) : undefined;
 
       const newRole: ServerRole = {
         id: `role-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
         name: name.trim() || 'Yeni Rol',
         color: color || '#3b82f6',
+        ...(cleanIcon ? { icon: cleanIcon } : {}),
         position: s.roles.length + 1,
         permissions: permissions || ['send_messages', 'connect_voice', 'speak_voice'],
       };
@@ -508,6 +522,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       roleId,
       name,
       color,
+      icon,
       permissions,
       position,
     }: {
@@ -515,6 +530,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       roleId: string;
       name: string;
       color: string;
+      icon?: string;
       permissions: ServerPermission[];
       position?: number;
     }) => {
@@ -532,6 +548,11 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
 
       role.name = name.trim() || role.name;
       role.color = color || role.color;
+      if (icon !== undefined) {
+        const cleanIcon = typeof icon === 'string' ? icon.trim().slice(0, 8) : '';
+        if (cleanIcon) role.icon = cleanIcon;
+        else delete role.icon;
+      }
       role.permissions = permissions;
       if (position !== undefined) role.position = position;
       saveServers(servers);

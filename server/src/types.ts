@@ -130,6 +130,13 @@ export interface MessageAttachment {
   type: string;
   url: string;
   e2ee?: EncryptedAttachmentMeta;
+  groupE2ee?: {
+    epoch: number;
+    ivBase64: string;
+    origName: string;
+    origType: string;
+    origSize: number;
+  };
 }
 
 export interface DirectCallState {
@@ -270,6 +277,7 @@ export interface ServerRole {
   id: string;
   name: string;
   color: string;
+  icon?: string;
   position: number;
   permissions: ServerPermission[];
   isDefault?: boolean;
@@ -279,6 +287,7 @@ export interface ServerMember {
   userId: string;
   username: string;
   avatar: string;
+  nickname?: string;
   roleIds: string[];
   joinedAt: string;
   isOwner?: boolean;

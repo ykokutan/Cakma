@@ -23,6 +23,8 @@ import { useOfflineMessageQueue } from './hooks/useOfflineMessageQueue';
 import { useDesktopTrayAndShortcuts } from '../hooks/useDesktopTrayAndShortcuts';
 import { useServerGovernanceAndStage, type ModerationNoticeBanner } from '../hooks/useServerGovernanceAndStage';
 import { getCachedGroupSenderKey, encryptGroupDmMessage } from '../utils/groupE2ee';
+import { IceRecoveryController } from '../utils/webrtcIceRecovery';
+import { computeNormalizerGain, computeRmsFromTimeDomain } from '../utils/audioLoudnessNormalizer';
 import { AuthContext } from './AuthContext';
 import { ChatContext } from './ChatContext';
 import type { ChatLayoutMode } from './ChatContext';
@@ -304,10 +306,11 @@ interface SocketContextType {
     tags?: string[];
   }) => void;
   restoreServerBackup: (serverId: string, backupData: any) => void;
-  createServerRole: (data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => void;
-  updateServerRole: (data: { serverId: string; roleId: string; name: string; color: string; permissions: ServerPermission[]; position?: number; }) => void;
+  createServerRole: (data: { serverId: string; name: string; color: string; icon?: string; permissions: ServerPermission[]; }) => void;
+  updateServerRole: (data: { serverId: string; roleId: string; name: string; color: string; icon?: string; permissions: ServerPermission[]; position?: number; }) => void;
   deleteServerRole: (serverId: string, roleId: string) => void;
   toggleMemberRole: (serverId: string, targetUserId: string, roleId: string) => void;
+  updateServerNickname: (serverId: string, nickname: string, targetUsername?: string) => void;
   kickServerMember: (serverId: string, targetUserId: string) => void;
   deleteServer: (serverId: string) => void;
   hasServerPermission: (permission: ServerPermission) => boolean;
@@ -591,6 +594,7 @@ interface SocketContextType {
   // Message Edit/Delete, Typing & Unread Badges
   editMessage: (messageId: string, newContent: string) => void;
   deleteMessage: (messageId: string) => void;
+  bulkDeleteMessages: (channelId: string, messageIds: string[]) => void;
   sendTyping: (isTyping: boolean) => void;
   unreadCounts: Record<string, number>;
   mentionCounts: Record<string, number>;
@@ -634,6 +638,8 @@ interface SocketContextType {
   setVoiceGateDb: (db: number) => void;
   noiseAggressiveness: number;
   setNoiseAggressiveness: (val: number) => void;
+  globalLoudnessNormalize: boolean;
+  setGlobalLoudnessNormalize: (enabled: boolean) => void;
   liveAudioTelemetry: AudioWorkletTelemetry;
   globalMuteShortcut: string;
   setGlobalMuteShortcut: (key: string) => void;
@@ -1470,13 +1476,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const userAudioEqRef = useRef<Record<string, UserAudioEq>>(userAudioEq);
   userAudioEqRef.current = userAudioEq;
+  const [globalLoudnessNormalize, setGlobalLoudnessNormalizeState] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem('cakma_global_loudness_normalize') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const globalLoudnessNormalizeRef = useRef<boolean>(globalLoudnessNormalize);
+  globalLoudnessNormalizeRef.current = globalLoudnessNormalize;
   const remoteAudioEqChainsRef = useRef<Map<string, {
     ctx: AudioContext;
     source: MediaStreamAudioSourceNode;
     lowShelf: BiquadFilterNode;
     highShelf: BiquadFilterNode;
     compressor: DynamicsCompressorNode;
+    analyser: AnalyserNode;
+    normalizerGain: GainNode;
     gain: GainNode;
+    normalizerEnabled: boolean;
+    currentNormGain: number;
   }>>(new Map());
   const processedStreamRef = useRef<MediaStream | null>(null);
   const [inputSensitivity, setInputSensitivityState] = useState<number>(() => {
@@ -1529,6 +1548,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const peerIceRecoveryRef = useRef<Map<string, IceRecoveryController>>(new Map());
   const pendingIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const tauriInvokeRef = useRef<((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null>(null);
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
@@ -2634,11 +2654,23 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               workletNode.port.onmessage = (ev) => {
                 const msg = ev?.data;
                 if (msg && msg.type === 'level') {
+                  const bands = msg.bandSuppression;
                   setLiveAudioTelemetry({
                     db: Number(msg.db) || -90,
                     noiseFloorDb: Number(msg.noiseFloorDb) || -60,
                     gateOpen: Boolean(msg.gateOpen),
                     gainReductionDb: Number(msg.gainReductionDb) || 0,
+                    bandSuppression:
+                      bands &&
+                      typeof bands.low === 'number' &&
+                      typeof bands.mid === 'number' &&
+                      typeof bands.high === 'number'
+                        ? {
+                            low: Number(bands.low) || 0,
+                            mid: Number(bands.mid) || 0,
+                            high: Number(bands.high) || 0,
+                          }
+                        : undefined,
                   });
                 }
               };
@@ -2821,7 +2853,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const audio = audioElementsRef.current.get(peerId);
     if (!audio || !audio.srcObject) return;
     const stream = audio.srcObject as MediaStream;
-    const isDefault = eq.bass === 0 && eq.treble === 0 && !eq.normalize;
+    const effectiveNormalize = Boolean(eq.normalize || globalLoudnessNormalizeRef.current);
+    const isDefault = eq.bass === 0 && eq.treble === 0 && !effectiveNormalize;
     const userVol = userVolumes[peerId] ?? 100;
     const isLocallyMuted = userLocalMutes[peerId] ?? false;
     const targetGain = isDeafened || isLocallyMuted ? 0 : Math.min(2, Math.max(0, (outputVolume / 100) * (userVol / 100)));
@@ -2852,23 +2885,82 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         highShelf.type = 'highshelf';
         highShelf.frequency.value = 3500;
         const compressor = ctx.createDynamicsCompressor();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        const normalizerGain = ctx.createGain();
+        normalizerGain.gain.value = 1.0;
         const gain = ctx.createGain();
         source.connect(lowShelf);
         lowShelf.connect(highShelf);
         highShelf.connect(compressor);
-        compressor.connect(gain);
+        compressor.connect(analyser);
+        analyser.connect(normalizerGain);
+        normalizerGain.connect(gain);
         gain.connect(ctx.destination);
-        chain = { ctx, source, lowShelf, highShelf, compressor, gain };
+        chain = {
+          ctx,
+          source,
+          lowShelf,
+          highShelf,
+          compressor,
+          analyser,
+          normalizerGain,
+          gain,
+          normalizerEnabled: effectiveNormalize,
+          currentNormGain: 1.0,
+        };
         remoteAudioEqChainsRef.current.set(peerId, chain);
       }
       chain.lowShelf.gain.value = eq.bass;
       chain.highShelf.gain.value = eq.treble;
-      chain.compressor.ratio.value = eq.normalize ? 6 : 1;
-      chain.compressor.threshold.value = eq.normalize ? -24 : 0;
+      chain.compressor.ratio.value = effectiveNormalize ? 4 : 1;
+      chain.compressor.threshold.value = effectiveNormalize ? -20 : 0;
+      chain.compressor.knee.value = effectiveNormalize ? 12 : 30;
+      chain.normalizerEnabled = effectiveNormalize;
+      if (!effectiveNormalize) {
+        chain.currentNormGain = 1.0;
+        chain.normalizerGain.gain.setTargetAtTime(1.0, chain.ctx.currentTime, 0.05);
+      }
       chain.gain.gain.value = targetGain;
       audio.muted = true;
     } catch {}
   }, [isDeafened, outputVolume, userVolumes, userLocalMutes]);
+
+  const setGlobalLoudnessNormalize = useCallback((enabled: boolean) => {
+    const nextVal = Boolean(enabled);
+    globalLoudnessNormalizeRef.current = nextVal;
+    setGlobalLoudnessNormalizeState(nextVal);
+    try {
+      localStorage.setItem('cakma_global_loudness_normalize', String(nextVal));
+    } catch {}
+    audioElementsRef.current.forEach((_audio, peerId) => {
+      const eq = userAudioEqRef.current[peerId] || { bass: 0, treble: 0, normalize: false };
+      applyRemoteAudioEq(peerId, eq);
+    });
+  }, [applyRemoteAudioEq]);
+
+  useEffect(() => {
+    let timeDomainBuf: Float32Array<ArrayBuffer> | null = null;
+    const timer = window.setInterval(() => {
+      if (remoteAudioEqChainsRef.current.size === 0) return;
+      remoteAudioEqChainsRef.current.forEach((chain) => {
+        if (!chain.normalizerEnabled) return;
+        try {
+          if (!timeDomainBuf || timeDomainBuf.length !== chain.analyser.fftSize) {
+            timeDomainBuf = new Float32Array(new ArrayBuffer(chain.analyser.fftSize * 4));
+          }
+          chain.analyser.getFloatTimeDomainData(timeDomainBuf);
+          const rms = computeRmsFromTimeDomain(timeDomainBuf);
+          const nextGain = computeNormalizerGain(chain.currentNormGain, rms);
+          chain.currentNormGain = nextGain;
+          chain.normalizerGain.gain.setTargetAtTime(nextGain, chain.ctx.currentTime, 0.08);
+        } catch {}
+      });
+    }, 150);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const setUserAudioEq = useCallback((userId: string, patch: Partial<UserAudioEq>) => {
     setUserAudioEqState((prev) => {
@@ -2929,6 +3021,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const cleanupWebRTC = useCallback(() => {
+    peerIceRecoveryRef.current.forEach((ctrl) => ctrl.dispose());
+    peerIceRecoveryRef.current.clear();
     peerConnectionsRef.current.forEach(pc => pc.close());
     peerConnectionsRef.current.clear();
 
@@ -3180,8 +3274,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }
             audioElementsRef.current.set(peerId, el);
             const savedEq = userAudioEqRef.current[peerId];
-            if (savedEq && (savedEq.bass !== 0 || savedEq.treble !== 0 || savedEq.normalize)) {
-              setTimeout(() => applyRemoteAudioEq(peerId, savedEq), 50);
+            if (
+              globalLoudnessNormalizeRef.current ||
+              (savedEq && (savedEq.bass !== 0 || savedEq.treble !== 0 || savedEq.normalize))
+            ) {
+              setTimeout(() => applyRemoteAudioEq(peerId, savedEq || { bass: 0, treble: 0, normalize: false }), 50);
             }
           } else if (track.kind === Track.Kind.Video && track.mediaStreamTrack) {
             const ms = new MediaStream([track.mediaStreamTrack]);
@@ -3465,6 +3562,19 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return {
           ...prev,
           [channelId]: channelList.filter(m => m.id !== messageId)
+        };
+      });
+    });
+
+    newSocket.on('messages_bulk_deleted', ({ channelId, messageIds }: { channelId: string; messageIds: string[] }) => {
+      const idSet = new Set(Array.isArray(messageIds) ? messageIds : []);
+      if (idSet.size === 0) return;
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.filter(m => !idSet.has(m.id))
         };
       });
     });
@@ -3994,6 +4104,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('user_left_voice', ({ userId }: { userId: string }) => {
       if (tsSoundEffectsRef.current) {
         playTeamSpeakChime('leave');
+      }
+      if (peerIceRecoveryRef.current.has(userId)) {
+        peerIceRecoveryRef.current.get(userId)?.dispose();
+        peerIceRecoveryRef.current.delete(userId);
       }
       if (peerConnectionsRef.current.has(userId)) {
         peerConnectionsRef.current.get(userId)?.close();
@@ -4538,35 +4652,30 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       screenStreamRef.current.getTracks().forEach(track => pc.addTrack(track, screenStreamRef.current!));
     }
 
-    let iceDisconnectTimer: number | null = null;
-    pc.oniceconnectionstatechange = () => {
-      if (iceDisconnectTimer !== null) {
-        window.clearTimeout(iceDisconnectTimer);
-        iceDisconnectTimer = null;
-      }
-      const state = pc.iceConnectionState;
-      const attemptIceRestart = async () => {
+    peerIceRecoveryRef.current.get(peerId)?.dispose();
+    const recovery = new IceRecoveryController({
+      localId: currentUserRef.current?.id || activeSocket.id || '',
+      peerId,
+      onRestart: async () => {
         if (pc.signalingState === 'closed') return;
-        try {
-          if (typeof pc.restartIce === 'function') pc.restartIce();
-          const offer = await pc.createOffer({ iceRestart: true });
-          await pc.setLocalDescription(offer);
-          activeSocket.emit('webrtc_signal', {
-            targetUserId: peerId,
-            signal: offer,
-            type: 'offer',
-          });
-        } catch {}
-      };
-      if (state === 'failed') {
-        void attemptIceRestart();
-      } else if (state === 'disconnected') {
-        iceDisconnectTimer = window.setTimeout(() => {
-          if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-            void attemptIceRestart();
-          }
-        }, 2000);
-      }
+        if (typeof pc.restartIce === 'function') pc.restartIce();
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+        activeSocket.emit('webrtc_signal', {
+          targetUserId: peerId,
+          signal: offer,
+          type: 'offer',
+        });
+      },
+    });
+    peerIceRecoveryRef.current.set(peerId, recovery);
+
+    pc.oniceconnectionstatechange = () => {
+      recovery.handleStateChange(pc.iceConnectionState);
+    };
+
+    pc.onconnectionstatechange = () => {
+      recovery.handleStateChange(pc.connectionState);
     };
 
     pc.onicecandidate = (event) => {
@@ -4679,8 +4788,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           console.warn('Remote audio playback blocked:', err);
         });
         const eq = userAudioEqRef.current[peerId];
-        if (eq && (eq.bass !== 0 || eq.treble !== 0 || eq.normalize)) {
-          applyRemoteAudioEq(peerId, eq);
+        if (
+          globalLoudnessNormalizeRef.current ||
+          (eq && (eq.bass !== 0 || eq.treble !== 0 || eq.normalize))
+        ) {
+          applyRemoteAudioEq(peerId, eq || { bass: 0, treble: 0, normalize: false });
         }
       }
     };
@@ -7032,11 +7144,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket?.emit('restore_server_backup', { serverId, backupData });
   }, [socket]);
 
-  const createServerRole = useCallback((data: { serverId: string; name: string; color: string; permissions: ServerPermission[]; }) => {
+  const createServerRole = useCallback((data: { serverId: string; name: string; color: string; icon?: string; permissions: ServerPermission[]; }) => {
     socket?.emit('create_server_role', data);
   }, [socket]);
 
-  const updateServerRole = useCallback((data: { serverId: string; roleId: string; name: string; color: string; permissions: ServerPermission[]; position?: number; }) => {
+  const updateServerRole = useCallback((data: { serverId: string; roleId: string; name: string; color: string; icon?: string; permissions: ServerPermission[]; position?: number; }) => {
     socket?.emit('update_server_role', data);
   }, [socket]);
 
@@ -7046,6 +7158,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const toggleMemberRole = useCallback((serverId: string, targetUserId: string, roleId: string) => {
     socket?.emit('toggle_member_role', { serverId, targetUserId, roleId });
+  }, [socket]);
+
+  const updateServerNickname = useCallback((serverId: string, nickname: string, targetUsername?: string) => {
+    socket?.emit('update_server_nickname', { serverId, nickname, targetUsername });
   }, [socket]);
 
   const kickServerMember = useCallback((serverId: string, targetUserId: string) => {
@@ -7095,6 +7211,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!socket || !activeChannelId) return;
     socket.emit('delete_message', { channelId: activeChannelId, messageId });
   }, [socket, activeChannelId]);
+
+  const bulkDeleteMessages = useCallback((channelId: string, messageIds: string[]) => {
+    if (!socket || !channelId || !Array.isArray(messageIds) || messageIds.length === 0) return;
+    socket.emit('bulk_delete_messages', { channelId, messageIds });
+  }, [socket]);
 
   const sendTyping = useCallback((isTyping: boolean) => {
     if (!socket || !activeChannelId) return;
@@ -8017,6 +8138,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       updateServerRole,
       deleteServerRole,
       toggleMemberRole,
+      updateServerNickname,
       kickServerMember,
       deleteServer,
       hasServerPermission,
@@ -8045,6 +8167,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      globalLoudnessNormalize,
+      setGlobalLoudnessNormalize,
       liveAudioTelemetry,
       globalMuteShortcut,
       setGlobalMuteShortcut,
@@ -8224,6 +8348,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Message Edit/Delete & Unread Badges
       editMessage,
       deleteMessage,
+      bulkDeleteMessages,
       sendTyping,
       unreadCounts,
       mentionCounts,
@@ -8456,6 +8581,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      globalLoudnessNormalize,
+      setGlobalLoudnessNormalize,
       liveAudioTelemetry,
       globalMuteShortcut,
       setGlobalMuteShortcut,
@@ -8478,6 +8605,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       jumpToMessage,
       retryQueuedMessage,
       cancelQueuedMessage,
+      updateServerNickname,
+      bulkDeleteMessages,
       loginWithSessionToken,
       pttReleaseDelayMs,
       setPttReleaseDelayMs,
@@ -8579,6 +8708,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       forwardMessage,
       editMessage,
       deleteMessage,
+      bulkDeleteMessages,
       sendTyping,
       markChannelRead,
       markDmRead,
@@ -8629,6 +8759,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       forwardMessage,
       editMessage,
       deleteMessage,
+      bulkDeleteMessages,
       sendTyping,
       markChannelRead,
       markDmRead,
@@ -8674,6 +8805,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      globalLoudnessNormalize,
+      setGlobalLoudnessNormalize,
       liveAudioTelemetry,
       globalMuteShortcut,
       setGlobalMuteShortcut,
@@ -8727,6 +8860,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      globalLoudnessNormalize,
+      setGlobalLoudnessNormalize,
       liveAudioTelemetry,
       globalMuteShortcut,
       setGlobalMuteShortcut,

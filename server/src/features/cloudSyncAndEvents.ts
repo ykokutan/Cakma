@@ -624,31 +624,32 @@ export function registerCloudSyncAndEvents(
     quotaPruner.unref?.();
   }
 
-  app.post('/api/upload', requireAuth, express.json({ limit: '35mb' }), async (req, res) => {
-    const authUser = (req as AuthenticatedRequest).authUser!;
-    const { name, type, dataUrl } = req.body || {};
-    if (typeof name !== 'string' || typeof dataUrl !== 'string' || !name.trim() || !dataUrl) {
-      return res.status(400).json({ ok: false, error: 'Geçersiz dosya yükleme isteği.' });
-    }
-    const match = dataUrl.match(/^data:([^;,]+)(?:;[^,]+)*;base64,(.+)$/);
-    if (!match) {
-      return res.status(400).json({ ok: false, error: 'Desteklenmeyen veri formatı (Base64 bekleniyor).' });
-    }
-
-    const mimeType = typeof type === 'string' && type.trim() ? type.trim() : match[1];
-    const buffer = Buffer.from(match[2], 'base64');
+  const persistVerifiedUpload = async (params: {
+    name: string;
+    mimeType: string;
+    buffer: Buffer;
+    username: string;
+    role: string;
+  }): Promise<
+    | { ok: true; attachment: { id: string; name: string; size: number; type: string; url: string } }
+    | { ok: false; status: number; error: string }
+  > => {
+    const cleanName = params.name.trim();
     const maxMb = context?.getMaxUploadSizeMb ? context.getMaxUploadSizeMb() : 5;
     const safety = validateAttachmentSafety(
-      { name: name.trim(), size: buffer.length, type: mimeType },
+      { name: cleanName, size: params.buffer.length, type: params.mimeType },
       maxMb
     );
     if (!safety.ok) {
-      return res.status(400).json({ ok: false, error: safety.error || 'Dosya güvenlik kontrolünden geçemedi.' });
+      return {
+        ok: false,
+        status: 400,
+        error: safety.error || 'Dosya güvenlik kontrolünden geçemedi.',
+      };
     }
 
-    // Per-user upload rate limit (20 files / 10 min) & hourly quota (100 MB / hr, higher for admin)
     const now = Date.now();
-    const uKey = authUser.username.toLowerCase();
+    const uKey = params.username.toLowerCase();
     const q = uploadQuotaMap.get(uKey) || {
       countWindowStart: now,
       count: 0,
@@ -663,52 +664,114 @@ export function registerCloudSyncAndEvents(
       q.bytesWindowStart = now;
       q.bytes = 0;
     }
-    const maxCount = authUser.role === 'admin' ? 100 : 20;
-    const maxHourlyBytes = (authUser.role === 'admin' ? 500 : 100) * 1024 * 1024;
+    const maxCount = params.role === 'admin' ? 100 : 20;
+    const maxHourlyBytes = (params.role === 'admin' ? 500 : 100) * 1024 * 1024;
     if (q.count + 1 > maxCount) {
-      return res.status(429).json({
+      return {
         ok: false,
+        status: 429,
         error: '10 dakikalık dosya yükleme limitine ulaştınız. Lütfen biraz bekleyin.',
-      });
+      };
     }
-    if (q.bytes + buffer.length > maxHourlyBytes) {
-      return res.status(429).json({
+    if (q.bytes + params.buffer.length > maxHourlyBytes) {
+      return {
         ok: false,
+        status: 429,
         error: 'Saatlik yükleme kotanız doldu. Lütfen daha sonra tekrar deneyin.',
-      });
+      };
     }
-    const rawExt = path.extname(name.trim()).toLowerCase().replace(/^\./, '');
+
+    const rawExt = path.extname(cleanName).toLowerCase().replace(/^\./, '');
     const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
-    const isVideoUpload = mimeType.toLowerCase().startsWith('video/');
+    const isVideoUpload = params.mimeType.toLowerCase().startsWith('video/');
     const storedName = `${isVideoUpload ? 'upl-vid' : 'upl'}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
     try {
       ensureDirs();
-      await fs.promises.writeFile(path.join(UPLOADS_DIR, storedName), buffer);
+      await fs.promises.writeFile(path.join(UPLOADS_DIR, storedName), params.buffer);
     } catch (err) {
       console.error('❌ [Upload] Dosya yazılamadı:', err);
-      return res.status(500).json({ ok: false, error: 'Dosya sunucuya kaydedilemedi.' });
+      return { ok: false, status: 500, error: 'Dosya sunucuya kaydedilemedi.' };
     }
+
     q.count += 1;
-    q.bytes += buffer.length;
+    q.bytes += params.buffer.length;
     uploadQuotaMap.set(uKey, q);
 
     context?.addAuditLog?.(
       'DOSYA_YUKLENDI',
-      `${authUser.username} diske dosya yükledi: ${name.trim()} (${buffer.length} B)`,
+      `${params.username} diske dosya yükledi: ${cleanName} (${params.buffer.length} B)`,
       'info'
     );
 
-    return res.json({
+    return {
       ok: true,
       attachment: {
         id: `att-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
-        name: name.trim().slice(0, 140),
-        size: buffer.length,
-        type: mimeType.slice(0, 120),
+        name: cleanName.slice(0, 140),
+        size: params.buffer.length,
+        type: params.mimeType.slice(0, 120),
         url: `/uploads/${storedName}`,
       },
+    };
+  };
+
+  app.post('/api/upload', requireAuth, express.json({ limit: '35mb' }), async (req, res) => {
+    const authUser = (req as AuthenticatedRequest).authUser!;
+    const { name, type, dataUrl } = req.body || {};
+    if (typeof name !== 'string' || typeof dataUrl !== 'string' || !name.trim() || !dataUrl) {
+      return res.status(400).json({ ok: false, error: 'Geçersiz dosya yükleme isteği.' });
+    }
+    const match = dataUrl.match(/^data:([^;,]+)(?:;[^,]+)*;base64,(.+)$/);
+    if (!match) {
+      return res.status(400).json({ ok: false, error: 'Desteklenmeyen veri formatı (Base64 bekleniyor).' });
+    }
+
+    const mimeType = typeof type === 'string' && type.trim() ? type.trim() : match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    const result = await persistVerifiedUpload({
+      name,
+      mimeType,
+      buffer,
+      username: authUser.username,
+      role: authUser.role,
     });
+    if (!result.ok) {
+      return res.status(result.status).json({ ok: false, error: result.error });
+    }
+    return res.json({ ok: true, attachment: result.attachment });
   });
+
+  app.post(
+    '/api/upload/stream',
+    requireAuth,
+    express.raw({ type: 'application/octet-stream', limit: '35mb' }),
+    async (req, res) => {
+      const authUser = (req as AuthenticatedRequest).authUser!;
+      const rawNameHeader = String(req.headers['x-file-name'] || '').trim();
+      let decodedName: string;
+      try {
+        decodedName = decodeURIComponent(rawNameHeader);
+      } catch {
+        decodedName = rawNameHeader;
+      }
+      if (!decodedName || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ ok: false, error: 'Geçersiz ikili dosya yükleme isteği.' });
+      }
+      const mimeType =
+        String(req.headers['x-file-type'] || '').trim() || 'application/octet-stream';
+      const result = await persistVerifiedUpload({
+        name: decodedName,
+        mimeType,
+        buffer: req.body,
+        username: authUser.username,
+        role: authUser.role,
+      });
+      if (!result.ok) {
+        return res.status(result.status).json({ ok: false, error: result.error });
+      }
+      return res.json({ ok: true, attachment: result.attachment });
+    }
+  );
 
   app.get('/uploads/:filename', (req, res) => {
     const sessionToken = extractSessionToken(req);

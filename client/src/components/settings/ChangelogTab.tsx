@@ -15,11 +15,24 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.0.0 - Latest */}
+        {/* v1.1.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.0.0 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v1.1.0 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">İkili Medya Akışı &amp; Atomik SQLite:</strong> JSON/Base64 yükünü kaldıran XHR ilerlemeli ve iptal edilebilir <code className="text-emerald-200">/api/upload/stream</code> ikili dosya yükleme, yükleme öncesi <strong>Görsel Kırpma (Orijinal / 16:9 / 1:1) &amp; Açıklama</strong> penceresi ve işlemsel <code className="text-emerald-200">SqliteStore</code> toplu silme/anlık görüntü yazımı eklendi.</li>
+            <li><strong className="text-white">Ses, WebRTC &amp; Masaüstü (Tauri):</strong> Üstel geri çekilme ve kibar-eş öncelikli <code className="text-emerald-200">IceRecoveryController</code> (<code className="text-emerald-200">restartIce</code>), kişi başına <strong>RMS Ses Düzeyi Dengeleyici</strong>, <strong>3 Bantlı Spektral Gürültü Bastırma</strong> Worklet telemetrisi, Windows görev çubuğu ses rozeti ve <code className="text-emerald-200">GoLiveModal</code> açık pencere/monitör seçicisi eklendi.</li>
+            <li><strong className="text-white">Sohbet 2.0 &amp; Topluluk:</strong> <code className="text-emerald-200">ResizeObserver</code> ile değişken yüksekliğe uyumlu sanal mesaj listesi, <strong>Markdown 2.0</strong> (GFM tablolar, satır içi kod, başlıklar, listeler, <code className="text-emerald-200">||spoiler||</code>), sunucuya özel <strong>Takma Adlar</strong>, <strong>Rol İkonları</strong>, kenar çubuğunda <strong>Aktif Alt Konular</strong> ve moderatör <strong>Toplu Mesaj Silme</strong> eklendi.</li>
+            <li><strong className="text-white">Güvenlik &amp; E2EE:</strong> Tek kullanımlık ve sunucuda sıfır kalıcı iz bırakan <strong>Cihazlar Arası QR Kod ile E2EE Anahtar Eşleştirme</strong> (<code className="text-emerald-200">/api/e2ee/pairing/*</code>) ile <strong>Grup DM E2EE Şifreli Dosya/Medya Ekleri</strong> tamamlandı.</li>
+          </ul>
+        </div>
+
+        {/* v1.0.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v1.0.0 — Önceki Sürüm</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">Topluluk Yönetimi &amp; İzinler:</strong> Kanal bazlı <strong>İzin Geçersiz Kılmaları &amp; Gizli Kanallar</strong>, <strong>Sunucu Denetim Günlüğü (Audit Log)</strong>, <strong>Moderasyon Sicili (Warn/Timeout/Kick/Ban)</strong>, <strong>Karşılama (Onboarding) &amp; Seçilebilir Roller</strong>, <strong>Zamanlanmış Mesajlar</strong>, akıllı arama filtreleri (<code className="text-emerald-200">has:image</code>, <code className="text-emerald-200">is:pinned</code>, <code className="text-emerald-200">from:@</code>) ve <code className="text-emerald-200">.md/.json</code> sohbet dışa aktarımı eklendi.</li>

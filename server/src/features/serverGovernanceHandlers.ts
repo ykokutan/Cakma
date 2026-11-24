@@ -489,4 +489,69 @@ export function registerServerGovernanceSocketHandlers(
     deps.saveServers(deps.servers);
     deps.emitServerUpdatedToMembers(srv);
   });
+
+  socket.on('update_server_nickname', (rawPayload: unknown) => {
+    const actor = deps.activeUsers.get(socket.id);
+    if (!actor) return;
+    if (!deps.socketEventLimiter.allow(socket.id, 'update_server_nickname', 20, 30_000)) return;
+
+    const check = validatePayload<{
+      serverId: string;
+      targetUsername?: string;
+      nickname: string;
+    }>(rawPayload, {
+      serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      targetUsername: { type: 'string', required: false, minLen: 1, maxLen: 48 },
+      nickname: { type: 'string', required: true, minLen: 0, maxLen: 32 },
+    });
+    if (!check.ok) {
+      return socket.emit('server_action_error', { message: check.error || 'Geçersiz takma ad.' });
+    }
+
+    const srv = deps.servers.find((s) => s.id === check.data.serverId);
+    if (!srv) return;
+
+    const requestedTarget = check.data.targetUsername?.trim() || actor.username;
+    const isSelf = requestedTarget.toLowerCase() === actor.username.toLowerCase();
+
+    if (!isSelf) {
+      const canEditOthers =
+        actor.role === 'admin' ||
+        isServerOwner(actor, srv) ||
+        deps.checkServerPermission(actor, srv, 'manage_server') ||
+        deps.checkServerPermission(actor, srv, 'manage_roles') ||
+        deps.checkServerPermission(actor, srv, 'kick_members');
+      if (!canEditOthers) {
+        return socket.emit('server_action_error', {
+          message: 'Başka üyelerin sunucu takma adını düzenlemek için yetkiniz yok.',
+        });
+      }
+    }
+
+    const member = (srv.members || []).find(
+      (m) => m.username.toLowerCase() === requestedTarget.toLowerCase()
+    );
+    if (!member) {
+      return socket.emit('server_action_error', { message: 'Sunucu üyesi bulunamadı.' });
+    }
+
+    const cleanNick = deps.sanitizeText(check.data.nickname).trim().slice(0, 32);
+    if (cleanNick) {
+      member.nickname = cleanNick;
+    } else {
+      delete member.nickname;
+    }
+
+    deps.saveServers(deps.servers);
+    helpers.recordServerAudit(
+      srv.id,
+      actor.username,
+      'TAKMA_AD_GUNCELLENDI',
+      cleanNick
+        ? `@${member.username} takma adı "${cleanNick}" olarak ayarlandı.`
+        : `@${member.username} takma adı temizlendi.`,
+      member.username
+    );
+    deps.emitServerUpdatedToMembers(srv);
+  });
 }

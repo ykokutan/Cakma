@@ -53,8 +53,8 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
     }
   };
 
-  // Helper to find member's highest role
-  const getUserRoleInfo = (user: User): { role: ServerRole | null; isOwner: boolean } => {
+  // Helper to find member's highest role & server nickname
+  const getUserRoleInfo = (user: User): { role: ServerRole | null; isOwner: boolean; nickname?: string } => {
     if (!activeServer) return { role: null, isOwner: false };
     const isOwner = isUserServerOwner(user, activeServer);
 
@@ -69,12 +69,13 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
       const ownerRole = activeServer.roles?.find((r) => r.id === 'role-owner');
       return {
         role: ownerRole || { id: 'role-owner', name: 'Sunucu Sahibi', color: '#f59e0b', position: 0, permissions: [] },
-        isOwner: true
+        isOwner: true,
+        nickname: member?.nickname,
       };
     }
 
     if (!member || !member.roleIds || member.roleIds.length === 0 || !activeServer.roles) {
-      return { role: null, isOwner: false };
+      return { role: null, isOwner: false, nickname: member?.nickname };
     }
 
     const assignedRoles = activeServer.roles
@@ -83,7 +84,8 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
 
     return {
       role: assignedRoles.length > 0 ? assignedRoles[0] : null,
-      isOwner: false
+      isOwner: false,
+      nickname: member.nickname,
     };
   };
 
@@ -277,7 +279,8 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
           <div className="space-y-1">
             {group.users.map((user) => {
               const isMe = isSameUser(user, currentUser);
-              const { role: userRole, isOwner } = getUserRoleInfo(user);
+              const { role: userRole, isOwner, nickname } = getUserRoleInfo(user);
+              const displayName = nickname || user.username;
               const currentVoice = activeServer?.channels.find(
                 (c) => c.id === user.currentVoiceChannelId
               );
@@ -300,7 +303,11 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                   className={`flex items-center gap-3 px-2.5 py-2 rounded-xl hover:bg-white/[0.06] cursor-pointer transition group ${
                     isOffline ? 'opacity-55 hover:opacity-100' : ''
                   }`}
-                  title={`${user.username} profilini görüntüle (Sağ tık: işlemler)`}
+                  title={
+                    nickname
+                      ? `${nickname} (@${user.username}) profilini görüntüle (Sağ tık: işlemler)`
+                      : `${user.username} profilini görüntüle (Sağ tık: işlemler)`
+                  }
                 >
                   <div className="relative shrink-0">
                     <div
@@ -319,13 +326,18 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
 
                   <div className="truncate flex-1">
                     <div className="flex items-center gap-1.5">
+                      {userRole?.icon && (
+                        <span className="text-xs shrink-0" title={userRole.name}>
+                          {userRole.icon}
+                        </span>
+                      )}
                       <span
                         style={userRole?.color ? { color: userRole.color } : undefined}
                         className={`text-xs font-bold truncate ${
                           !userRole?.color ? (isMe ? 'text-blue-400' : 'text-white') : ''
                         }`}
                       >
-                        {user.username}
+                        {displayName}
                       </span>
                       {isOwner && (
                         <span title="Sunucu Sahibi">

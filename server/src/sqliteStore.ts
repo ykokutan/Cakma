@@ -116,6 +116,30 @@ export class SqliteStore {
     } catch {}
   }
 
+  putJsonSnapshotBatch(entries: Array<[string, unknown]>): number {
+    if (!this.isActive() || !Array.isArray(entries) || entries.length === 0) return 0;
+    let written = 0;
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      const stmt = this.db.prepare(
+        'INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES (?, ?, ?)'
+      );
+      const nowIso = new Date().toISOString();
+      for (const [key, value] of entries) {
+        if (!key) continue;
+        stmt.run(key, JSON.stringify(value), nowIso);
+        written += 1;
+      }
+      this.db.exec('COMMIT');
+    } catch {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
+      return 0;
+    }
+    return written;
+  }
+
   getJsonSnapshot<T = any>(key: string): T | null {
     if (!this.isActive()) return null;
     try {
@@ -160,6 +184,33 @@ export class SqliteStore {
       this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
       this.removeMessage(id);
     } catch {}
+  }
+
+  deleteMessagesBulk(ids: string[]): number {
+    if (!this.isActive() || !Array.isArray(ids) || ids.length === 0) return 0;
+    const unique = Array.from(
+      new Set(ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0))
+    ).slice(0, 100);
+    if (unique.length === 0) return 0;
+
+    let deleted = 0;
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      const delMsg = this.db.prepare('DELETE FROM messages WHERE id = ?');
+      const delFts = this.db.prepare('DELETE FROM messages_fts WHERE id = ?');
+      for (const id of unique) {
+        const info = delMsg.run(id);
+        if (info && Number(info.changes) > 0) deleted += 1;
+        delFts.run(id);
+      }
+      this.db.exec('COMMIT');
+    } catch {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
+      return 0;
+    }
+    return deleted;
   }
 
   deleteChannelMessages(channelId: string): void {

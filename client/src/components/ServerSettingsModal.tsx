@@ -176,12 +176,14 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
 
   const [roleName, setRoleName] = useState(selectedRole?.name || '');
   const [roleColor, setRoleColor] = useState(selectedRole?.color || '#3b82f6');
+  const [roleIcon, setRoleIcon] = useState(selectedRole?.icon || '');
   const [rolePerms, setRolePerms] = useState<ServerPermission[]>(selectedRole?.permissions || []);
 
   const handleSelectRole = (r: ServerRole) => {
     setSelectedRoleId(r.id);
     setRoleName(r.name);
     setRoleColor(r.color);
+    setRoleIcon(r.icon || '');
     setRolePerms(r.permissions);
   };
 
@@ -350,6 +352,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       serverId: server.id,
       name: 'Yeni Rol',
       color: '#3b82f6',
+      icon: '⭐',
       permissions: ['send_messages', 'attach_files', 'connect_voice', 'speak_voice'],
     });
   };
@@ -361,6 +364,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
       roleId: selectedRole.id,
       name: roleName,
       color: roleColor,
+      icon: roleIcon.trim() || undefined,
       permissions: rolePerms,
     });
     setSaveSuccess(true);
@@ -1331,6 +1335,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                     >
                       <div className="flex items-center gap-2 overflow-hidden">
                         <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                        {r.icon && <span className="text-xs shrink-0">{r.icon}</span>}
                         <span className="truncate">{r.name}</span>
                       </div>
                       {r.isDefault && (
@@ -1365,8 +1370,8 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                     )}
                   </div>
 
-                  {/* Role Name & Color */}
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* Role Name, Icon & Color */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1.5">Rol Adı</label>
                       <input
@@ -1393,6 +1398,44 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                             {roleColor === c && <Check className="w-3 h-3 text-white" />}
                           </button>
                         ))}
+                      </div>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[11px] font-semibold text-white/40 uppercase mb-1.5">
+                        Rol İkonu (Emoji)
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={8}
+                          value={roleIcon}
+                          onChange={(e) => setRoleIcon(e.target.value)}
+                          placeholder="Örn: 👑"
+                          className="w-24 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white outline-none focus:border-blue-500"
+                        />
+                        {['👑', '🛡️', '⭐', '🔥', '🎮', '💎', '🤖', '🎵'].map((em) => (
+                          <button
+                            key={em}
+                            type="button"
+                            onClick={() => setRoleIcon(em)}
+                            className={`px-2 py-1 rounded-lg text-xs border transition ${
+                              roleIcon === em
+                                ? 'bg-blue-500/25 border-blue-400 text-white'
+                                : 'bg-white/5 border-white/10 hover:bg-white/15'
+                            }`}
+                          >
+                            {em}
+                          </button>
+                        ))}
+                        {roleIcon && (
+                          <button
+                            type="button"
+                            onClick={() => setRoleIcon('')}
+                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-rose-500/20 text-[10px] text-white/60 hover:text-rose-300 border border-white/10 transition"
+                          >
+                            Temizle
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

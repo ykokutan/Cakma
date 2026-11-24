@@ -3,6 +3,7 @@ import { Download, FileText, Lock, ShieldAlert, Volume2 } from 'lucide-react';
 import type { MessageAttachment } from '../../types';
 import { authFetch, resolveMediaUrl } from '../../utils/authFetch';
 import { decryptBinaryFromPeer } from '../../utils/e2ee';
+import { decryptGroupAttachmentBytes, getCachedGroupSenderKey } from '../../utils/groupE2ee';
 import { t, type AppLanguage } from '../../utils/i18n';
 
 interface EncryptedAttachmentViewProps {
@@ -10,6 +11,8 @@ interface EncryptedAttachmentViewProps {
   currentServerHost: string;
   myUsername: string;
   peerPublicKeyJson?: string | null;
+  groupId?: string | null;
+  groupE2eeVersion?: number;
   onOpenLightbox?: (blobUrl: string) => void;
   language?: AppLanguage;
 }
@@ -36,23 +39,37 @@ export const EncryptedAttachmentView: React.FC<EncryptedAttachmentViewProps> = (
   currentServerHost,
   myUsername,
   peerPublicKeyJson,
+  groupId,
+  groupE2eeVersion = 0,
   onOpenLightbox,
   language = 'tr',
 }) => {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
-  const meta = attachment.e2ee;
-  const origName = meta?.origName || attachment.name || 'encrypted-file';
-  const origType = meta?.origType || 'application/octet-stream';
-  const origSize = meta?.origSize ?? attachment.size;
-  const iv = meta?.iv || '';
+  const dmMeta = attachment.e2ee;
+  const grpMeta = attachment.groupE2ee;
+  const isGroup = Boolean(grpMeta && !dmMeta);
+  const origName = grpMeta?.origName || dmMeta?.origName || attachment.name || 'encrypted-file';
+  const origType = grpMeta?.origType || dmMeta?.origType || 'application/octet-stream';
+  const origSize = grpMeta?.origSize ?? dmMeta?.origSize ?? attachment.size;
+  const iv = grpMeta?.ivBase64 || dmMeta?.iv || '';
 
   useEffect(() => {
     let cancelled = false;
     let createdObjectUrl: string | null = null;
 
-    if (!iv || !myUsername || !peerPublicKeyJson) {
+    if (!iv || (!isGroup && (!myUsername || !peerPublicKeyJson)) || (isGroup && !groupId)) {
+      setBlobUrl(null);
+      setStatus('error');
+      return;
+    }
+
+    const groupKey =
+      isGroup && groupId && grpMeta
+        ? getCachedGroupSenderKey(groupId, grpMeta.epoch)
+        : null;
+    if (isGroup && !groupKey) {
       setBlobUrl(null);
       setStatus('error');
       return;
@@ -75,12 +92,15 @@ export const EncryptedAttachmentView: React.FC<EncryptedAttachmentViewProps> = (
           cipherBytes = await resp.arrayBuffer();
         }
 
-        const plainBuf = await decryptBinaryFromPeer(
-          cipherBytes,
-          iv,
-          myUsername,
-          peerPublicKeyJson
-        );
+        const plainBuf =
+          isGroup && groupKey
+            ? await decryptGroupAttachmentBytes(cipherBytes, iv, groupKey)
+            : await decryptBinaryFromPeer(
+                cipherBytes,
+                iv,
+                myUsername,
+                peerPublicKeyJson!
+              );
         if (!plainBuf) {
           if (!cancelled) setStatus('error');
           return;
@@ -112,7 +132,18 @@ export const EncryptedAttachmentView: React.FC<EncryptedAttachmentViewProps> = (
         createdObjectUrl = null;
       }
     };
-  }, [attachment.url, iv, origType, currentServerHost, myUsername, peerPublicKeyJson]);
+  }, [
+    attachment.url,
+    iv,
+    origType,
+    currentServerHost,
+    myUsername,
+    peerPublicKeyJson,
+    isGroup,
+    groupId,
+    grpMeta?.epoch,
+    groupE2eeVersion,
+  ]);
 
   if (status === 'loading') {
     return (

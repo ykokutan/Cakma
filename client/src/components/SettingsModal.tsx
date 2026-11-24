@@ -153,6 +153,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setGlobalDeafenShortcut,
     soundboardShortcut,
     setSoundboardShortcut,
+    globalLoudnessNormalize,
+    setGlobalLoudnessNormalize,
   } = useVoice();
   const micVolumeLevel = useMicVolumeLevel();
 
@@ -300,7 +302,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('1.0.0');
+  const [appVersion, setAppVersion] = useState<string>('1.1.0');
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
     downloadedMb: string;
@@ -1416,6 +1418,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <div
                       className="ios-toggle-dot"
                       style={{ transform: lowLatencyAudio ? 'translateX(20px)' : 'translateX(0)' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Per-Speaker RMS Audio Loudness Normalizer */}
+                <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-semibold text-white flex items-center gap-2">
+                      <Sliders className="w-3.5 h-3.5 text-emerald-400" />
+                      Otomatik Ses Düzeyi Dengeleyici (Loudness Normalizer)
+                    </div>
+                    <div className="text-[11px] text-white/40">
+                      Kısık konuşan katılımcıları dengeler, yüksek sesli ani çıkışları yumuşatarak tüm konuşmacıları aynı seviyede tutar.
+                    </div>
+                  </div>
+                  <div
+                    onClick={() => setGlobalLoudnessNormalize(!globalLoudnessNormalize)}
+                    className={`ios-toggle ${globalLoudnessNormalize ? 'bg-emerald-500' : 'bg-white/20'}`}
+                  >
+                    <div
+                      className="ios-toggle-dot"
+                      style={{ transform: globalLoudnessNormalize ? 'translateX(20px)' : 'translateX(0)' }}
                     />
                   </div>
                 </div>

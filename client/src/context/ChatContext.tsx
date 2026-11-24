@@ -47,6 +47,7 @@ export interface ChatContextValue {
   ) => void;
   editMessage: (messageId: string, newContent: string) => void;
   deleteMessage: (messageId: string) => void;
+  bulkDeleteMessages: (channelId: string, messageIds: string[]) => void;
   sendTyping: (isTyping: boolean) => void;
   markChannelRead: (channelId: string, lastMessageId: string) => void;
   markDmRead: (partnerUsername: string) => void;

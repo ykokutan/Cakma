@@ -82,7 +82,44 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [desktopMonitors, setDesktopMonitors] = useState<
+    { index: number; name: string; width: number; height: number; is_primary: boolean }[]
+  >([]);
+  const [desktopWindows, setDesktopWindows] = useState<
+    { hwnd: number; title: string; is_minimized: boolean }[]
+  >([]);
+  const [desktopLoading, setDesktopLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const isTauriApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+  const refreshDesktopSources = async () => {
+    if (!isTauriApp) return;
+    setDesktopLoading(true);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const [monitors, windows] = await Promise.all([
+        invoke<{ index: number; name: string; width: number; height: number; is_primary: boolean }[]>(
+          'get_display_monitors'
+        ).catch(() => []),
+        invoke<{ hwnd: number; title: string; is_minimized: boolean }[]>(
+          'list_capturable_windows'
+        ).catch(() => []),
+      ]);
+      setDesktopMonitors(Array.isArray(monitors) ? monitors : []);
+      setDesktopWindows(Array.isArray(windows) ? windows : []);
+    } catch {
+      // Silently ignore on non-Tauri or unsupported runtimes
+    } finally {
+      setDesktopLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && isTauriApp) {
+      void refreshDesktopSources();
+    }
+  }, [isOpen, isTauriApp]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -236,6 +273,7 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
 
   const audioBitrates: (64 | 96 | 128 | 192 | 256 | 320)[] = [64, 96, 128, 192, 256, 320];
   const estimatedMbps = ((settings.bitrateKbps + (settings.audioEnabled ? settings.audioBitrateKbps : 0)) / 1000).toFixed(1);
+  const previewVideoSettings = previewStream?.getVideoTracks()[0]?.getSettings?.();
   const displaySupportsHdr =
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
@@ -256,8 +294,16 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                   playsInline
                   className="w-full h-full object-contain"
                 />
-                <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold backdrop-blur-md">
-                  ● Canlı Önizleme
+                <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+                  <div className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold backdrop-blur-md">
+                    ● Canlı Önizleme
+                  </div>
+                  {previewVideoSettings?.width && previewVideoSettings?.height && (
+                    <div className="px-2 py-1 rounded-full bg-black/65 border border-white/15 text-cyan-200 text-[10px] font-mono backdrop-blur-md">
+                      {previewVideoSettings.width}×{previewVideoSettings.height}
+                      {previewVideoSettings.frameRate ? ` @ ${Math.round(previewVideoSettings.frameRate)} fps` : ''}
+                    </div>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -299,6 +345,57 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
               ~{estimatedMbps} Mbps yükleme • {settings.audioEnabled ? `Ses %${settings.masterVolume}` : 'Ses Kapalı'}
             </span>
           </div>
+
+          {isTauriApp && (desktopMonitors.length > 0 || desktopWindows.length > 0) && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-semibold text-slate-300">
+                  Masaüstü Kaynakları (Ekranlar &amp; Açık Pencereler)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void refreshDesktopSources()}
+                  className="flex items-center gap-1 text-[10px] text-cyan-300 hover:text-cyan-200 transition"
+                >
+                  <RefreshCw className={`w-3 h-3 ${desktopLoading ? 'animate-spin' : ''}`} />
+                  <span>Yenile</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                {desktopMonitors.map((mon) => (
+                  <button
+                    key={`mon-${mon.index}`}
+                    type="button"
+                    onClick={handlePickSource}
+                    title={`${mon.name} (${mon.width}×${mon.height})`}
+                    className="shrink-0 px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/30 border border-blue-400/30 text-[10px] font-medium text-blue-200 transition flex items-center gap-1.5"
+                  >
+                    <Monitor className="w-3 h-3 text-blue-300" />
+                    <span className="max-w-[140px] truncate">{mon.name}</span>
+                    <span className="font-mono text-white/60">
+                      {mon.width}×{mon.height}
+                    </span>
+                    {mon.is_primary && (
+                      <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px]">
+                        Ana
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {desktopWindows.slice(0, 8).map((win) => (
+                  <button
+                    key={`win-${win.hwnd}`}
+                    type="button"
+                    onClick={handlePickSource}
+                    title={win.title}
+                    className="shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-[10px] text-slate-200 transition max-w-[170px] truncate"
+                  >
+                    {win.is_minimized ? '🗕 ' : ''}{win.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Scrollable Settings Body */}

@@ -171,6 +171,9 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     notificationPrefs,
     setTargetNotificationPref,
     leaveServer,
+    updateServerNickname,
+    messagesMap,
+    jumpToMessage,
     language,
   } = useSocket();
   const drafts = useChannelDrafts();
@@ -382,8 +385,8 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     const isDropTarget = dragOverChannelTargetId === channel.id && draggingChannelId !== channel.id;
 
     return (
+      <React.Fragment key={channel.id}>
       <div
-        key={channel.id}
         draggable={canManageChannels && !channel.isTempCreatorChannel}
         onDragStart={(e) => {
           if (!canManageChannels || channel.isTempCreatorChannel) return;
@@ -513,6 +516,40 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
           ) : null}
         </div>
       </div>
+      {(() => {
+        const chMsgs = messagesMap[channel.id] || [];
+        const activeThreads = chMsgs
+          .filter((m) => Array.isArray(m.threadMessages) && m.threadMessages.length > 0)
+          .slice(-3)
+          .reverse();
+        if (activeThreads.length === 0) return null;
+        return (
+          <div className="ml-5 pl-2.5 border-l border-white/10 space-y-0.5 mt-0.5 mb-1">
+            {activeThreads.map((tMsg) => {
+              const snippet =
+                (tMsg.content || '').replace(/\s+/g, ' ').trim().slice(0, 26) || 'Alt Konu';
+              return (
+                <button
+                  key={`thread-${tMsg.id}`}
+                  type="button"
+                  onClick={() => {
+                    selectChannel(channel.id);
+                    void jumpToMessage(channel.id, tMsg.id);
+                  }}
+                  className="w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded-lg text-[11px] text-white/55 hover:text-cyan-200 hover:bg-white/[0.05] transition text-left"
+                  title={tMsg.content || 'Alt Konu'}
+                >
+                  <span className="truncate">↳ {snippet}</span>
+                  <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/15 text-cyan-300 text-[9px] font-bold shrink-0">
+                    {tMsg.threadMessages?.length || 0}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
+      </React.Fragment>
     );
   };
 
@@ -920,6 +957,43 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
             </div>
             <span className="text-[10px] text-indigo-300">Paylaş</span>
           </button>
+
+          {currentUser && activeServer.id !== 'direct-messages' && (
+            <button
+              type="button"
+              onClick={async () => {
+                setIsDropdownOpen(false);
+                const meMember = activeServer.members?.find(
+                  (m) =>
+                    m.username.toLowerCase() === currentUser.username.toLowerCase() ||
+                    m.userId === currentUser.id
+                );
+                const next = await appPrompt({
+                  title: 'Sunucu Takma Adım',
+                  message: `${activeServer.name} sunucusunda görünecek takma adınızı yazın (temizlemek için boş bırakın):`,
+                  defaultValue: meMember?.nickname || '',
+                  placeholder: currentUser.username,
+                  confirmLabel: 'Kaydet',
+                });
+                if (next !== null) {
+                  updateServerNickname(activeServer.id, next.trim());
+                }
+              }}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+            >
+              <div className="flex items-center gap-2">
+                <Pencil className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Sunucu Takma Adım</span>
+              </div>
+              <span className="text-[10px] text-cyan-300 truncate max-w-[90px]">
+                {activeServer.members?.find(
+                  (m) =>
+                    m.username.toLowerCase() === currentUser.username.toLowerCase() ||
+                    m.userId === currentUser.id
+                )?.nickname || currentUser.username}
+              </span>
+            </button>
+          )}
 
           {currentUser && !isUserServerOwner(currentUser, activeServer) && (
               <div className="pt-1 mt-1 border-t border-white/10">

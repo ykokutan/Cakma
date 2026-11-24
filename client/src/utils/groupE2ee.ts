@@ -159,3 +159,48 @@ export async function decryptGroupDmMessage(ciphertext: string, key: CryptoKey):
     return null;
   }
 }
+
+/** Encrypt binary attachment bytes with the active Group DM AES-256-GCM Sender Key. */
+export async function encryptGroupAttachmentBytes(
+  plainBytes: Uint8Array | ArrayBuffer,
+  groupKey: CryptoKey
+): Promise<{ ciphertext: Uint8Array; ivBase64: string } | null> {
+  const subtle = getSubtle();
+  if (!subtle) return null;
+  try {
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const input = plainBytes instanceof Uint8Array ? plainBytes : new Uint8Array(plainBytes);
+    const cipherBuf = await subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      groupKey,
+      input as BufferSource
+    );
+    return {
+      ciphertext: new Uint8Array(cipherBuf),
+      ivBase64: bytesToBase64(iv),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Decrypt binary attachment bytes using a Group DM AES-256-GCM Sender Key. */
+export async function decryptGroupAttachmentBytes(
+  cipherBytes: Uint8Array | ArrayBuffer,
+  ivBase64: string,
+  groupKey: CryptoKey
+): Promise<ArrayBuffer | null> {
+  const subtle = getSubtle();
+  if (!subtle || !ivBase64) return null;
+  try {
+    const iv = base64ToBytes(ivBase64);
+    const input = cipherBytes instanceof Uint8Array ? cipherBytes : new Uint8Array(cipherBytes);
+    return await subtle.decrypt(
+      { name: 'AES-GCM', iv: iv as BufferSource },
+      groupKey,
+      input as BufferSource
+    );
+  } catch {
+    return null;
+  }
+}

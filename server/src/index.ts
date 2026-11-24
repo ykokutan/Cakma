@@ -65,7 +65,7 @@ import {
   loadAccounts, saveAccounts,
   loadServers, saveServers,
   loadMessages, saveMessages, saveChannelMessages,
-  saveChannelMessageUpsert, saveChannelMessageDelete, saveChannelMessageBulkReplace,
+  saveChannelMessageUpsert, saveChannelMessageDelete, saveChannelMessagesBulkDelete, saveChannelMessageBulkReplace,
   getChannelMessagesPageSmart,
   getChannelMessageContextSmart,
   saveUserReadCursor,
@@ -114,6 +114,7 @@ import { registerChatEnhancementsRoutes } from './features/chatEnhancementsRoute
 import { registerGroupDmSocketHandlers, getGroupDmsForUser } from './features/groupDmSocketHandlers.js';
 import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTemplatesRoutes.js';
 import { registerPasskeyRoutes } from './features/passkeyRoutes.js';
+import { registerE2eePairingRoutes } from './features/e2eePairingRoutes.js';
 import {
   createServerGovernanceHelpers,
   registerServerGovernanceRoutes,
@@ -1694,6 +1695,11 @@ registerPasskeyRoutes(app, {
   getClientIp,
 });
 
+registerE2eePairingRoutes(app, {
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+});
+
 const socketEventLimiter = createSocketEventRateLimiter();
 
 const governanceDeps: ServerGovernanceDeps = {
@@ -2136,6 +2142,8 @@ io.on('connection', (socket: Socket) => {
     saveUserReadCursor,
     saveChannelMessageUpsert,
     saveChannelMessageDelete,
+    saveChannelMessagesBulkDelete,
+    recordServerAudit: governanceHelpers.recordServerAudit,
     getChannelMessagesPageSmart,
     getChannelMessageContextSmart,
     searchMessagesSmart,

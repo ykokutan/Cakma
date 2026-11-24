@@ -53,6 +53,7 @@ pub fn run() {
                 platform::set_global_ptt,
                 platform::get_platform_capabilities,
                 platform::update_tray_state,
+                platform::list_capturable_windows,
                 overlay::toggle_overlay_window,
                 overlay::set_overlay_window,
                 overlay::get_overlay_window_state,

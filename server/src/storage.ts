@@ -259,11 +259,28 @@ export function flushPendingWritesSync() {
     clearTimeout(timer);
     pendingTimers.delete(filename);
   }
+  const batchSnapshots: Array<[string, unknown]> = [];
   for (const [filename, data] of pendingWrites.entries()) {
     pendingWrites.delete(filename);
-    safeWriteJson(filename, data);
+    try {
+      ensureDataDir();
+      const filePath = path.join(DATA_DIR, filename);
+      const tempPath = `${filePath}.tmp-${Date.now()}`;
+      fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tempPath, filePath);
+      batchSnapshots.push([filename, data]);
+    } catch (err) {
+      console.error(`❌ [Storage] ${filename} yazılamadı:`, err);
+    }
+  }
+  if (batchSnapshots.length > 0 && sqliteStore.isActive()) {
+    sqliteStore.putJsonSnapshotBatch(batchSnapshots);
   }
   messageStore.flushSync();
+}
+
+export function flushAllSnapshotsToSqlite(snapshots: Array<[string, unknown]>): number {
+  return sqliteStore.putJsonSnapshotBatch(snapshots);
 }
 
 export function getPendingWriteCount(): number {
@@ -342,6 +359,18 @@ export function saveChannelMessageUpsert(channelId: string, channelMessages: Mes
 export function saveChannelMessageDelete(channelId: string, channelMessages: Message[], messageId: string) {
   if (sqliteStore.isActive()) {
     sqliteStore.deleteMessage(messageId);
+    return;
+  }
+  messageStore.scheduleSaveChannel(channelId, channelMessages);
+}
+
+export function saveChannelMessagesBulkDelete(
+  channelId: string,
+  channelMessages: Message[],
+  messageIds: string[]
+) {
+  if (sqliteStore.isActive()) {
+    sqliteStore.deleteMessagesBulk(messageIds);
     return;
   }
   messageStore.scheduleSaveChannel(channelId, channelMessages);

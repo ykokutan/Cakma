@@ -51,6 +51,18 @@ export interface ChatMessageHandlerDeps {
   ) => void;
   saveChannelMessageUpsert: (channelId: string, channelMessages: Message[], msg: Message) => void;
   saveChannelMessageDelete: (channelId: string, channelMessages: Message[], messageId: string) => void;
+  saveChannelMessagesBulkDelete?: (
+    channelId: string,
+    channelMessages: Message[],
+    messageIds: string[]
+  ) => void;
+  recordServerAudit?: (
+    serverId: string,
+    actorUsername: string,
+    action: string,
+    details: string,
+    targetLabel?: string
+  ) => void;
   getChannelMessagesPageSmart: (
     allMessages: Record<string, Message[]>,
     channelId: string,
@@ -124,6 +136,8 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     saveUserReadCursor,
     saveChannelMessageUpsert,
     saveChannelMessageDelete,
+    saveChannelMessagesBulkDelete,
+    recordServerAudit,
     getChannelMessagesPageSmart,
     getChannelMessageContextSmart,
     searchMessagesSmart,
@@ -973,5 +987,76 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     }
     acc.readCursors = cursors;
     saveUserReadCursor(reader.username, cleanCh, cleanMsgId, registeredAccounts);
+  });
+
+  socket.on('bulk_delete_messages', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    if (user.role !== 'admin' && !socketEventLimiter.allow(socket.id, 'bulk_delete_messages', 10, 30_000)) {
+      return socket.emit('server_action_error', { message: 'Çok sık toplu silme işlemi yapıyorsunuz.' });
+    }
+    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return;
+    const raw = rawPayload as { channelId?: unknown; messageIds?: unknown };
+    const channelId = typeof raw.channelId === 'string' ? raw.channelId.trim() : '';
+    if (!channelId || !Array.isArray(raw.messageIds)) return;
+
+    const targetIds = Array.from(
+      new Set(
+        raw.messageIds
+          .filter((id): id is string => typeof id === 'string' && id.trim().length > 0 && id.length <= 120)
+          .map((id) => id.trim())
+      )
+    ).slice(0, 100);
+    if (targetIds.length === 0) return;
+
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs || channelMsgs.length === 0) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
+
+    const srv = findServerByChannelId(servers, channelId);
+    const isAllowed =
+      user.role === 'admin' ||
+      (srv &&
+        (checkServerPermission(user, srv, 'manage_channels') ||
+          checkServerPermission(user, srv, 'manage_server')));
+    if (!isAllowed) {
+      return socket.emit('server_action_error', {
+        message: 'Toplu mesaj silme için Kanalı Yönet veya Yönetici yetkiniz yok.',
+      });
+    }
+
+    const idSet = new Set(targetIds);
+    const deletedIds: string[] = [];
+    for (let i = channelMsgs.length - 1; i >= 0; i--) {
+      if (idSet.has(channelMsgs[i].id)) {
+        deletedIds.push(channelMsgs[i].id);
+        channelMsgs.splice(i, 1);
+      }
+    }
+    if (deletedIds.length === 0) return;
+
+    if (saveChannelMessagesBulkDelete) {
+      saveChannelMessagesBulkDelete(channelId, channelMsgs, deletedIds);
+    } else {
+      for (const delId of deletedIds) {
+        saveChannelMessageDelete(channelId, channelMsgs, delId);
+      }
+    }
+
+    emitToChannelAudience(channelId, srv?.id, 'messages_bulk_deleted', {
+      channelId,
+      messageIds: deletedIds,
+    });
+
+    if (srv && recordServerAudit) {
+      const ch = srv.channels.find((c) => c.id === channelId);
+      recordServerAudit(
+        srv.id,
+        user.username,
+        'TOPLU_MESAJ_SILINDI',
+        `#${ch?.name || channelId} kanalından ${deletedIds.length} mesaj toplu silindi.`,
+        `#${ch?.name || channelId}`
+      );
+    }
   });
 }

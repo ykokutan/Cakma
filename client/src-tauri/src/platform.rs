@@ -570,6 +570,133 @@ pub(crate) fn render_tray_badge_rgba(
     out
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn render_taskbar_voice_overlay_rgba(dot_rgba: [u8; 4]) -> Vec<u8> {
+    let size: usize = 16;
+    let mut rgba = vec![0u8; size * size * 4];
+    let cx = 7.5_f32;
+    let cy = 7.5_f32;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * size + x) * 4;
+            if dist <= 7.2 {
+                if dist >= 5.6 {
+                    // Crisp dark halo border so badge stands out on light/dark taskbars
+                    rgba[idx] = 15;
+                    rgba[idx + 1] = 18;
+                    rgba[idx + 2] = 28;
+                    rgba[idx + 3] = 255;
+                } else {
+                    rgba[idx] = dot_rgba[0];
+                    rgba[idx + 1] = dot_rgba[1];
+                    rgba[idx + 2] = dot_rgba[2];
+                    rgba[idx + 3] = dot_rgba[3];
+                }
+            }
+        }
+    }
+    rgba
+}
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct CapturableWindowInfo {
+    pub hwnd: isize,
+    pub title: String,
+    pub is_minimized: bool,
+}
+
+pub(crate) fn is_capturable_window_title(title: &str) -> bool {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "program manager"
+            | "settings"
+            | "microsoft text input application"
+            | "windows input experience"
+            | "task switching"
+            | "start"
+            | "search"
+    ) || trimmed.eq_ignore_ascii_case("çakma")
+        || trimmed.eq_ignore_ascii_case("cakma")
+        || trimmed.to_lowercase() == "çakma"
+    {
+        return false;
+    }
+    true
+}
+
+#[cfg(target_os = "windows")]
+mod win_windows {
+    pub type WndEnumProc = unsafe extern "system" fn(isize, isize) -> i32;
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        pub fn EnumWindows(lp_enum_func: WndEnumProc, l_param: isize) -> i32;
+        pub fn IsWindowVisible(h_wnd: isize) -> i32;
+        pub fn IsIconic(h_wnd: isize) -> i32;
+        pub fn GetWindowTextLengthW(h_wnd: isize) -> i32;
+        pub fn GetWindowTextW(h_wnd: isize, lp_string: *mut u16, n_max_count: i32) -> i32;
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn enum_capturable_windows_proc(hwnd: isize, l_param: isize) -> i32 {
+    unsafe {
+        if win_windows::IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let len = win_windows::GetWindowTextLengthW(hwnd);
+        if len <= 0 {
+            return 1;
+        }
+        let list = &mut *(l_param as *mut Vec<CapturableWindowInfo>);
+        if list.len() >= 24 {
+            return 0;
+        }
+        let buf_len = (len as usize).min(255) + 1;
+        let mut buf = vec![0u16; buf_len];
+        let copied = win_windows::GetWindowTextW(hwnd, buf.as_mut_ptr(), buf_len as i32);
+        if copied > 0 {
+            let title = String::from_utf16_lossy(&buf[..copied as usize]).trim().to_string();
+            if is_capturable_window_title(&title) {
+                let is_minimized = win_windows::IsIconic(hwnd) != 0;
+                list.push(CapturableWindowInfo {
+                    hwnd,
+                    title,
+                    is_minimized,
+                });
+            }
+        }
+    }
+    1
+}
+
+#[tauri::command]
+pub fn list_capturable_windows() -> Vec<CapturableWindowInfo> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut list: Vec<CapturableWindowInfo> = Vec::new();
+        unsafe {
+            win_windows::EnumWindows(
+                enum_capturable_windows_proc,
+                (&mut list as *mut Vec<CapturableWindowInfo>) as isize,
+            );
+        }
+        list
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
 #[tauri::command]
 pub fn update_tray_state(
     app: tauri::AppHandle,
@@ -579,6 +706,14 @@ pub fn update_tray_state(
     status: String,
     channel_name: Option<String>,
 ) -> Result<(), String> {
+    let voice_dot = if is_deafened {
+        [245, 158, 11, 255] // Amber: deafened
+    } else if is_muted {
+        [239, 68, 68, 255] // Rose/Red: muted
+    } else {
+        [16, 185, 129, 255] // Emerald: active mic
+    };
+
     if let Some(tray) = app.tray_by_id("main-tray") {
         let tip = format_tray_tooltip(
             in_voice,
@@ -590,20 +725,24 @@ pub fn update_tray_state(
         let _ = tray.set_tooltip(Some(tip));
 
         if in_voice {
-            let dot = if is_deafened {
-                [245, 158, 11, 255] // Amber: deafened
-            } else if is_muted {
-                [239, 68, 68, 255] // Rose/Red: muted
-            } else {
-                [16, 185, 129, 255] // Emerald: active mic
-            };
             if let Some(base) = app.default_window_icon() {
-                let badged = render_tray_badge_rgba(base.rgba(), base.width(), base.height(), dot);
+                let badged = render_tray_badge_rgba(base.rgba(), base.width(), base.height(), voice_dot);
                 let img = tauri::image::Image::new_owned(badged, base.width(), base.height());
                 let _ = tray.set_icon(Some(img));
             }
         } else if let Some(base) = app.default_window_icon() {
             let _ = tray.set_icon(Some(base.clone()));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(win) = app.get_webview_window("main") {
+        if in_voice {
+            let overlay_rgba = render_taskbar_voice_overlay_rgba(voice_dot);
+            let overlay_img = tauri::image::Image::new_owned(overlay_rgba, 16, 16);
+            let _ = win.set_overlay_icon(Some(overlay_img));
+        } else {
+            let _ = win.set_overlay_icon(None);
         }
     }
     Ok(())
@@ -613,8 +752,8 @@ pub fn update_tray_state(
 mod tests {
     use super::{
         clamp_ptt_release_delay_ms, current_platform_capabilities,
-        format_linux_autostart_desktop_entry, format_tray_tooltip, map_ptt_key_to_vk,
-        render_tray_badge_rgba,
+        format_linux_autostart_desktop_entry, format_tray_tooltip, is_capturable_window_title,
+        map_ptt_key_to_vk, render_taskbar_voice_overlay_rgba, render_tray_badge_rgba,
     };
 
     #[test]
@@ -692,5 +831,24 @@ mod tests {
             }
         }
         assert!(found_dot);
+    }
+
+    #[test]
+    fn renders_taskbar_voice_overlay_icon_with_badge() {
+        let dot = [239, 68, 68, 255];
+        let rgba = render_taskbar_voice_overlay_rgba(dot);
+        assert_eq!(rgba.len(), 16 * 16 * 4);
+        assert!(rgba.chunks_exact(4).any(|px| px == dot));
+    }
+
+    #[test]
+    fn filters_capturable_window_titles() {
+        assert!(!is_capturable_window_title(""));
+        assert!(!is_capturable_window_title("   "));
+        assert!(!is_capturable_window_title("Program Manager"));
+        assert!(!is_capturable_window_title("Settings"));
+        assert!(!is_capturable_window_title("Çakma"));
+        assert!(is_capturable_window_title("Visual Studio Code"));
+        assert!(is_capturable_window_title("VALORANT"));
     }
 }
