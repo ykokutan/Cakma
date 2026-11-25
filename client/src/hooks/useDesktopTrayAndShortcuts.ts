@@ -147,6 +147,31 @@ export function useDesktopTrayAndShortcuts(params: DesktopTrayAndShortcutsParams
                 const { emit } = await import('@tauri-apps/api/event');
                 await invoke('set_overlay_ignore_cursor', { ignore: nextLocked });
                 await emit('overlay-lock-changed', nextLocked);
+                await emit('overlay-interactive-changed', !nextLocked);
+              } catch {}
+            }
+          }).catch(() => {});
+        }
+
+        const interactiveOverlayAcc = 'Alt+O';
+        if (
+          interactiveOverlayAcc !== muteAcc &&
+          interactiveOverlayAcc !== deafenAcc &&
+          interactiveOverlayAcc !== soundboardAcc
+        ) {
+          await register(interactiveOverlayAcc, async (e) => {
+            if (e.state === 'Pressed') {
+              try {
+                const nextLocked = localStorage.getItem('dc_overlay_locked') !== '1';
+                localStorage.setItem('dc_overlay_locked', nextLocked ? '1' : '0');
+                const { invoke } = await import('@tauri-apps/api/core');
+                const { emit } = await import('@tauri-apps/api/event');
+                if (!nextLocked) {
+                  await invoke('set_overlay_window', { enabled: true }).catch(() => {});
+                }
+                await invoke('set_overlay_ignore_cursor', { ignore: nextLocked });
+                await emit('overlay-lock-changed', nextLocked);
+                await emit('overlay-interactive-changed', !nextLocked);
               } catch {}
             }
           }).catch(() => {});

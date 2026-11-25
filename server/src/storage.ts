@@ -52,6 +52,7 @@ export async function initStorageEngine(
   }
 
   if (ok && opts?.accounts) {
+    sqliteStore.syncAccountsIndex(opts.accounts);
     const sqlCursors = sqliteStore.getAllReadCursors();
     for (const [unameLower, acc] of opts.accounts.entries()) {
       const sqlMap = sqlCursors.get(unameLower);
@@ -317,6 +318,9 @@ export function loadAccounts(): Map<string, RegisteredAccount> {
 export function saveAccounts(accounts: Map<string, RegisteredAccount>) {
   const list = Array.from(accounts.values());
   scheduleWriteJson('users.json', list);
+  if (sqliteStore.isActive()) {
+    sqliteStore.syncAccountsIndex(accounts);
+  }
 }
 
 // 2. SERVERS (Sunucular & Roller & Kanallar)
@@ -883,4 +887,7 @@ export function loadContentReports(): ContentReport[] {
 export function saveContentReports(reports: ContentReport[]): void {
   const bounded = Array.isArray(reports) ? reports.slice(0, 1000) : [];
   scheduleWriteJson('reports.json', bounded);
+  if (sqliteStore.isActive()) {
+    sqliteStore.syncContentReports(bounded);
+  }
 }

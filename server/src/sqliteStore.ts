@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { AuditLog, Message } from './types.js';
+import type { AuditLog, ContentReport, Message, RegisteredAccount } from './types.js';
 
 export interface FtsSearchHit {
   id: string;
@@ -75,6 +75,27 @@ export class SqliteStore {
           type TEXT NOT NULL,
           timestamp TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS accounts_index (
+          username_lower TEXT PRIMARY KEY,
+          id TEXT NOT NULL,
+          username TEXT NOT NULL,
+          email TEXT NOT NULL,
+          role TEXT NOT NULL,
+          is_banned INTEGER NOT NULL DEFAULT 0,
+          wallet_balance REAL NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS content_reports (
+          id TEXT PRIMARY KEY,
+          reporter_username TEXT NOT NULL,
+          target_username TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          payload TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status, created_at DESC);
       `);
       const seqRow = this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM messages').get();
       this.nextSeq = Number(seqRow?.maxSeq || 0);
@@ -658,6 +679,152 @@ export class SqliteStore {
       }
     } catch {}
     return Array.from(out);
+  }
+
+  syncAccountsIndex(accounts: Map<string, RegisteredAccount>): number {
+    if (!this.isActive() || !this.db || !accounts || accounts.size === 0) return 0;
+    const nowIso = new Date().toISOString();
+    let count = 0;
+    try {
+      this.db.exec('BEGIN');
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO accounts_index
+          (username_lower, id, username, email, role, is_banned, wallet_balance, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const [unameLower, acc] of accounts.entries()) {
+        stmt.run(
+          unameLower,
+          acc.id,
+          acc.username,
+          acc.email || '',
+          acc.role || 'user',
+          acc.isBanned ? 1 : 0,
+          Number(acc.walletBalance) || 0,
+          acc.createdAt || nowIso,
+          nowIso
+        );
+        count += 1;
+      }
+      this.db.exec('COMMIT');
+    } catch {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
+    }
+    return count;
+  }
+
+  listAccountSummaries(limit = 500): Array<{
+    id: string;
+    username: string;
+    email: string;
+    role: string;
+    isBanned: boolean;
+    walletBalance: number;
+  }> {
+    if (!this.isActive() || !this.db) return [];
+    try {
+      const rows = this.db
+        .prepare(
+          'SELECT id, username, email, role, is_banned as isBanned, wallet_balance as walletBalance FROM accounts_index ORDER BY username_lower ASC LIMIT ?'
+        )
+        .all(Math.min(Math.max(limit, 1), 2000)) as Array<{
+        id: string;
+        username: string;
+        email: string;
+        role: string;
+        isBanned: number;
+        walletBalance: number;
+      }>;
+      return (Array.isArray(rows) ? rows : []).map((r) => ({
+        id: String(r.id),
+        username: String(r.username),
+        email: String(r.email || ''),
+        role: String(r.role || 'user'),
+        isBanned: Boolean(r.isBanned),
+        walletBalance: Number(r.walletBalance) || 0,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  upsertContentReport(report: ContentReport): void {
+    if (!this.isActive() || !this.db || !report?.id) return;
+    try {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO content_reports
+            (id, reporter_username, target_username, reason, status, created_at, payload)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          report.id,
+          report.reporterUsername,
+          report.targetUsername,
+          report.reason,
+          report.status,
+          report.createdAt,
+          JSON.stringify(report)
+        );
+    } catch {}
+  }
+
+  syncContentReports(reports: ContentReport[]): number {
+    if (!this.isActive() || !this.db || !Array.isArray(reports)) return 0;
+    let count = 0;
+    try {
+      this.db.exec('BEGIN');
+      const stmt = this.db.prepare(
+        `INSERT OR REPLACE INTO content_reports
+          (id, reporter_username, target_username, reason, status, created_at, payload)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const r of reports) {
+        if (!r?.id) continue;
+        stmt.run(
+          r.id,
+          r.reporterUsername,
+          r.targetUsername,
+          r.reason,
+          r.status,
+          r.createdAt,
+          JSON.stringify(r)
+        );
+        count += 1;
+      }
+      this.db.exec('COMMIT');
+    } catch {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {}
+    }
+    return count;
+  }
+
+  listContentReports(status?: ContentReport['status'], limit = 200): ContentReport[] {
+    if (!this.isActive() || !this.db) return [];
+    const capped = Math.min(Math.max(limit, 1), 1000);
+    try {
+      const rows = status
+        ? (this.db
+            .prepare('SELECT payload FROM content_reports WHERE status = ? ORDER BY created_at DESC LIMIT ?')
+            .all(status, capped) as Array<{ payload?: string }>)
+        : (this.db
+            .prepare('SELECT payload FROM content_reports ORDER BY created_at DESC LIMIT ?')
+            .all(capped) as Array<{ payload?: string }>);
+      const out: ContentReport[] = [];
+      for (const row of rows || []) {
+        if (!row?.payload) continue;
+        try {
+          out.push(JSON.parse(row.payload) as ContentReport);
+        } catch {}
+      }
+      return out;
+    } catch {
+      return [];
+    }
   }
 
   close(): void {

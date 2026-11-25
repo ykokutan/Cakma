@@ -232,4 +232,62 @@ test.describe('Çakma v1.0.0 End-to-End', () => {
 
     expect(pageErrors).toEqual([]);
   });
+
+  test('v1.2.0 forum solved status filter, rich multi/anonymous poll, and code syntax block wrap toggle', async ({ page }) => {
+    const pageErrors: Error[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err));
+
+    await loginAsE2eAdmin(page);
+
+    // 1. Forum Solved Workflow
+    await page.getByRole('button', { name: 'forum-alani' }).click();
+    await page.getByRole('button', { name: 'Yeni Konu Başlat', exact: true }).click();
+    await page.locator('input[placeholder="Konu başlığı..."]').fill('E2E v1.2.0 Çözülen Konu');
+    await page.locator('textarea[placeholder*="Konu açıklamanızı"]').fill('Çözüm durumu e2e testi.');
+    await page.getByRole('button', { name: 'Konuyu Yayınla' }).click();
+
+    const solvedTopicHeading = page.getByRole('heading', { name: 'E2E v1.2.0 Çözülen Konu' });
+    await expect(solvedTopicHeading).toBeVisible({ timeout: 10_000 });
+
+    const markSolvedBtns = page.getByRole('button', { name: 'Çözüldü İşaretle' });
+    await markSolvedBtns.first().click();
+
+    await page.getByRole('button', { name: /Çözüldü \(\d+\)/ }).click();
+    await expect(solvedTopicHeading).toBeVisible();
+
+    await page.getByRole('button', { name: /Açık \(\d+\)/ }).click();
+    await expect(solvedTopicHeading).not.toBeVisible();
+
+    // 2. Switch back to #genel for Rich Poll + Code Syntax Block
+    await page.getByRole('button', { name: 'genel', exact: true }).click();
+    await expect(page.locator('header h3', { hasText: 'genel' })).toBeVisible();
+
+    // Rich Poll creation & multi-choice voting
+    await page.locator('button[aria-label="Anket Başlat"]').click();
+    await page.locator('input[placeholder*="Bu akşam"]').fill('v1.2.0 Çoklu Seçim Anketi');
+    await page.locator('input[placeholder="Seçenek 1"]').fill('Seçenek A');
+    await page.locator('input[placeholder="Seçenek 2"]').fill('Seçenek B');
+    await page.getByText('Çoklu Seçim').click();
+    await page.getByText('Anonim Oylama').click();
+    await page.getByRole('button', { name: 'Anketi Başlat' }).click();
+
+    await expect(page.getByText('v1.2.0 Çoklu Seçim Anketi').last()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Çoklu', { exact: true }).last()).toBeVisible();
+    await expect(page.getByText('Anonim', { exact: true }).last()).toBeVisible();
+
+    await page.getByRole('button', { name: /Seçenek A/ }).click();
+    await page.getByRole('button', { name: /Seçenek B/ }).click();
+    await expect(page.getByText('Toplam 2 oy').last()).toBeVisible({ timeout: 10_000 });
+
+    // Code block syntax highlighting + line count + wrap toggle
+    const composer = page.locator('textarea[aria-label="Mesaj yaz"]');
+    await composer.fill('```ts\nconst answer: number = 42;\nconsole.log(answer);\n```');
+    await composer.press('Enter');
+
+    const wrapBtn = page.locator('button[title="Satır Kaydırmayı Aç/Kapat"]').last();
+    await expect(wrapBtn).toBeVisible({ timeout: 10_000 });
+    await wrapBtn.click();
+
+    expect(pageErrors).toEqual([]);
+  });
 });

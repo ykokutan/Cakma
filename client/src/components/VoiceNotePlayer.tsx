@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Mic, Download } from 'lucide-react';
+import { decodeAudioWaveformPeaks } from '../utils/audioWaveform';
+
+const DEFAULT_WAVEFORM = [30, 60, 45, 90, 75, 40, 80, 100, 65, 85, 45, 95, 70, 50, 80, 40, 60, 35, 70, 55, 85, 60, 45, 35];
 
 interface VoiceNotePlayerProps {
   url: string;
@@ -12,8 +15,22 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(durationSeconds && Number.isFinite(durationSeconds) ? durationSeconds : 0);
   const [playbackRate, setPlaybackRate] = useState<1 | 1.5 | 2>(1);
+  const [waveformHeights, setWaveformHeights] = useState<number[]>(DEFAULT_WAVEFORM);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setWaveformHeights(DEFAULT_WAVEFORM);
+    void decodeAudioWaveformPeaks(url, 24).then((peaks) => {
+      if (active && peaks && peaks.length > 0) {
+        setWaveformHeights(peaks);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [url]);
 
   useEffect(() => {
     const audio = new Audio(url);
@@ -140,8 +157,6 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  // 18 Waveform bars with static heights
-  const waveformHeights = [30, 60, 45, 90, 75, 40, 80, 100, 65, 85, 45, 95, 70, 50, 80, 40, 60, 35];
   const progressPercent = duration > 0 && Number.isFinite(duration)
     ? Math.min(100, Math.max(0, (currentTime / duration) * 100))
     : 0;

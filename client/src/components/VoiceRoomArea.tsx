@@ -17,6 +17,10 @@ import { AvatarView } from './AvatarView';
 import { StageChannelView } from './voice/StageChannelView';
 import { ScreenAnnotationOverlay } from './voice/ScreenAnnotationOverlay';
 import { LiveCaptionsOverlay } from './voice/LiveCaptionsOverlay';
+import { InlineMarkdown } from './chat/MessageTextRenderer';
+import { uploadAttachmentFile } from '../utils/uploadAttachment';
+import { resolveMediaUrl } from '../utils/authFetch';
+import { appToast } from '../utils/appDialogs';
 import {
   Mic,
   MicOff,
@@ -52,6 +56,11 @@ import {
   PenTool,
   Trash2,
   Captions,
+  Paperclip,
+  Lock,
+  ShieldCheck,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -493,6 +502,11 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     toggleOverlayWindow,
     messagesMap,
     sendMessage,
+    addReaction,
+    currentServerHost,
+    voiceE2eeEnabled,
+    voiceE2eeFingerprint,
+    setVoiceE2eeConfig,
     language,
     requestScreenShareQuality,
     updateLiveScreenShareSettings,
@@ -517,6 +531,13 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [showRadioBot, setShowRadioBot] = useState(false);
   const [showVoiceChat, setShowVoiceChat] = useState(false);
   const [voiceChatInput, setVoiceChatInput] = useState('');
+  const [lastReadVoiceChatCount, setLastReadVoiceChatCount] = useState(0);
+  const [voiceChatUploading, setVoiceChatUploading] = useState(false);
+  const voiceChatFileRef = useRef<HTMLInputElement>(null);
+  const voiceChatEndRef = useRef<HTMLDivElement>(null);
+  const [showE2eePopover, setShowE2eePopover] = useState(false);
+  const [e2eePassInput, setE2eePassInput] = useState('');
+  const [e2eeCopied, setE2eeCopied] = useState(false);
   const [audioDuckingEnabled, setAudioDuckingEnabled] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem('cakma_ducking_enabled');
@@ -549,6 +570,24 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     window.addEventListener('cakma-toggle-live-captions', handler);
     return () => window.removeEventListener('cakma-toggle-live-captions', handler);
   }, []);
+
+  const activeVoiceId = activeChannel?.id || '';
+  const currentVoiceMsgsCount = messagesMap[activeVoiceId]?.length || 0;
+  const prevVoiceChRef = useRef<string>('');
+  useEffect(() => {
+    if (prevVoiceChRef.current !== activeVoiceId) {
+      prevVoiceChRef.current = activeVoiceId;
+      setLastReadVoiceChatCount(currentVoiceMsgsCount);
+    } else if (showVoiceChat) {
+      setLastReadVoiceChatCount(currentVoiceMsgsCount);
+    }
+    if (showVoiceChat) {
+      voiceChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activeVoiceId, currentVoiceMsgsCount, showVoiceChat]);
+  const unreadVoiceChatCount = showVoiceChat
+    ? 0
+    : Math.max(0, currentVoiceMsgsCount - lastReadVoiceChatCount);
   const [viewerQualityByPresenter, setViewerQualityByPresenter] = useState<Record<string, ViewerStreamQuality>>({});
   const [liveFps, setLiveFps] = useState<5 | 30 | 60>(30);
   const [liveBitrateKbps, setLiveBitrateKbps] = useState<number>(10000);
@@ -715,6 +754,90 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             <span>{t(language, 'liveCaptions')}</span>
           </button>
 
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowE2eePopover((v) => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
+                voiceE2eeEnabled
+                  ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-sm'
+                  : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+              }`}
+              title="Ses & Medya Uçtan Uca Şifreleme (E2EE)"
+            >
+              {voiceE2eeEnabled ? <ShieldCheck className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+              <span>{voiceE2eeEnabled ? 'Medya E2EE Açık' : 'Medya E2EE'}</span>
+            </button>
+            {showE2eePopover && (
+              <div className="absolute right-0 top-9 z-50 w-72 p-3.5 rounded-2xl bg-[#141722]/98 backdrop-blur-2xl border border-white/15 shadow-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    Ses / Medya E2EE
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowE2eePopover(false)}
+                    className="text-white/40 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-white/60 leading-snug">
+                  Odadaki katılımcılarla ortak bir parola belirleyerek WebRTC medya karelerini uçtan uca şifreleyin.
+                </p>
+                <input
+                  type="password"
+                  value={e2eePassInput}
+                  onChange={(e) => setE2eePassInput(e.target.value)}
+                  placeholder="Ortak oda parolası..."
+                  className="w-full bg-black/40 border border-white/15 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-white/35 outline-none focus:border-emerald-400"
+                />
+                {voiceE2eeEnabled && voiceE2eeFingerprint && (
+                  <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-400/25">
+                    <span className="text-[10px] text-emerald-200/80">SAS Doğrulama:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(voiceE2eeFingerprint).catch(() => {});
+                        setE2eeCopied(true);
+                        setTimeout(() => setE2eeCopied(false), 1500);
+                      }}
+                      className="inline-flex items-center gap-1 font-mono text-xs font-bold text-emerald-300 hover:text-emerald-200"
+                    >
+                      <span>{voiceE2eeFingerprint}</span>
+                      {e2eeCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!e2eePassInput.trim()}
+                    onClick={() => {
+                      void setVoiceE2eeConfig(true, e2eePassInput.trim());
+                    }}
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-xs font-bold text-white transition"
+                  >
+                    {voiceE2eeEnabled ? 'Anahtarı Güncelle' : 'E2EE Aktifleştir'}
+                  </button>
+                  {voiceE2eeEnabled && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void setVoiceE2eeConfig(false, '');
+                        setE2eePassInput('');
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-200 transition"
+                    >
+                      Kapat
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => setShowVoiceChat((prev) => !prev)}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
@@ -726,9 +849,9 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>{t(language, 'roomChat')}</span>
-            {(messagesMap[activeChannel.id]?.length || 0) > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-bold">
-                {messagesMap[activeChannel.id].length}
+            {unreadVoiceChatCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-blue-500/35 text-[10px] font-bold text-white">
+                {unreadVoiceChatCount}
               </span>
             )}
           </button>
@@ -1644,15 +1767,90 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
               </div>
             ) : (
               (messagesMap[activeChannel.id] || []).map((msg) => (
-                <div key={msg.id} className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-2.5">
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                <div key={msg.id} className="group bg-white/[0.04] border border-white/[0.06] rounded-xl p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] font-bold text-white truncate">{msg.author.username}</span>
-                    <span className="text-[9px] text-white/35 shrink-0">{msg.timestamp}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => addReaction(msg.id, '👍')}
+                        className="opacity-0 group-hover:opacity-100 px-1 py-0.2 rounded bg-white/10 hover:bg-white/20 text-[10px] transition"
+                        title="Beğen"
+                      >
+                        👍
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => addReaction(msg.id, '🔥')}
+                        className="opacity-0 group-hover:opacity-100 px-1 py-0.2 rounded bg-white/10 hover:bg-white/20 text-[10px] transition"
+                        title="Ateş"
+                      >
+                        🔥
+                      </button>
+                      <span className="text-[9px] text-white/35 ml-0.5">{msg.timestamp}</span>
+                    </div>
                   </div>
-                  <p className="text-xs text-white/85 break-words">{msg.content}</p>
+                  {msg.content && (
+                    <div className="text-xs text-white/85 break-words">
+                      <InlineMarkdown text={msg.content} />
+                    </div>
+                  )}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="space-y-1.5 pt-0.5">
+                      {msg.attachments.map((att) => {
+                        const resolved = resolveMediaUrl(att.url, currentServerHost);
+                        if (att.type?.startsWith('image/')) {
+                          return (
+                            <a key={att.id} href={resolved} target="_blank" rel="noreferrer" className="block">
+                              <img
+                                src={resolved}
+                                alt={att.name}
+                                className="max-h-36 rounded-lg border border-white/10 object-cover"
+                              />
+                            </a>
+                          );
+                        }
+                        return (
+                          <a
+                            key={att.id}
+                            href={resolved}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-cyan-300"
+                          >
+                            <Paperclip className="w-3 h-3" />
+                            <span className="truncate max-w-[180px]">{att.name}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {Object.entries(msg.reactions).map(([emoji, users]) => {
+                        const hasMine = Boolean(currentUser && users.includes(currentUser.username));
+                        return (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => addReaction(msg.id, emoji)}
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] border transition ${
+                              hasMine
+                                ? 'bg-blue-500/20 border-blue-400/50 text-blue-200 font-semibold'
+                                : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                            }`}
+                          >
+                            <span>{emoji}</span>
+                            <span>{users.length}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))
             )}
+            <div ref={voiceChatEndRef} />
           </div>
           <form
             onSubmit={(e) => {
@@ -1663,6 +1861,34 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             }}
             className="p-3 border-t border-white/10 flex items-center gap-2"
           >
+            <input
+              ref={voiceChatFileRef}
+              type="file"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                setVoiceChatUploading(true);
+                try {
+                  const uploaded = await uploadAttachmentFile(currentServerHost, file, 10);
+                  sendMessage('', [uploaded]);
+                } catch (err: any) {
+                  appToast(err?.message || 'Dosya yüklenemedi.', 'error');
+                } finally {
+                  setVoiceChatUploading(false);
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={voiceChatUploading}
+              onClick={() => voiceChatFileRef.current?.click()}
+              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white disabled:opacity-40 transition"
+              title="Dosya veya Görsel Gönder"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+            </button>
             <input
               type="text"
               value={voiceChatInput}

@@ -79,6 +79,26 @@ export interface EffectiveLiveKitConfigSnapshot {
   turnCredential?: string;
 }
 
+export function computeUploadsDirectoryStats(dir: string): { totalBytes: number; fileCount: number } {
+  if (!fs.existsSync(dir)) return { totalBytes: 0, fileCount: 0 };
+  let totalBytes = 0;
+  let fileCount = 0;
+  try {
+    const entries = fs.readdirSync(dir);
+    for (const name of entries) {
+      const full = path.join(dir, name);
+      try {
+        const st = fs.statSync(full);
+        if (st.isFile()) {
+          totalBytes += st.size;
+          fileCount += 1;
+        }
+      } catch {}
+    }
+  } catch {}
+  return { totalBytes, fileCount };
+}
+
 export interface CloudSyncContext extends OrphanCleanupContext {
   verifySessionToken?: (token: string) => string | null;
   verifySessionTokenWithMeta?: (token: string) => { username: string; iat: number } | null;
@@ -87,6 +107,8 @@ export interface CloudSyncContext extends OrphanCleanupContext {
   getEffectiveLiveKitConfig?: () => EffectiveLiveKitConfigSnapshot;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
   getMaxUploadSizeMb?: () => number;
+  uploadsDir?: string;
+  maxUploadsDiskMb?: number;
   isUserMemberOfServer?: (
     user: { id?: string; accountId?: string; username: string; role?: string },
     server: Server
@@ -100,7 +122,12 @@ export function registerCloudSyncAndEvents(
   activeUsers: Map<string, { username: string }>,
   context?: CloudSyncContext
 ) {
+  const uploadsDir = context?.uploadsDir ? path.resolve(context.uploadsDir) : UPLOADS_DIR;
+  const ensureUploadsDir = () => {
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+  };
   ensureDirs();
+  ensureUploadsDir();
 
   const failClosed: RequestHandler = (_req: Request, res: Response, _next: NextFunction) => {
     res.status(500).json({ ok: false, error: 'Kimlik doğrulama bağlamı yapılandırılmadı.' });
@@ -681,13 +708,27 @@ export function registerCloudSyncAndEvents(
       };
     }
 
+    const maxDiskMb = Math.max(
+      0.01,
+      context?.maxUploadsDiskMb ?? (Number(process.env.MAX_UPLOADS_DISK_MB) || 2048)
+    );
+    const maxDiskBytes = Math.floor(maxDiskMb * 1024 * 1024);
+    const diskStats = computeUploadsDirectoryStats(uploadsDir);
+    if (diskStats.totalBytes + params.buffer.length > maxDiskBytes) {
+      return {
+        ok: false,
+        status: 507,
+        error: 'Sunucu dosya depolama kotası doldu.',
+      };
+    }
+
     const rawExt = path.extname(cleanName).toLowerCase().replace(/^\./, '');
     const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
     const isVideoUpload = params.mimeType.toLowerCase().startsWith('video/');
     const storedName = `${isVideoUpload ? 'upl-vid' : 'upl'}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
     try {
-      ensureDirs();
-      await fs.promises.writeFile(path.join(UPLOADS_DIR, storedName), params.buffer);
+      ensureUploadsDir();
+      await fs.promises.writeFile(path.join(uploadsDir, storedName), params.buffer);
     } catch (err) {
       console.error('❌ [Upload] Dosya yazılamadı:', err);
       return { ok: false, status: 500, error: 'Dosya sunucuya kaydedilemedi.' };
@@ -805,7 +846,7 @@ export function registerCloudSyncAndEvents(
     if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
       return res.status(400).json({ error: 'Geçersiz dosya adı' });
     }
-    const filePath = path.join(UPLOADS_DIR, safeName);
+    const filePath = path.join(uploadsDir, safeName);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'Dosya bulunamadı' });
     }
@@ -823,5 +864,70 @@ export function registerCloudSyncAndEvents(
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
     }
     res.sendFile(filePath);
+  });
+
+  app.get('/api/storage/usage', requireAuth, (_req, res) => {
+    const stats = computeUploadsDirectoryStats(uploadsDir);
+    const maxDiskMb = Math.max(
+      0.01,
+      context?.maxUploadsDiskMb ?? (Number(process.env.MAX_UPLOADS_DISK_MB) || 2048)
+    );
+    const quotaBytes = Math.floor(maxDiskMb * 1024 * 1024);
+    const usagePercent = Math.min(100, Math.round((stats.totalBytes / Math.max(1, quotaBytes)) * 1000) / 10);
+    res.json({
+      ok: true,
+      totalBytes: stats.totalBytes,
+      fileCount: stats.fileCount,
+      quotaBytes,
+      usagePercent,
+    });
+  });
+
+  app.post('/api/storage/prune', requireAdmin, express.json({ limit: '64kb' }), (req, res) => {
+    const rawAgeDays = Number(req.body?.maxAgeDays);
+    const maxAgeDays = Number.isFinite(rawAgeDays) && rawAgeDays > 0 ? rawAgeDays : 30;
+    const cutoffMs = Date.now() - maxAgeDays * 86_400_000;
+    const targetFreeBytes = Math.max(0, Number(req.body?.targetFreeBytes) || 0);
+
+    ensureUploadsDir();
+    const fileItems: Array<{ fullPath: string; size: number; mtimeMs: number }> = [];
+    for (const name of fs.readdirSync(uploadsDir)) {
+      const fullPath = path.join(uploadsDir, name);
+      try {
+        const st = fs.statSync(fullPath);
+        if (st.isFile()) {
+          fileItems.push({ fullPath, size: st.size, mtimeMs: st.mtimeMs });
+        }
+      } catch {}
+    }
+    fileItems.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+    let deletedCount = 0;
+    let freedBytes = 0;
+    for (const item of fileItems) {
+      const shouldDeleteForAge = item.mtimeMs < cutoffMs;
+      const shouldDeleteForSpace = targetFreeBytes > 0 && freedBytes < targetFreeBytes;
+      if (!shouldDeleteForAge && !shouldDeleteForSpace) continue;
+      try {
+        fs.unlinkSync(item.fullPath);
+        deletedCount += 1;
+        freedBytes += item.size;
+      } catch {}
+    }
+
+    const remaining = computeUploadsDirectoryStats(uploadsDir);
+    if (deletedCount > 0) {
+      context?.addAuditLog?.(
+        'DEPOLAMA_TEMIZLIGI',
+        `${deletedCount} yükleme dosyası silindi (${freedBytes} B boşaltıldı).`,
+        'info'
+      );
+    }
+    res.json({
+      ok: true,
+      deletedCount,
+      freedBytes,
+      remainingBytes: remaining.totalBytes,
+    });
   });
 }

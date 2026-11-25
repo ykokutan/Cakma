@@ -606,6 +606,35 @@ pub struct CapturableWindowInfo {
     pub hwnd: isize,
     pub title: String,
     pub is_minimized: bool,
+    pub pid: u32,
+    pub process_name: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct AudioCaptureCapabilities {
+    pub process_loopback_supported: bool,
+    pub os_platform: String,
+    pub backend: String,
+}
+
+#[tauri::command]
+pub fn get_audio_capture_capabilities() -> AudioCaptureCapabilities {
+    #[cfg(target_os = "windows")]
+    {
+        AudioCaptureCapabilities {
+            process_loopback_supported: true,
+            os_platform: "windows".to_string(),
+            backend: "WASAPI Process Loopback".to_string(),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        AudioCaptureCapabilities {
+            process_loopback_supported: false,
+            os_platform: std::env::consts::OS.to_string(),
+            backend: "System Audio Capture".to_string(),
+        }
+    }
 }
 
 pub(crate) fn is_capturable_window_title(title: &str) -> bool {
@@ -635,6 +664,7 @@ pub(crate) fn is_capturable_window_title(title: &str) -> bool {
 #[cfg(target_os = "windows")]
 mod win_windows {
     pub type WndEnumProc = unsafe extern "system" fn(isize, isize) -> i32;
+    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
     #[link(name = "user32")]
     unsafe extern "system" {
@@ -643,6 +673,53 @@ mod win_windows {
         pub fn IsIconic(h_wnd: isize) -> i32;
         pub fn GetWindowTextLengthW(h_wnd: isize) -> i32;
         pub fn GetWindowTextW(h_wnd: isize, lp_string: *mut u16, n_max_count: i32) -> i32;
+        pub fn GetWindowThreadProcessId(h_wnd: isize, lpdw_process_id: *mut u32) -> u32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        pub fn OpenProcess(
+            dw_desired_access: u32,
+            b_inherit_handle: i32,
+            dw_process_id: u32,
+        ) -> isize;
+        pub fn QueryFullProcessImageNameW(
+            h_process: isize,
+            dw_flags: u32,
+            lp_exe_name: *mut u16,
+            lpdw_size: *mut u32,
+        ) -> i32;
+        pub fn CloseHandle(h_object: isize) -> i32;
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn resolve_window_process_info(hwnd: isize) -> (u32, String) {
+    unsafe {
+        let mut pid: u32 = 0;
+        win_windows::GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return (0, String::new());
+        }
+        let handle = win_windows::OpenProcess(win_windows::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle == 0 {
+            return (pid, String::new());
+        }
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let ok = win_windows::QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut len);
+        win_windows::CloseHandle(handle);
+        if ok == 0 || len == 0 {
+            return (pid, String::new());
+        }
+        let full_path = String::from_utf16_lossy(&buf[..len as usize]);
+        let exe_name = full_path
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        (pid, exe_name)
     }
 }
 
@@ -667,10 +744,13 @@ unsafe extern "system" fn enum_capturable_windows_proc(hwnd: isize, l_param: isi
             let title = String::from_utf16_lossy(&buf[..copied as usize]).trim().to_string();
             if is_capturable_window_title(&title) {
                 let is_minimized = win_windows::IsIconic(hwnd) != 0;
+                let (pid, process_name) = resolve_window_process_info(hwnd);
                 list.push(CapturableWindowInfo {
                     hwnd,
                     title,
                     is_minimized,
+                    pid,
+                    process_name,
                 });
             }
         }
@@ -752,7 +832,8 @@ pub fn update_tray_state(
 mod tests {
     use super::{
         clamp_ptt_release_delay_ms, current_platform_capabilities,
-        format_linux_autostart_desktop_entry, format_tray_tooltip, is_capturable_window_title,
+        format_linux_autostart_desktop_entry, format_tray_tooltip,
+        get_audio_capture_capabilities, is_capturable_window_title,
         map_ptt_key_to_vk, render_taskbar_voice_overlay_rgba, render_tray_badge_rgba,
     };
 
@@ -850,5 +931,14 @@ mod tests {
         assert!(!is_capturable_window_title("Çakma"));
         assert!(is_capturable_window_title("Visual Studio Code"));
         assert!(is_capturable_window_title("VALORANT"));
+    }
+
+    #[test]
+    fn reports_audio_capture_capabilities() {
+        let caps = get_audio_capture_capabilities();
+        assert!(!caps.os_platform.is_empty());
+        assert!(!caps.backend.is_empty());
+        #[cfg(target_os = "windows")]
+        assert!(caps.process_loopback_supported);
     }
 }

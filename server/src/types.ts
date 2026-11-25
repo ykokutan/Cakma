@@ -456,6 +456,9 @@ export interface PollData {
   options: PollOption[];
   closed?: boolean;
   totalVotes?: number;
+  allowMultiple?: boolean;
+  isAnonymous?: boolean;
+  closesAt?: string;
 }
 
 export interface ChannelCategory {
@@ -502,6 +505,9 @@ export interface ForumPostMeta {
   tags?: string[];
   pinned?: boolean;
   locked?: boolean;
+  solved?: boolean;
+  solvedAt?: string;
+  solvedBy?: string;
 }
 
 export interface MetricsHistoryPoint {

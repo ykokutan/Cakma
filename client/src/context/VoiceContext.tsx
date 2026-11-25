@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { GroupDmRoom, IncomingVoiceScreenAnnotation, ScreenShareSettings, VoiceScreenAnnotationStroke } from '../types';
+import type { NoiseDspProfile } from '../utils/noiseDspProfiles';
 
 export interface AudioWorkletTelemetry {
   db: number;
@@ -31,6 +32,11 @@ export interface VoiceContextValue {
   setVoiceGateDb: (db: number) => void;
   noiseAggressiveness: number;
   setNoiseAggressiveness: (val: number) => void;
+  noiseProfile: NoiseDspProfile;
+  setNoiseProfile: (profile: NoiseDspProfile) => void;
+  voiceE2eeEnabled: boolean;
+  voiceE2eeFingerprint: string | null;
+  setVoiceE2eeConfig: (enabled: boolean, passphrase: string) => Promise<void>;
   globalLoudnessNormalize: boolean;
   setGlobalLoudnessNormalize: (enabled: boolean) => void;
   liveAudioTelemetry: AudioWorkletTelemetry;

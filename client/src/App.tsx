@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import { SocketProvider, useSocket } from './context/SocketContext';
 import { ServerSidebar } from './components/ServerSidebar';
 import { ChannelSidebar } from './components/ChannelSidebar';
@@ -27,6 +27,7 @@ const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDia
 const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
 const LegalDocumentsModal = lazy(() => import('./components/LegalDocumentsModal').then((m) => ({ default: m.LegalDocumentsModal })));
 import { LEGAL_DOCUMENTS_VERSION, resolveLegalDocFromLocation, type LegalDocumentId } from './data/legalDocuments';
+import { evaluateHorizontalSwipe, shouldOpenDrawerFromEdge, shouldCloseDrawerSwipe } from './utils/touchGestures';
 import { User } from './types';
 import { X, Volume2, Check, ShieldAlert } from 'lucide-react';
 
@@ -144,6 +145,7 @@ const MainLayout: React.FC = () => {
     });
   };
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const mobileSwipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isServerSettingsOpen, setIsServerSettingsOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -211,7 +213,28 @@ const MainLayout: React.FC = () => {
           </button>
         </div>
       )}
-      <div className="relative flex flex-1 min-h-0 w-full overflow-hidden md:p-2.5 md:gap-2.5">
+      <div
+        className="relative flex flex-1 min-h-0 w-full overflow-hidden md:p-2.5 md:gap-2.5"
+        onTouchStart={(e) => {
+          if (typeof window !== 'undefined' && window.innerWidth >= 768) return;
+          const touch = e.touches[0];
+          if (!touch) return;
+          mobileSwipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+        }}
+        onTouchEnd={(e) => {
+          const start = mobileSwipeStartRef.current;
+          mobileSwipeStartRef.current = null;
+          if (!start || (typeof window !== 'undefined' && window.innerWidth >= 768)) return;
+          const touch = e.changedTouches[0];
+          if (!touch) return;
+          const swipe = evaluateHorizontalSwipe(start.x, start.y, touch.clientX, touch.clientY, 56, 0.65);
+          if (!isMobileNavOpen && shouldOpenDrawerFromEdge(start.x, swipe, 40)) {
+            setIsMobileNavOpen(true);
+          } else if (isMobileNavOpen && shouldCloseDrawerSwipe(swipe)) {
+            setIsMobileNavOpen(false);
+          }
+        }}
+      >
       <AppBannerStack
         isDedicatedServer={isDedicatedServer}
         currentServerHost={currentServerHost}

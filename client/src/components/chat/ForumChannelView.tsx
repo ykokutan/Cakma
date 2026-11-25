@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { MessageSquare, MessagesSquare, Paperclip, Plus, Search, Send, Tag, X } from 'lucide-react';
+import { CheckCircle2, CircleDot, MessageSquare, MessagesSquare, Paperclip, Plus, RotateCcw, Search, Send, Tag, X } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
 import type { Channel, Message } from '../../types';
 import { t } from '../../utils/i18n';
+import { isUserServerOwner } from '../../utils/serverIdentity';
 import { AvatarView } from '../AvatarView';
 
 interface ForumChannelViewProps {
@@ -18,13 +19,22 @@ export const ForumChannelView: React.FC<ForumChannelViewProps> = ({
   onOpenThread,
   onAuthorClick,
 }) => {
-  const { sendMessage, addReaction, currentUser, language } = useSocket();
+  const { sendMessage, addReaction, toggleForumSolved, currentUser, activeServer, hasServerPermission, language } = useSocket();
   const [isComposing, setIsComposing] = useState(false);
   const [postTitle, setPostTitle] = useState('');
   const [postTagsText, setPostTagsText] = useState('');
   const [postBody, setPostBody] = useState('');
   const [searchText, setSearchText] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'solved'>('all');
+
+  const { solvedCount, openCount } = useMemo(() => {
+    let solved = 0;
+    for (const msg of messages) {
+      if (msg.forumPost?.solved) solved += 1;
+    }
+    return { solvedCount: solved, openCount: messages.length - solved };
+  }, [messages]);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -42,6 +52,9 @@ export const ForumChannelView: React.FC<ForumChannelViewProps> = ({
     return [...messages]
       .reverse()
       .filter((msg) => {
+        const isSolved = Boolean(msg.forumPost?.solved);
+        if (statusFilter === 'open' && isSolved) return false;
+        if (statusFilter === 'solved' && !isSolved) return false;
         if (activeTag) {
           const tags = msg.forumPost?.tags || [];
           if (!tags.some((tag) => tag.toLowerCase() === activeTag.toLowerCase())) {
@@ -58,7 +71,7 @@ export const ForumChannelView: React.FC<ForumChannelViewProps> = ({
           msg.author.username.toLowerCase().includes(q)
         );
       });
-  }, [messages, searchText, activeTag]);
+  }, [messages, searchText, activeTag, statusFilter]);
 
   const handleSubmitTopic = (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,19 +136,58 @@ export const ForumChannelView: React.FC<ForumChannelViewProps> = ({
           </button>
         </div>
 
-        {allTags.length > 0 && (
+        {(messages.length > 0 || allTags.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setActiveTag(null)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
-                activeTag === null
-                  ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
-                  : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
-              }`}
-            >
-              Tümü ({messages.length})
-            </button>
+            <div className="inline-flex items-center rounded-full bg-black/30 border border-white/10 p-0.5 mr-1">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition ${
+                  statusFilter === 'all'
+                    ? 'bg-cyan-500/25 text-cyan-200'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                Tümü ({messages.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('open')}
+                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition ${
+                  statusFilter === 'open'
+                    ? 'bg-amber-500/25 text-amber-200'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                <CircleDot className="w-2.5 h-2.5" />
+                <span>Açık ({openCount})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('solved')}
+                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition ${
+                  statusFilter === 'solved'
+                    ? 'bg-emerald-500/25 text-emerald-200'
+                    : 'text-white/60 hover:text-white'
+                }`}
+              >
+                <CheckCircle2 className="w-2.5 h-2.5" />
+                <span>Çözüldü ({solvedCount})</span>
+              </button>
+            </div>
+            {allTags.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveTag(null)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
+                  activeTag === null
+                    ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
+                    : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                }`}
+              >
+                Tüm Etiketler
+              </button>
+            )}
             {allTags.map((tag) => {
               const selected = activeTag?.toLowerCase() === tag.toLowerCase();
               return (
@@ -235,16 +287,39 @@ export const ForumChannelView: React.FC<ForumChannelViewProps> = ({
             const replyCount = msg.threadMessages?.length || 0;
             const tags = msg.forumPost?.tags || [];
             const attachmentCount = msg.attachments?.length || 0;
+            const isSolved = Boolean(msg.forumPost?.solved);
+            const canToggleSolved = Boolean(
+              msg.forumPost &&
+                currentUser &&
+                (msg.author.username.toLowerCase() === currentUser.username.toLowerCase() ||
+                  currentUser.role === 'admin' ||
+                  isUserServerOwner(currentUser, activeServer) ||
+                  hasServerPermission('manage_channels') ||
+                  hasServerPermission('manage_server'))
+            );
 
             return (
               <div
                 key={msg.id}
                 onClick={() => onOpenThread(msg.id)}
-                className="group p-4 rounded-2xl ios-glass border border-white/10 hover:border-cyan-400/40 bg-white/[0.03] hover:bg-white/[0.06] transition cursor-pointer space-y-2.5"
+                className={`group p-4 rounded-2xl ios-glass border transition cursor-pointer space-y-2.5 ${
+                  isSolved
+                    ? 'border-emerald-400/30 hover:border-emerald-400/60 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.07]'
+                    : 'border-white/10 hover:border-cyan-400/40 bg-white/[0.03] hover:bg-white/[0.06]'
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
+                      {isSolved && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-[10px] font-bold text-emerald-300 shrink-0"
+                          title={msg.forumPost?.solvedBy ? `Çözen: ${msg.forumPost.solvedBy}` : undefined}
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Çözüldü</span>
+                        </span>
+                      )}
                       <h3 className="text-sm font-bold text-white group-hover:text-cyan-200 transition truncate">
                         {title}
                       </h3>
@@ -263,11 +338,39 @@ export const ForumChannelView: React.FC<ForumChannelViewProps> = ({
                     </p>
                   </div>
 
-                  <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-500/10 border border-cyan-400/20 text-[11px] font-semibold text-cyan-200">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>
-                      {replyCount} {t(language, 'repliesCount')}
-                    </span>
+                  <div className="shrink-0 flex flex-col items-end gap-1.5">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-500/10 border border-cyan-400/20 text-[11px] font-semibold text-cyan-200">
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>
+                        {replyCount} {t(language, 'repliesCount')}
+                      </span>
+                    </div>
+                    {canToggleSolved && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleForumSolved(channel.id, msg.id);
+                        }}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-semibold transition ${
+                          isSolved
+                            ? 'bg-white/5 border-white/15 text-white/70 hover:bg-white/10 hover:text-white'
+                            : 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300 hover:bg-emerald-500/25'
+                        }`}
+                      >
+                        {isSolved ? (
+                          <>
+                            <RotateCcw className="w-2.5 h-2.5" />
+                            <span>Yeniden Aç</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-2.5 h-2.5" />
+                            <span>Çözüldü İşaretle</span>
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 

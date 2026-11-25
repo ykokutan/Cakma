@@ -86,8 +86,13 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
     { index: number; name: string; width: number; height: number; is_primary: boolean }[]
   >([]);
   const [desktopWindows, setDesktopWindows] = useState<
-    { hwnd: number; title: string; is_minimized: boolean }[]
+    { hwnd: number; title: string; is_minimized: boolean; pid?: number; process_name?: string }[]
   >([]);
+  const [audioCaps, setAudioCaps] = useState<{
+    process_loopback_supported: boolean;
+    os_platform: string;
+    backend: string;
+  } | null>(null);
   const [desktopLoading, setDesktopLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -98,16 +103,20 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
     setDesktopLoading(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const [monitors, windows] = await Promise.all([
+      const [monitors, windows, caps] = await Promise.all([
         invoke<{ index: number; name: string; width: number; height: number; is_primary: boolean }[]>(
           'get_display_monitors'
         ).catch(() => []),
-        invoke<{ hwnd: number; title: string; is_minimized: boolean }[]>(
+        invoke<{ hwnd: number; title: string; is_minimized: boolean; pid?: number; process_name?: string }[]>(
           'list_capturable_windows'
         ).catch(() => []),
+        invoke<{ process_loopback_supported: boolean; os_platform: string; backend: string }>(
+          'get_audio_capture_capabilities'
+        ).catch(() => null),
       ]);
       setDesktopMonitors(Array.isArray(monitors) ? monitors : []);
       setDesktopWindows(Array.isArray(windows) ? windows : []);
+      if (caps) setAudioCaps(caps);
     } catch {
       // Silently ignore on non-Tauri or unsupported runtimes
     } finally {
@@ -387,10 +396,17 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                     key={`win-${win.hwnd}`}
                     type="button"
                     onClick={handlePickSource}
-                    title={win.title}
-                    className="shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-[10px] text-slate-200 transition max-w-[170px] truncate"
+                    title={win.process_name ? `${win.title} (${win.process_name})` : win.title}
+                    className="shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-[10px] text-slate-200 transition max-w-[200px] flex items-center gap-1.5"
                   >
-                    {win.is_minimized ? '🗕 ' : ''}{win.title}
+                    <span className="truncate">
+                      {win.is_minimized ? '🗕 ' : ''}{win.title}
+                    </span>
+                    {win.process_name && (
+                      <span className="shrink-0 px-1 py-0.2 rounded bg-cyan-500/15 text-cyan-300 font-mono text-[9px]">
+                        {win.process_name}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -495,7 +511,14 @@ export const GoLiveModal: React.FC<GoLiveModalProps> = ({ isOpen, onClose, onGoL
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-white/10">
                   <div>
-                    <div className="text-xs font-semibold text-white">Yalnızca Seçili Pencere/Oyun Sesi (WASAPI)</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs font-semibold text-white">Yalnızca Seçili Pencere/Oyun Sesi (WASAPI)</span>
+                      {audioCaps?.process_loopback_supported && settings.appAudioOnly && (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300">
+                          {audioCaps.backend} Hazır
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[11px] text-slate-400">
                       Sistem genelindeki sesler yerine mümkün olduğunda yalnızca seçili pencerenin sesini yakalar.
                     </div>

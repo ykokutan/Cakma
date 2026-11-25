@@ -874,6 +874,34 @@ io.on('connection', (socket: Socket) => {
     ack?.({ ok: true, deletedCount: removedIds.length });
   });
 
+  // Forum Post Solved Toggle (v1.2.0 Parity)
+  socket.on('toggle_forum_solved', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
+    if (!channelId || !messageId) return;
+    const list = messages[channelId];
+    if (!Array.isArray(list)) return;
+    const msg = list.find((m) => m.id === messageId);
+    if (!msg || !msg.forumPost) return;
+    const isAuthor = msg.author?.username?.toLowerCase() === user.username.toLowerCase();
+    if (!isAuthor && user.role !== 'admin') {
+      return socket.emit('server_action_error', {
+        message: 'Bu forum konusunun çözüm durumunu yalnızca konu sahibi veya yönetici değiştirebilir.',
+      });
+    }
+    const nextSolved = !msg.forumPost.solved;
+    msg.forumPost = {
+      ...msg.forumPost,
+      solved: nextSolved,
+      solvedAt: nextSolved ? new Date().toISOString() : undefined,
+      solvedBy: nextSolved ? user.username : undefined,
+    };
+    persistDedicatedState();
+    io.emit('forum_post_updated', {
+      channelId,
+      messageId,
+      forumPost: msg.forumPost,
+    });
+  });
+
   // Channel & Category Admin Management (Parity v1.0.0)
   socket.on('create_channel', ({ name, type, categoryId, topic, isLocked, password }: any) => {
     if (user.role !== 'admin') {

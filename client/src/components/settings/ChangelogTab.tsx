@@ -15,11 +15,23 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.1.0 - Latest */}
+        {/* v1.2.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.1.0 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v1.2.0 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Sohbet, Forum &amp; Anketler:</strong> Çok dilli sözdizimi renklendirme ve diff vurgulu <code className="text-emerald-200">CodeBlock</code> (satır kaydırma dahil), gerçek ses dalga formu dekoderi, Forum konularında <strong>Çözüldü</strong> durumu/filtresi, etkinliklere <code className="text-emerald-200">.ics</code> takvim aktarımı ve <strong>Çoklu Seçim / Anonim / Otomatik Kapanışlı Anketler</strong> eklendi.</li>
+            <li><strong className="text-white">Ses Odası, E2EE Medya &amp; Etkileşimli HUD:</strong> Okunmamış rozetli, dosya yüklemeli ve tepkili ses odası sohbeti; WebRTC <strong>Ses/Medya E2EE</strong> + SAS doğrulama kodu, <code className="text-emerald-200">Alt+O</code> etkileşimli HUD &amp; tek tıkla ses çıkış düğmesi, 4 profilli <strong>Spektral DSP Gürültü Engelleme</strong> (Stüdyo / Dengeli / Agresif / Klavye Koruması) ve Windows süreç/WASAPI loopback tespiti tamamlandı.</li>
+            <li><strong className="text-white">Mobil, PWA v4 &amp; Mağaza/Altyapı:</strong> Kenardan kaydırarak menü ve sağa kaydırarak yanıtla hareketleri, medya önbellek sınırlı <code className="text-emerald-200">sw.js</code> v4, HMAC imzalı ödeme webhook&apos;u (<code className="text-emerald-200">/api/store/payment-webhook</code>) + yazdırılabilir <strong>Lisans Makbuzu</strong>, sunucu disk kotası (<code className="text-emerald-200">/api/storage/usage</code>) ve ilişkisel SQLite hesap/rapor tabloları eklendi.</li>
+          </ul>
+        </div>
+
+        {/* v1.1.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v1.1.0 — Önceki Sürüm</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">İkili Medya Akışı &amp; Atomik SQLite:</strong> JSON/Base64 yükünü kaldıran XHR ilerlemeli ve iptal edilebilir <code className="text-emerald-200">/api/upload/stream</code> ikili dosya yükleme, yükleme öncesi <strong>Görsel Kırpma (Orijinal / 16:9 / 1:1) &amp; Açıklama</strong> penceresi ve işlemsel <code className="text-emerald-200">SqliteStore</code> toplu silme/anlık görüntü yazımı eklendi.</li>

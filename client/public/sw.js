@@ -1,4 +1,6 @@
-const CACHE_NAME = 'cakma-pwa-v3';
+const CACHE_NAME = 'cakma-pwa-v4';
+const MEDIA_CACHE_NAME = 'cakma-media-v4';
+const MAX_MEDIA_ENTRIES = 80;
 const SHELL_ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +9,24 @@ const SHELL_ASSETS = [
   '/app-icon.png',
   '/noise-suppressor-worklet.js',
 ];
+
+async function trimCache(cacheName, maxEntries) {
+  try {
+    const cache = await caches.open(cacheName);
+    const keys = await cache.keys();
+    if (keys.length <= maxEntries) return;
+    const excess = keys.length - maxEntries;
+    for (let i = 0; i < excess; i++) {
+      await cache.delete(keys[i]);
+    }
+  } catch {}
+}
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,11 +44,12 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+  const keepCaches = new Set([CACHE_NAME, MEDIA_CACHE_NAME]);
   event.waitUntil(
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
+        Promise.all(keys.filter((key) => !keepCaches.has(key)).map((key) => caches.delete(key)))
       )
       .then(() => self.clients.claim())
   );
@@ -65,14 +86,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for static assets (/assets/*, icons, worklets)
+  const isMediaAsset = /\.(png|jpe?g|webp|gif|svg|woff2?|ttf)$/i.test(url.pathname);
+  const targetCache = isMediaAsset ? MEDIA_CACHE_NAME : CACHE_NAME;
+
+  // Stale-while-revalidate for static assets (/assets/*, icons, worklets, fonts/images)
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const fetchPromise = fetch(event.request)
         .then((res) => {
           if (res && res.ok && res.type === 'basic') {
             const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+            caches
+              .open(targetCache)
+              .then((cache) => cache.put(event.request, copy))
+              .then(() => (isMediaAsset ? trimCache(MEDIA_CACHE_NAME, MAX_MEDIA_ENTRIES) : undefined))
+              .catch(() => {});
           }
           return res;
         })

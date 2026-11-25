@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Calendar, Plus, Trash2, Users, X, Check } from 'lucide-react';
+import { Calendar, Download, Plus, Trash2, Users, X, Check } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 import { authFetch } from '../utils/authFetch';
+import { downloadEventIcs } from '../utils/eventCalendar';
 import { isUserServerOwner } from '../utils/serverIdentity';
 
 interface ServerEventItem {
@@ -212,23 +213,34 @@ export const ServerEventsModal: React.FC<ServerEventsModalProps> = ({ isOpen = t
                     )}
                   </div>
                   {evt.description && <p className="text-xs text-white/70">{evt.description}</p>}
-                  <div className="flex items-center justify-between pt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                     <span className="text-[11px] text-white/50 flex items-center gap-1">
                       <Users className="w-3.5 h-3.5" />
                       {evt.attendees.length} Katılımcı
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRsvp(evt.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition ${
-                        joined
-                          ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
-                          : 'bg-white/10 hover:bg-white/20 text-white'
-                      }`}
-                    >
-                      {joined && <Check className="w-3.5 h-3.5" />}
-                      <span>{joined ? 'Katılıyorum' : 'Katılacağım'}</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => downloadEventIcs(evt, activeServer.name)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-white/75 hover:text-white text-xs font-semibold flex items-center gap-1 transition"
+                        title="Google/Outlook Takvime Ekle (.ics)"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>.ics</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRsvp(evt.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition ${
+                          joined
+                            ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300'
+                            : 'bg-white/10 hover:bg-white/20 text-white'
+                        }`}
+                      >
+                        {joined && <Check className="w-3.5 h-3.5" />}
+                        <span>{joined ? 'Katılıyorum' : 'Katılacağım'}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

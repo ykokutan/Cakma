@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
-import { BarChart2, Plus, Trash2, X, Check } from 'lucide-react';
+import { BarChart2, Plus, Trash2, X, Check, CheckSquare, EyeOff, Clock } from 'lucide-react';
+
+export interface PollCreateConfig {
+  allowMultiple?: boolean;
+  isAnonymous?: boolean;
+  durationMinutes?: number;
+}
 
 interface PollModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreatePoll: (question: string, options: string[]) => void;
+  onCreatePoll: (question: string, options: string[], config?: PollCreateConfig) => void;
 }
 
 export const PollModal: React.FC<PollModalProps> = ({
@@ -14,6 +20,9 @@ export const PollModal: React.FC<PollModalProps> = ({
 }) => {
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState<string[]>(['', '']);
+  const [allowMultiple, setAllowMultiple] = useState(false);
+  const [isAnonymous, setIsAnonymous] = useState(false);
+  const [durationMinutes, setDurationMinutes] = useState<number>(0);
 
   if (!isOpen) return null;
 
@@ -42,9 +51,16 @@ export const PollModal: React.FC<PollModalProps> = ({
 
     if (!cleanQuestion || cleanOptions.length < 2) return;
 
-    onCreatePoll(cleanQuestion, cleanOptions);
+    onCreatePoll(cleanQuestion, cleanOptions, {
+      allowMultiple,
+      isAnonymous,
+      durationMinutes: durationMinutes > 0 ? durationMinutes : undefined,
+    });
     setQuestion('');
     setOptions(['', '']);
+    setAllowMultiple(false);
+    setIsAnonymous(false);
+    setDurationMinutes(0);
     onClose();
   };
 
@@ -121,6 +137,49 @@ export const PollModal: React.FC<PollModalProps> = ({
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Rich Poll Options */}
+          <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allowMultiple}
+                  onChange={(e) => setAllowMultiple(e.target.checked)}
+                  className="accent-emerald-500 rounded"
+                />
+                <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Çoklu Seçim</span>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isAnonymous}
+                  onChange={(e) => setIsAnonymous(e.target.checked)}
+                  className="accent-emerald-500 rounded"
+                />
+                <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                <span>Anonim Oylama</span>
+              </label>
+            </div>
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-400">
+                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                Otomatik Kapanış
+              </span>
+              <select
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                className="bg-slate-950/70 border border-white/15 rounded-lg px-2 py-1 text-[11px] text-white outline-none focus:border-emerald-500"
+              >
+                <option value={0}>Süresiz</option>
+                <option value={15}>15 dakika</option>
+                <option value={60}>1 saat</option>
+                <option value={360}>6 saat</option>
+                <option value={1440}>24 saat</option>
+              </select>
             </div>
           </div>
 

@@ -3,7 +3,12 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.enabled = true;
+    this.profile = 'balanced';
     this.aggressiveness = 0.85;
+    this.minGainFloor = 0.12;
+    this.speechBias = 1.35;
+    this.hangoverFramesConfig = 48;
+    this.highBandBoost = 1.08;
     this.voiceGateDb = -52;
     this.noiseFloor = 0.0025;
     this.lowNoiseFloor = 0.0018;
@@ -29,8 +34,23 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
       if (typeof data.enabled === 'boolean') {
         this.enabled = data.enabled;
       }
+      if (typeof data.profile === 'string' && data.profile) {
+        this.profile = data.profile;
+      }
       if (typeof data.aggressiveness === 'number' && Number.isFinite(data.aggressiveness)) {
         this.aggressiveness = Math.max(0.2, Math.min(1.0, data.aggressiveness));
+      }
+      if (typeof data.minGainFloor === 'number' && Number.isFinite(data.minGainFloor)) {
+        this.minGainFloor = Math.max(0.02, Math.min(0.4, data.minGainFloor));
+      }
+      if (typeof data.speechBias === 'number' && Number.isFinite(data.speechBias)) {
+        this.speechBias = Math.max(0.9, Math.min(2.2, data.speechBias));
+      }
+      if (typeof data.hangoverFrames === 'number' && Number.isFinite(data.hangoverFrames)) {
+        this.hangoverFramesConfig = Math.max(16, Math.min(120, Math.round(data.hangoverFrames)));
+      }
+      if (typeof data.highBandBoost === 'number' && Number.isFinite(data.highBandBoost)) {
+        this.highBandBoost = Math.max(0.8, Math.min(2.5, data.highBandBoost));
       }
       if (typeof data.voiceGateDb === 'number' && Number.isFinite(data.voiceGateDb)) {
         this.voiceGateDb = Math.max(-80, Math.min(-20, data.voiceGateDb));
@@ -195,7 +215,7 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
 
     if (!isTransientClick && rms >= speechTrigger) {
       gateOpen = true;
-      this.hangoverFrames = 48; // ~128 ms smooth voice tail
+      this.hangoverFrames = this.hangoverFramesConfig;
       const snr = Math.min(12, rms / Math.max(1e-6, this.noiseFloor));
       targetGain = snr > 3.0 ? 1.0 : Math.max(0.4, (snr - 1) / 2.0);
     } else if (this.hangoverFrames > 0) {
@@ -203,10 +223,10 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
       gateOpen = true;
       targetGain = spectralHissRatio > 1.15 ? 0.62 : 0.82;
     } else {
-      const floorGain = 1.0 - this.aggressiveness * 0.9;
+      const floorGain = Math.max(this.minGainFloor, 1.0 - this.aggressiveness * 0.9);
       const ratio = rms / Math.max(1e-6, speechTrigger);
       targetGain = isTransientClick
-        ? Math.min(0.18, floorGain * 1.2)
+        ? Math.min(0.18 / Math.max(1.0, this.highBandBoost), floorGain * 1.2)
         : Math.max(floorGain, Math.min(0.42, ratio * ratio));
     }
 
@@ -230,9 +250,9 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
       spectralHissRatio > 0.9
     );
 
-    const lowFloorMin = 1.0 - this.aggressiveness * 0.88;
-    const midFloorMin = 1.0 - this.aggressiveness * 0.72;
-    const highFloorMin = 1.0 - this.aggressiveness * 0.9;
+    const lowFloorMin = Math.max(this.minGainFloor, 1.0 - this.aggressiveness * 0.88);
+    const midFloorMin = Math.max(this.minGainFloor * 1.2, 1.0 - this.aggressiveness * 0.72);
+    const highFloorMin = Math.max(this.minGainFloor * 0.85, 1.0 - this.aggressiveness * 0.9);
 
     const targetLowGain = SpectralNoiseSuppressorProcessor.computeBandTarget(
       lowRms,
@@ -240,7 +260,7 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
       this.aggressiveness,
       gateOpen,
       lowFloorMin,
-      1.45
+      Math.max(1.05, this.speechBias * 1.07)
     );
     const targetMidGain = SpectralNoiseSuppressorProcessor.computeBandTarget(
       midRms,
@@ -248,7 +268,7 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
       this.aggressiveness * 0.78,
       gateOpen,
       midFloorMin,
-      1.2
+      Math.max(1.0, this.speechBias * 0.9)
     );
     let targetHighGain = SpectralNoiseSuppressorProcessor.computeBandTarget(
       highRms,
@@ -256,10 +276,10 @@ class SpectralNoiseSuppressorProcessor extends AudioWorkletProcessor {
       this.aggressiveness,
       gateOpen,
       highFloorMin,
-      1.5
+      Math.max(1.1, this.speechBias * 1.12 * this.highBandBoost)
     );
     if (isTransientClick) {
-      targetHighGain = Math.min(targetHighGain, 0.22);
+      targetHighGain = Math.min(targetHighGain, 0.22 / Math.max(1.0, this.highBandBoost));
     }
 
     const prevGain = this.currentGain;

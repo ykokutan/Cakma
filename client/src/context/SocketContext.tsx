@@ -26,6 +26,13 @@ import { getCachedGroupSenderKey, encryptGroupDmMessage } from '../utils/groupE2
 import { IceRecoveryController } from '../utils/webrtcIceRecovery';
 import { useRemoteAudioEqNormalizer, type UserAudioEq } from '../hooks/useRemoteAudioEqNormalizer';
 export type { UserAudioEq };
+import { NOISE_DSP_PROFILE_CONFIGS, normalizeNoiseDspProfile, type NoiseDspProfile } from '../utils/noiseDspProfiles';
+import {
+  deriveVoiceE2eeKey,
+  computeVoiceE2eeFingerprint,
+  attachSenderE2eeTransform,
+  attachReceiverE2eeTransform,
+} from '../utils/voiceMediaE2ee';
 import { AuthContext } from './AuthContext';
 import { ChatContext } from './ChatContext';
 import type { ChatLayoutMode } from './ChatContext';
@@ -585,7 +592,12 @@ interface SocketContextType {
   // Reactions, Pinned & Polls
   addReaction: (messageId: string, emoji: string) => void;
   togglePinMessage: (messageId: string) => void;
-  createPoll: (question: string, options: string[]) => void;
+  toggleForumSolved: (channelId: string, messageId: string) => void;
+  createPoll: (
+    question: string,
+    options: string[],
+    config?: { allowMultiple?: boolean; isAnonymous?: boolean; durationMinutes?: number }
+  ) => void;
   votePoll: (messageId: string, optionId: string) => void;
 
   // Message Edit/Delete, Typing & Unread Badges
@@ -636,6 +648,11 @@ interface SocketContextType {
   setVoiceGateDb: (db: number) => void;
   noiseAggressiveness: number;
   setNoiseAggressiveness: (val: number) => void;
+  noiseProfile: NoiseDspProfile;
+  setNoiseProfile: (profile: NoiseDspProfile) => void;
+  voiceE2eeEnabled: boolean;
+  voiceE2eeFingerprint: string | null;
+  setVoiceE2eeConfig: (enabled: boolean, passphrase: string) => Promise<void>;
   globalLoudnessNormalize: boolean;
   setGlobalLoudnessNormalize: (enabled: boolean) => void;
   liveAudioTelemetry: AudioWorkletTelemetry;
@@ -1443,6 +1460,14 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const num = raw !== null ? Number(raw) : 0.85;
     return Number.isFinite(num) ? Math.max(0.2, Math.min(1.0, num)) : 0.85;
   });
+  const [noiseProfile, setNoiseProfileState] = useState<NoiseDspProfile>(() => {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('dc_noise_profile') : null;
+    return normalizeNoiseDspProfile(raw);
+  });
+  const [voiceE2eeEnabled, setVoiceE2eeEnabled] = useState(false);
+  const [voiceE2eePassphrase, setVoiceE2eePassphrase] = useState('');
+  const [voiceE2eeFingerprint, setVoiceE2eeFingerprint] = useState<string | null>(null);
+  const voiceE2eeKeyRef = useRef<CryptoKey | null>(null);
   const [liveAudioTelemetry, setLiveAudioTelemetry] = useState<AudioWorkletTelemetry>({
     db: -90,
     noiseFloorDb: -60,
@@ -2613,9 +2638,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 noiseWorkletLoadedCtxRef.current.add(ctx);
               }
               const workletNode = new AudioWorkletNode(ctx, 'spectral-noise-suppressor');
+              const profileCfg = NOISE_DSP_PROFILE_CONFIGS[noiseProfile];
               workletNode.port.postMessage({
                 enabled: true,
+                profile: noiseProfile,
                 aggressiveness: noiseAggressiveness,
+                minGainFloor: profileCfg.minGainFloor,
+                speechBias: profileCfg.speechBias,
+                hangoverFrames: profileCfg.hangoverFrames,
+                highBandBoost: profileCfg.highBandBoost,
                 voiceGateDb,
               });
               workletNode.port.onmessage = (ev) => {
@@ -2762,7 +2793,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try { localStorage.setItem('dsp_aiNoiseSuppression', String(val)); } catch {}
     if (noiseWorkletNodeRef.current) {
       try {
-        noiseWorkletNodeRef.current.port.postMessage({ enabled: val, aggressiveness: noiseAggressiveness, voiceGateDb });
+        const cfg = NOISE_DSP_PROFILE_CONFIGS[noiseProfile];
+        noiseWorkletNodeRef.current.port.postMessage({
+          enabled: val,
+          profile: noiseProfile,
+          aggressiveness: noiseAggressiveness,
+          minGainFloor: cfg.minGainFloor,
+          speechBias: cfg.speechBias,
+          hangoverFrames: cfg.hangoverFrames,
+          highBandBoost: cfg.highBandBoost,
+          voiceGateDb,
+        });
         return;
       } catch {}
     }
@@ -2786,6 +2827,77 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       noiseWorkletNodeRef.current?.port.postMessage({ aggressiveness: clamped });
     } catch {}
   }, []);
+
+  const setNoiseProfile = useCallback((nextProfile: NoiseDspProfile) => {
+    const normalized = normalizeNoiseDspProfile(nextProfile);
+    const cfg = NOISE_DSP_PROFILE_CONFIGS[normalized];
+    setNoiseProfileState(normalized);
+    setNoiseAggressivenessState(cfg.aggressiveness);
+    try {
+      localStorage.setItem('dc_noise_profile', normalized);
+      localStorage.setItem('dc_noise_agg', String(cfg.aggressiveness));
+    } catch {}
+    try {
+      noiseWorkletNodeRef.current?.port.postMessage({
+        profile: normalized,
+        aggressiveness: cfg.aggressiveness,
+        minGainFloor: cfg.minGainFloor,
+        speechBias: cfg.speechBias,
+        hangoverFrames: cfg.hangoverFrames,
+        highBandBoost: cfg.highBandBoost,
+      });
+    } catch {}
+  }, []);
+
+  const setVoiceE2eeConfig = useCallback(async (enabled: boolean, passphrase: string) => {
+    const cleanPass = String(passphrase || '').trim();
+    if (!enabled || !cleanPass) {
+      voiceE2eeKeyRef.current = null;
+      setVoiceE2eeEnabled(false);
+      setVoiceE2eePassphrase('');
+      setVoiceE2eeFingerprint(null);
+      return;
+    }
+    const scope = connectedVoiceChannelIdRef.current || 'global-voice';
+    try {
+      const [key, fp] = await Promise.all([
+        deriveVoiceE2eeKey(cleanPass, scope),
+        computeVoiceE2eeFingerprint(cleanPass, scope),
+      ]);
+      voiceE2eeKeyRef.current = key;
+      setVoiceE2eeEnabled(true);
+      setVoiceE2eePassphrase(cleanPass);
+      setVoiceE2eeFingerprint(fp);
+    } catch {
+      voiceE2eeKeyRef.current = null;
+      setVoiceE2eeEnabled(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!voiceE2eeEnabled || !voiceE2eePassphrase) {
+      voiceE2eeKeyRef.current = null;
+      setVoiceE2eeFingerprint(null);
+      return;
+    }
+    const scope = connectedVoiceChannelId || 'global-voice';
+    let cancelled = false;
+    Promise.all([
+      deriveVoiceE2eeKey(voiceE2eePassphrase, scope),
+      computeVoiceE2eeFingerprint(voiceE2eePassphrase, scope),
+    ])
+      .then(([key, fp]) => {
+        if (cancelled) return;
+        voiceE2eeKeyRef.current = key;
+        setVoiceE2eeFingerprint(fp);
+      })
+      .catch(() => {
+        if (!cancelled) voiceE2eeKeyRef.current = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [voiceE2eeEnabled, voiceE2eePassphrase, connectedVoiceChannelId]);
 
   const setGlobalMuteShortcut = useCallback((key: string) => {
     setGlobalMuteShortcutState(key);
@@ -3482,6 +3594,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return {
           ...prev,
           [channelId]: channelList.map(m => m.id === messageId ? { ...m, poll } : m)
+        };
+      });
+    });
+
+    newSocket.on('forum_post_updated', ({ channelId, messageId, forumPost }: { channelId: string; messageId: string; forumPost: ForumPostMeta }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m => m.id === messageId ? { ...m, forumPost } : m)
         };
       });
     });
@@ -4493,11 +4616,28 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [cleanupWebRTC]);
 
   const createPeerConnection = (peerId: string, localStream: MediaStream, activeSocket: Socket): RTCPeerConnection => {
-    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
+    const activeE2eeKey = voiceE2eeKeyRef.current;
+    const senderProto =
+      typeof window !== 'undefined'
+        ? (window as unknown as { RTCRtpSender?: { prototype?: object } }).RTCRtpSender?.prototype
+        : undefined;
+    const canEncodedStreams = Boolean(
+      activeE2eeKey && senderProto && 'createEncodedStreams' in senderProto
+    );
+    const pc = new RTCPeerConnection(
+      canEncodedStreams
+        ? ({ iceServers: iceServersRef.current, encodedInsertableStreams: true } as RTCConfiguration)
+        : { iceServers: iceServersRef.current }
+    );
 
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach(track => pc.addTrack(track, screenStreamRef.current!));
+    }
+    if (canEncodedStreams && activeE2eeKey) {
+      pc.getSenders().forEach((sender) => {
+        attachSenderE2eeTransform(sender, activeE2eeKey);
+      });
     }
 
     peerIceRecoveryRef.current.get(peerId)?.dispose();
@@ -4541,6 +4681,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     pc.ontrack = (event) => {
+      if (voiceE2eeKeyRef.current && event.receiver) {
+        attachReceiverE2eeTransform(event.receiver, voiceE2eeKeyRef.current);
+      }
       const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
       if (event.track.kind === 'video') {
         receivedRemoteVideoTracksRef.current.set(event.track.id, {
@@ -6365,8 +6508,21 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('toggle_pin_message', { channelId: activeChannel.id, messageId });
   }, [socket, activeChannel]);
 
-  const createPoll = useCallback((question: string, options: string[]) => {
+  const toggleForumSolved = useCallback((channelId: string, messageId: string) => {
+    if (!socket || !channelId || !messageId) return;
+    socket.emit('toggle_forum_solved', { channelId, messageId });
+  }, [socket]);
+
+  const createPoll = useCallback((
+    question: string,
+    options: string[],
+    config?: { allowMultiple?: boolean; isAnonymous?: boolean; durationMinutes?: number }
+  ) => {
     if (!socket || !activeServer || !activeChannel) return;
+    const closesAt =
+      config?.durationMinutes && config.durationMinutes > 0
+        ? new Date(Date.now() + config.durationMinutes * 60_000).toISOString()
+        : undefined;
     const poll: PollData = {
       question,
       options: options.map((opt, i) => ({
@@ -6375,7 +6531,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         votes: []
       })),
       closed: false,
-      totalVotes: 0
+      totalVotes: 0,
+      ...(config?.allowMultiple ? { allowMultiple: true } : {}),
+      ...(config?.isAnonymous ? { isAnonymous: true } : {}),
+      ...(closesAt ? { closesAt } : {}),
     };
     socket.emit('send_message', {
       serverId: activeServer.id,
@@ -7786,7 +7945,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const u2 = await listen('overlay-close-requested', () => setOverlayEnabled(false));
         const u3 = await listen('overlay-toggle-mute', () => toggleMuteRef.current());
         const u4 = await listen('overlay-toggle-deafen', () => toggleDeafenRef.current());
-        unlisteners = [u1, u2, u3, u4];
+        const u5 = await listen('overlay-leave-voice', () => leaveVoiceChannelRef.current());
+        unlisteners = [u1, u2, u3, u4, u5];
       })
       .catch(() => {});
 
@@ -8051,6 +8211,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      noiseProfile,
+      setNoiseProfile,
+      voiceE2eeEnabled,
+      voiceE2eeFingerprint,
+      setVoiceE2eeConfig,
       globalLoudnessNormalize,
       setGlobalLoudnessNormalize,
       liveAudioTelemetry,
@@ -8133,6 +8298,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Reactions, Pinned & Polls
       addReaction,
       togglePinMessage,
+      toggleForumSolved,
       createPoll,
       votePoll,
 
@@ -8466,6 +8632,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      noiseProfile,
+      setNoiseProfile,
+      voiceE2eeEnabled,
+      voiceE2eeFingerprint,
+      setVoiceE2eeConfig,
       globalLoudnessNormalize,
       setGlobalLoudnessNormalize,
       liveAudioTelemetry,
@@ -8493,6 +8664,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cancelQueuedMessage,
       updateServerNickname,
       bulkDeleteMessages,
+      toggleForumSolved,
       loginWithSessionToken,
       pttReleaseDelayMs,
       setPttReleaseDelayMs,
@@ -8608,6 +8780,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cancelQueuedMessage,
       addReaction,
       togglePinMessage,
+      toggleForumSolved,
       sendThreadMessage,
       chatLayout,
       setChatLayout,
@@ -8659,6 +8832,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cancelQueuedMessage,
       addReaction,
       togglePinMessage,
+      toggleForumSolved,
       sendThreadMessage,
       chatLayout,
       setChatLayout,
@@ -8693,6 +8867,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      noiseProfile,
+      setNoiseProfile,
+      voiceE2eeEnabled,
+      voiceE2eeFingerprint,
+      setVoiceE2eeConfig,
       globalLoudnessNormalize,
       setGlobalLoudnessNormalize,
       liveAudioTelemetry,
@@ -8748,6 +8927,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setVoiceGateDb,
       noiseAggressiveness,
       setNoiseAggressiveness,
+      noiseProfile,
+      setNoiseProfile,
+      voiceE2eeEnabled,
+      voiceE2eeFingerprint,
+      setVoiceE2eeConfig,
       globalLoudnessNormalize,
       setGlobalLoudnessNormalize,
       liveAudioTelemetry,

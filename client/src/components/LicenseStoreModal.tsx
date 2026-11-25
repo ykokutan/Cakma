@@ -18,8 +18,10 @@ import {
   Ban,
   ShieldCheck,
   RotateCw,
+  Printer,
 } from 'lucide-react';
 import { IssuedLicense } from '../types';
+import { printLicenseReceipt } from '../utils/licenseReceipt';
 
 interface LicenseStoreModalProps {
   onClose: () => void;
@@ -901,6 +903,16 @@ export const LicenseStoreModal: React.FC<LicenseStoreModalProps> = ({ onClose })
                             >
                               <RotateCw className="w-3.5 h-3.5" />
                               <span>Süreyi Uzat</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => printLicenseReceipt(lic, currentUser?.username, storeSettings?.currencySymbol || '₺')}
+                              className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-xs transition flex items-center gap-1.5"
+                              title="Yazdırılabilir Lisans Makbuzu"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Makbuz</span>
                             </button>
 
                             <button

@@ -1,7 +1,8 @@
 import React from 'react';
-import { Activity, Mic, Sliders } from 'lucide-react';
+import { Activity, Mic, Sliders, Sparkles } from 'lucide-react';
 import { useVoice } from '../../context/VoiceContext';
 import { useSocket } from '../../context/SocketContext';
+import { NOISE_DSP_PROFILE_CONFIGS, type NoiseDspProfile } from '../../utils/noiseDspProfiles';
 import { t } from '../../utils/i18n';
 
 function dbToPercent(db: number): number {
@@ -20,6 +21,8 @@ export const AudioNoiseGatePanel: React.FC = () => {
     setVoiceGateDb,
     noiseAggressiveness,
     setNoiseAggressiveness,
+    noiseProfile,
+    setNoiseProfile,
     liveAudioTelemetry,
   } = useVoice();
   const { noiseSuppression, isMicTesting, toggleMicTest, language } = useSocket();
@@ -140,6 +143,41 @@ export const AudioNoiseGatePanel: React.FC = () => {
           <span>-80 dB (Hassas)</span>
           <span>-55 dB (Standart)</span>
           <span>-20 dB (Katı)</span>
+        </div>
+      </div>
+
+      {/* Neural / Spectral Noise Profile Selector */}
+      <div className="space-y-2 pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-semibold text-white/80 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Spektral / Yapay Zekâ Gürültü Profili</span>
+          </span>
+          <span className="text-[10px] font-mono text-emerald-300">
+            {NOISE_DSP_PROFILE_CONFIGS[noiseProfile].label}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {(Object.keys(NOISE_DSP_PROFILE_CONFIGS) as NoiseDspProfile[]).map((profileId) => {
+            const cfg = NOISE_DSP_PROFILE_CONFIGS[profileId];
+            const active = noiseProfile === profileId;
+            return (
+              <button
+                key={profileId}
+                type="button"
+                onClick={() => setNoiseProfile(profileId)}
+                className={`p-2 rounded-xl border text-left transition ${
+                  active
+                    ? 'bg-emerald-500/20 border-emerald-400 text-white'
+                    : 'bg-white/5 border-white/10 text-white/65 hover:bg-white/10'
+                }`}
+                title={cfg.description}
+              >
+                <div className="text-[11px] font-bold">{cfg.label}</div>
+                <div className="text-[10px] text-white/45 line-clamp-2">{cfg.description}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 

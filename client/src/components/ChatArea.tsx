@@ -38,6 +38,7 @@ import { SmartSearchFilterBar } from './chat/SmartSearchFilterBar';
 import { EmojiAndStickerPicker } from './chat/EmojiAndStickerPicker';
 import { ImagePreSendModal } from './chat/ImagePreSendModal';
 import { evaluatePeerKeyTrust, acknowledgePeerKeyChange } from '../utils/e2eeTofu';
+import { evaluateHorizontalSwipe } from '../utils/touchGestures';
 import { ReportContentModal } from './ReportContentModal';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
@@ -549,6 +550,28 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [openActionMsgId, setOpenActionMsgId] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const msgSwipeRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const handleMsgTouchStart = (msgId: string, e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    msgSwipeRef.current = { id: msgId, x: touch.clientX, y: touch.clientY };
+  };
+  const handleMsgTouchEnd = (msg: Message, e: React.TouchEvent) => {
+    const start = msgSwipeRef.current;
+    msgSwipeRef.current = null;
+    if (!start || start.id !== msg.id) return;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const swipe = evaluateHorizontalSwipe(start.x, start.y, touch.clientX, touch.clientY, 64, 0.6);
+    if (swipe.triggered && swipe.direction === 'right') {
+      setReplyingTo({
+        id: msg.id,
+        username: msg.author.username,
+        content: msg.content || 'Ek / Medya',
+      });
+      composerRef.current?.focus();
+    }
+  };
   const showScrollBottomRef = useRef(false);
   showScrollBottomRef.current = showScrollBottom;
 
@@ -3017,46 +3040,83 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     )}
 
                     {/* Interactive Poll Card */}
-                    {msg.poll && (
-                      <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-white/15 space-y-2 min-w-[240px] max-w-md">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-white mb-1">
-                          <BarChart2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                          <span>{msg.poll.question}</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          {msg.poll.options.map((opt) => {
-                            const isVoted = currentUser && opt.votes.includes(currentUser.username);
-                            const total = msg.poll!.totalVotes || 1;
-                            const pct = total > 0 ? Math.round((opt.votes.length / total) * 100) : 0;
-                            return (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() => votePoll(msg.id, opt.id)}
-                                className={`w-full relative overflow-hidden flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-all ${
-                                  isVoted
-                                    ? 'border-emerald-500 bg-emerald-500/20 text-white font-semibold'
-                                    : 'border-white/5 bg-white/5 text-slate-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <div
-                                  className="absolute left-0 top-0 bottom-0 bg-emerald-500/25 transition-all duration-500"
-                                  style={{ width: `${pct}%` }}
-                                />
-                                <span className="relative z-10 truncate">{opt.text}</span>
-                                <span className="relative z-10 text-[10px] text-slate-400 font-mono ml-2">
-                                  %{pct} ({opt.votes.length})
+                    {msg.poll && (() => {
+                      const closesAtMs = msg.poll.closesAt ? Date.parse(msg.poll.closesAt) : NaN;
+                      const isExpired = Number.isFinite(closesAtMs) && closesAtMs <= Date.now();
+                      const isPollClosed = Boolean(msg.poll.closed || isExpired);
+                      const closesLabel = Number.isFinite(closesAtMs)
+                        ? new Date(closesAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : null;
+                      return (
+                        <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-white/15 space-y-2 min-w-[240px] max-w-md">
+                          <div className="flex items-start justify-between gap-2 text-xs font-bold text-white mb-1">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <BarChart2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <span className="break-words">{msg.poll.question}</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1 shrink-0">
+                              {msg.poll.allowMultiple && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/30 text-[9px] font-semibold text-emerald-300">
+                                  Çoklu
                                 </span>
-                              </button>
-                            );
-                          })}
+                              )}
+                              {msg.poll.isAnonymous && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-400/30 text-[9px] font-semibold text-amber-300">
+                                  Anonim
+                                </span>
+                              )}
+                              {isPollClosed && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-500/15 border border-rose-400/30 text-[9px] font-semibold text-rose-300">
+                                  Kapalı
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="space-y-1.5">
+                            {msg.poll.options.map((opt) => {
+                              const isVoted = currentUser && opt.votes.includes(currentUser.username);
+                              const total = msg.poll!.totalVotes || 1;
+                              const pct = total > 0 ? Math.round((opt.votes.length / total) * 100) : 0;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  disabled={isPollClosed}
+                                  onClick={() => votePoll(msg.id, opt.id)}
+                                  title={!msg.poll!.isAnonymous && opt.votes.length > 0 ? opt.votes.join(', ') : undefined}
+                                  className={`w-full relative overflow-hidden flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-all disabled:opacity-70 disabled:cursor-not-allowed ${
+                                    isVoted
+                                      ? 'border-emerald-500 bg-emerald-500/20 text-white font-semibold'
+                                      : 'border-white/5 bg-white/5 text-slate-300 hover:bg-white/10'
+                                  }`}
+                                >
+                                  <div
+                                    className="absolute left-0 top-0 bottom-0 bg-emerald-500/25 transition-all duration-500"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                  <span className="relative z-10 truncate">{opt.text}</span>
+                                  <span className="relative z-10 text-[10px] text-slate-400 font-mono ml-2">
+                                    %{pct} ({opt.votes.length})
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="text-[10px] text-slate-400 pt-1 border-t border-white/10 flex items-center justify-between gap-2 select-none">
+                            <span>Toplam {msg.poll.totalVotes || 0} oy</span>
+                            <span className={isPollClosed ? 'text-rose-400' : 'text-emerald-400'}>
+                              {isPollClosed
+                                ? 'Oylama kapandı'
+                                : closesLabel
+                                  ? `Kapanış: ${closesLabel}`
+                                  : msg.poll.allowMultiple
+                                    ? 'Birden çok seçim yapılabilir'
+                                    : 'Oylamak için dokunun'}
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-[10px] text-slate-400 pt-1 border-t border-white/10 flex items-center justify-between select-none">
-                          <span>Toplam {msg.poll.totalVotes || 0} oy</span>
-                          <span className="text-emerald-400">Oylamak için dokunun</span>
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Attachments rendering */}
                     {msg.attachments && msg.attachments.length > 0 && (
@@ -3243,6 +3303,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         <div
                           ref={(el) => bindMeasuredRow(msg.id, el)}
                           id={`message-${msg.id}`}
+                          onTouchStart={(e) => handleMsgTouchStart(msg.id, e)}
+                          onTouchEnd={(e) => handleMsgTouchEnd(msg, e)}
                           className={`relative group/msg chat-msg-row flex items-start ${
                             isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
                           } ${
@@ -3333,6 +3395,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         <div
                           ref={(el) => bindMeasuredRow(msg.id, el)}
                           id={`message-${msg.id}`}
+                          onTouchStart={(e) => handleMsgTouchStart(msg.id, e)}
+                          onTouchEnd={(e) => handleMsgTouchEnd(msg, e)}
                           className={`relative flex gap-3 items-end group chat-msg-row ${
                             isActionOpen ? 'z-30' : 'hover:z-20 focus-within:z-20'
                           } ${
@@ -3977,7 +4041,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         <PollModal
           isOpen={isPollModalOpen}
           onClose={() => setIsPollModalOpen(false)}
-          onCreatePoll={(question, options) => createPoll(question, options)}
+          onCreatePoll={(question, options, config) => createPoll(question, options, config)}
         />
 
         {/* Pinned Messages Modal */}

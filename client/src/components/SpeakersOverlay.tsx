@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Mic, MicOff, Hand, Radio, Headphones, X, VolumeX, Lock, Unlock } from 'lucide-react';
+import { Mic, MicOff, Hand, Radio, Headphones, X, VolumeX, Lock, Unlock, PhoneOff, Minimize2, Maximize2 } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
 interface OverlaySpeaker {
@@ -31,6 +31,8 @@ export const SpeakersOverlay: React.FC = () => {
   const [isClickThrough, setIsClickThrough] = useState<boolean>(() => {
     try { return localStorage.getItem('dc_overlay_locked') === '1'; } catch { return false; }
   });
+  const [isCompactHud, setIsCompactHud] = useState(false);
+  const [interactiveBanner, setInteractiveBanner] = useState(false);
   const [overlayOpacity, setOverlayOpacity] = useState<number>(() => {
     const saved = Number(localStorage.getItem('dc_overlay_opacity') || '92');
     return Number.isFinite(saved) ? Math.min(100, Math.max(30, saved)) : 92;
@@ -53,6 +55,7 @@ export const SpeakersOverlay: React.FC = () => {
     let unlisten: (() => void) | null = null;
     let unlistenLock: (() => void) | null = null;
     let unlistenOpacity: (() => void) | null = null;
+    let unlistenInteractive: (() => void) | null = null;
     import('@tauri-apps/api/core')
       .then(({ invoke }) => {
         const corner = localStorage.getItem('dc_overlay_corner') || 'top-left';
@@ -76,6 +79,9 @@ export const SpeakersOverlay: React.FC = () => {
         unlistenLock = await listen<boolean>('overlay-lock-changed', (event) => {
           setIsClickThrough(Boolean(event.payload));
         });
+        unlistenInteractive = await listen<boolean>('overlay-interactive-changed', (event) => {
+          setInteractiveBanner(Boolean(event.payload));
+        });
         unlistenOpacity = await listen<number>('overlay-opacity-changed', (event) => {
           const val = Number(event.payload);
           if (Number.isFinite(val)) {
@@ -90,8 +96,22 @@ export const SpeakersOverlay: React.FC = () => {
       if (unlisten) unlisten();
       if (unlistenLock) unlistenLock();
       if (unlistenOpacity) unlistenOpacity();
+      if (unlistenInteractive) unlistenInteractive();
     };
   }, []);
+
+  const toggleCompactHud = () => {
+    const next = !isCompactHud;
+    setIsCompactHud(next);
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) =>
+        invoke('resize_overlay_window', {
+          width: next ? 250 : 300,
+          height: next ? 130 : 280,
+        })
+      )
+      .catch(() => {});
+  };
 
   const toggleClickThrough = () => {
     const next = !isClickThrough;
@@ -131,7 +151,20 @@ export const SpeakersOverlay: React.FC = () => {
               {ping}ms
             </span>
           )}
+          {interactiveBanner && !isClickThrough && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/35">
+              Alt+O
+            </span>
+          )}
           <span className="text-[10px] text-white/45 font-mono">{speakers.length}</span>
+          <button
+            type="button"
+            onClick={toggleCompactHud}
+            className="p-0.5 rounded hover:bg-white/15 text-white/50 hover:text-white transition"
+            title={isCompactHud ? 'Genişletilmiş HUD' : 'Kompakt HUD'}
+          >
+            {isCompactHud ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+          </button>
           <button
             type="button"
             onClick={toggleClickThrough}
@@ -140,7 +173,7 @@ export const SpeakersOverlay: React.FC = () => {
                 ? 'bg-amber-500/25 text-amber-300'
                 : 'hover:bg-white/15 text-white/50 hover:text-white'
             }`}
-            title={isClickThrough ? 'Kilidi Aç (Ctrl+Shift+O)' : 'Tıklama Geçirgenliğini Aç / Kilitle (Ctrl+Shift+O)'}
+            title={isClickThrough ? 'Kilidi Aç (Alt+O / Ctrl+Shift+O)' : 'Tıklama Geçirgenliğini Aç / Kilitle (Alt+O)'}
           >
             {isClickThrough ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
           </button>
@@ -163,7 +196,7 @@ export const SpeakersOverlay: React.FC = () => {
             <span>Ses odasına katıldığınızda konuşanlar burada görünür.</span>
           </div>
         ) : (
-          speakers.map((s) => (
+          (isCompactHud ? speakers.filter((s) => s.isSpeaking).slice(0, 3) : speakers).map((s) => (
             <div
               key={s.id}
               className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl border transition-all ${
@@ -224,6 +257,16 @@ export const SpeakersOverlay: React.FC = () => {
           >
             <Headphones className="w-3 h-3" />
           </button>
+          {inVoice && (
+            <button
+              type="button"
+              onClick={() => emitAction('overlay-leave-voice')}
+              className="p-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-300 transition"
+              title="Ses Kanalından Ayrıl"
+            >
+              <PhoneOff className="w-3 h-3" />
+            </button>
+          )}
         </div>
       </div>
     </div>

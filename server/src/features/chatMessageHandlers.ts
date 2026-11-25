@@ -7,6 +7,7 @@ import type {
   MemberLevelData,
   Message,
   MessageAttachment,
+  PollData,
   RegisteredAccount,
   Server,
   ServerPermission,
@@ -22,7 +23,7 @@ import {
 } from '../utils/channelAccess.js';
 import { resolveChannelPermissions } from '../utils/channelPermissions.js';
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
-import { resolveServerLevelRecord } from '../utils/serverIdentity.js';
+import { isServerOwner, resolveServerLevelRecord } from '../utils/serverIdentity.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
 
 export interface ChatMessageHandlerDeps {
@@ -409,6 +410,40 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       };
     }
 
+    let cleanPoll: PollData | undefined;
+    if (poll && typeof poll === 'object' && typeof poll.question === 'string') {
+      const q = sanitizeText(poll.question).trim().slice(0, 200);
+      const opts = Array.isArray(poll.options)
+        ? poll.options
+            .filter((o: unknown) => o && typeof o === 'object' && typeof (o as { text?: unknown }).text === 'string')
+            .map((o: { id?: unknown; text: string }, idx: number) => ({
+              id: typeof o.id === 'string' && o.id.trim() ? o.id.trim().slice(0, 64) : `opt-${idx + 1}-${Date.now()}`,
+              text: sanitizeText(o.text).trim().slice(0, 120),
+              votes: [] as string[],
+            }))
+            .filter((o: { text: string }) => Boolean(o.text))
+            .slice(0, 10)
+        : [];
+      if (q && opts.length >= 2) {
+        let closesAt: string | undefined;
+        if (typeof poll.closesAt === 'string' && poll.closesAt.trim()) {
+          const parsedMs = Date.parse(poll.closesAt);
+          if (Number.isFinite(parsedMs) && parsedMs > Date.now()) {
+            closesAt = new Date(parsedMs).toISOString();
+          }
+        }
+        cleanPoll = {
+          question: q,
+          options: opts,
+          closed: false,
+          totalVotes: 0,
+          ...(poll.allowMultiple ? { allowMultiple: true } : {}),
+          ...(poll.isAnonymous ? { isAnonymous: true } : {}),
+          ...(closesAt ? { closesAt } : {}),
+        };
+      }
+    }
+
     const sanitizedAttachments = Array.isArray(attachments)
       ? attachments.map((att) => ({
           id: att.id,
@@ -444,7 +479,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
       attachments: sanitizedAttachments,
       reactions: {},
       isPinned: false,
-      poll: poll || undefined,
+      poll: cleanPoll,
       replyTo: replyTo
         ? { id: replyTo.id, username: sanitizeText(replyTo.username), content: sanitizeText(replyTo.content).slice(0, 140) }
         : undefined,
@@ -885,6 +920,53 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     emitToChannelAudience(channelId, undefined, 'user_typing', { channelId, username: user.username, isTyping: false }, socket.id);
   });
 
+  socket.on('toggle_forum_solved', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user) return;
+    if (!socketEventLimiter.allow(socket.id, 'toggle_forum_solved', 20, 10_000)) return;
+    const check = validatePayload<{ channelId: string; messageId: string }>(rawPayload, {
+      channelId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+      messageId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
+    });
+    if (!check.ok) return;
+    const { channelId, messageId } = check.data;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
+    const msg = channelMsgs.find((m) => m.id === messageId);
+    if (!msg || !msg.forumPost) return;
+
+    const targetServer = findServerByChannelId(servers, channelId, msg.serverId);
+    const isAuthor = msg.author.username.toLowerCase() === user.username.toLowerCase();
+    const isModerator =
+      user.role === 'admin' ||
+      (targetServer
+        ? isServerOwner(user, targetServer) ||
+          checkServerPermission(user, targetServer, 'manage_channels') ||
+          checkServerPermission(user, targetServer, 'manage_server')
+        : false);
+
+    if (!isAuthor && !isModerator) {
+      return socket.emit('server_action_error', {
+        message: 'Bu forum konusunun çözüm durumunu yalnızca konu sahibi veya yetkililer değiştirebilir.',
+      });
+    }
+
+    const nextSolved = !msg.forumPost.solved;
+    msg.forumPost = {
+      ...msg.forumPost,
+      solved: nextSolved,
+      solvedAt: nextSolved ? new Date().toISOString() : undefined,
+      solvedBy: nextSolved ? user.username : undefined,
+    };
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
+    emitToChannelAudience(channelId, msg.serverId, 'forum_post_updated', {
+      channelId,
+      messageId,
+      forumPost: msg.forumPost,
+    });
+  });
+
   socket.on('vote_poll', ({ channelId, messageId, optionId }: { channelId: string; messageId: string; optionId: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user || !channelId || !messageId) return;
@@ -894,6 +976,17 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
     const msg = channelMsgs.find((m) => m.id === messageId);
     if (!msg || !msg.poll || msg.poll.closed) return;
 
+    if (msg.poll.closesAt) {
+      const closesMs = Date.parse(msg.poll.closesAt);
+      if (Number.isFinite(closesMs) && Date.now() >= closesMs) {
+        msg.poll.closed = true;
+        saveChannelMessageUpsert(channelId, channelMsgs, msg);
+        emitToChannelAudience(channelId, msg.serverId, 'poll_updated', { channelId, messageId, poll: msg.poll });
+        return;
+      }
+    }
+
+    const allowMultiple = Boolean(msg.poll.allowMultiple);
     msg.poll.options.forEach((opt) => {
       const voteIdx = opt.votes.indexOf(user.username);
       if (opt.id === optionId) {
@@ -902,7 +995,7 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
         } else {
           opt.votes.push(user.username);
         }
-      } else if (voteIdx !== -1) {
+      } else if (!allowMultiple && voteIdx !== -1) {
         opt.votes.splice(voteIdx, 1);
       }
     });

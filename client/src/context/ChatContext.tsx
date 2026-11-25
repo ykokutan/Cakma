@@ -59,6 +59,7 @@ export interface ChatContextValue {
   cancelQueuedMessage: (localId: string) => void;
   addReaction: (messageId: string, emoji: string) => void;
   togglePinMessage: (messageId: string) => void;
+  toggleForumSolved: (channelId: string, messageId: string) => void;
   sendThreadMessage: (channelId: string, parentMessageId: string, content: string) => void;
   chatLayout: ChatLayoutMode;
   setChatLayout: (mode: ChatLayoutMode) => void;

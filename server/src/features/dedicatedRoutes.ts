@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { Express, NextFunction, Request, Response } from 'express';
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { Server as SocketIOServer } from 'socket.io';
 import { generateLicenseKey, getLicensePublicKeyPem, verifyLicenseKey } from '../licenseGenerator.js';
 import { extractSessionToken } from '../utils/adminAuth.js';
@@ -12,6 +12,8 @@ export interface DedicatedRoutesDeps {
   storeSettings: StoreSettings;
   saveStoreSettings: (settings: StoreSettings) => void;
   registeredAccounts: Map<string, RegisteredAccount>;
+  saveAccounts?: (accounts: Map<string, RegisteredAccount>) => void;
+  paymentWebhookSecret?: string;
   verifySessionTokenWithMeta: (token: string) => { username: string; iat: number } | null;
   isMasterRequest: (req: Request) => boolean;
   addAuditLog: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
@@ -345,6 +347,105 @@ export function registerDedicatedAndMasterRoutes(app: Express, io: SocketIOServe
     deps.saveStoreSettings(deps.storeSettings);
     io.emit('store_settings_updated', deps.storeSettings);
     res.json({ success: true, storeSettings: deps.storeSettings });
+  });
+
+  const processedPaymentEvents = new Set<string>();
+  app.post('/api/store/payment-webhook', express.json({ limit: '256kb' }), (req, res) => {
+    const secret = String(
+      deps.paymentWebhookSecret ?? process.env.STORE_PAYMENT_WEBHOOK_SECRET ?? ''
+    ).trim();
+    if (!secret) {
+      return res.status(503).json({
+        ok: false,
+        error: 'Ödeme webhook gizli anahtarı yapılandırılmamış.',
+      });
+    }
+
+    const rawSig = String(req.headers['x-payment-signature'] || '')
+      .trim()
+      .replace(/^sha256=/i, '')
+      .toLowerCase();
+    const expectedSig = crypto
+      .createHmac('sha256', secret)
+      .update(JSON.stringify(req.body || {}))
+      .digest('hex')
+      .toLowerCase();
+
+    if (
+      !rawSig ||
+      rawSig.length !== expectedSig.length ||
+      !crypto.timingSafeEqual(Buffer.from(rawSig, 'utf-8'), Buffer.from(expectedSig, 'utf-8'))
+    ) {
+      return res.status(401).json({ ok: false, error: 'Geçersiz ödeme webhook imzası.' });
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const eventId = typeof body.eventId === 'string' ? body.eventId.trim() : '';
+    if (!eventId) {
+      return res.status(400).json({ ok: false, error: 'eventId zorunludur.' });
+    }
+    if (processedPaymentEvents.has(eventId)) {
+      return res.json({ ok: true, duplicate: true, eventId });
+    }
+
+    const eventType = typeof body.type === 'string' ? body.type.trim() : '';
+    const username = typeof body.username === 'string' ? body.username.trim() : '';
+    const acc = username ? deps.registeredAccounts.get(username.toLowerCase()) : undefined;
+    if (!acc) {
+      return res.status(404).json({ ok: false, error: 'Hedef kullanıcı hesabı bulunamadı.' });
+    }
+
+    if (processedPaymentEvents.size >= 10_000) {
+      processedPaymentEvents.clear();
+    }
+
+    if (eventType === 'wallet_topup') {
+      const amount = Number(body.amount);
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000) {
+        return res.status(400).json({ ok: false, error: 'Geçersiz bakiye tutarı.' });
+      }
+      acc.walletBalance = Math.round(((acc.walletBalance || 0) + amount) * 100) / 100;
+      deps.saveAccounts?.(deps.registeredAccounts);
+      processedPaymentEvents.add(eventId);
+      deps.addAuditLog('ODEME_WEBHOOK_BAKIYE', `${acc.username} hesabına +${amount} bakiye işlendi (${eventId})`, 'info');
+      return res.json({ ok: true, type: 'wallet_topup', username: acc.username, walletBalance: acc.walletBalance });
+    }
+
+    if (eventType === 'license_purchase') {
+      const rawTier = typeof body.tier === 'string' ? body.tier.trim() : 'Pro';
+      const tier: 'Starter' | 'Pro' | 'Enterprise' =
+        rawTier === 'Starter' || rawTier === 'Enterprise' ? rawTier : 'Pro';
+      const maxSlots = Math.max(8, Math.min(500, Number(body.maxSlots) || 64));
+      const expireDays = Number(body.expireDays) === -1 ? -1 : Math.max(1, Number(body.expireDays) || 30);
+      const licensee =
+        typeof body.licensee === 'string' && body.licensee.trim()
+          ? body.licensee.trim().slice(0, 64)
+          : `${acc.username} Server`;
+
+      const licenseKey = generateLicenseKey(licensee, maxSlots, expireDays, tier);
+      const expiresAt =
+        expireDays === -1 ? 'lifetime' : new Date(Date.now() + expireDays * 86_400_000).toISOString();
+      const newLicense: IssuedLicense = {
+        id: `lic-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+        licenseKey,
+        licensee,
+        assignedUsername: acc.username,
+        maxSlots,
+        tier,
+        status: 'active',
+        issuedAt: new Date().toISOString(),
+        expiresAt,
+        source: 'store',
+      };
+      deps.issuedLicenses.set(newLicense.id, newLicense);
+      deps.saveLicenses(deps.issuedLicenses);
+      io.to('admins').emit('admin_licenses_list', Array.from(deps.issuedLicenses.values()));
+      processedPaymentEvents.add(eventId);
+      deps.addAuditLog('ODEME_WEBHOOK_LISANS', `${acc.username} için webhook üzerinden ${tier} lisans üretildi (${eventId})`, 'info');
+      return res.json({ ok: true, type: 'license_purchase', license: newLicense });
+    }
+
+    return res.status(400).json({ ok: false, error: 'Desteklenmeyen webhook işlem türü.' });
   });
 
   // Periodic Heartbeat Sweeper: 30 saniye sinyal vermeyenleri offline yap

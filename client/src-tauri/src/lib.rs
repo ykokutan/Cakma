@@ -54,6 +54,7 @@ pub fn run() {
                 platform::get_platform_capabilities,
                 platform::update_tray_state,
                 platform::list_capturable_windows,
+                platform::get_audio_capture_capabilities,
                 overlay::toggle_overlay_window,
                 overlay::set_overlay_window,
                 overlay::get_overlay_window_state,
