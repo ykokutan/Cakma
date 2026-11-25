@@ -16,10 +16,18 @@ import { PasswordChangeCard } from './settings/PasswordChangeCard';
 import { SettingsAboutTab } from './settings/SettingsAboutTab';
 import { AudioNoiseGatePanel } from './settings/AudioNoiseGatePanel';
 import { NOISE_DSP_PROFILE_CONFIGS, type NoiseDspProfile } from '../utils/noiseDspProfiles';
+import {
+  MIC_ECHO_DELAY_OPTIONS,
+  createMicEchoLoopback,
+  type MicEchoLoopbackHandle,
+} from '../utils/micEchoTester';
 import { LegalDocumentsModal } from './LegalDocumentsModal';
 import type { LegalDocumentId } from '../data/legalDocuments';
+import { downloadTwoFactorBackupCodes } from '../utils/sessionAndSecurityHelpers';
+import { AccessibilitySettingsSection } from './settings/AccessibilitySettingsSection';
 import {
   X,
+  Download,
   Mic,
   User,
   Keyboard,
@@ -306,7 +314,58 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const [appVersion, setAppVersion] = useState<string>('1.2.0');
+  const [micEchoDelayMs, setMicEchoDelayMs] = useState<number>(0);
+  const [isEchoLoopbackActive, setIsEchoLoopbackActive] = useState(false);
+  const echoTesterRef = useRef<MicEchoLoopbackHandle | null>(null);
+  const echoStreamRef = useRef<MediaStream | null>(null);
+
+  const stopLocalEchoLoopback = () => {
+    try {
+      echoTesterRef.current?.stop();
+    } catch {}
+    echoTesterRef.current = null;
+    if (echoStreamRef.current) {
+      echoStreamRef.current.getTracks().forEach((tr) => tr.stop());
+      echoStreamRef.current = null;
+    }
+    setIsEchoLoopbackActive(false);
+  };
+
+  useEffect(() => () => stopLocalEchoLoopback(), []);
+  useEffect(() => {
+    if (activeTab !== 'audio') stopLocalEchoLoopback();
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (isEchoLoopbackActive && echoTesterRef.current) {
+      echoTesterRef.current.setDelayMs(micEchoDelayMs);
+    }
+  }, [micEchoDelayMs, isEchoLoopbackActive]);
+
+  const handleEchoMicTestToggle = async () => {
+    if (isMicTesting || isEchoLoopbackActive) {
+      if (isMicTesting) toggleMicTest();
+      stopLocalEchoLoopback();
+      return;
+    }
+    if (micEchoDelayMs === 0) {
+      toggleMicTest();
+      return;
+    }
+    try {
+      const audioConstraint: boolean | MediaTrackConstraints =
+        selectedInputDeviceId && selectedInputDeviceId !== 'default'
+          ? { deviceId: { exact: selectedInputDeviceId } }
+          : true;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+      echoStreamRef.current = stream;
+      echoTesterRef.current = createMicEchoLoopback(stream, micEchoDelayMs, Math.min(1, outputVolume / 100));
+      setIsEchoLoopbackActive(true);
+    } catch {
+      appToast('Mikrofon yankı testi başlatılamadı. Mikrofon iznini kontrol edin.', 'warning');
+    }
+  };
+  const [appVersion, setAppVersion] = useState<string>('1.3.0');
   const [legalModalDoc, setLegalModalDoc] = useState<LegalDocumentId | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
@@ -1108,24 +1167,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               )}
 
-              {/* Live Mic Test with Loopback */}
+              {/* Live Mic Test with Loopback & Echo Delay */}
               <div className="bg-white/[0.04] p-4 rounded-2xl space-y-3 border border-white/10">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-xs font-semibold text-white">Mikrofon Testi & Sesimi Dinle</div>
-                    <div className="text-[11px] text-white/40">Mikrofonunuzun nasıl duyulduğunu kendi kulaklığınızda test edin.</div>
+                    <div className="text-xs font-semibold text-white">Mikrofon Testi &amp; Sesimi Dinle</div>
+                    <div className="text-[11px] text-white/40">Mikrofonunuzun nasıl duyulduğunu anlık veya gecikmeli yankı ile test edin.</div>
                   </div>
                   <button
                     type="button"
-                    onClick={toggleMicTest}
+                    onClick={handleEchoMicTestToggle}
                     className={`px-4 py-1.5 rounded-full text-xs font-semibold transition shadow-md ${
-                      isMicTesting
+                      isMicTesting || isEchoLoopbackActive
                         ? 'bg-red-500 text-white shadow-red-500/30'
                         : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/30'
                     }`}
                   >
-                    {isMicTesting ? 'Testi Durdur' : 'Sesimi Dinle'}
+                    {isMicTesting || isEchoLoopbackActive ? 'Testi Durdur' : 'Sesimi Dinle'}
                   </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] text-white/55 font-medium">{t(language, 'echoLoopbackTest')}:</span>
+                  <div className="flex items-center gap-1.5 bg-black/25 p-1 rounded-xl border border-white/10">
+                    {MIC_ECHO_DELAY_OPTIONS.map((ms) => (
+                      <button
+                        key={ms}
+                        type="button"
+                        onClick={() => {
+                          if (ms > 0 && isMicTesting) toggleMicTest();
+                          if (ms === 0 && isEchoLoopbackActive) stopLocalEchoLoopback();
+                          setMicEchoDelayMs(ms);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold transition ${
+                          micEchoDelayMs === ms
+                            ? 'bg-blue-500 text-white shadow'
+                            : 'text-white/65 hover:text-white'
+                        }`}
+                      >
+                        {ms === 0 ? 'Anlık (0ms)' : ms < 1000 ? `${ms}ms Yankı` : `${(ms / 1000).toFixed(1)}sn Yankı`}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Level Meter */}
@@ -1955,8 +2038,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
                 {twoFaBackupCodes && twoFaBackupCodes.length > 0 && (
                   <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2">
-                    <div className="text-xs font-bold text-amber-300">
-                      Tek Kullanımlık Yedek Kurtarma Kodlarınız (Güvenli Bir Yere Kaydedin):
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs font-bold text-amber-300">
+                        Tek Kullanımlık Yedek Kurtarma Kodlarınız (Güvenli Bir Yere Kaydedin):
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadTwoFactorBackupCodes(
+                            currentUser?.username || 'kullanici',
+                            twoFaBackupCodes
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-[11px] font-semibold inline-flex items-center gap-1 transition"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Kurtarma Kodlarını İndir (.txt)</span>
+                      </button>
                     </div>
                     <div className="grid grid-cols-3 gap-1.5 font-mono text-xs text-white">
                       {twoFaBackupCodes.map((c) => (
@@ -2391,6 +2489,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     ))}
                   </div>
                 </div>
+
+                {/* Accessibility & Side-Monitor Layout */}
+                <AccessibilitySettingsSection language={language} />
 
                 {/* Glass, Corners & Background Pattern */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-white/10">

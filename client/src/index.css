@@ -750,3 +750,36 @@ button:focus-visible,
 .auth-orb-float {
   animation: authOrbFloat 11s ease-in-out infinite;
 }
+
+/* v1.3.0 Accessibility & Narrow Side-Monitor Mode */
+html[data-colorblind-status="true"] .status-cb-shape {
+  display: block;
+}
+
+html[data-high-contrast="true"] {
+  --ui-border-subtle: rgba(255, 255, 255, 0.34);
+  --ui-text-primary: #ffffff;
+  --ui-text-muted: rgba(255, 255, 255, 0.84);
+  --ui-focus-ring: #facc15;
+}
+
+html[data-high-contrast="true"] .ios-glass,
+html[data-high-contrast="true"] .ios-glass-card {
+  border-color: rgba(255, 255, 255, 0.32) !important;
+}
+
+html[data-high-contrast="true"] button:focus-visible,
+html[data-high-contrast="true"] input:focus-visible,
+html[data-high-contrast="true"] [role="button"]:focus-visible {
+  outline: 2.5px solid #facc15 !important;
+  outline-offset: 2px;
+}
+
+html[data-narrow-compact="true"] .app-nav-shell {
+  gap: 0.25rem !important;
+}
+
+html[data-narrow-compact="true"] .app-nav-shell > nav,
+html[data-narrow-compact="true"] .app-nav-shell > aside {
+  max-width: 196px;
+}

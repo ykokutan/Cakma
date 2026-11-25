@@ -1,8 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { t, LANGUAGE_OPTIONS } from '../i18n';
+import { t, LANGUAGE_OPTIONS, getDictionaryKeys } from '../i18n';
 
 describe('i18n translations', () => {
-  it('supports all configured languages with core UI, auth, security, and chat keys', () => {
+  it('supports all 5 configured languages (tr, en, de, ru, fr) with 100% key parity and core UI keys', () => {
+    expect(LANGUAGE_OPTIONS.map((l) => l.id)).toEqual(['tr', 'en', 'de', 'ru', 'fr']);
+    const trKeys = getDictionaryKeys('tr').sort();
+    for (const lang of LANGUAGE_OPTIONS) {
+      expect(getDictionaryKeys(lang.id).sort()).toEqual(trKeys);
+    }
+
     const requiredKeys = [
       'settings',
       'textChannels',
@@ -27,6 +33,14 @@ describe('i18n translations', () => {
       'deleteAccountTitle',
       'activeSessionsTitle',
       'linkPreviewOpen',
+      'streamClipBuffer',
+      'streamClipSave',
+      'watchQueueTitle',
+      'skipVote',
+      'highContrastMode',
+      'colorblindStatusMode',
+      'narrowCompactMode',
+      'echoLoopbackTest',
     ];
 
     for (const lang of LANGUAGE_OPTIONS) {

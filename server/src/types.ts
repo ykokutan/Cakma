@@ -558,6 +558,8 @@ export interface ServerInvite {
   expiresAt?: number | null;
   maxUses?: number;
   uses: number;
+  sourceLabel?: string;
+  recentJoiners?: Array<{ username: string; joinedAt: string }>;
 }
 
 export type ServerCategory = 'gaming' | 'community' | 'tech' | 'music' | 'education' | 'other';
@@ -622,6 +624,13 @@ export interface MemberLevelData {
   voiceMinutes: number;
 }
 
+export interface WatchTogetherQueueItem {
+  id: string;
+  videoId: string;
+  title: string;
+  addedBy: string;
+}
+
 export interface WatchTogetherState {
   channelId: string;
   active: boolean;
@@ -630,6 +639,8 @@ export interface WatchTogetherState {
   isPlaying: boolean;
   currentTime: number;
   startedBy: string;
+  queue?: WatchTogetherQueueItem[];
+  skipVotes?: string[];
 }
 
 export interface MiniGameState {

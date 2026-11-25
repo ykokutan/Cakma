@@ -185,7 +185,7 @@ describe('v1.0.0 WebAuthn base64url & 4-language i18n keys', () => {
       'serverSounds',
       'serverStickers',
     ];
-    const langs: AppLanguage[] = ['tr', 'en', 'de', 'ru'];
+    const langs: AppLanguage[] = ['tr', 'en', 'de', 'ru', 'fr'];
     for (const key of keys) {
       const trVal = t('tr', key);
       expect(trVal).not.toBe(key);

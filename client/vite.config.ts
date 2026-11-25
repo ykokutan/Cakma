@@ -18,6 +18,12 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           const norm = id.replace(/\\/g, '/');
+          if (norm.includes('/src/utils/i18n.ts')) {
+            return 'i18n-dict';
+          }
+          if (norm.includes('/src/data/legalDocuments.ts')) {
+            return 'legal-docs';
+          }
           if (!norm.includes('/node_modules/')) return undefined;
           if (
             norm.includes('/node_modules/react/') ||

@@ -1,4 +1,4 @@
-export type NoiseDspProfile = 'studio' | 'balanced' | 'aggressive' | 'keyboard_guard';
+export type NoiseDspProfile = 'studio' | 'balanced' | 'aggressive' | 'keyboard_guard' | 'voice_isolation';
 
 export interface NoiseDspProfileConfig {
   id: NoiseDspProfile;
@@ -52,10 +52,26 @@ export const NOISE_DSP_PROFILE_CONFIGS: Record<NoiseDspProfile, NoiseDspProfileC
     hangoverFrames: 42,
     highBandBoost: 1.65,
   },
+  voice_isolation: {
+    id: 'voice_isolation',
+    label: 'Ses İzolasyonu (Gelişmiş DSP)',
+    description: 'İnsan vokal bandına odaklanan derin spektral kapılama ve maksimum arka plan yalıtımı uygular.',
+    aggressiveness: 0.98,
+    minGainFloor: 0.03,
+    speechBias: 1.75,
+    hangoverFrames: 40,
+    highBandBoost: 1.45,
+  },
 };
 
 export function normalizeNoiseDspProfile(raw?: string | null): NoiseDspProfile {
-  if (raw === 'studio' || raw === 'balanced' || raw === 'aggressive' || raw === 'keyboard_guard') {
+  if (
+    raw === 'studio' ||
+    raw === 'balanced' ||
+    raw === 'aggressive' ||
+    raw === 'keyboard_guard' ||
+    raw === 'voice_isolation'
+  ) {
     return raw;
   }
   return 'balanced';

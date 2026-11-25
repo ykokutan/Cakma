@@ -15,11 +15,23 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.2.0 - Latest */}
+        {/* v1.3.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.2.0 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v1.3.0 — Son Sürüm</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Topluluk, AFK &amp; Etkinlikler:</strong> Daraltılabilir renkli <strong>Sunucu Klasörleri</strong>, konuşurken atmayı önleyen akıllı <strong>AFK Ses Taşıma Koruması</strong>, etkinliklerden 15 dakika önce otomatik <code className="text-emerald-200">event_reminder</code> bildirimi, 2x2 <strong>Hızlı Durum Şablonları</strong> ve davet kaynak takibi (<strong>Invite Analytics</strong>) eklendi.</li>
+            <li><strong className="text-white">Yayın Klibi, Birlikte İzle &amp; Ses DSP:</strong> Ekran yayınlarında <strong>Anlık 30sn Klip Tamponu &amp; İndirme</strong>, <strong>Birlikte İzle (Watch Together) Ortak Sıra &amp; Çoğunluk Geç Oyu</strong>, <code className="text-emerald-200">500ms/1.5sn</code> gecikmeli gerçek <strong>Mikrofon Yankı Testi</strong> ve 5. gelişmiş DSP profili (<code className="text-emerald-200">voice_isolation</code>) eklendi.</li>
+            <li><strong className="text-white">Erişilebilirlik, 5 Dil &amp; Altyapı Modülerliği:</strong> <strong>Yüksek Kontrast</strong>, <strong>Renk Körlüğü Durum Şekilleri</strong> ve <strong>Dar Yan Monitör Kompakt Modu</strong>; tam <strong>Fransızca (FR)</strong> dâhil 5 dilli (%100 anahtar eşleşmeli) <code className="text-emerald-200">i18n</code>; kalıcı SQLite ödeme webhook tekilleştirme (<code className="text-emerald-200">/api/admin/payment-webhooks</code>), Admin Disk Kotası &amp; Webhook kartı, Dedicated Server v1.3.0 eşitlemesi ve 2FA <code className="text-emerald-200">.txt</code> yedek dışa aktarımı tamamlandı.</li>
+          </ul>
+        </div>
+
+        {/* v1.2.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v1.2.0 — Önceki Sürüm</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">Sohbet, Forum &amp; Anketler:</strong> Çok dilli sözdizimi renklendirme ve diff vurgulu <code className="text-emerald-200">CodeBlock</code> (satır kaydırma dahil), gerçek ses dalga formu dekoderi, Forum konularında <strong>Çözüldü</strong> durumu/filtresi, etkinliklere <code className="text-emerald-200">.ics</code> takvim aktarımı ve <strong>Çoklu Seçim / Anonim / Otomatik Kapanışlı Anketler</strong> eklendi.</li>

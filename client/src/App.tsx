@@ -28,6 +28,7 @@ const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => 
 const LegalDocumentsModal = lazy(() => import('./components/LegalDocumentsModal').then((m) => ({ default: m.LegalDocumentsModal })));
 import { LEGAL_DOCUMENTS_VERSION, resolveLegalDocFromLocation, type LegalDocumentId } from './data/legalDocuments';
 import { evaluateHorizontalSwipe, shouldOpenDrawerFromEdge, shouldCloseDrawerSwipe } from './utils/touchGestures';
+import { loadAccessibilityPrefs, applyAccessibilityPrefs } from './utils/accessibilityPrefs';
 import { User } from './types';
 import { X, Volume2, Check, ShieldAlert } from 'lucide-react';
 
@@ -67,6 +68,10 @@ const MainLayout: React.FC = () => {
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [isReconsentOpen, setIsReconsentOpen] = useState(false);
+
+  useEffect(() => {
+    applyAccessibilityPrefs(loadAccessibilityPrefs());
+  }, []);
 
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
@@ -347,7 +352,7 @@ const MainLayout: React.FC = () => {
 
       {/* 1 & 2. Sol Sunucular & Kanallar Sütunu (Responsive Drawer) */}
       <div
-        className={`${
+        className={`app-nav-shell ${
           isMobileNavOpen ? 'fixed inset-y-0 left-0 z-40 flex max-w-[92vw] animate-fade-in' : 'hidden'
         } md:relative md:flex md:gap-2 h-full shrink-0`}
       >

@@ -707,8 +707,8 @@ interface SocketContextType {
   removeReminder: (id: string) => void;
   messagesMap: Record<string, Message[]>;
   socketId: string | null;
-  language: 'tr' | 'en' | 'de' | 'ru';
-  setLanguage: (lang: 'tr' | 'en' | 'de' | 'ru') => void;
+  language: 'tr' | 'en' | 'de' | 'ru' | 'fr';
+  setLanguage: (lang: 'tr' | 'en' | 'de' | 'ru' | 'fr') => void;
 
   // Diagnostics & Network Telemetry
   ping: number;
@@ -756,6 +756,9 @@ interface SocketContextType {
   startWatchTogether: (channelId: string, videoId: string, title: string) => void;
   sendWatchTogetherAction: (channelId: string, action: 'play' | 'pause' | 'seek', currentTime: number) => void;
   stopWatchTogether: (channelId: string) => void;
+  enqueueWatchTogether: (channelId: string, videoId: string, title?: string) => void;
+  voteSkipWatchTogether: (channelId: string) => void;
+  nextWatchTogether: (channelId: string) => void;
 
   // Mini Games
   miniGameState: MiniGameState | null;
@@ -1109,10 +1112,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [reduceMotion, setReduceMotionState] = useState<boolean>(() => {
     return localStorage.getItem('dc_reduce_motion') === 'true';
   });
-  const [language, setLanguageState] = useState<'tr' | 'en' | 'de' | 'ru'>(() =>
-    readLiteralFromStorage('dc_app_language', ['tr', 'en', 'de', 'ru'] as const, 'tr')
+  const [language, setLanguageState] = useState<'tr' | 'en' | 'de' | 'ru' | 'fr'>(() =>
+    readLiteralFromStorage('dc_app_language', ['tr', 'en', 'de', 'ru', 'fr'] as const, 'tr')
   );
-  const setLanguage = (lang: 'tr' | 'en' | 'de' | 'ru') => {
+  const setLanguage = (lang: 'tr' | 'en' | 'de' | 'ru' | 'fr') => {
     setLanguageState(lang);
     try { localStorage.setItem('dc_app_language', lang); } catch {}
     document.documentElement.lang = lang;
@@ -2376,6 +2379,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [socket]);
   const stopWatchTogether = useCallback((channelId: string) => {
     socket?.emit('watch_together_stop', { channelId });
+  }, [socket]);
+  const enqueueWatchTogether = useCallback((channelId: string, videoId: string, title?: string) => {
+    socket?.emit('watch_together_enqueue', { channelId, videoId, title });
+  }, [socket]);
+  const voteSkipWatchTogether = useCallback((channelId: string) => {
+    socket?.emit('watch_together_skip_vote', { channelId });
+  }, [socket]);
+  const nextWatchTogether = useCallback((channelId: string) => {
+    socket?.emit('watch_together_next', { channelId });
   }, [socket]);
 
   // 3. Mini Games State
@@ -3771,8 +3783,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('afk_moved', ({ channelId, channelName }: { channelId: string; channelName: string }) => {
       setConnectedVoiceChannelId(channelId);
       setIsMuted(true);
+      appToast(`Hareketsiz kaldığınız için "${channelName}" AFK odasına taşındınız.`, 'info');
       if (currentUserRef.current?.status !== 'dnd') {
         sendDesktopNotification('AFK Taşıma', `Hareketsiz kaldığınız için "${channelName}" odasına taşındınız.`);
+      }
+    });
+
+    newSocket.on('event_reminder', (payload: { serverName?: string; title?: string; scheduledAt?: string }) => {
+      const eventTitle = payload?.title || 'Yaklaşan Etkinlik';
+      const serverLabel = payload?.serverName || 'Sunucu';
+      appToast(`📅 Etkinlik Hatırlatıcısı: ${eventTitle} (${serverLabel}) ~15 dk içinde başlıyor!`, 'info');
+      if (currentUserRef.current?.status !== 'dnd') {
+        sendDesktopNotification(`Etkinlik Hatırlatıcısı (${serverLabel})`, `"${eventTitle}" ~15 dakika içinde başlıyor.`);
       }
     });
 
@@ -8350,6 +8372,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       startWatchTogether,
       sendWatchTogetherAction,
       stopWatchTogether,
+      enqueueWatchTogether,
+      voteSkipWatchTogether,
+      nextWatchTogether,
 
       // Mini Games
       miniGameState,

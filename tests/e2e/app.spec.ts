@@ -290,4 +290,60 @@ test.describe('Çakma v1.0.0 End-to-End', () => {
 
     expect(pageErrors).toEqual([]);
   });
+
+  test('v1.3.0 accessibility modes, 5-language French switcher, and admin storage/webhook card', async ({ page }) => {
+    const pageErrors: Error[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err));
+
+    await loginAsE2eAdmin(page);
+
+    // Open Settings -> Appearance tab
+    await page.locator('button[aria-label="Ayarlar"]').click();
+    const settingsDialog = page.getByRole('dialog');
+    await expect(settingsDialog).toBeVisible();
+    await settingsDialog.getByRole('button', { name: 'Görünüm' }).click();
+
+    // Toggle High Contrast, Colorblind Status Shapes, and Narrow Side-Monitor Compact Mode
+    await settingsDialog.getByRole('button', { name: /Yüksek Kontrast Modu/ }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-high-contrast', 'true');
+
+    await settingsDialog.getByRole('button', { name: /Renk Körlüğü Durum Şekilleri/ }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-colorblind-status', 'true');
+
+    await settingsDialog.getByRole('button', { name: /Dar Yan Monitör Kompakt Modu/ }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-narrow-compact', 'true');
+
+    // Switch language to French and verify PARAMÈTRES heading, then revert to Türkçe
+    await settingsDialog.getByRole('button', { name: /Français/ }).click();
+    await expect(settingsDialog.getByText('PARAMÈTRES', { exact: true })).toBeVisible();
+    await settingsDialog.getByRole('button', { name: /Türkçe/ }).click();
+    await expect(settingsDialog.getByText('AYARLAR', { exact: true })).toBeVisible();
+
+    await settingsDialog.locator('button[title="Kapat"]').click();
+    await expect(settingsDialog).not.toBeVisible();
+
+    // Open Admin Dashboard & verify Storage Quota & Payment Webhook History card
+    await page.getByRole('button', { name: /Sistem Yönetimi/ }).click();
+    await expect(page.getByText('Yükleme Disk Kotası & Ödeme Webhook Geçmişi')).toBeVisible({ timeout: 10_000 });
+    await page.locator('button[title="Kapat"]').last().click();
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test('v1.3.0 mobile viewport (390x844) login and responsive navigation drawer', async ({ page }) => {
+    const pageErrors: Error[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err));
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loginAsE2eAdmin(page);
+
+    const mobileNavBtn = page.locator('button[aria-label="Menüyü Aç"]').first();
+    await expect(mobileNavBtn).toBeVisible();
+    await mobileNavBtn.click();
+
+    await expect(page.locator('button[aria-label="Ayarlar"]')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Sistem Yönetimi/ })).toBeVisible();
+
+    expect(pageErrors).toEqual([]);
+  });
 });

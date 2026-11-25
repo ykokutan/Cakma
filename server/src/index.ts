@@ -90,7 +90,7 @@ import {
   loadContentReports, saveContentReports,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
-  searchMessagesSmart, initStorageEngine, getStorageEngineInfo, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
+  searchMessagesSmart, initStorageEngine, getStorageEngineInfo, sqliteStore, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
   getStorageStats, exportAllDataBundle, importAllDataBundle,
   createScheduledBackup, listScheduledBackups, readScheduledBackup, deleteScheduledBackup
 } from './storage.js';
@@ -102,6 +102,8 @@ import { validatePasswordAgainstPolicy } from './utils/passwordPolicy.js';
 import { logger, createRequestIdMiddleware, type RequestWithId } from './utils/logger.js';
 import { createCorsOptionsDelegate, createSocketCorsOriginValidator } from './utils/corsConfig.js';
 import { createSocketEventRateLimiter, validatePayload } from './utils/socketGuard.js';
+import { shouldMoveUserToAfk } from './utils/afkVoiceHelper.js';
+import { registerWatchTogetherAndGamesHandlers } from './features/watchTogetherAndGamesHandlers.js';
 import {
   createAccountSecurityManager,
   registerAccountSecuritySocketHandlers,
@@ -1628,6 +1630,9 @@ registerDedicatedAndMasterRoutes(app, io, {
   saveStoreSettings,
   registeredAccounts,
   saveAccounts,
+  hasPaymentWebhookEvent: (eventId) => sqliteStore.hasPaymentWebhookEvent(eventId),
+  recordPaymentWebhookEvent: (ev) => sqliteStore.recordPaymentWebhookEvent(ev),
+  listPaymentWebhookEvents: (limit) => sqliteStore.listPaymentWebhookEvents(limit),
   verifySessionTokenWithMeta,
   isMasterRequest,
   addAuditLog,
@@ -3485,117 +3490,13 @@ io.on('connection', (socket: Socket) => {
     socket.to(user.currentVoiceChannelId).emit('whiteboard_clear');
   });
 
-  // 1. Watch Together (YouTube Sineması - Scoped to active voice room)
-  socket.on('watch_together_start', ({ channelId, videoId, title }: { channelId: string; videoId: string; title: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || user.currentVoiceChannelId !== channelId) return;
-    const roomState: WatchTogetherState = {
-      channelId,
-      active: true,
-      videoId,
-      title: title || 'YouTube Video',
-      isPlaying: true,
-      currentTime: 0,
-      startedBy: user.username
-    };
-    watchTogetherRooms.set(channelId, roomState);
-    io.to(channelId).emit('watch_together_update', roomState);
-    addAuditLog('WATCH_TOGETHER', `${user.username} ${channelId} odasinda YouTube sinemasi baslatti: "${title}"`);
-  });
-
-  socket.on('watch_together_action', ({ channelId, action, currentTime }: { channelId: string; action: 'play' | 'pause' | 'seek'; currentTime: number }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || user.currentVoiceChannelId !== channelId) return;
-    const roomState = watchTogetherRooms.get(channelId);
-    if (!roomState) return;
-    if (action === 'play') roomState.isPlaying = true;
-    if (action === 'pause') roomState.isPlaying = false;
-    roomState.currentTime = currentTime;
-    socket.to(channelId).emit('watch_together_sync', { action, currentTime, isPlaying: roomState.isPlaying });
-  });
-
-  socket.on('watch_together_stop', ({ channelId }: { channelId: string }) => {
-    const user = activeUsers.get(socket.id);
-    if (!user || user.currentVoiceChannelId !== channelId) return;
-    watchTogetherRooms.delete(channelId);
-    io.to(channelId).emit('watch_together_ended');
-  });
-
-  socket.on('watch_together_get', ({ channelId }: { channelId: string }) => {
-    const roomState = watchTogetherRooms.get(channelId);
-    if (roomState) {
-      socket.emit('watch_together_update', roomState);
-    }
-  });
-
-  // 2. Mini Games (XOX & TypeRacer)
-  socket.on('minigame_start', ({ channelId, game }: { channelId: string; game: 'xox' | 'typeracer' }) => {
-    const user = activeUsers.get(socket.id);
-    const state: MiniGameState = {
-      channelId,
-      game,
-      board: Array(9).fill(null),
-      turn: 'X',
-      winner: null,
-      players: { X: socket.id, O: '' },
-      playerNames: { X: user?.username || 'Oyuncu 1', O: 'Bekleniyor...' }
-    };
-    miniGameRooms.set(channelId, state);
-    io.to(channelId).emit('minigame_update', state);
-  });
-
-  socket.on('minigame_join', ({ channelId }: { channelId: string }) => {
-    const state = miniGameRooms.get(channelId);
-    const user = activeUsers.get(socket.id);
-    if (state && !state.players?.O && state.players?.X !== socket.id) {
-      state.players!.O = socket.id;
-      state.playerNames!.O = user?.username || 'Oyuncu 2';
-      io.to(channelId).emit('minigame_update', state);
-    }
-  });
-
-  socket.on('minigame_move', ({ channelId, index }: { channelId: string; index: number }) => {
-    const state = miniGameRooms.get(channelId);
-    if (!state || state.winner || !state.board) return;
-    const currentSymbol = state.turn || 'X';
-    if (state.board[index] !== null) return;
-
-    state.board[index] = currentSymbol;
-
-    const lines = [
-      [0,1,2], [3,4,5], [6,7,8],
-      [0,3,6], [1,4,7], [2,5,8],
-      [0,4,8], [2,4,6]
-    ];
-    let won = false;
-    for (const [a, b, c] of lines) {
-      if (state.board[a] && state.board[a] === state.board[b] && state.board[a] === state.board[c]) {
-        state.winner = currentSymbol;
-        won = true;
-        break;
-      }
-    }
-    if (!won && state.board.every(cell => cell !== null)) {
-      state.winner = 'draw';
-    } else if (!won) {
-      state.turn = currentSymbol === 'X' ? 'O' : 'X';
-    }
-
-    io.to(channelId).emit('minigame_update', state);
-  });
-
-  socket.on('minigame_reset', ({ channelId }: { channelId: string }) => {
-    const state = miniGameRooms.get(channelId);
-    if (!state) return;
-    state.board = Array(9).fill(null);
-    state.turn = 'X';
-    state.winner = null;
-    io.to(channelId).emit('minigame_update', state);
-  });
-
-  socket.on('minigame_stop', ({ channelId }: { channelId: string }) => {
-    miniGameRooms.delete(channelId);
-    io.to(channelId).emit('minigame_ended');
+  // 1 & 2. Watch Together & Mini Games (extracted module)
+  registerWatchTogetherAndGamesHandlers(socket, {
+    io,
+    activeUsers,
+    watchTogetherRooms,
+    miniGameRooms,
+    addAuditLog,
   });
 
   // 3. TeamSpeak Whisper (Fısıltı) Relay
@@ -3697,6 +3598,9 @@ io.on('connection', (socket: Socket) => {
     if (!user) return;
 
     user.isSpeaking = isSpeaking;
+    if (isSpeaking && user.currentVoiceChannelId) {
+      userVoiceActivity.set(socket.id, Date.now());
+    }
     if (user.currentVoiceChannelId) {
       io.to(user.currentVoiceChannelId).emit('user_speaking_change', {
         userId: socket.id,
@@ -4870,13 +4774,19 @@ setInterval(() => {
     if (!user.currentVoiceChannelId) continue;
     const srv = servers.find((s) => s.channels.some((c) => c.id === user.currentVoiceChannelId));
     if (!srv || !srv.afkChannelId || !srv.afkTimeoutMinutes || srv.afkTimeoutMinutes <= 0) continue;
-    if (user.currentVoiceChannelId === srv.afkChannelId) continue;
 
     const afkChannel = srv.channels.find((c) => c.id === srv.afkChannelId && c.type === 'voice');
     if (!afkChannel) continue;
 
     const lastActive = userVoiceActivity.get(sid) || now;
-    if (now - lastActive >= srv.afkTimeoutMinutes * 60_000) {
+    if (shouldMoveUserToAfk({
+      currentVoiceChannelId: user.currentVoiceChannelId,
+      isSpeaking: user.isSpeaking,
+      lastActivityMs: lastActive,
+      nowMs: now,
+      afkChannelId: afkChannel.id,
+      afkTimeoutMinutes: srv.afkTimeoutMinutes,
+    })) {
       const sock = io.sockets.sockets.get(sid);
       const oldChannelId = user.currentVoiceChannelId;
       if (sock) {
@@ -4900,7 +4810,7 @@ setInterval(() => {
       addAuditLog('AFK_TASIMA', `${user.username} hareketsiz kaldığı için AFK odasına (${afkChannel.name}) taşındı.`, 'voice');
     }
   }
-}, 30_000);
+}, 30_000).unref();
 
 // Register modular Cloud Sync, Events, Sound Upload, and Session Management routes
 registerCloudSyncAndEvents(app, io, activeUsers, {

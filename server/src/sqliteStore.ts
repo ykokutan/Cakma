@@ -96,6 +96,14 @@ export class SqliteStore {
           payload TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status, created_at DESC);
+        CREATE TABLE IF NOT EXISTS payment_webhook_events (
+          event_id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          username TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          processed_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_webhooks_processed ON payment_webhook_events(processed_at DESC);
       `);
       const seqRow = this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM messages').get();
       this.nextSeq = Number(seqRow?.maxSeq || 0);
@@ -822,6 +830,70 @@ export class SqliteStore {
         } catch {}
       }
       return out;
+    } catch {
+      return [];
+    }
+  }
+
+  hasPaymentWebhookEvent(eventId: string): boolean {
+    if (!this.isActive() || !this.db || !eventId) return false;
+    try {
+      const row = this.db
+        .prepare('SELECT 1 AS found FROM payment_webhook_events WHERE event_id = ? LIMIT 1')
+        .get(eventId) as { found?: number } | undefined;
+      return Boolean(row?.found);
+    } catch {
+      return false;
+    }
+  }
+
+  recordPaymentWebhookEvent(event: {
+    eventId: string;
+    eventType: string;
+    username: string;
+    summary: string;
+    processedAt?: string;
+  }): void {
+    if (!this.isActive() || !this.db || !event?.eventId) return;
+    try {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO payment_webhook_events
+            (event_id, event_type, username, summary, processed_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(
+          event.eventId,
+          event.eventType,
+          event.username,
+          event.summary,
+          event.processedAt || new Date().toISOString()
+        );
+    } catch {}
+  }
+
+  listPaymentWebhookEvents(limit = 50): Array<{
+    eventId: string;
+    eventType: string;
+    username: string;
+    summary: string;
+    processedAt: string;
+  }> {
+    if (!this.isActive() || !this.db) return [];
+    const capped = Math.min(Math.max(limit, 1), 200);
+    try {
+      const rows = this.db
+        .prepare(
+          'SELECT event_id as eventId, event_type as eventType, username, summary, processed_at as processedAt FROM payment_webhook_events ORDER BY processed_at DESC LIMIT ?'
+        )
+        .all(capped) as Array<{
+        eventId: string;
+        eventType: string;
+        username: string;
+        summary: string;
+        processedAt: string;
+      }>;
+      return Array.isArray(rows) ? rows : [];
     } catch {
       return [];
     }

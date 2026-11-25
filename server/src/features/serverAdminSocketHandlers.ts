@@ -16,6 +16,7 @@ import { SERVER_TEMPLATES } from './webhooksAndTemplatesRoutes.js';
 import { findServerMember, getPersistentUserId, isServerOwner } from '../utils/serverIdentity.js';
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
+import { normalizeInviteSourceLabel } from '../utils/inviteAnalytics.js';
 
 export interface ServerAdminHandlerDeps {
   io: Pick<SocketIOServer, 'to'>;
@@ -728,7 +729,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     }
   );
 
-  socket.on('create_server_invite', ({ serverId, maxUses, expireMinutes }: { serverId: string; maxUses?: number; expireMinutes?: number }) => {
+  socket.on('create_server_invite', ({ serverId, maxUses, expireMinutes, sourceLabel }: { serverId: string; maxUses?: number; expireMinutes?: number; sourceLabel?: string }) => {
     const user = activeUsers.get(socket.id);
     if (!user) return;
     const s = servers.find((srv) => srv.id === serverId);
@@ -744,6 +745,8 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       expiresAt: expireMinutes && expireMinutes > 0 ? Date.now() + expireMinutes * 60 * 1000 : null,
       maxUses: maxUses && maxUses > 0 ? maxUses : undefined,
       uses: 0,
+      sourceLabel: normalizeInviteSourceLabel(sourceLabel),
+      recentJoiners: [],
     };
     s.invites.unshift(newInvite);
     if (s.invites.length > 20) s.invites = s.invites.slice(0, 20);
@@ -808,6 +811,9 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
 
         addUserToServer(user, s);
         inv.uses += 1;
+        const joiners = Array.isArray(inv.recentJoiners) ? inv.recentJoiners : [];
+        joiners.push({ username: user.username, joinedAt: new Date().toISOString() });
+        inv.recentJoiners = joiners.slice(-50);
         saveServers(servers);
         emitServerUpdatedToMembers(s);
         const srvMsgs = getInitialMessagesForServers([s], user.username);

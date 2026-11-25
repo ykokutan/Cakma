@@ -17,6 +17,7 @@ import type { User } from '../../types';
 import type { AdminDashboardData, RequestAdminDialogFn } from './adminTypes';
 import { authFetch } from '../../utils/authFetch';
 import { resolveVoiceChannelLabel } from '../../utils/adminHelpers';
+import { AdminStorageAndWebhooksCard } from './AdminStorageAndWebhooksCard';
 
 interface MetricSnapshot {
   ts: number;
@@ -527,6 +528,8 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
           </div>
         </div>
       )}
+
+      <AdminStorageAndWebhooksCard currentServerHost={currentServerHost} />
     </div>
   );
 };

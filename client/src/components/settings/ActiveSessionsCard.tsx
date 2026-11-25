@@ -3,6 +3,7 @@ import { Smartphone } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
 import { useAuth } from '../../context/AuthContext';
 import { t } from '../../utils/i18n';
+import { parseReadableUserAgent } from '../../utils/sessionAndSecurityHelpers';
 
 interface SessionInfo {
   socketId: string;
@@ -72,14 +73,17 @@ export const ActiveSessionsCard: React.FC = () => {
             >
               <div className="min-w-0 pr-2">
                 <div className="font-semibold text-white flex items-center gap-2">
-                  <span className="font-mono">{sess.ip}</span>
+                  <span>{parseReadableUserAgent(sess.userAgent)}</span>
+                  <span className="font-mono text-[11px] text-white/55">({sess.ip})</span>
                   {sess.isCurrent && (
                     <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
                       Bu Cihaz
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] text-white/40 truncate mt-0.5">{sess.userAgent}</div>
+                <div className="text-[11px] text-white/40 truncate mt-0.5" title={sess.userAgent}>
+                  {sess.userAgent}
+                </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-[10px] text-white/40">

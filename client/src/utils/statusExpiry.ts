@@ -1,5 +1,20 @@
 export type StatusExpiryPreset = 'never' | '30m' | '1h' | '4h' | 'today';
 
+export interface QuickStatusTemplate {
+  id: string;
+  label: string;
+  status: 'online' | 'idle' | 'dnd';
+  statusMessage: string;
+  durationPreset: StatusExpiryPreset;
+}
+
+export const QUICK_STATUS_PRESETS: QuickStatusTemplate[] = [
+  { id: 'meeting', label: 'Toplantıda (1 saat)', status: 'dnd', statusMessage: '🎙️ Toplantıda', durationPreset: '1h' },
+  { id: 'gaming', label: 'Oyunda', status: 'dnd', statusMessage: '🎮 Oyunda', durationPreset: '4h' },
+  { id: 'break', label: 'Mola (30 dk)', status: 'idle', statusMessage: '☕ Kısa Molada', durationPreset: '30m' },
+  { id: 'focus', label: 'Odaklanıyor (1 saat)', status: 'dnd', statusMessage: '🎧 Odaklanma Modu', durationPreset: '1h' },
+];
+
 export const STATUS_EXPIRY_KEY = 'dc_custom_status_expires_at';
 
 export const STATUS_EXPIRY_OPTIONS: Array<{ id: StatusExpiryPreset; label: string }> = [

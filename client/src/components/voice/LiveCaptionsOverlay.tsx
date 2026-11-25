@@ -22,6 +22,7 @@ const LANG_MAP: Record<AppLanguage, string> = {
   en: 'en-US',
   de: 'de-DE',
   ru: 'ru-RU',
+  fr: 'fr-FR',
 };
 
 export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({

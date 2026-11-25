@@ -22,6 +22,11 @@ import { uploadAttachmentFile } from '../utils/uploadAttachment';
 import { resolveMediaUrl } from '../utils/authFetch';
 import { appToast } from '../utils/appDialogs';
 import {
+  createStreamClipRecorder,
+  downloadClipBlob,
+  type StreamClipRecorderHandle,
+} from '../utils/streamClipRecorder';
+import {
   Mic,
   MicOff,
   Headphones,
@@ -61,6 +66,8 @@ import {
   ShieldCheck,
   Copy,
   Check,
+  Scissors,
+  Download,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -592,6 +599,40 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [liveFps, setLiveFps] = useState<5 | 30 | 60>(30);
   const [liveBitrateKbps, setLiveBitrateKbps] = useState<number>(10000);
   const [userContextMenu, setUserContextMenu] = useState<{ user: any; x: number; y: number } | null>(null);
+  const [clipBufferEnabled, setClipBufferEnabled] = useState(false);
+  const [clipBufferedSeconds, setClipBufferedSeconds] = useState(0);
+  const clipRecorderRef = useRef<StreamClipRecorderHandle | null>(null);
+  const activeClipStream =
+    isScreenSharing && screenStream
+      ? screenStream
+      : (selectedScreenPresenterId ? remoteScreenStreams.get(selectedScreenPresenterId) : undefined) ||
+        Array.from(remoteScreenStreams.values())[0] ||
+        null;
+
+  useEffect(() => {
+    if (!clipBufferEnabled || !activeClipStream) {
+      clipRecorderRef.current?.stop();
+      clipRecorderRef.current = null;
+      setClipBufferedSeconds(0);
+      return;
+    }
+    const handle = createStreamClipRecorder(activeClipStream, 30, (secs) => {
+      setClipBufferedSeconds(secs);
+    });
+    const started = handle.start();
+    if (!started) {
+      setClipBufferEnabled(false);
+      appToast('Tarayıcı/cihaz bu akış için klip tamponu kaydını desteklemiyor.', 'warning');
+      return;
+    }
+    clipRecorderRef.current = handle;
+    return () => {
+      handle.stop();
+      if (clipRecorderRef.current === handle) {
+        clipRecorderRef.current = null;
+      }
+    };
+  }, [clipBufferEnabled, activeClipStream]);
 
   const handleOpenUserContextMenu = (e: React.MouseEvent, user: any) => {
     e.preventDefault();
@@ -1035,6 +1076,49 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                   <LayoutGrid className="w-3.5 h-3.5" />
                   <span>{isMultiStreamGrid ? 'Tek Yayın Odak' : 'Çoklu Yayın Izgarası'}</span>
                 </button>
+              </div>
+            )}
+            {/* Instant 30s Rolling Clip Recorder */}
+            {typeof MediaRecorder !== 'undefined' && activeClipStream && (
+              <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 text-[11px] shrink-0">
+                <div className="flex items-center gap-2 text-white/75 font-semibold">
+                  <Scissors className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{t(language, 'streamClipBuffer')}:</span>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-black/30 border border-white/10 text-amber-300">
+                    {clipBufferEnabled ? `${clipBufferedSeconds}s / 30s` : 'Kapalı'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setClipBufferEnabled((prev) => !prev)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold border transition flex items-center gap-1.5 ${
+                      clipBufferEnabled
+                        ? 'bg-rose-500/20 border-rose-400/40 text-rose-200 hover:bg-rose-500/30'
+                        : 'bg-white/10 border-white/15 text-white/85 hover:bg-white/20'
+                    }`}
+                  >
+                    <Scissors className="w-3 h-3" />
+                    <span>{clipBufferEnabled ? 'Tamponu Durdur' : t(language, 'streamClipBuffer')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!clipBufferEnabled || clipBufferedSeconds <= 0}
+                    onClick={() => {
+                      const blob = clipRecorderRef.current?.captureBlob();
+                      if (!blob) {
+                        appToast('Henüz kaydedilecek klip tamponu oluşmadı.', 'info');
+                        return;
+                      }
+                      downloadClipBlob(blob, 'cakma-stream-clip');
+                      appToast('30 saniyelik yayın klibi indirildi!', 'success');
+                    }}
+                    className="px-2.5 py-1 rounded-lg font-semibold border border-amber-400/40 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1.5"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>{t(language, 'streamClipSave')}</span>
+                  </button>
+                </div>
               </div>
             )}
             {/* Presenter Live Stream Adjustments (FPS / Bitrate without restarting) */}

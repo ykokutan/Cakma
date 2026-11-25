@@ -24,6 +24,27 @@ export interface ServerEventItem {
   createdBy: string;
   attendees: string[];
   createdAt: string;
+  remindedAt?: string;
+}
+
+export function findDueEventReminders(
+  eventsByServer: Record<string, ServerEventItem[]>,
+  nowMs: number,
+  leadWindowMs = 15 * 60_000
+): ServerEventItem[] {
+  const due: ServerEventItem[] = [];
+  for (const list of Object.values(eventsByServer || {})) {
+    if (!Array.isArray(list)) continue;
+    for (const ev of list) {
+      if (!ev || ev.remindedAt) continue;
+      const scheduledMs = Date.parse(ev.scheduledAt);
+      if (!Number.isFinite(scheduledMs)) continue;
+      if (scheduledMs > nowMs && scheduledMs - nowMs <= leadWindowMs) {
+        due.push(ev);
+      }
+    }
+  }
+  return due;
 }
 
 const DATA_DIR = getPersistentDir();
@@ -172,6 +193,43 @@ export function registerCloudSyncAndEvents(
       } catch {}
     }, 6 * 3600 * 1000);
     gcTimer.unref?.();
+
+    const eventReminderTimer = setInterval(() => {
+      try {
+        const all = readJson<Record<string, ServerEventItem[]>>(EVENTS_FILE, {});
+        const nowMs = Date.now();
+        const due = findDueEventReminders(all, nowMs, 15 * 60_000);
+        if (due.length === 0) return;
+
+        const remindedIso = new Date(nowMs).toISOString();
+        const dueIds = new Set(due.map((e) => e.id));
+        for (const list of Object.values(all)) {
+          if (!Array.isArray(list)) continue;
+          for (const item of list) {
+            if (dueIds.has(item.id)) item.remindedAt = remindedIso;
+          }
+        }
+        writeJson(EVENTS_FILE, all);
+
+        for (const ev of due) {
+          const targetServer = context.getServers?.()?.find((s) => s.id === ev.serverId);
+          for (const [sockId, u] of activeUsers.entries()) {
+            const isAttendee = ev.attendees.some((a) => a.toLowerCase() === u.username.toLowerCase());
+            const isMember = targetServer && context.isUserMemberOfServer?.(u, targetServer);
+            if (isAttendee || (ev.attendees.length === 0 && isMember)) {
+              io.to(sockId).emit('event_reminder', {
+                serverId: ev.serverId,
+                serverName: targetServer?.name || 'Sunucu',
+                eventId: ev.id,
+                title: ev.title,
+                scheduledAt: ev.scheduledAt,
+              });
+            }
+          }
+        }
+      } catch {}
+    }, 60_000);
+    eventReminderTimer.unref?.();
   }
 
   // 1. Cloud User Preferences Sync (authenticated self or admin only)

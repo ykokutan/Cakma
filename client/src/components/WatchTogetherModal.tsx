@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Play, Pause, RotateCcw, Film, Sparkles, ExternalLink } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, Film, Sparkles, ExternalLink, ListPlus, SkipForward } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
 
 interface WatchTogetherModalProps {
   channelId: string;
@@ -22,8 +23,21 @@ function extractYouTubeId(url: string): string | null {
 }
 
 export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelId, onClose }) => {
-  const { watchTogetherState, startWatchTogether, sendWatchTogetherAction, stopWatchTogether } = useSocket();
+  const {
+    watchTogetherState,
+    startWatchTogether,
+    sendWatchTogetherAction,
+    stopWatchTogether,
+    enqueueWatchTogether,
+    voteSkipWatchTogether,
+    nextWatchTogether,
+    currentUser,
+    onlineUsers,
+    language,
+  } = useSocket();
   const [inputUrl, setInputUrl] = useState('');
+  const [queueUrl, setQueueUrl] = useState('');
+  const [queueError, setQueueError] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [localPlaying, setLocalPlaying] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -78,6 +92,27 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
   const handleStop = () => {
     stopWatchTogether(channelId);
   };
+
+  const handleQueueSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const id = extractYouTubeId(queueUrl);
+    if (!id) {
+      setQueueError('Sıraya eklemek için geçerli bir YouTube linki veya video kodu girin.');
+      return;
+    }
+    setQueueError('');
+    enqueueWatchTogether(channelId, id, 'Sıradaki Video');
+    setQueueUrl('');
+  };
+
+  const roomParticipantCount = Math.max(
+    1,
+    onlineUsers.filter((u) => u.currentVoiceChannelId === channelId).length
+  );
+  const skipVoteThreshold = Math.max(1, Math.ceil(roomParticipantCount / 2));
+  const skipVotes = activeSession?.skipVotes || [];
+  const hasVotedSkip = Boolean(currentUser?.username && skipVotes.includes(currentUser.username));
+  const queueList = activeSession?.queue || [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
@@ -157,14 +192,39 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
                   </button>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => voteSkipWatchTogether(channelId)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
+                      hasVotedSkip
+                        ? 'bg-amber-500/25 border-amber-400/50 text-amber-200'
+                        : 'bg-white/10 hover:bg-white/20 border-white/10 text-white/85'
+                    }`}
+                  >
+                    <SkipForward className="w-3.5 h-3.5" />
+                    <span>
+                      {t(language, 'skipVote')} ({skipVotes.length}/{skipVoteThreshold})
+                    </span>
+                  </button>
+
+                  {queueList.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => nextWatchTogether(channelId)}
+                      className="px-3 py-2 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 text-xs font-bold border border-blue-400/30 transition"
+                    >
+                      Sıradakine Geç
+                    </button>
+                  )}
+
                   <a
                     href={`https://youtube.com/watch?v=${activeSession.videoId}`}
                     target="_blank"
                     rel="noreferrer"
                     className="text-xs text-white/60 hover:text-white flex items-center gap-1 transition"
                   >
-                    <span>YouTube'da Aç</span>
+                    <span>YouTube&apos;da Aç</span>
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
 
@@ -175,6 +235,55 @@ export const WatchTogetherModal: React.FC<WatchTogetherModalProps> = ({ channelI
                     Sinemayı Kapat
                   </button>
                 </div>
+              </div>
+
+              {/* Shared Watch Queue */}
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white/85">
+                    <ListPlus className="w-4 h-4 text-blue-400" />
+                    <span>{t(language, 'watchQueueTitle')} ({queueList.length})</span>
+                  </div>
+                </div>
+                <form onSubmit={handleQueueSubmit} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={queueUrl}
+                    onChange={(e) => setQueueUrl(e.target.value)}
+                    placeholder="Sıraya eklemek için YouTube linki veya video ID..."
+                    className="flex-1 px-3 py-2 rounded-xl bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none text-xs text-white placeholder-white/30"
+                  />
+                  <button
+                    type="submit"
+                    className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shrink-0"
+                  >
+                    Sıraya Ekle
+                  </button>
+                </form>
+                {queueError && <p className="text-[11px] text-red-400">{queueError}</p>}
+                {queueList.length > 0 ? (
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {queueList.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-semibold text-white truncate">
+                            {idx + 1}. {item.title}
+                          </div>
+                          <div className="text-[10px] text-white/45 font-mono truncate">
+                            ID: {item.videoId} • @{item.addedBy}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-white/40">
+                    Sıra boş. Yukarıdan arkadaşlarınla sıraya yeni video ekleyebilirsin.
+                  </div>
+                )}
               </div>
             </div>
           ) : (

@@ -4,6 +4,7 @@ import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
 import { appConfirm, appPrompt } from '../utils/appDialogs';
 import { isUserServerOwner } from '../utils/serverIdentity';
+import { QUICK_STATUS_PRESETS, STATUS_EXPIRY_KEY, computeStatusExpiryTimestamp } from '../utils/statusExpiry';
 import { User, Channel } from '../types';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
 import {
@@ -1634,6 +1635,32 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                   </button>
                 );
               })}
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              {QUICK_STATUS_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    const expiresAt = computeStatusExpiryTimestamp(preset.durationPreset);
+                    try {
+                      if (expiresAt) localStorage.setItem(STATUS_EXPIRY_KEY, String(expiresAt));
+                      else localStorage.removeItem(STATUS_EXPIRY_KEY);
+                    } catch {}
+                    setCustomStatusInput(preset.statusMessage);
+                    updateProfileDetails({
+                      status: preset.status,
+                      statusMessage: preset.statusMessage,
+                    });
+                    setIsStatusMenuOpen(false);
+                  }}
+                  className="px-2 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/10 border border-white/[0.06] text-left text-[10px] font-semibold text-white/80 hover:text-white truncate transition"
+                  title={preset.label}
+                >
+                  {preset.statusMessage}
+                </button>
+              ))}
             </div>
 
             <form

@@ -609,6 +609,48 @@ app.get('/', (req, res) => {
   `);
 });
 
+app.get('/api/dedicated/telemetry', (_req, res) => {
+  const mem = process.memoryUsage();
+  const totalMessages = Object.values(messages).reduce(
+    (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
+    0
+  );
+  res.json({
+    ok: true,
+    serverName: config.serverName,
+    version: '1.3.0',
+    uptimeSeconds: Math.round(process.uptime()),
+    memoryRssMb: Math.round((mem.rss / (1024 * 1024)) * 10) / 10,
+    memoryHeapMb: Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10,
+    onlineUsers: connectedUsers.size,
+    maxSlots: license.maxSlots,
+    totalChannels: serverChannels.length,
+    totalMessages,
+  });
+});
+
+app.get('/api/storage/usage', (_req, res) => {
+  let totalBytes = 0;
+  let fileCount = 0;
+  try {
+    if (fs.existsSync(UPLOADS_DIR)) {
+      for (const name of fs.readdirSync(UPLOADS_DIR)) {
+        const full = path.join(UPLOADS_DIR, name);
+        try {
+          const st = fs.statSync(full);
+          if (st.isFile()) {
+            totalBytes += st.size;
+            fileCount += 1;
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  const quotaBytes = (Number(process.env.MAX_UPLOADS_DISK_MB) || 2048) * 1024 * 1024;
+  const usagePercent = Math.min(100, Math.round((totalBytes / Math.max(1, quotaBytes)) * 1000) / 10);
+  res.json({ ok: true, totalBytes, fileCount, quotaBytes, usagePercent });
+});
+
 // Socket Events
 io.on('connection', (socket: Socket) => {
   const auth = socket.handshake.auth || {};
@@ -778,15 +820,38 @@ io.on('connection', (socket: Socket) => {
     io.emit('user_updated', user);
   });
 
-  // Messaging (Supports text, announcement gating, forum/reply & file attachments)
-  socket.on('send_message', ({ channelId, content, attachments, forumPost, replyTo }: any) => {
+  // Messaging (Supports text, announcement gating, forum/reply, rich polls & file attachments)
+  socket.on('send_message', ({ channelId, content, attachments, forumPost, replyTo, poll }: any) => {
     const textContent = (content || '').trim();
-    if (!textContent && (!attachments || attachments.length === 0)) return;
+    if (!textContent && (!attachments || attachments.length === 0) && !poll) return;
     const targetCh = serverChannels.find((c) => c.id === channelId);
     if (targetCh?.type === 'announcement' && user.role !== 'admin') {
       return socket.emit('server_action_error', {
         message: 'Bu duyuru kanalında yalnızca yöneticiler paylaşım yapabilir.',
       });
+    }
+    let cleanPoll: any;
+    if (poll && typeof poll === 'object' && typeof poll.question === 'string' && Array.isArray(poll.options)) {
+      const q = poll.question.trim().slice(0, 200);
+      const opts = poll.options
+        .filter((o: any) => o && typeof o.text === 'string' && o.text.trim())
+        .slice(0, 10)
+        .map((o: any, idx: number) => ({
+          id: typeof o.id === 'string' && o.id.trim() ? o.id.trim().slice(0, 64) : `opt-${idx + 1}-${Date.now()}`,
+          text: o.text.trim().slice(0, 120),
+          votes: [] as string[],
+        }));
+      if (q && opts.length >= 2) {
+        cleanPoll = {
+          question: q,
+          options: opts,
+          closed: false,
+          totalVotes: 0,
+          ...(poll.allowMultiple ? { allowMultiple: true } : {}),
+          ...(poll.isAnonymous ? { isAnonymous: true } : {}),
+          ...(typeof poll.closesAt === 'string' && poll.closesAt.trim() ? { closesAt: poll.closesAt.trim() } : {}),
+        };
+      }
     }
     const msg = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
@@ -800,6 +865,7 @@ io.on('connection', (socket: Socket) => {
       content: textContent,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       attachments: attachments || [],
+      ...(cleanPoll ? { poll: cleanPoll } : {}),
       ...(forumPost && typeof forumPost === 'object' ? { forumPost } : {}),
       ...(replyTo && typeof replyTo === 'object' ? { replyTo } : {}),
     };
@@ -809,6 +875,37 @@ io.on('connection', (socket: Socket) => {
     persistDedicatedState();
 
     io.emit('new_message', msg);
+  });
+
+  // Rich Poll Voting (v1.3.0 Parity)
+  socket.on('vote_poll', ({ channelId, messageId, optionId }: any) => {
+    if (!channelId || !messageId) return;
+    const list = messages[channelId];
+    if (!Array.isArray(list)) return;
+    const msg = list.find((m) => m.id === messageId);
+    if (!msg || !msg.poll || msg.poll.closed) return;
+    if (msg.poll.closesAt) {
+      const closesMs = Date.parse(msg.poll.closesAt);
+      if (Number.isFinite(closesMs) && Date.now() >= closesMs) {
+        msg.poll.closed = true;
+        persistDedicatedState();
+        io.emit('poll_updated', { channelId, messageId, poll: msg.poll });
+        return;
+      }
+    }
+    const allowMultiple = Boolean(msg.poll.allowMultiple);
+    msg.poll.options.forEach((opt: any) => {
+      const idx = Array.isArray(opt.votes) ? opt.votes.indexOf(user.username) : -1;
+      if (opt.id === optionId) {
+        if (idx !== -1) opt.votes.splice(idx, 1);
+        else opt.votes.push(user.username);
+      } else if (!allowMultiple && idx !== -1) {
+        opt.votes.splice(idx, 1);
+      }
+    });
+    msg.poll.totalVotes = msg.poll.options.reduce((s: number, o: any) => s + (o.votes?.length || 0), 0);
+    persistDedicatedState();
+    io.emit('poll_updated', { channelId, messageId, poll: msg.poll });
   });
 
   // Server Nickname Update (v1.1.0 Parity)

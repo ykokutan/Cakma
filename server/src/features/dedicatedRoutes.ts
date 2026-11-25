@@ -14,6 +14,16 @@ export interface DedicatedRoutesDeps {
   registeredAccounts: Map<string, RegisteredAccount>;
   saveAccounts?: (accounts: Map<string, RegisteredAccount>) => void;
   paymentWebhookSecret?: string;
+  hasPaymentWebhookEvent?: (eventId: string) => boolean;
+  recordPaymentWebhookEvent?: (ev: {
+    eventId: string;
+    eventType: string;
+    username: string;
+    summary: string;
+  }) => void;
+  listPaymentWebhookEvents?: (
+    limit?: number
+  ) => Array<{ eventId: string; eventType: string; username: string; summary: string; processedAt: string }>;
   verifySessionTokenWithMeta: (token: string) => { username: string; iat: number } | null;
   isMasterRequest: (req: Request) => boolean;
   addAuditLog: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
@@ -384,7 +394,7 @@ export function registerDedicatedAndMasterRoutes(app: Express, io: SocketIOServe
     if (!eventId) {
       return res.status(400).json({ ok: false, error: 'eventId zorunludur.' });
     }
-    if (processedPaymentEvents.has(eventId)) {
+    if (processedPaymentEvents.has(eventId) || deps.hasPaymentWebhookEvent?.(eventId)) {
       return res.json({ ok: true, duplicate: true, eventId });
     }
 
@@ -407,6 +417,12 @@ export function registerDedicatedAndMasterRoutes(app: Express, io: SocketIOServe
       acc.walletBalance = Math.round(((acc.walletBalance || 0) + amount) * 100) / 100;
       deps.saveAccounts?.(deps.registeredAccounts);
       processedPaymentEvents.add(eventId);
+      deps.recordPaymentWebhookEvent?.({
+        eventId,
+        eventType: 'wallet_topup',
+        username: acc.username,
+        summary: `+${amount} cüzdan yüklemesi`,
+      });
       deps.addAuditLog('ODEME_WEBHOOK_BAKIYE', `${acc.username} hesabına +${amount} bakiye işlendi (${eventId})`, 'info');
       return res.json({ ok: true, type: 'wallet_topup', username: acc.username, walletBalance: acc.walletBalance });
     }
@@ -441,11 +457,30 @@ export function registerDedicatedAndMasterRoutes(app: Express, io: SocketIOServe
       deps.saveLicenses(deps.issuedLicenses);
       io.to('admins').emit('admin_licenses_list', Array.from(deps.issuedLicenses.values()));
       processedPaymentEvents.add(eventId);
+      deps.recordPaymentWebhookEvent?.({
+        eventId,
+        eventType: 'license_purchase',
+        username: acc.username,
+        summary: `${tier} · ${maxSlots} slot (${licensee})`,
+      });
       deps.addAuditLog('ODEME_WEBHOOK_LISANS', `${acc.username} için webhook üzerinden ${tier} lisans üretildi (${eventId})`, 'info');
       return res.json({ ok: true, type: 'license_purchase', license: newLicense });
     }
 
     return res.status(400).json({ ok: false, error: 'Desteklenmeyen webhook işlem türü.' });
+  });
+
+  app.get('/api/admin/payment-webhooks', (req, res) => {
+    const isMaster = deps.isMasterRequest(req);
+    const uname = getSessionUsername(req);
+    const isAdminUser = Boolean(
+      uname && deps.registeredAccounts.get(uname.toLowerCase())?.role === 'admin'
+    );
+    if (!isMaster && !isAdminUser) {
+      return res.status(401).json({ ok: false, error: 'Yönetici yetkisi gereklidir.' });
+    }
+    const events = deps.listPaymentWebhookEvents?.(50) || [];
+    res.json({ ok: true, events });
   });
 
   // Periodic Heartbeat Sweeper: 30 saniye sinyal vermeyenleri offline yap

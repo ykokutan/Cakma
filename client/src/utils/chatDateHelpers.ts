@@ -47,6 +47,7 @@ export function formatDateDividerLabel(
     en: 'en-US',
     de: 'de-DE',
     ru: 'ru-RU',
+    fr: 'fr-FR',
   };
   try {
     return new Intl.DateTimeFormat(localeMap[language] || 'tr-TR', {

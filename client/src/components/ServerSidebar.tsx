@@ -1,10 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
-import { Plus, Compass, MessageCircle, Download, Bell, BellOff } from 'lucide-react';
+import { Plus, Compass, MessageCircle, Download, Bell, BellOff, FolderOpen, FolderPlus, FolderMinus } from 'lucide-react';
 import { isImageAvatar } from './AvatarView';
 import type { Server } from '../types';
 import type { NotificationLevel } from '../utils/notificationPrefs';
+import { appPrompt } from '../utils/appDialogs';
+import {
+  type ServerFolder,
+  loadServerFolders,
+  saveServerFolders,
+  createServerFolder,
+  toggleServerInFolder,
+  toggleFolderCollapsed,
+} from '../utils/serverFolders';
 
 interface ServerSidebarProps {
   onOpenCreateServer: () => void;
@@ -36,6 +45,15 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   } = useSocket();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [serverMenu, setServerMenu] = useState<{ server: Server; x: number; y: number } | null>(null);
+  const [folders, setFolders] = useState<ServerFolder[]>(() => loadServerFolders());
+
+  const updateFolders = (updater: (prev: ServerFolder[]) => ServerFolder[]) => {
+    setFolders((prev) => {
+      const next = updater(prev);
+      saveServerFolders(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!serverMenu) return;
@@ -74,6 +92,96 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   };
 
   const hideTooltip = () => setTooltip(null);
+
+  const groupedServerIds = new Set(folders.flatMap((f) => f.serverIds));
+  const ungroupedServers = servers.filter((s) => !groupedServerIds.has(s.id));
+
+  const renderServerItem = (server: Server) => {
+    const isActive = activeServer?.id === server.id;
+    const serverMentions = server.channels.reduce((sum, ch) => sum + (mentionCounts[ch.id] || 0), 0);
+    const serverUnreads = server.channels.reduce((sum, ch) => sum + (unreadCounts[ch.id] || 0), 0);
+
+    return (
+      <div
+        key={server.id}
+        className="relative group flex items-center justify-center w-full shrink-0"
+      >
+        <div
+          className={`absolute left-0 w-[3.5px] rounded-r-full transition-all duration-200 ${
+            isActive
+              ? 'h-7 ui-accent-bar opacity-100'
+              : serverUnreads > 0
+              ? 'h-2 bg-white/85 group-hover:h-4 opacity-100'
+              : 'h-0 bg-white/75 group-hover:h-4 opacity-0 group-hover:opacity-100'
+          }`}
+        />
+
+        <button
+          type="button"
+          onClick={() => selectServer(server.id)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setServerMenu({
+              server,
+              x: Math.max(8, Math.min(e.clientX, window.innerWidth - 230)),
+              y: Math.max(8, Math.min(e.clientY, window.innerHeight - 280)),
+            });
+          }}
+          onMouseEnter={(e) =>
+            showTooltip(
+              e,
+              server.name,
+              notificationPrefs[server.id] === 'muted'
+                ? 'Bildirimler sessize alındı'
+                : serverMentions > 0
+                ? `${serverMentions} yeni bahsetme`
+                : serverUnreads > 0
+                ? `${serverUnreads} okunmamış mesaj`
+                : undefined
+            )
+          }
+          onMouseLeave={hideTooltip}
+          className={`w-11 h-11 transition-all duration-200 flex items-center justify-center font-bold text-sm overflow-hidden border shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] ${
+            isActive
+              ? 'rounded-[15px] ui-accent-bg'
+              : 'rounded-[22px] hover:rounded-[15px] bg-white/[0.06] hover:bg-white/[0.13] text-white/90 border-white/[0.08] hover:border-white/20'
+          }`}
+          aria-label={server.name}
+        >
+          {isImageAvatar(server.icon) ? (
+            <img
+              src={server.icon}
+              alt={server.name}
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
+          ) : server.icon ? (
+            <span className="text-lg leading-none">{server.icon}</span>
+          ) : (
+            <span className="tracking-tight">{server.name.substring(0, 2).toUpperCase()}</span>
+          )}
+        </button>
+
+        {notificationPrefs[server.id] === 'muted' && (
+          <span
+            title="Sunucu bildirimleri sessize alındı"
+            className="pointer-events-none absolute -top-0.5 right-2.5 w-4 h-4 rounded-full bg-slate-800/95 text-white/65 border border-white/15 flex items-center justify-center shadow"
+          >
+            <BellOff className="w-2.5 h-2.5" />
+          </span>
+        )}
+
+        {serverMentions > 0 && (
+          <span
+            className="pointer-events-none absolute -bottom-0.5 right-2.5 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#0b0d14] shadow-lg"
+          >
+            {serverMentions > 99 ? '99+' : serverMentions}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <nav className="w-[74px] ios-glass-sidebar md:rounded-2xl md:border md:border-white/[0.08] md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] flex flex-col items-center py-3.5 shrink-0 select-none z-20">
@@ -121,94 +229,68 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
       {/* Scrollable Server List + Server Actions */}
       <div className="flex-1 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-2.5 py-0.5">
-        {servers.map((server) => {
-          const isActive = activeServer?.id === server.id;
-          const serverMentions = server.channels.reduce((sum, ch) => sum + (mentionCounts[ch.id] || 0), 0);
-          const serverUnreads = server.channels.reduce((sum, ch) => sum + (unreadCounts[ch.id] || 0), 0);
+        {folders.map((folder) => {
+          const folderServers = folder.serverIds
+            .map((id) => servers.find((s) => s.id === id))
+            .filter((s): s is Server => Boolean(s));
+          if (folderServers.length === 0) return null;
+          const folderMentions = folderServers.reduce(
+            (sum, srv) => sum + srv.channels.reduce((s2, ch) => s2 + (mentionCounts[ch.id] || 0), 0),
+            0
+          );
+
+          if (folder.collapsed) {
+            return (
+              <div key={folder.id} className="relative flex items-center justify-center w-full shrink-0">
+                <button
+                  type="button"
+                  onClick={() => updateFolders((prev) => toggleFolderCollapsed(prev, folder.id))}
+                  onMouseEnter={(e) => showTooltip(e, folder.name, `${folderServers.length} sunucu`)}
+                  onMouseLeave={hideTooltip}
+                  style={{ borderColor: `${folder.color}66`, backgroundColor: `${folder.color}22` }}
+                  className="w-11 h-11 rounded-2xl border p-1.5 grid grid-cols-2 gap-0.5 items-center justify-center hover:brightness-110 transition"
+                  aria-label={`Klasör: ${folder.name}`}
+                >
+                  {folderServers.slice(0, 4).map((srv) => (
+                    <div
+                      key={srv.id}
+                      className="w-full h-full rounded bg-black/40 flex items-center justify-center text-[9px] text-white/90 overflow-hidden"
+                    >
+                      {srv.icon && !isImageAvatar(srv.icon) ? srv.icon : srv.name.slice(0, 1).toUpperCase()}
+                    </div>
+                  ))}
+                </button>
+                {folderMentions > 0 && (
+                  <span className="pointer-events-none absolute -bottom-0.5 right-2.5 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#0b0d14] shadow-lg">
+                    {folderMentions > 99 ? '99+' : folderMentions}
+                  </span>
+                )}
+              </div>
+            );
+          }
 
           return (
             <div
-              key={server.id}
-              className="relative group flex items-center justify-center w-full shrink-0"
+              key={folder.id}
+              style={{ borderColor: `${folder.color}45`, backgroundColor: `${folder.color}12` }}
+              className="w-[58px] rounded-2xl border py-1.5 flex flex-col items-center gap-2 shrink-0"
             >
-              {/* Left Active / Hover / Unread Indicator */}
-              <div
-                className={`absolute left-0 w-[3.5px] rounded-r-full transition-all duration-200 ${
-                  isActive
-                    ? 'h-7 ui-accent-bar opacity-100'
-                    : serverUnreads > 0
-                    ? 'h-2 bg-white/85 group-hover:h-4 opacity-100'
-                    : 'h-0 bg-white/75 group-hover:h-4 opacity-0 group-hover:opacity-100'
-                }`}
-              />
-
-              {/* Server Tile */}
               <button
                 type="button"
-                onClick={() => selectServer(server.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setServerMenu({
-                    server,
-                    x: Math.max(8, Math.min(e.clientX, window.innerWidth - 220)),
-                    y: Math.max(8, Math.min(e.clientY, window.innerHeight - 190)),
-                  });
-                }}
-                onMouseEnter={(e) =>
-                  showTooltip(
-                    e,
-                    server.name,
-                    notificationPrefs[server.id] === 'muted'
-                      ? 'Bildirimler sessize alındı'
-                      : serverMentions > 0
-                      ? `${serverMentions} yeni bahsetme`
-                      : serverUnreads > 0
-                      ? `${serverUnreads} okunmamış mesaj`
-                      : undefined
-                  )
-                }
+                onClick={() => updateFolders((prev) => toggleFolderCollapsed(prev, folder.id))}
+                onMouseEnter={(e) => showTooltip(e, folder.name, 'Daraltmak için tıkla')}
                 onMouseLeave={hideTooltip}
-                className={`w-11 h-11 transition-all duration-200 flex items-center justify-center font-bold text-sm overflow-hidden border shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] ${
-                  isActive
-                    ? 'rounded-[15px] ui-accent-bg'
-                    : 'rounded-[22px] hover:rounded-[15px] bg-white/[0.06] hover:bg-white/[0.13] text-white/90 border-white/[0.08] hover:border-white/20'
-                }`}
-                aria-label={server.name}
+                className="w-8 h-6 rounded-lg bg-white/5 hover:bg-white/15 flex items-center justify-center transition"
+                aria-label={`${folder.name} klasörünü daralt`}
               >
-                {isImageAvatar(server.icon) ? (
-                  <img
-                    src={server.icon}
-                    alt={server.name}
-                    className="w-full h-full object-cover"
-                    draggable={false}
-                  />
-                ) : server.icon ? (
-                  <span className="text-lg leading-none">{server.icon}</span>
-                ) : (
-                  <span className="tracking-tight">{server.name.substring(0, 2).toUpperCase()}</span>
-                )}
+                <FolderOpen className="w-3.5 h-3.5" style={{ color: folder.color }} />
               </button>
-
-              {notificationPrefs[server.id] === 'muted' && (
-                <span
-                  title="Sunucu bildirimleri sessize alındı"
-                  className="pointer-events-none absolute -top-0.5 right-2.5 w-4 h-4 rounded-full bg-slate-800/95 text-white/65 border border-white/15 flex items-center justify-center shadow"
-                >
-                  <BellOff className="w-2.5 h-2.5" />
-                </span>
-              )}
-
-              {serverMentions > 0 && (
-                <span
-                  className="pointer-events-none absolute -bottom-0.5 right-2.5 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-[#0b0d14] shadow-lg"
-                >
-                  {serverMentions > 99 ? '99+' : serverMentions}
-                </span>
-              )}
+              {folderServers.map(renderServerItem)}
             </div>
           );
         })}
+
+        {ungroupedServers.map(renderServerItem)}
 
         <div className="w-7 h-[1px] bg-white/[0.08] rounded-full my-0.5 shrink-0" />
 
@@ -307,6 +389,55 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
                     <span>{opt.label}</span>
                   </span>
                   {current === opt.id && <span className="w-1.5 h-1.5 rounded-full bg-red-400" />}
+                </button>
+              );
+            })}
+
+            <div className="px-2.5 py-1 mt-1 border-t border-white/10 text-[10px] font-bold uppercase tracking-wider text-white/45">
+              Klasörler
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const srvId = serverMenu.server.id;
+                setServerMenu(null);
+                const name = await appPrompt({
+                  title: 'Yeni Sunucu Klasörü',
+                  message: 'Sunucu klasörü adını girin:',
+                  defaultValue: 'Oyunlar',
+                  placeholder: 'Örn. Oyunlar, İş, Topluluk',
+                });
+                if (name && name.trim()) {
+                  updateFolders((prev) => createServerFolder(prev, name.trim(), srvId));
+                }
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-emerald-300 text-left transition"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              <span>Yeni Klasöre Ekle</span>
+            </button>
+            {folders.map((folder) => {
+              const inFolder = folder.serverIds.includes(serverMenu.server.id);
+              return (
+                <button
+                  key={folder.id}
+                  type="button"
+                  onClick={() => {
+                    updateFolders((prev) => toggleServerInFolder(prev, folder.id, serverMenu.server.id));
+                    setServerMenu(null);
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-white/80 text-left transition"
+                >
+                  <span className="flex items-center gap-2 truncate">
+                    {inFolder ? (
+                      <FolderMinus className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    ) : (
+                      <FolderOpen className="w-3.5 h-3.5 shrink-0" style={{ color: folder.color }} />
+                    )}
+                    <span className="truncate">
+                      {inFolder ? `"${folder.name}" Klasöründen Çıkar` : `"${folder.name}" Klasörüne Ekle`}
+                    </span>
+                  </span>
                 </button>
               );
             })}

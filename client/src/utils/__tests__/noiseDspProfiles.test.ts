@@ -7,13 +7,14 @@ describe('noiseDspProfiles', () => {
     expect(normalizeNoiseDspProfile('balanced')).toBe('balanced');
     expect(normalizeNoiseDspProfile('aggressive')).toBe('aggressive');
     expect(normalizeNoiseDspProfile('keyboard_guard')).toBe('keyboard_guard');
+    expect(normalizeNoiseDspProfile('voice_isolation')).toBe('voice_isolation');
     expect(normalizeNoiseDspProfile('unknown')).toBe('balanced');
     expect(normalizeNoiseDspProfile(null)).toBe('balanced');
   });
 
-  it('provides valid DSP parameters across all 4 profiles with elevated transient clamping on keyboard_guard', () => {
+  it('provides valid DSP parameters across all 5 profiles with elevated transient clamping on keyboard_guard', () => {
     const profiles = Object.values(NOISE_DSP_PROFILE_CONFIGS);
-    expect(profiles).toHaveLength(4);
+    expect(profiles).toHaveLength(5);
     for (const cfg of profiles) {
       expect(cfg.aggressiveness).toBeGreaterThanOrEqual(0.2);
       expect(cfg.aggressiveness).toBeLessThanOrEqual(1.0);
