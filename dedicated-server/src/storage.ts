@@ -80,6 +80,7 @@ export interface DedicatedPersistedState {
   categories?: DedicatedChannelCategory[];
   webhooks?: DedicatedWebhook[];
   scheduledMessages?: DedicatedScheduledMessage[];
+  nicknames?: Record<string, string>;
 }
 
 export interface LoadDedicatedStateOptions {
@@ -114,6 +115,7 @@ export function writeDedicatedStateSync(snapshot: DedicatedPersistedState, dataD
       ...(Array.isArray(snapshot.categories) ? { categories: snapshot.categories } : {}),
       ...(Array.isArray(snapshot.webhooks) ? { webhooks: snapshot.webhooks } : {}),
       ...(Array.isArray(snapshot.scheduledMessages) ? { scheduledMessages: snapshot.scheduledMessages } : {}),
+      ...(snapshot.nicknames && typeof snapshot.nicknames === 'object' ? { nicknames: snapshot.nicknames } : {}),
     };
     const stateFile = resolveStateFile(dataDir);
     const tmpPath = `${stateFile}.tmp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
@@ -132,6 +134,7 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
   categories: DedicatedChannelCategory[];
   webhooks: DedicatedWebhook[];
   scheduledMessages: DedicatedScheduledMessage[];
+  nicknames: Record<string, string>;
 }> {
   const targetDir = opts.dataDir || DEFAULT_DATA_DIR;
   const stateFile = resolveStateFile(targetDir);
@@ -159,10 +162,14 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
       const categories = Array.isArray(parsed.categories) ? parsed.categories : [];
       const webhooks = Array.isArray(parsed.webhooks) ? parsed.webhooks : [];
       const scheduledMessages = Array.isArray(parsed.scheduledMessages) ? parsed.scheduledMessages : [];
+      const nicknames =
+        parsed.nicknames && typeof parsed.nicknames === 'object' && !Array.isArray(parsed.nicknames)
+          ? (parsed.nicknames as Record<string, string>)
+          : {};
       console.log(
         `💾 [Dedicated Storage] ${accounts.size} hesap, ${channels.length} kanal, ${categories.length} kategori, ${Object.keys(messages).length} kanal mesajı yüklendi.`
       );
-      return { accounts, channels, messages, friendRequests, categories, webhooks, scheduledMessages };
+      return { accounts, channels, messages, friendRequests, categories, webhooks, scheduledMessages, nicknames };
     } catch (err) {
       console.warn('⚠️ [Dedicated Storage] state.json okunamadı, temiz başlatılıyor:', err);
     }
@@ -193,6 +200,7 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
   const categories: DedicatedChannelCategory[] = [];
   const webhooks: DedicatedWebhook[] = [];
   const scheduledMessages: DedicatedScheduledMessage[] = [];
+  const nicknames: Record<string, string> = {};
 
   writeDedicatedStateSync(
     {
@@ -203,6 +211,7 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
       categories,
       webhooks,
       scheduledMessages,
+      nicknames,
     },
     targetDir
   );
@@ -217,7 +226,7 @@ export async function loadDedicatedState(opts: LoadDedicatedStateOptions): Promi
     console.log('============================================================');
   }
 
-  return { accounts, channels, messages, friendRequests, categories, webhooks, scheduledMessages };
+  return { accounts, channels, messages, friendRequests, categories, webhooks, scheduledMessages, nicknames };
 }
 
 export function scheduleDedicatedStateSave(
@@ -231,6 +240,7 @@ export function scheduleDedicatedStateSave(
     categories?: DedicatedChannelCategory[];
     webhooks?: DedicatedWebhook[];
     scheduledMessages?: DedicatedScheduledMessage[];
+    nicknames?: Record<string, string>;
   }
 ) {
   pendingSnapshot = {
@@ -243,6 +253,7 @@ export function scheduleDedicatedStateSave(
       ...(extra?.categories ? { categories: [...extra.categories] } : {}),
       ...(extra?.webhooks ? { webhooks: [...extra.webhooks] } : {}),
       ...(extra?.scheduledMessages ? { scheduledMessages: [...extra.scheduledMessages] } : {}),
+      ...(extra?.nicknames ? { nicknames: { ...extra.nicknames } } : {}),
     },
   };
   if (saveTimer) clearTimeout(saveTimer);

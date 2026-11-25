@@ -25,6 +25,8 @@ client/src-tauri/target/
 
 # Persistent Application Databases (Users, servers, channels, messages, licenses)
 data/
+!client/src/data/
+!client/src/data/**
 server/data/
 */data/
 *.tmp-*

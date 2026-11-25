@@ -344,7 +344,84 @@ const serverChannels = initialDedicatedState.channels;
 const serverCategories: DedicatedChannelCategory[] = initialDedicatedState.categories;
 const dedicatedWebhooks: DedicatedWebhook[] = initialDedicatedState.webhooks;
 const dedicatedScheduledMessages: DedicatedScheduledMessage[] = initialDedicatedState.scheduledMessages;
+const serverNicknames: Record<string, string> = initialDedicatedState.nicknames;
 const messages: Record<string, any[]> = initialDedicatedState.messages;
+
+const DEDICATED_SESSION_SECRET = crypto
+  .createHash('sha256')
+  .update(String(config.licenseKey || process.env.DEDICATED_SESSION_SECRET || 'dedicated-fallback-secret'))
+  .digest('hex');
+
+const UPLOADS_DIR = path.resolve(__dirname, '../data/uploads');
+try {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch {}
+
+const DEDICATED_BLOCKED_EXTENSIONS = new Set([
+  '.exe', '.bat', '.cmd', '.msi', '.ps1', '.scr', '.vbs', '.js', '.sh', '.com', '.hta', '.jar',
+]);
+
+const DEDICATED_INLINE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.webm': 'audio/webm',
+  '.mp4': 'video/mp4',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+function generateDedicatedToken(username: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({ u: username, iat: Date.now(), exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })
+  ).toString('base64url');
+  const sig = crypto.createHmac('sha256', DEDICATED_SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyDedicatedToken(token: string): string | null {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  const [payload, sig] = token.split('.');
+  if (!payload || !sig) return null;
+  const expected = crypto.createHmac('sha256', DEDICATED_SESSION_SECRET).update(payload).digest('base64url');
+  try {
+    const sigBuf = Buffer.from(sig);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as { u?: string; exp?: number };
+    if (!parsed.u || !parsed.exp || parsed.exp < Date.now()) return null;
+    return registeredAccounts.has(parsed.u.toLowerCase()) ? parsed.u : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractDedicatedToken(req: express.Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+    const tok = authHeader.slice(7).trim();
+    if (tok && tok !== '__cookie__') return tok;
+  }
+  const cookieHeader = Array.isArray(req.headers.cookie) ? req.headers.cookie.join('; ') : req.headers.cookie;
+  if (cookieHeader) {
+    for (const part of cookieHeader.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx === -1) continue;
+      if (part.slice(0, idx).trim() === 'cakma_session') {
+        try {
+          const val = decodeURIComponent(part.slice(idx + 1).trim());
+          if (val && val !== '__cookie__') return val;
+        } catch {}
+      }
+    }
+  }
+  return null;
+}
 
 function persistDedicatedState() {
   scheduleDedicatedStateSave(
@@ -358,17 +435,66 @@ function persistDedicatedState() {
       categories: serverCategories,
       webhooks: dedicatedWebhooks,
       scheduledMessages: dedicatedScheduledMessages,
+      nicknames: serverNicknames,
     }
   );
 }
 
+const DEFAULT_DEDICATED_ROLES = [
+  {
+    id: 'role-admin',
+    name: 'Yönetici',
+    color: '#f59e0b',
+    icon: '👑',
+    position: 0,
+    permissions: [
+      'manage_server',
+      'manage_roles',
+      'manage_channels',
+      'kick_members',
+      'ban_members',
+      'send_messages',
+      'attach_files',
+      'connect_voice',
+      'speak_voice',
+      'mute_members',
+      'priority_speaker',
+    ],
+  },
+  {
+    id: 'role-member',
+    name: '@everyone',
+    color: '#94a3b8',
+    position: 1,
+    permissions: ['send_messages', 'attach_files', 'connect_voice', 'speak_voice'],
+    isDefault: true,
+  },
+];
+
 function buildDedicatedServerPayload() {
+  const members = Array.from(registeredAccounts.values()).map((acc) => {
+    const unameLower = acc.username.toLowerCase();
+    const nick = serverNicknames[unameLower];
+    return {
+      userId: `usr-${unameLower}`,
+      username: acc.username,
+      avatar: acc.avatar || '🎮',
+      ...(nick ? { nickname: nick } : {}),
+      roleIds: acc.role === 'admin' ? ['role-admin'] : ['role-member'],
+      joinedAt: 'Üye',
+      isOwner: acc.role === 'admin',
+    };
+  });
+
   return {
     id: 'dedicated-server-root',
     name: config.serverName,
     icon: '🛡️',
+    ownerId: 'usr-admin',
     categories: serverCategories,
     channels: serverChannels,
+    roles: DEFAULT_DEDICATED_ROLES,
+    members,
   };
 }
 
@@ -556,7 +682,8 @@ io.on('connection', (socket: Socket) => {
     connectedUsers.set(socket.id, user);
     console.log(`[Giriş Başarılı] ${user.username} (${user.role}) yetkilendirildi.`);
 
-    socket.emit('auth_response', { success: true, user });
+    const token = generateDedicatedToken(user.username);
+    socket.emit('auth_response', { success: true, user, token, mediaToken: token });
     socket.emit('init_data', {
       currentUser: user,
       servers: [buildDedicatedServerPayload()],
@@ -568,7 +695,13 @@ io.on('connection', (socket: Socket) => {
   });
 
   // 2. AUTH REGISTER
-  socket.on('auth_register', async ({ username, email, password, avatar }: any) => {
+  socket.on('auth_register', async ({ username, email, password, avatar, acceptedTerms }: any) => {
+    if (acceptedTerms !== true) {
+      return socket.emit('auth_response', {
+        success: false,
+        error: "Kayıt olabilmek için Kullanıcı Sözleşmesi, Gizlilik Politikası ve KVKK Aydınlatma Metni'ni kabul etmeniz zorunludur.",
+      });
+    }
     const cleanUsername = typeof username === 'string' ? username.trim() : '';
     if (!cleanUsername || typeof password !== 'string' || !password) {
       return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı ve şifre zorunludur.' });
@@ -597,7 +730,8 @@ io.on('connection', (socket: Socket) => {
     connectedUsers.set(socket.id, user);
     console.log(`[Yeni Kayıt] ${user.username} (${user.role}) kaydoldu.`);
 
-    socket.emit('auth_response', { success: true, user });
+    const token = generateDedicatedToken(user.username);
+    socket.emit('auth_response', { success: true, user, token, mediaToken: token, isNewUser: true });
     socket.emit('init_data', {
       currentUser: user,
       servers: [buildDedicatedServerPayload()],
@@ -605,6 +739,42 @@ io.on('connection', (socket: Socket) => {
       messages
     });
 
+    io.emit('user_updated', user);
+  });
+
+  // 2.5 TOKEN LOGIN
+  socket.on('auth_token_login', ({ token }: { token?: string }) => {
+    const verifiedUsername = token ? verifyDedicatedToken(token) : null;
+    if (!verifiedUsername) {
+      return socket.emit('auth_response', {
+        success: false,
+        tokenExpired: true,
+        error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.',
+      });
+    }
+    const foundAccount = registeredAccounts.get(verifiedUsername.toLowerCase());
+    if (!foundAccount) {
+      return socket.emit('auth_response', {
+        success: false,
+        tokenExpired: true,
+        error: 'Hesap bulunamadı.',
+      });
+    }
+    user.username = foundAccount.username;
+    user.email = foundAccount.email;
+    user.role = foundAccount.role;
+    user.avatar = foundAccount.avatar;
+    connectedUsers.set(socket.id, user);
+
+    const refreshed = generateDedicatedToken(user.username);
+    socket.emit('auth_response', { success: true, user, token: refreshed, mediaToken: refreshed });
+    socket.emit('init_data', {
+      currentUser: user,
+      servers: [buildDedicatedServerPayload()],
+      onlineUsers: Array.from(connectedUsers.values()),
+      messages,
+    });
+    socket.emit('friends_data', getDedicatedFriendsData(user.username));
     io.emit('user_updated', user);
   });
 
@@ -639,6 +809,69 @@ io.on('connection', (socket: Socket) => {
     persistDedicatedState();
 
     io.emit('new_message', msg);
+  });
+
+  // Server Nickname Update (v1.1.0 Parity)
+  socket.on('update_server_nickname', ({ targetUsername, nickname }: any) => {
+    const rawTarget = typeof targetUsername === 'string' && targetUsername.trim() ? targetUsername.trim() : user.username;
+    const targetLower = rawTarget.toLowerCase();
+    const isSelf = targetLower === user.username.toLowerCase();
+    if (!isSelf && user.role !== 'admin') {
+      return socket.emit('server_action_error', { message: 'Başkasının sunucu takma adını değiştirme yetkiniz yok.' });
+    }
+    if (!registeredAccounts.has(targetLower)) {
+      return socket.emit('server_action_error', { message: 'Sunucu üyesi bulunamadı.' });
+    }
+    const cleanNick = typeof nickname === 'string'
+      ? nickname.replace(/[<>]/g, '').trim().slice(0, 32)
+      : '';
+    if (cleanNick) {
+      serverNicknames[targetLower] = cleanNick;
+    } else {
+      delete serverNicknames[targetLower];
+    }
+    persistDedicatedState();
+    const updatedServer = buildDedicatedServerPayload();
+    io.emit('server_updated', updatedServer);
+    io.emit('servers_updated', [updatedServer]);
+  });
+
+  // Bulk Message Delete (v1.1.0 Moderator Parity)
+  socket.on('bulk_delete_messages', ({ channelId, messageIds }: any, ack?: (res: any) => void) => {
+    if (user.role !== 'admin') {
+      ack?.({ ok: false, error: 'Toplu mesaj silmek için yönetici yetkisi gerekir.' });
+      return socket.emit('server_action_error', { message: 'Toplu mesaj silmek için yönetici yetkisi gerekir.' });
+    }
+    if (!channelId || !Array.isArray(messageIds) || messageIds.length === 0) {
+      ack?.({ ok: false, error: 'Geçersiz kanal veya mesaj listesi.' });
+      return;
+    }
+    const idSet = new Set(
+      messageIds
+        .filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
+        .slice(0, 100)
+    );
+    const list = messages[channelId];
+    if (!Array.isArray(list) || idSet.size === 0) {
+      ack?.({ ok: true, deletedCount: 0 });
+      return;
+    }
+    const removedIds: string[] = [];
+    const remaining: any[] = [];
+    for (const m of list) {
+      if (idSet.has(m.id)) removedIds.push(m.id);
+      else remaining.push(m);
+    }
+    if (removedIds.length > 0) {
+      messages[channelId] = remaining;
+      persistDedicatedState();
+      io.emit('messages_bulk_deleted', {
+        serverId: 'dedicated-server-root',
+        channelId,
+        messageIds: removedIds,
+      });
+    }
+    ack?.({ ok: true, deletedCount: removedIds.length });
   });
 
   // Channel & Category Admin Management (Parity v1.0.0)
@@ -1411,6 +1644,91 @@ function shutdownDueToLicenseRevocation(reason: string) {
     process.exit(1);
   }, 400);
 }
+
+// Binary Stream Upload & Authenticated Media Serving (v1.1.0 Parity)
+app.post(
+  '/api/upload/stream',
+  express.raw({ type: '*/*', limit: '25mb' }),
+  async (req, res) => {
+    const token = extractDedicatedToken(req);
+    const verifiedUser = token ? verifyDedicatedToken(token) : null;
+    if (!verifiedUser) {
+      return res.status(401).json({ ok: false, error: 'Dosya yüklemek için oturum doğrulaması gereklidir.' });
+    }
+    const rawNameHeader = String(req.headers['x-file-name'] || '').trim();
+    let decodedName: string;
+    try {
+      decodedName = decodeURIComponent(rawNameHeader);
+    } catch {
+      decodedName = rawNameHeader;
+    }
+    const cleanName = path.basename(decodedName || 'dosya').replace(/[\u0000-\u001f<>:"/\\|?*]/g, '_').slice(0, 120);
+    const ext = path.extname(cleanName).toLowerCase();
+    if (DEDICATED_BLOCKED_EXTENSIONS.has(ext)) {
+      return res.status(400).json({ ok: false, error: 'Çalıştırılabilir veya tehlikeli dosya uzantıları engellenmiştir.' });
+    }
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ ok: false, error: 'Geçersiz ikili dosya yükleme isteği.' });
+    }
+    const maxBytes = 25 * 1024 * 1024;
+    if (req.body.length > maxBytes) {
+      return res.status(413).json({ ok: false, error: 'Dosya boyutu 25 MB sınırını aşıyor.' });
+    }
+
+    const mimeType = String(req.headers['x-file-type'] || '').trim() || 'application/octet-stream';
+    const safeExt = /^[a-z0-9.]{1,12}$/i.test(ext) ? ext : '';
+    const storedName = `upl-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${safeExt}`;
+    const destPath = path.join(UPLOADS_DIR, storedName);
+    await fs.promises.mkdir(UPLOADS_DIR, { recursive: true });
+    await fs.promises.writeFile(destPath, req.body);
+
+    const attachment = {
+      id: `att-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      name: cleanName,
+      size: req.body.length,
+      type: mimeType,
+      url: `/uploads/${storedName}`,
+    };
+    return res.json({
+      ok: true,
+      attachment,
+      url: attachment.url,
+      name: attachment.name,
+      type: attachment.type,
+      size: attachment.size,
+    });
+  }
+);
+
+app.get('/uploads/:filename', (req, res) => {
+  const token = extractDedicatedToken(req);
+  const queryMt = typeof req.query?.mt === 'string' ? req.query.mt.trim() : '';
+  const authorized = (token && verifyDedicatedToken(token)) || (queryMt && verifyDedicatedToken(queryMt));
+  if (!authorized) {
+    return res.status(401).json({ ok: false, error: 'Bu dosyayı görüntülemek için oturum açmalısınız.' });
+  }
+  const safeName = path.basename(String(req.params.filename || ''));
+  if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
+    return res.status(400).json({ ok: false, error: 'Geçersiz dosya adı.' });
+  }
+  const filePath = path.join(UPLOADS_DIR, safeName);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ ok: false, error: 'Dosya bulunamadı.' });
+  }
+  const ext = path.extname(safeName).toLowerCase();
+  const inlineMime = DEDICATED_INLINE_MIME[ext];
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  if (inlineMime) {
+    res.setHeader('Content-Type', inlineMime);
+    res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  } else {
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+  }
+  return res.sendFile(filePath);
+});
 
 // Incoming Webhook Endpoint on Dedicated Server
 app.post('/api/webhooks/:webhookId/:token', (req, res) => {

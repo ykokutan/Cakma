@@ -24,7 +24,8 @@ import { useDesktopTrayAndShortcuts } from '../hooks/useDesktopTrayAndShortcuts'
 import { useServerGovernanceAndStage, type ModerationNoticeBanner } from '../hooks/useServerGovernanceAndStage';
 import { getCachedGroupSenderKey, encryptGroupDmMessage } from '../utils/groupE2ee';
 import { IceRecoveryController } from '../utils/webrtcIceRecovery';
-import { computeNormalizerGain, computeRmsFromTimeDomain } from '../utils/audioLoudnessNormalizer';
+import { useRemoteAudioEqNormalizer, type UserAudioEq } from '../hooks/useRemoteAudioEqNormalizer';
+export type { UserAudioEq };
 import { AuthContext } from './AuthContext';
 import { ChatContext } from './ChatContext';
 import type { ChatLayoutMode } from './ChatContext';
@@ -45,12 +46,6 @@ function playServerOrSynthSound(soundId: string, serverList: Server[], serverHos
 }
 export type { AudioWorkletTelemetry };
 import { SocialContext } from './SocialContext';
-
-export interface UserAudioEq {
-  bass: number;
-  treble: number;
-  normalize: boolean;
-}
 
 export interface RadioBotState {
   isPlaying: boolean;
@@ -330,6 +325,8 @@ interface SocketContextType {
     challengeToken?: string;
     challengeAnswer?: string;
     honeypot?: string;
+    acceptedTerms?: boolean;
+    acceptedTermsVersion?: string;
   }) => Promise<{ success: boolean; error?: string }>;
   requestRegisterChallenge: () => Promise<{
     token: string;
@@ -606,6 +603,7 @@ interface SocketContextType {
   confirmEmailChange: (code: string) => Promise<{ success: boolean; email?: string; message?: string; error?: string }>;
   revokeSingleSession: (targetSocketId: string) => Promise<{ success: boolean; error?: string }>;
   deleteMyAccount: (currentPassword: string, confirmText: string, totpCode?: string) => Promise<{ success: boolean; error?: string }>;
+  acceptLatestTerms: (version?: string) => Promise<{ success: boolean; error?: string }>;
   readCursors: Record<string, string>;
   markChannelRead: (channelId: string, lastMessageId: string) => void;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; message?: string; error?: string }>;
@@ -1466,37 +1464,6 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_lowLatencyAudio') : null;
     return val !== null ? val === 'true' : true;
   });
-  const [userAudioEq, setUserAudioEqState] = useState<Record<string, UserAudioEq>>(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('cakma_user_audio_eq') : null;
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
-  const userAudioEqRef = useRef<Record<string, UserAudioEq>>(userAudioEq);
-  userAudioEqRef.current = userAudioEq;
-  const [globalLoudnessNormalize, setGlobalLoudnessNormalizeState] = useState<boolean>(() => {
-    try {
-      return typeof window !== 'undefined' && localStorage.getItem('cakma_global_loudness_normalize') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const globalLoudnessNormalizeRef = useRef<boolean>(globalLoudnessNormalize);
-  globalLoudnessNormalizeRef.current = globalLoudnessNormalize;
-  const remoteAudioEqChainsRef = useRef<Map<string, {
-    ctx: AudioContext;
-    source: MediaStreamAudioSourceNode;
-    lowShelf: BiquadFilterNode;
-    highShelf: BiquadFilterNode;
-    compressor: DynamicsCompressorNode;
-    analyser: AnalyserNode;
-    normalizerGain: GainNode;
-    gain: GainNode;
-    normalizerEnabled: boolean;
-    currentNormGain: number;
-  }>>(new Map());
   const processedStreamRef = useRef<MediaStream | null>(null);
   const [inputSensitivity, setInputSensitivityState] = useState<number>(() => {
     const val = typeof window !== 'undefined' ? localStorage.getItem('dsp_inputSensitivity') : null;
@@ -2849,133 +2816,24 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const applyRemoteAudioEq = useCallback((peerId: string, eq: UserAudioEq) => {
-    const audio = audioElementsRef.current.get(peerId);
-    if (!audio || !audio.srcObject) return;
-    const stream = audio.srcObject as MediaStream;
-    const effectiveNormalize = Boolean(eq.normalize || globalLoudnessNormalizeRef.current);
-    const isDefault = eq.bass === 0 && eq.treble === 0 && !effectiveNormalize;
-    const userVol = userVolumes[peerId] ?? 100;
-    const isLocallyMuted = userLocalMutes[peerId] ?? false;
-    const targetGain = isDeafened || isLocallyMuted ? 0 : Math.min(2, Math.max(0, (outputVolume / 100) * (userVol / 100)));
-
-    if (isDefault) {
-      const existing = remoteAudioEqChainsRef.current.get(peerId);
-      if (existing) {
-        try {
-          existing.source.disconnect();
-          existing.ctx.close().catch(() => {});
-        } catch {}
-        remoteAudioEqChainsRef.current.delete(peerId);
-      }
-      audio.muted = isDeafened || isLocallyMuted;
-      return;
-    }
-
-    try {
-      let chain = remoteAudioEqChainsRef.current.get(peerId);
-      if (!chain) {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx = new AudioCtx({ sampleRate: 48000 });
-        const source = ctx.createMediaStreamSource(stream);
-        const lowShelf = ctx.createBiquadFilter();
-        lowShelf.type = 'lowshelf';
-        lowShelf.frequency.value = 200;
-        const highShelf = ctx.createBiquadFilter();
-        highShelf.type = 'highshelf';
-        highShelf.frequency.value = 3500;
-        const compressor = ctx.createDynamicsCompressor();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        const normalizerGain = ctx.createGain();
-        normalizerGain.gain.value = 1.0;
-        const gain = ctx.createGain();
-        source.connect(lowShelf);
-        lowShelf.connect(highShelf);
-        highShelf.connect(compressor);
-        compressor.connect(analyser);
-        analyser.connect(normalizerGain);
-        normalizerGain.connect(gain);
-        gain.connect(ctx.destination);
-        chain = {
-          ctx,
-          source,
-          lowShelf,
-          highShelf,
-          compressor,
-          analyser,
-          normalizerGain,
-          gain,
-          normalizerEnabled: effectiveNormalize,
-          currentNormGain: 1.0,
-        };
-        remoteAudioEqChainsRef.current.set(peerId, chain);
-      }
-      chain.lowShelf.gain.value = eq.bass;
-      chain.highShelf.gain.value = eq.treble;
-      chain.compressor.ratio.value = effectiveNormalize ? 4 : 1;
-      chain.compressor.threshold.value = effectiveNormalize ? -20 : 0;
-      chain.compressor.knee.value = effectiveNormalize ? 12 : 30;
-      chain.normalizerEnabled = effectiveNormalize;
-      if (!effectiveNormalize) {
-        chain.currentNormGain = 1.0;
-        chain.normalizerGain.gain.setTargetAtTime(1.0, chain.ctx.currentTime, 0.05);
-      }
-      chain.gain.gain.value = targetGain;
-      audio.muted = true;
-    } catch {}
-  }, [isDeafened, outputVolume, userVolumes, userLocalMutes]);
-
-  const setGlobalLoudnessNormalize = useCallback((enabled: boolean) => {
-    const nextVal = Boolean(enabled);
-    globalLoudnessNormalizeRef.current = nextVal;
-    setGlobalLoudnessNormalizeState(nextVal);
-    try {
-      localStorage.setItem('cakma_global_loudness_normalize', String(nextVal));
-    } catch {}
-    audioElementsRef.current.forEach((_audio, peerId) => {
-      const eq = userAudioEqRef.current[peerId] || { bass: 0, treble: 0, normalize: false };
-      applyRemoteAudioEq(peerId, eq);
-    });
-  }, [applyRemoteAudioEq]);
-
-  useEffect(() => {
-    let timeDomainBuf: Float32Array<ArrayBuffer> | null = null;
-    const timer = window.setInterval(() => {
-      if (remoteAudioEqChainsRef.current.size === 0) return;
-      remoteAudioEqChainsRef.current.forEach((chain) => {
-        if (!chain.normalizerEnabled) return;
-        try {
-          if (!timeDomainBuf || timeDomainBuf.length !== chain.analyser.fftSize) {
-            timeDomainBuf = new Float32Array(new ArrayBuffer(chain.analyser.fftSize * 4));
-          }
-          chain.analyser.getFloatTimeDomainData(timeDomainBuf);
-          const rms = computeRmsFromTimeDomain(timeDomainBuf);
-          const nextGain = computeNormalizerGain(chain.currentNormGain, rms);
-          chain.currentNormGain = nextGain;
-          chain.normalizerGain.gain.setTargetAtTime(nextGain, chain.ctx.currentTime, 0.08);
-        } catch {}
-      });
-    }, 150);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  const setUserAudioEq = useCallback((userId: string, patch: Partial<UserAudioEq>) => {
-    setUserAudioEqState((prev) => {
-      const current = prev[userId] || { bass: 0, treble: 0, normalize: false };
-      const updated: UserAudioEq = {
-        bass: patch.bass !== undefined ? Math.max(-12, Math.min(12, patch.bass)) : current.bass,
-        treble: patch.treble !== undefined ? Math.max(-12, Math.min(12, patch.treble)) : current.treble,
-        normalize: patch.normalize !== undefined ? patch.normalize : current.normalize,
-      };
-      const next = { ...prev, [userId]: updated };
-      try { localStorage.setItem('cakma_user_audio_eq', JSON.stringify(next)); } catch {}
-      applyRemoteAudioEq(userId, updated);
-      return next;
-    });
-  }, [applyRemoteAudioEq]);
+  const {
+    userAudioEq,
+    userAudioEqRef,
+    setUserAudioEqState,
+    setUserAudioEq,
+    globalLoudnessNormalize,
+    globalLoudnessNormalizeRef,
+    setGlobalLoudnessNormalize,
+    applyRemoteAudioEq,
+    disposeRemoteAudioEqChain,
+    disposeAllRemoteAudioEqChains,
+  } = useRemoteAudioEqNormalizer({
+    audioElementsRef,
+    outputVolume,
+    isDeafened,
+    userVolumes,
+    userLocalMutes,
+  });
 
   const setInputVolume = (val: number) => {
     setInputVolumeState(val);
@@ -3057,13 +2915,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       try { chs.move?.close(); } catch {}
     });
     remoteDataChannelsRef.current.clear();
-    remoteAudioEqChainsRef.current.forEach((chain) => {
-      try {
-        chain.source.disconnect();
-        chain.ctx.close().catch(() => {});
-      } catch {}
-    });
-    remoteAudioEqChainsRef.current.clear();
+    disposeAllRemoteAudioEqChains();
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
@@ -3297,11 +3149,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             track.detach();
             audioElementsRef.current.get(peerId)?.remove();
             audioElementsRef.current.delete(peerId);
-            const eqChain = remoteAudioEqChainsRef.current.get(peerId);
-            if (eqChain) {
-              try { eqChain.source.disconnect(); eqChain.ctx.close().catch(() => {}); } catch {}
-              remoteAudioEqChainsRef.current.delete(peerId);
-            }
+            disposeRemoteAudioEqChain(peerId);
           } else if (track.kind === Track.Kind.Video) {
             setRemoteScreenStreams((prev) => {
               const next = new Map(prev);
@@ -5114,6 +4962,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     challengeToken?: string;
     challengeAnswer?: string;
     honeypot?: string;
+    acceptedTerms?: boolean;
+    acceptedTermsVersion?: string;
   }): Promise<{ success: boolean; error?: string }> => {
     return new Promise((resolve) => {
       if (!socket) return resolve({ success: false, error: 'Sunucuya bağlı değil.' });
@@ -7394,6 +7244,40 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, [socket, cleanupWebRTC]);
 
+  const acceptLatestTerms = useCallback(
+    async (version = '1.1.0'): Promise<{ success: boolean; error?: string }> => {
+      try {
+        const res = await authFetch(currentServerHost, '/api/account/accept-terms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version }),
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          acceptedTermsVersion?: string;
+          acceptedTermsAt?: string;
+          error?: string;
+        };
+        if (!res.ok || !json.ok) {
+          return { success: false, error: json.error || 'Sözleşme onayı kaydedilemedi.' };
+        }
+        setCurrentUser((prev) =>
+          prev
+            ? {
+                ...prev,
+                acceptedTermsVersion: json.acceptedTermsVersion || version,
+                acceptedTermsAt: json.acceptedTermsAt || new Date().toISOString(),
+              }
+            : prev
+        );
+        return { success: true };
+      } catch {
+        return { success: false, error: 'Sunucuya bağlanılamadı.' };
+      }
+    },
+    [currentServerHost]
+  );
+
   const markChannelRead = useCallback((channelId: string, lastMessageId: string) => {
     if (!channelId || !lastMessageId) return;
     if (readCursorsRef.current[channelId] === lastMessageId) return;
@@ -8363,6 +8247,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       confirmEmailChange,
       revokeSingleSession,
       deleteMyAccount,
+      acceptLatestTerms,
       blockUser,
       unblockUser,
       timeoutMember,
@@ -8596,6 +8481,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       confirmEmailChange,
       revokeSingleSession,
       deleteMyAccount,
+      acceptLatestTerms,
       markChannelRead,
       offlineQueue,
       pendingJumpTarget,
@@ -8642,6 +8528,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       confirmEmailChange,
       revokeSingleSession,
       deleteMyAccount,
+      acceptLatestTerms,
       connectToDedicatedServer,
       resetToMainServer,
     }),
@@ -8669,6 +8556,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       confirmEmailChange,
       revokeSingleSession,
       deleteMyAccount,
+      acceptLatestTerms,
       connectToDedicatedServer,
       resetToMainServer,
     ]

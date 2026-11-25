@@ -6,14 +6,14 @@ import {
 } from '../../data/legalDocuments';
 
 describe('legalDocuments', () => {
-  it('contains all 5 Turkish legal documents with non-empty sections', () => {
+  it('contains all 5 comprehensive Turkish legal documents with detailed sections', () => {
     expect(LEGAL_DOCUMENTS_VERSION).toBe('1.1.0');
     const ids = LEGAL_DOCUMENTS.map((d) => d.id);
     expect(ids).toEqual(['terms', 'privacy', 'kvkk', 'community', 'cookies']);
 
     for (const doc of LEGAL_DOCUMENTS) {
       expect(doc.title.length).toBeGreaterThan(5);
-      expect(doc.sections.length).toBeGreaterThanOrEqual(2);
+      expect(doc.sections.length).toBeGreaterThanOrEqual(6);
       for (const sec of doc.sections) {
         expect(sec.heading.length).toBeGreaterThan(2);
         expect(sec.paragraphs.length).toBeGreaterThanOrEqual(1);

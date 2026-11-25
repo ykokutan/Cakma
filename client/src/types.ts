@@ -75,6 +75,8 @@ export interface User {
   xp?: number;
   twoFactorEnabled?: boolean;
   e2eePublicKey?: string;
+  acceptedTermsAt?: string;
+  acceptedTermsVersion?: string;
 }
 
 export interface EncryptedAttachmentMeta {
@@ -763,4 +765,24 @@ export interface RemoteAssistState {
   hostMonitors: RemoteMonitorInfo[];
   selectedMonitorIndex: number | null;
   inputTransport: 'datachannel' | 'socket';
+}
+
+export type ContentReportCategory = 'harassment' | 'spam' | 'illegal' | 'malware' | 'other';
+export type ContentReportStatus = 'open' | 'resolved' | 'dismissed';
+
+export interface ContentReport {
+  id: string;
+  reporterUsername: string;
+  targetUsername: string;
+  serverId?: string;
+  channelId?: string;
+  messageId?: string;
+  messageExcerpt?: string;
+  category: ContentReportCategory;
+  reason: string;
+  status: ContentReportStatus;
+  createdAt: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
 }

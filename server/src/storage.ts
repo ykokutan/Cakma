@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule } from './types.js';
+import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule, ContentReport } from './types.js';
 import { ShardedMessageStore, getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages } from './messageStore.js';
 import { SqliteStore } from './sqliteStore.js';
 
@@ -873,4 +873,14 @@ export function loadServerAutomations(): ServerAutomationRule[] {
 
 export function saveServerAutomations(rules: ServerAutomationRule[]): void {
   scheduleWriteJson('server-automations.json', rules);
+}
+
+// 17. CONTENT & 5651 COMPLIANCE REPORTS
+export function loadContentReports(): ContentReport[] {
+  return safeReadJson<ContentReport[]>('reports.json', []);
+}
+
+export function saveContentReports(reports: ContentReport[]): void {
+  const bounded = Array.isArray(reports) ? reports.slice(0, 1000) : [];
+  scheduleWriteJson('reports.json', bounded);
 }

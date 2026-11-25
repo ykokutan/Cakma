@@ -32,6 +32,8 @@ export interface AuthContextValue {
     challengeToken?: string;
     challengeAnswer?: string;
     honeypot?: string;
+    acceptedTerms?: boolean;
+    acceptedTermsVersion?: string;
   }) => Promise<{ success: boolean; error?: string }>;
   requestRegisterChallenge: () => Promise<{
     token: string;
@@ -63,6 +65,7 @@ export interface AuthContextValue {
     confirmText: string,
     totpCode?: string
   ) => Promise<{ success: boolean; error?: string }>;
+  acceptLatestTerms: (version?: string) => Promise<{ success: boolean; error?: string }>;
   connectToDedicatedServer: (hostWithPort: string) => void;
   resetToMainServer: () => void;
 }

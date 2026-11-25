@@ -37,6 +37,8 @@ import { EncryptedAttachmentView } from './chat/EncryptedAttachmentView';
 import { SmartSearchFilterBar } from './chat/SmartSearchFilterBar';
 import { EmojiAndStickerPicker } from './chat/EmojiAndStickerPicker';
 import { ImagePreSendModal } from './chat/ImagePreSendModal';
+import { evaluatePeerKeyTrust, acknowledgePeerKeyChange } from '../utils/e2eeTofu';
+import { ReportContentModal } from './ReportContentModal';
 
 const VoiceRoomArea = lazy(() => import('./VoiceRoomArea').then((m) => ({ default: m.VoiceRoomArea })));
 const FriendsDashboard = lazy(() => import('./FriendsDashboard').then((m) => ({ default: m.FriendsDashboard })));
@@ -129,6 +131,7 @@ import {
   RefreshCw,
   KeyRound,
   SlidersHorizontal,
+  Flag,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -441,6 +444,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isEventsModalOpen, setIsEventsModalOpen] = useState(false);
   const [visibleMsgCount, setVisibleMsgCount] = useState(80);
   const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
+  const [tofuAckTick, setTofuAckTick] = useState(0);
+  const [reportTarget, setReportTarget] = useState<{
+    targetUsername: string;
+    serverId?: string;
+    channelId?: string;
+    messageId?: string;
+    messagePreview?: string;
+  } | null>(null);
   const [activeUploads, setActiveUploads] = useState<
     { id: string; name: string; progress: number; controller: AbortController }[]
   >([]);
@@ -941,6 +952,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )?.e2eePublicKey ||
       friends.find((f) => dmPartnerLower && f.username.toLowerCase() === dmPartnerLower)?.e2eePublicKey
     : undefined;
+  const dmPeerKeyTrust = (() => {
+    void tofuAckTick;
+    return isDM && dmPartner?.username && dmPeerPublicKey
+      ? evaluatePeerKeyTrust(dmPartner.username, dmPeerPublicKey)
+      : { status: 'missing' as const };
+  })();
 
   const canManageChannels = Boolean(
     !isDirectSpace &&
@@ -1858,6 +1875,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
       </header>
+
+      {isDM && dmPartner && dmPeerPublicKey && dmPeerKeyTrust.status === 'changed' && (
+        <div className="px-4 py-2 bg-amber-500/15 border-b border-amber-400/35 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-100 shrink-0 z-10">
+          <div className="flex items-center gap-2 min-w-0">
+            <ShieldAlert className="w-4 h-4 text-amber-300 shrink-0" />
+            <span className="truncate">
+              <strong>E2EE Güvenlik Uyarısı:</strong> @{dmPartner.username} kullanıcısının şifreleme anahtarı değişti.
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSafetyModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white transition"
+            >
+              Güvenlik Numarası
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                acknowledgePeerKeyChange(dmPartner.username, dmPeerPublicKey);
+                setTofuAckTick((v) => v + 1);
+                appToast(`@${dmPartner.username} yeni E2EE anahtarı onaylandı.`, 'success');
+              }}
+              className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-[11px] font-bold text-black transition"
+            >
+              Yeni Anahtarı Onayla
+            </button>
+          </div>
+        </div>
+      )}
 
       {(showSmartFilters || searchQuery.trim().length > 0) && (
         <SmartSearchFilterBar
@@ -2820,6 +2868,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                               <span>Düzenle</span>
+                            </button>
+                          )}
+                          {!isMe && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const rawPreview = (msg.content || '').trim();
+                                const messagePreview =
+                                  rawPreview.startsWith('E2EE:') || rawPreview.startsWith('GE2EE:')
+                                    ? '[Uçtan Uca Şifreli Mesaj]'
+                                    : rawPreview.slice(0, 140);
+                                setReportTarget({
+                                  targetUsername: msg.author.username,
+                                  serverId: isDirectSpace ? undefined : activeServer?.id,
+                                  channelId: activeChannel?.id,
+                                  messageId: msg.id,
+                                  ...(messagePreview ? { messagePreview } : {}),
+                                });
+                                setOpenActionMsgId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-rose-500/20 text-left text-rose-300"
+                            >
+                              <Flag className="w-3.5 h-3.5" />
+                              <span>{t(language, 'reportActionMenuLabel')}</span>
                             </button>
                           )}
                           {(isMe || isUserServerOwner(currentUser, activeServer)) && (
@@ -4159,6 +4231,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           }
           void uploadSingleFile(processedFile);
         }}
+      />
+
+      <ReportContentModal
+        isOpen={Boolean(reportTarget)}
+        onClose={() => setReportTarget(null)}
+        targetUsername={reportTarget?.targetUsername || ''}
+        serverId={reportTarget?.serverId}
+        channelId={reportTarget?.channelId}
+        messageId={reportTarget?.messageId}
+        messagePreview={reportTarget?.messagePreview}
       />
     </main>
   );

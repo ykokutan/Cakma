@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import QRCode from 'qrcode';
+import React, { useContext, useEffect, useState } from 'react';
 import { QrCode, RefreshCw, Copy, Check, KeyRound, X, Send, Smartphone } from 'lucide-react';
+import { AuthContext } from '../../context/AuthContext';
 import { authFetch, resolveBackendBaseUrl } from '../../utils/authFetch';
 import { exportEncryptedE2eeBackup, importEncryptedE2eeBackup } from '../../utils/e2ee';
+import { t } from '../../utils/i18n';
 
 interface E2eeQrPairingModalProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export const E2eeQrPairingModal: React.FC<E2eeQrPairingModalProps> = ({
   currentServerHost,
   onKeyImported,
 }) => {
+  const language = useContext(AuthContext)?.language || 'tr';
   const [tab, setTab] = useState<'receive' | 'send'>('receive');
 
   // Receive (New Device) state
@@ -82,7 +84,9 @@ export const E2eeQrPairingModal: React.FC<E2eeQrPairingModalProps> = ({
         code: json.code,
         pin,
       });
-      const dataUrl = await QRCode.toDataURL(qrPayload, {
+      const qrModule = await import('qrcode');
+      const QRCodeLib = qrModule.default ?? qrModule;
+      const dataUrl = await QRCodeLib.toDataURL(qrPayload, {
         width: 200,
         margin: 1,
         color: { dark: '#0f172a', light: '#f8fafc' },
@@ -261,13 +265,13 @@ export const E2eeQrPairingModal: React.FC<E2eeQrPairingModalProps> = ({
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
             <QrCode className="w-4 h-4" />
-            <span>QR / Kod ile Cihaz Eşleştirme (E2EE)</span>
+            <span>{t(language, 'qrPairingTitle')} (E2EE)</span>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
-            aria-label="Kapat"
+            aria-label={t(language, 'close')}
           >
             <X className="w-4 h-4" />
           </button>
@@ -284,7 +288,7 @@ export const E2eeQrPairingModal: React.FC<E2eeQrPairingModalProps> = ({
             }`}
           >
             <Smartphone className="w-3.5 h-3.5" />
-            <span>Yeni Cihaz (QR Göster)</span>
+            <span>{t(language, 'qrTabReceive')}</span>
           </button>
           <button
             type="button"
@@ -296,7 +300,7 @@ export const E2eeQrPairingModal: React.FC<E2eeQrPairingModalProps> = ({
             }`}
           >
             <KeyRound className="w-3.5 h-3.5" />
-            <span>Mevcut Cihaz (Gönder)</span>
+            <span>{t(language, 'qrTabSend')}</span>
           </button>
         </div>
 

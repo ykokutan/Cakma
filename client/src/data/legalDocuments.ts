@@ -22,44 +22,89 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     id: 'terms',
     title: 'Kullanıcı Sözleşmesi ve Kullanım Koşulları',
     shortTitle: 'Kullanıcı Sözleşmesi',
-    subtitle: 'Çakma ses, görüntülü iletişim ve topluluk platformunun kullanım şartları.',
+    subtitle: 'Çakma sesli, görüntülü iletişim, ekran paylaşımı ve topluluk platformu kullanım şartları.',
     sections: [
       {
-        heading: '1. Taraflar ve Kapsam',
+        heading: '1. Taraflar, Kapsam ve Tanımlar',
         paragraphs: [
-          'Bu Kullanıcı Sözleşmesi ("Sözleşme"), Çakma web ve masaüstü uygulamasını ("Platform") kullanan her bireysel kullanıcı ("Kullanıcı") için geçerlidir. Platformda hesap oluşturduğunuzda veya sunucu bağlantısı üzerinden oturum açtığınızda bu Sözleşme\'yi, Gizlilik Politikası\'nı ve Topluluk Kuralları\'nı kabul etmiş sayılırsınız.',
-        ],
-      },
-      {
-        heading: '2. Yaş Sınırı ve Hesap Güvenliği',
-        paragraphs: [
-          'Platformu kullanabilmek için en az 13 yaşında (veya ikamet ettiğiniz ülkedeki geçerli dijital rıza yaşında) olmanız gerekir. Doğru ve güncel e-posta bilgisi sağlamak, şifrenizi ve varsa iki adımlı doğrulama (2FA / Passkey) kurtarma kodlarınızı gizli tutmak sizin sorumluluğunuzdadır.',
+          'Bu Kullanıcı Sözleşmesi ("Sözleşme"), Çakma web istemcisi ve Tauri tabanlı masaüstü uygulaması ("Platform") ile Platform üzerinden hesap oluşturan veya bağlantılı sunuculara erişen gerçek kişi ("Kullanıcı") arasındaki hak ve yükümlülükleri düzenler.',
+          'Kayıt formunda onay kutusunu işaretleyerek hesap oluşturmanız anında işbu Sözleşme, Gizlilik Politikası, KVKK Aydınlatma Metni, Topluluk Kuralları ve Çerez Politikası elektronik ortamda yürürlüğe girer ve bağlayıcı nitelik kazanır.',
         ],
         bullets: [
-          'Bir hesap başka kişilere devredilemez veya kiralanamaz.',
-          'Hesabınızdan gerçekleştirilen yetkisiz erişim şüphesinde Ayarlar → Aktif Oturumlar bölümünden tüm oturumları sonlandırabilirsiniz.',
+          'Platform: Çakma istemci yazılımı, merkezi kimlik/mesajlaşma sunucusu ve isteğe bağlı ayrılmış ses/sohbet sunucu yazılımını ifade eder.',
+          'Topluluk Sunucusu: Kullanıcılar tarafından oluşturulan çoklu kanal, rol, bot, webhook ve ses odası barındıran sanal çalışma alanlarıdır.',
         ],
       },
       {
-        heading: '3. İletişim, Ekran Paylaşımı ve Uzaktan Yardım',
+        heading: '2. Yaş Sınırı, Ehliyet ve Hesap Güvenliği',
         paragraphs: [
-          'Çakma; metin sohbetleri, P2P / LiveKit SFU sesli ve görüntülü görüşmeler, yüksek çözünürlüklü ekran paylaşımı ve açık kullanıcı onayına bağlı Uzaktan Yardım (Remote Assist) özellikleri sunar.',
+          'Platformu kullanabilmek için en az 13 yaşında olmanız; reşit değilseniz yasal veli veya vasinizin açık onayıyla kayıt olmanız gerekir. Gerçeğe aykırı e-posta adresi bildirilmesi veya güvenlik doğrulamasını aşmaya yönelik otomasyon kullanımı hesap kapatma sebebidir.',
         ],
         bullets: [
-          'Uzaktan Yardım yalnızca paylaşım yapan kullanıcının açık onayıyla başlar ve klavye acil durdurma (Killswitch) kısayolu ile anında sonlandırılabilir.',
-          'Ekran paylaşımı ve ses kayıtlarında üçüncü kişilerin kişisel verilerini ve telif haklarını ihlal etmemek kullanıcının yükümlülüğündedir.',
+          'Kullanıcı, parolasını, TOTP iki adımlı doğrulama kurtarma kodlarını ve Passkey kimlik bilgisini korumakla bizzat yükümlüdür.',
+          'Tek hesap tek kişiye aittir; hesap satışı, kiralanması veya yetkisiz kişilere kullandırılması yasaktır.',
+          'Yetkisiz oturum tespit edildiğinde Kullanıcı, Ayarlar → Aktif Oturumlar üzerinden tüm cihaz oturumlarını anında iptal etmelidir.',
         ],
       },
       {
-        heading: '4. Fikri Mülkiyet ve Kullanıcı İçeriği',
+        heading: '3. Hizmet Kapsamı ve İletişim Araçları',
         paragraphs: [
-          'Sunuculara ve mesaj kanallarına yüklediğiniz içeriklerin mülkiyeti size aittir; ancak mesajların ilgili kanal veya özel sohbet katılımcılarına iletilmesi için gereken teknik işleme ve önbellekleme hakkını Platform\'a tanımış olursunuz.',
+          'Çakma; gerçek zamanlı metin sohbetleri, alt konular (Threads), duyuru ve forum kanalları, WebRTC P2P ve LiveKit SFU destekli sesli/görüntülü iletişim, ekran paylaşımı, ses tahtası ve dosya paylaşımı imkanları sunar.',
+        ],
+        bullets: [
+          'Platform kesintisiz %100 erişilebilirlik veya sıfır gecikme taahhüdü vermez; planlı bakım modunda geçici erişim kısıtlaması uygulanabilir.',
+          'Ek dosya yüklemelerinde güvenlik politikası gereği çalıştırılabilir uzantılar engellenir ve boyut limitleri sunucu yapılandırmasına göre uygulanır.',
         ],
       },
       {
-        heading: '5. Sorumluluk Reddi ve Hesap Feshi',
+        heading: '4. Uzaktan Yardım (Remote Assist) ve Masaüstü Yetkileri',
         paragraphs: [
-          'Platform "olduğu gibi" sunulur. Kullanıcı sözleşmesini veya Topluluk Kuralları\'nı ağır şekilde ihlal eden hesaplar yönetici kararıyla geçici olarak susturulabilir, uzaklaştırılabilir veya kapatılabilir. Dilediğiniz zaman Ayarlar → Hesap Güvenliği bölümünden hesabınızı ve kişisel kayıtlarınızı kalıcı olarak silebilirsiniz.',
+          'Uzaktan Yardım özelliği yalnızca paylaşım başlatan kullanıcının açık, adım adım onayı ve belirlediği izin kapsamı (Kontrol, Pano, Ekran Çizimi) dahilinde çalışır.',
+        ],
+        bullets: [
+          'Bağlantıyı paylaşan kullanıcı dilediği an duraklatma (Pause) veya acil durdurma (Killswitch) kısayolunu kullanarak uzaktan girişi kesebilir.',
+          'Platform, uzaktan kontrol sırasında kullanıcılar arasında gerçekleşen dosya, komut veya ekran işlemlerinden doğan veri kaybından veya üçüncü kişi zararlarından sorumlu tutulamaz.',
+        ],
+      },
+      {
+        heading: '5. Fikri Mülkiyet ve 5846 Sayılı FSEK Uyumluluğu',
+        paragraphs: [
+          'Çakma arayüzü, kaynak kodu, marka unsurları ve görsel tasarımları telif hakları kapsamında korunmaktadır. Kullanıcıların Platforma yüklediği mesaj, görsel, ses kaydı ve dosya içeriklerinin mülkiyeti yükleyen Kullanıcıya aittir.',
+        ],
+        bullets: [
+          'Kullanıcı, paylaştığı içeriklerin kanal üyelerine veya sohbet muhatabına iletilebilmesi, önizleme oluşturulabilmesi ve sunucu yedekleme/önbellekleme süreçlerinde işlenebilmesi için münhasır olmayan, ücretsiz teknik kullanım lisansı vermiş olur.',
+          'Üçüncü kişilere ait telif hakkı, marka veya ticari sırrı ihlal eden içeriklerin paylaşımından doğan tüm hukuki ve cezai sorumluluk paylaşan Kullanıcıya aittir.',
+        ],
+      },
+      {
+        heading: '6. Bağımsız (Dedicated) ve Topluluk Sunucularının Sorumluluğu',
+        paragraphs: [
+          'Platform altyapısında kullanıcılar tarafından kurulan topluluk sunucuları veya bağımsız barındırılan Dedicated Server örnekleri kendi yöneticileri tarafından idare edilir.',
+        ],
+        bullets: [
+          'Sunucu sahipleri ve moderatörleri; kanal izinleri, AutoMod kuralları, bot ve gelen webhook entegrasyonlarının yasalara uygun kullanımından sorumludur.',
+          'Bağımsız barındırılan özel sunuculara bağlanıldığında veriler ilgili sunucu sahibinin belirlediği depolama ortamına iletilir.',
+        ],
+      },
+      {
+        heading: '7. Yasaklı Kullanımlar, Moderasyon ve Hesap Feshi',
+        paragraphs: [
+          'Topluluk Kuralları\'nı veya yürürlükteki mevzuatı ihlal eden davranışlar tespit edildiğinde uyarı, geçici susturma (Timeout), sunucudan çıkarma (Kick), kalıcı yasaklama (Ban) veya sistem geneli hesap askıya alma uygulanabilir.',
+        ],
+        bullets: [
+          'Kullanıcı, Ayarlar → Hesap Güvenliği → Hesabımı Sil adımıyla hesabını dilediği zaman kendi iradesiyle kalıcı olarak kapatabilir.',
+        ],
+      },
+      {
+        heading: '8. Sorumluluk Sınırı ve Mücbir Sebepler',
+        paragraphs: [
+          'Platform "olduğu gibi" (as-is) sunulmaktadır. Doğal afet, siber saldırı, internet omurga kesintileri, elektrik arızaları ve yasal düzenleyici kararları gibi mücbir sebep hallerinden kaynaklanan kesintilerden dolayı Platform sorumlu tutulamaz.',
+        ],
+      },
+      {
+        heading: '9. Sözleşme Değişiklikleri, 5651 Uyumluluğu ve Uygulanacak Hukuk',
+        paragraphs: [
+          'Bu Sözleşme\'den doğabilecek tüm uyuşmazlıklarda Türkiye Cumhuriyeti kanunları (5651 sayılı Kanun, 6698 sayılı KVKK ve 6098 sayılı TBK dahil) uygulanır. Güncel sözleşme sürümü uygulama içi Hakkında ve Sürüm Geçmişi ekranlarından takip edilebilir.',
         ],
       },
     ],
@@ -68,38 +113,71 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     id: 'privacy',
     title: 'Gizlilik Politikası',
     shortTitle: 'Gizlilik Politikası',
-    subtitle: 'Verilerinizin nasıl işlendiği, şifrelendiği ve korunduğuna dair esaslar.',
+    subtitle: 'Verilerinizin toplanması, şifrelenmesi, saklanması ve korunmasına ilişkin kapsamlı esaslar.',
     sections: [
       {
-        heading: '1. Toplanan Hesap ve İletişim Verileri',
+        heading: '1. Kapsam ve Gizlilik Yaklaşımı',
         paragraphs: [
-          'Hesap oluşturma ve kimlik doğrulama süreçlerinde yalnızca hizmetin çalışması için gerekli veriler işlenir:',
+          'Çakma, minimum veri toplama (data minimization) ve istemci tarafı uçtan uca şifreleme prensipleriyle tasarlanmıştır. Verileriniz hiçbir şekilde üçüncü taraf reklam ağlarına satılmaz veya profilleme amacıyla paylaşılmaz.',
+        ],
+      },
+      {
+        heading: '2. İşlenen Veri Kategorileri',
+        paragraphs: [
+          'Hizmetin çalışabilmesi ve hesap güvenliğinin sağlanması için yalnızca aşağıdaki teknik ve profil verileri işlenir:',
         ],
         bullets: [
-          'Kullanıcı adı, e-posta adresi, şifre özeti (scrypt / güvenli tuzlanmış hash) ve profil tercihleri (avatar, bio, durum mesajı).',
-          'Üye olunan sunucular, kanal mesajları, tepkiler, yüklenen dosya ekleri ve denetim/güvenlik oturumu kayıtları (IP / User-Agent oturum güvenliği için).',
+          'Kimlik ve Hesap Bilgileri: Kullanıcı adı, e-posta adresi, scrypt tuzlanmış parola özeti, avatar, banner ve biyografi bilgileri.',
+          'İletişim ve Topluluk Verileri: Sunucu üyelikleri, rol/izin atamaları, şifrelenmemiş genel kanal mesajları, tepkiler, anket oyları ve yüklenen ek dosyalar.',
+          'Güvenlik ve Denetim Kayıtları: Yeni cihaz IP bildirimleri, aktif oturum User-Agent bilgisi, 2FA/Passkey doğrulama kayıtları ve sunucu denetim günlüğü olayları.',
         ],
       },
       {
-        heading: '2. Uçtan Uca Şifreleme (E2EE) ve Sıfır Sunucu Bilgisi',
+        heading: '3. Uçtan Uca Şifreleme (E2EE) ve Sıfır Sunucu Bilgisi',
         paragraphs: [
-          '1\'e 1 Direkt Mesajlarda ve Grup DM\'lerde Uçtan Uca Şifreleme (E2EE) etkinleştirildiğinde mesaj içerikleri ve şifreli dosya ekleri cihazınızdan çıkmadan önce WebCrypto P-256 ECDH ve AES-256-GCM ile şifrelenir.',
+          '1\'e 1 Direkt Mesajlarda (`[E2EE:v1]`) ve Grup DM\'lerde (`[GE2EE:v1]`) E2EE açıkken metinler ve dosya ekleri cihazınızdan ayrılmadan önce WebCrypto P-256 ECDH ve AES-256-GCM algoritmalarıyla şifrelenir.',
         ],
         bullets: [
-          'Özel şifreleme anahtarlarınız yalnızca kendi cihazınızda (IndexedDB) tutulur; sunucu tarafından okunamaz.',
-          'QR Kod ile Cihaz Eşleştirme (/api/e2ee/pairing) akışında yalnızca şifrelenmiş yedek paketi 120 saniyeliğine bellekte tutulur, teslim sonrası tek kullanımlık olarak derhal silinir ve PIN sunucuya hiç gönderilmez.',
+          'Özel anahtarlar yalnızca tarayıcı veya masaüstü uygulamasının yerel IndexedDB (`cakma_e2ee_v2`) alanında saklanır; sunucu tarafında düz metin veya özel anahtar bulunmaz.',
+          'Cihazlar arası QR Kod Eşleştirme (`/api/e2ee/pairing/*`) sırasında istemci PIN kodu sunucuya gönderilmez; yalnızca istemci tarafında PBKDF2 + AES-GCM ile şifrelenmiş yedek en fazla 120 saniye RAM\'de tutulur ve ilk okumada kalıcı olarak silinir.',
         ],
       },
       {
-        heading: '3. Sesli, Görüntülü ve Ekran Yayını Trafiği',
+        heading: '4. Sesli/Görüntülü Görüşme ve Ekran Paylaşımı Trafiği',
         paragraphs: [
-          'Sesli görüşme ve ekran paylaşımı akışları DTLS/SRTP ile şifreli WebRTC bağlantısı veya LiveKit SFU medya aktarıcısı üzerinden iletilir. Siz yerel kayıt özelliğiyle bilerek kayıt başlatmadıkça sunucular ses veya video akışını arşivlemez.',
+          'Gerçek zamanlı ses, kamera ve ekran yayını paketleri WebRTC DTLS/SRTP şifrelemesi ile doğrudan eşler arası (P2P) veya sunucu tabanlı LiveKit SFU medya aktarıcısı üzerinden geçirilir.',
+        ],
+        bullets: [
+          'Kullanıcının kendi cihazında yerel ses kaydı başlatması haricinde sunucular sesli veya görüntülü görüşmeleri otomatik olarak kaydetmez.',
+          'TURN/STUN aktarımında yalnızca ICE bağlantı aday IP bilgileri oturum süresince işlenir.',
         ],
       },
       {
-        heading: '4. Veri Saklama ve Hesap Silme',
+        heading: '5. Veri Saklama Süreleri ve Otomatik Temizlik',
         paragraphs: [
-          'Hesap sildiğinizde hesap kimlik bilgileriniz, oturum belirteçleriniz, arkadaşlık istekleriniz ve profil verileriniz sistemden kaldırılır. Üçüncü taraf reklam veya takip aracıyla veri paylaşımı yapılmaz.',
+          'Veriler yasal zorunluluklar ve hizmet gereksinimleriyle orantılı süreler boyunca saklanır:',
+        ],
+        bullets: [
+          'Mesaj ve ek dosyalar, kanal sahibi veya moderatör tarafından silinene ya da kullanıcı hesabını kapatana kadar saklanır; sahipsiz yüklemeler arka plan temizleyicisiyle periyodik olarak temizlenir.',
+          'QR E2EE eşleştirme verileri en fazla 120 saniye, OTP doğrulama kodları kısa ömürlü TTL süresi dolduğunda otomatik imha edilir.',
+        ],
+      },
+      {
+        heading: '6. Üçüncü Taraf Hizmetler ve Alt İşleyenler',
+        paragraphs: [
+          'Platform temel olarak kendi barındırılan altyapı üzerinde çalışır. E-posta OTP doğrulamaları yapılandırılmış SMTP/Mail Relay üzerinden iletilir; harici bağlantı önizlemeleri SSRF korumalı sunucu vekili aracılığıyla yalnızca URL başlık bilgisi çeker.',
+        ],
+      },
+      {
+        heading: '7. Çocukların Gizliliği',
+        paragraphs: [
+          '13 yaş altındaki çocuklardan bilerek kişisel veri toplanmaz. Ebeveyn veya yasal vasinin bildirimi üzerine ilgili yaş sınırının altındaki hesaplar inceleme sonrası derhal sonlandırılır.',
+        ],
+      },
+      {
+        heading: '8. Veri Sahibi Hakları ve Hesap Silme',
+        paragraphs: [
+          'Kullanıcılar istedikleri anda sohbet geçmişlerini `.md`/`.json` olarak dışa aktarabilir, Şifreli E2EE Anahtar Yedeği indirebilir ve Ayarlar → Hesap Güvenliği üzerinden hesaplarını kalıcı olarak silebilir.',
         ],
       },
     ],
@@ -108,30 +186,71 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     id: 'kvkk',
     title: 'KVKK Aydınlatma Metni (6698 Sayılı Kanun)',
     shortTitle: 'KVKK Aydınlatma',
-    subtitle: '6698 sayılı Kişisel Verilerin Korunması Kanunu kapsamında veri sahibi hakları.',
+    subtitle: '6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") m.10 uyarınca aydınlatma beyanı.',
     sections: [
       {
-        heading: '1. Veri Sorumlusu ve İşleme Amacı',
+        heading: '1. Veri Sorumlusunun Kimliği',
         paragraphs: [
-          '6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") uyarınca kişisel verileriniz; üyelik işlemlerinin yürütülmesi, kimlik ve hesap güvenliğinin (OTP, 2FA, Passkey, yeni IP uyarısı) sağlanması, gerçek zamanlı ses/sohbet iletişiminin iletilmesi ve kötüye kullanımın önlenmesi amaçlarıyla sınırlı olarak işlenmektedir.',
+          '6698 sayılı Kişisel Verilerin Korunması Kanunu uyarınca kişisel verileriniz, Çakma Platformu sunucu işletmecisi/veri sorumlusu tarafından aşağıda açıklanan kapsam ve hukuki sebeplerle sınırlı olarak işlenmektedir.',
         ],
       },
       {
-        heading: '2. Kişisel Verilerin Toplanma Yöntemi ve Hukuki Sebepleri',
+        heading: '2. İşlenen Kişisel Veri Kategorileri',
         paragraphs: [
-          'Verileriniz Platform arayüzleri ve oturum istekleri üzerinden elektronik ortamda toplanır ve KVKK m. 5/2-c (bir sözleşmenin kurulması veya ifası), m. 5/2-ç (hukuki yükümlülük) ve m. 5/2-f (temel hak ve özgürlüklere zarar vermemek kaydıyla meşru menfaat) hukuki sebeplerine dayanılarak işlenir.',
-        ],
-      },
-      {
-        heading: '3. KVKK Madde 11 Kapsamındaki Haklarınız',
-        paragraphs: [
-          'Kişisel veri sahibi olarak aşağıdaki haklara sahipsiniz:',
+          'Platformun kullanımı sırasında kimlik doğrulama ve iletişim amacıyla şu veri kategorileri işlenir:',
         ],
         bullets: [
-          'Kişisel verilerinizin işlenip işlenmediğini öğrenme ve işlenmişse buna ilişkin bilgi talep etme,',
-          'Verilerin işlenme amacını ve amacına uygun kullanılıp kullanılmadığını öğrenme,',
-          'Eksik veya yanlış işlenmiş verilerin düzeltilmesini isteme,',
-          'KVKK m. 7 şartları çerçevesinde kişisel verilerin silinmesini veya yok edilmesini isteme (uygulama içi Ayarlar → Hesap Güvenliği → Hesabımı Sil üzerinden doğrudan kullanılabilir).',
+          'Kimlik ve İletişim Verisi: Kullanıcı adı, sunucu içi takma ad, e-posta adresi.',
+          'İşlem Güvenliği Verisi: Parola kriptografik özeti (scrypt), oturum token tanımlayıcıları, giriş IP adresi, tarayıcı/cihaz bilgisi, 2FA/Passkey doğrulama kayıtları ve denetim logları.',
+          'Görsel ve İşitsel İletişim Verisi: Kullanıcı tarafından paylaşılan profil/sunucu görselleri, yüklenen medya ekleri ve isteğe bağlı anlık WebRTC medya akışları.',
+        ],
+      },
+      {
+        heading: '3. Kişisel Verilerin İşlenme Amaçları',
+        paragraphs: [
+          'Toplanan kişisel veriler aşağıdaki belirli, açık ve meşru amaçlar doğrultusunda işlenir:',
+        ],
+        bullets: [
+          'Üyelik kaydı oluşturma, giriş güvenliğini sağlama ve şifre sıfırlama/OTP süreçlerini yürütme,',
+          'Sunucu kanalları, direkt mesajlaşma, arkadaşlık sistemi ve sesli odaların teknik işleyişini sağlama,',
+          'Spam, bot saldırıları, yetkisiz erişim (yeni IP tespiti) ve kural ihlallerini önleme,',
+          'Mevzuattan doğan bilgi saklama ve yetkili mercilere bildirim yükümlülüklerini yerine getirme.',
+        ],
+      },
+      {
+        heading: '4. Toplama Yöntemi ve Hukuki Sebepler (KVKK m.5)',
+        paragraphs: [
+          'Verileriniz kayıt ekranı, WebSocket/HTTP oturum istekleri ve kullanıcı ayar formları aracılığıyla tamamen veya kısmen otomatik yollarla toplanmaktadır.',
+        ],
+        bullets: [
+          'KVKK m. 5/2-c: Sözleşmenin kurulması veya ifasıyla doğrudan doğruya ilgili olması,',
+          'KVKK m. 5/2-ç: Veri sorumlusunun hukuki yükümlülüğünü yerine getirebilmesi için zorunlu olması,',
+          'KVKK m. 5/2-f: İlgili kişinin temel hak ve özgürlüklerine zarar vermemek kaydıyla, hesap güvenliği ve kötüye kullanımı önleme yönündeki meşru menfaatler.',
+        ],
+      },
+      {
+        heading: '5. Kişisel Verilerin Aktarılması',
+        paragraphs: [
+          'Kişisel verileriniz pazarlama veya veri ticareti amacıyla üçüncü kişilere aktarılmaz. Yalnızca kendi seçtiğiniz iletişim muhataplarıyla paylaşılan içerikler ilgili sunucu/sohbet katılımcılarına iletilir ve e-posta OTP gönderimleri için yetkili mail aktarım sunucusuna sınırlı aktarım yapılır.',
+        ],
+      },
+      {
+        heading: '6. Saklama, İmha ve Alınan Teknik Tedbirler',
+        paragraphs: [
+          'Veri güvenliği için tuzlanmış scrypt parola karma algoritması, HTTPS/WSS şifreli aktarım, HttpOnly oturum çerezleri, SQLite WAL atomik depolama, hız sınırlamaları (rate limit) ve istemci tarafı P-256 + AES-256-GCM E2EE mekanizmaları uygulanmaktadır.',
+        ],
+      },
+      {
+        heading: '7. İlgili Kişinin KVKK Madde 11 Kapsamındaki Hakları',
+        paragraphs: [
+          'KVKK\'nın 11. maddesi uyarınca veri sorumlusu sunucu yöneticisine başvurarak şu haklarınızı kullanabilirsiniz:',
+        ],
+        bullets: [
+          'Kişisel verinizin işlenip işlenmediğini öğrenme ve işlenmişse bilgi talep etme,',
+          'İşlenme amacını ve amaca uygun kullanılıp kullanılmadığını öğrenme,',
+          'Eksik veya yanlış işlenmiş verilerin düzeltilmesini ve aktarıldığı taraflara bildirilmesini isteme,',
+          'KVKK m. 7 çerçevesinde silinmesini veya yok edilmesini isteme (uygulama içi Ayarlar → Hesap Güvenliği → Hesabımı Sil üzerinden anında işlem yapılabilir),',
+          'Kanuna aykırı işleme sebebiyle zarara uğramanız hâlinde zararın giderilmesini talep etme.',
         ],
       },
     ],
@@ -140,24 +259,57 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     id: 'community',
     title: 'Topluluk Kuralları ve İçerik Politikası',
     shortTitle: 'Topluluk Kuralları',
-    subtitle: 'Tüm sunucularda, ses odalarında ve sohbetlerde uyulması gereken davranış ilkeleri.',
+    subtitle: 'Tüm sunucular, sesli odalar, sahne kanalları ve özel mesajlarda uyulması zorunlu davranış ilkeleri.',
     sections: [
       {
-        heading: '1. Saygılı İletişim ve Taciz Yasağı',
+        heading: '1. Temel Saygı ve Topluluk Güvenliği İlkesi',
         paragraphs: [
-          'Kullanıcılara yönelik tehdit, hakaret, nefret söylemi, ısrarlı taciz (stalking), özel hayatın gizliliğini ihlal eden ifşaat (doxxing) ve kimliğe bürünme kesinlikle yasaktır.',
+          'Çakma topluluklarının güvenli ve kapsayıcı kalması için tüm katılımcıların diğer kullanıcılara saygılı davranması esastır. Farklı görüşler hakaret veya yıldırma gerekçesi yapılamaz.',
         ],
       },
       {
-        heading: '2. Zararlı Dosya, Spam ve Kötüye Kullanım',
+        heading: '2. Taciz, Nefret Söylemi ve İfşa (Doxxing) Yasağı',
         paragraphs: [
-          'Platforma zararlı yazılım (çalıştırılabilir zararlı dosyalar), kimlik avı (phishing) bağlantıları, otomatik spam mesajları veya diğer kullanıcıların bağlantısını bozmaya yönelik yük üretmek yasaktır. Sunucularda AutoMod kuralları, yavaş mod ve hız sınırları bu nedenle aktif olabilir.',
+          'Aşağıdaki davranışlar hiçbir koşulda tolere edilmez:',
+        ],
+        bullets: [
+          'Kullanıcılara yönelik tehdit, şantaj, ısrarlı takip (stalking) ve organize linç girişimleri,',
+          'Irk, din, cinsiyet, cinsel yönelim, engellilik veya etnik kökene dayalı nefret söylemi,',
+          'Başka kişilere ait adres, telefon numarası, kimlik veya özel görsellerin izinsiz paylaşılması (doxxing).',
         ],
       },
       {
-        heading: '3. Yaptırımlar ve Sunucu Moderasyonu',
+        heading: '3. Yasa Dışı İçerik Konusunda Sıfır Tolerans',
         paragraphs: [
-          'Sunucu sahipleri ve yetkili moderatörler uyarma (Warn), geçici susturma (Timeout), sunucudan atma (Kick) ve kalıcı yasaklama (Ban) yetkilerini Denetim Günlüğü kaydıyla uygulayabilir. Ağır sistem ihlallerinde Platform yöneticileri hesabı sonlandırabilir.',
+          'Çocuk istismarı, terör propagandası, uyuşturucu ticareti, yasa dışı bahis yönlendirmeleri ve şiddeti teşvik eden tüm içerikler kesinlikle yasaktır; tespit halinde hesaplar kalıcı olarak kapatılır ve yasal bildirim yükümlülükleri uygulanır.',
+        ],
+      },
+      {
+        heading: '4. Zararlı Yazılım, Oltalama (Phishing) ve Spam',
+        paragraphs: [
+          'Güvenliği riske atan teknik ihlaller derhal yaptırıma tabidir:',
+        ],
+        bullets: [
+          'Zararlı yazılım barındıran dosyalar, sahte giriş/oturum çalma (phishing) bağlantıları veya token avcılığı paylaşılamaz.',
+          'Otomatik mesaj yağmuru (flood), toplu @everyone suistimali veya hız sınırlarını (rate limit) aşmaya yönelik betik kullanımı yasaktır.',
+        ],
+      },
+      {
+        heading: '5. Sesli Odalar, Sahne ve Ekran Paylaşımı Etiği',
+        paragraphs: [
+          'Ses odalarında ve Stage (Sahne) yayınlarında diğer katılımcıların rızası olmadan rahatsız edici derecede yüksek ses/parazit basmak, habersiz gizli ses kaydı alıp kötüye kullanmak veya uygunsuz ekran içeriği yansıtmak yasaktır.',
+        ],
+      },
+      {
+        heading: '6. Botlar, Webhooklar ve Otomasyon Sorumluluğu',
+        paragraphs: [
+          '`/api/bot/v1/...` tokenları, özel slash komutları ve gelen webhooklar yalnızca ilgili sunucu sahibinin yetkilendirdiği kapsamda kullanılmalıdır. İstenmeyen toplu bildirim üreten bot ve webhooklar sunucu yöneticisi veya sistem tarafından iptal edilebilir.',
+        ],
+      },
+      {
+        heading: '7. Moderasyon Kademeleri ve Denetim Şeffaflığı',
+        paragraphs: [
+          'Kuralları ihlal eden kullanıcılara sunucu moderatörleri tarafından sırasıyla veya ihlalin ağırlığına göre Uyarı (Warn), Geçici Susturma (Timeout), Atma (Kick), Yasaklama (Ban) ve Toplu Mesaj Silme uygulanabilir; işlemler sunucu Denetim Günlüğü\'ne işlenir.',
         ],
       },
     ],
@@ -166,22 +318,51 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
     id: 'cookies',
     title: 'Çerez ve Yerel Depolama Politikası',
     shortTitle: 'Çerez Politikası',
-    subtitle: 'Oturum çerezleri, localStorage ve cihaz içi IndexedDB kullanımı hakkında bilgi.',
+    subtitle: 'Zorunlu oturum çerezleri, localStorage tercihleri ve cihaz içi IndexedDB anahtar deposunun kullanımı.',
     sections: [
       {
-        heading: '1. Zorunlu Oturum Çerezleri',
+        heading: '1. Çerez ve Yerel Depolama Nedir?',
         paragraphs: [
-          'Çakma yalnızca kimlik doğrulama oturumunuzu güvenli biçimde sürdürebilmek ve yüklenen medya eklerine yetkili erişim sağlamak için HttpOnly / SameSite korumalı teknik oturum çerezi kullanır. Reklam, pazarlama veya üçüncü taraf izleme (tracking) çerezi kullanılmaz.',
+          'Çerezler (cookies) ve tarayıcı yerel depolama alanları (`localStorage`, `IndexedDB`), uygulamanın oturumunuzu açık tutması, ses/görüntü ayarlarınızı hatırlaması ve şifreleme anahtarlarını cihazınızda güvenle saklaması için kullanılan teknik bileşenlerdir.',
         ],
       },
       {
-        heading: '2. Tarayıcı ve Masaüstü Yerel Depolama (localStorage & IndexedDB)',
+        heading: '2. Kesinlikle Zorunlu Oturum Çerezleri',
         paragraphs: [
-          'Deneyiminizi hızlandırmak ve gizliliğinizi korumak için cihazınızda yalnızca teknik ve tercih verileri tutulur:',
+          'Çakma yalnızca kimlik doğrulama ve yetkili dosya/medya indirme erişimi için sunucu tarafından atanan teknik oturum çerezi kullanır.',
         ],
         bullets: [
-          'localStorage: Seçili arayüz teması, dil (TR/EN), mikrofon/hoparlör DSP ayarları, bas-konuş (PTT) kısayolu ve taslak mesajlar.',
-          'IndexedDB (cakma_e2ee_v2): Uçtan uca şifreleme (E2EE) için üretilen P-256 özel/genel kriptografik anahtarlarınız.',
+          '`HttpOnly` ve `SameSite` güvenlik bayrakları sayesinde oturum çerezine istemci betikleri doğrudan erişemez.',
+          'Bu çerezler olmadan güvenli dosya indirme (`/uploads/...`) ve oturum yenileme çalışamayacağı için teknik olarak zorunludur.',
+        ],
+      },
+      {
+        heading: '3. `localStorage` Tercih ve Önbellek Verileri',
+        paragraphs: [
+          'Konforunuz için seçtiğiniz kullanıcı arayüzü ayarları cihazınızın yerel depolamasında saklanır:',
+        ],
+        bullets: [
+          'Seçilen arayüz teması (`uiTheme`), yazı tipi/yoğunluk ayarı, dil (`TR`/`EN`) ve sohbet düzeni,',
+          'Mikrofon/hoparlör cihaz kimlikleri, Ses Geçidi (Voice Gate dB), Stüdyo DSP / Loudness Normalizer, PTT tuşu ve gecikme tercihleri,',
+          'Kanal bazlı bildirim tercihleri ve henüz gönderilmemiş kanal mesaj taslakları.',
+        ],
+      },
+      {
+        heading: '4. `IndexedDB` Uçtan Uca Şifreleme Anahtar Deposu (`cakma_e2ee_v2`)',
+        paragraphs: [
+          'Uçtan uca şifreli mesajlaşmada kullanılan P-256 ECDH `CryptoKey` nesneleri doğrudan tarayıcı veya masaüstü WebView içindeki `IndexedDB` veritabanında saklanır. Sunucuya yalnızca genel (public) anahtarınız iletilir.',
+        ],
+      },
+      {
+        heading: '5. Reklam ve Üçüncü Taraf Takip Çerezlerinin Bulunmaması',
+        paragraphs: [
+          'Çakma bünyesinde Google Analytics, reklam pikseli, davranışsal takip çerezi veya üçüncü taraf veri toplayıcı SDK\'lar bulunmamaktadır.',
+        ],
+      },
+      {
+        heading: '6. Depolamayı Temizleme ve E2EE Anahtar Yedeği Uyarısı',
+        paragraphs: [
+          'Tarayıcı geçmişini/site verilerini tamamen temizlediğinizde `cakma_e2ee_v2` içindeki yerel E2EE anahtarlarınız da silinir. Bu işlemden önce Ayarlar → Hesap Güvenliği üzerinden **Şifreli E2EE Anahtar Yedeği** almanız veya ikinci bir cihazla **QR Kod Eşleştirme** yapmanız şiddetle önerilir.',
         ],
       },
     ],

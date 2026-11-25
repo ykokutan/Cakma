@@ -3,6 +3,7 @@ import {
   Activity,
   Cpu,
   FileText,
+  Flag,
   HardDrive,
   Key,
   Megaphone,
@@ -21,6 +22,7 @@ import { AdminDedicatedTab } from './admin/AdminDedicatedTab';
 import { AdminLicensesTab } from './admin/AdminLicensesTab';
 import { AdminLogsTab } from './admin/AdminLogsTab';
 import { AdminOverviewTab } from './admin/AdminOverviewTab';
+import { AdminReportsTab } from './admin/AdminReportsTab';
 import { AdminServersTab } from './admin/AdminServersTab';
 import { AdminStoreTab } from './admin/AdminStoreTab';
 import { AdminSystemTab } from './admin/AdminSystemTab';
@@ -43,6 +45,7 @@ type AdminTabId =
   | 'store'
   | 'servers'
   | 'logs'
+  | 'reports'
   | 'broadcast'
   | 'tools';
 
@@ -241,6 +244,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                     icon: FileText,
                     dirty: false,
                   },
+                  {
+                    id: 'reports',
+                    label: 'Şikayetler (5651)',
+                    icon: Flag,
+                    dirty: false,
+                  },
                 ],
               },
               {
@@ -414,6 +423,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                 onRequestDialog={setDialog}
               />
             )}
+
+            {activeTab === 'reports' && <AdminReportsTab onNotify={notify} />}
 
             {activeTab === 'broadcast' && (
               <AdminBroadcastTab

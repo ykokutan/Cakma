@@ -42,7 +42,7 @@ import { TwoFactorForm } from './auth/TwoFactorForm';
 import { ForgotPasswordForm } from './auth/ForgotPasswordForm';
 import { isWebAuthnSupported, loginWithPasskey } from '../utils/webauthn';
 import { LegalDocumentsModal } from './LegalDocumentsModal';
-import type { LegalDocumentId } from '../data/legalDocuments';
+import { LEGAL_DOCUMENTS_VERSION, type LegalDocumentId } from '../data/legalDocuments';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -287,6 +287,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
     setConfirmPassword('');
     setPending2faToken(null);
     setTotpCode('');
+    setAcceptedTerms(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -407,6 +408,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
           challengeToken,
           challengeAnswer: challengeAnswer.trim(),
           honeypot,
+          acceptedTerms: true,
+          acceptedTermsVersion: LEGAL_DOCUMENTS_VERSION,
         });
         if (res.success) {
           persistRememberedUser(username);
@@ -1240,54 +1243,79 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
 
                     {/* Register: Required Legal Consent Checkbox */}
                     {isRegister && (
-                      <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-[11px] text-white/75 leading-relaxed cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={acceptedTerms}
-                          onChange={(e) => setAcceptedTerms(e.target.checked)}
-                          className="mt-0.5 rounded border-white/25 bg-white/10 text-emerald-500 focus:ring-emerald-500 shrink-0"
-                        />
-                        <span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              setLegalModalDoc('terms');
-                            }}
-                            className="font-semibold text-rose-300 hover:text-rose-200 underline"
-                          >
-                            Kullanıcı Sözleşmesi
-                          </button>
-                          ,{' '}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              setLegalModalDoc('privacy');
-                            }}
-                            className="font-semibold text-rose-300 hover:text-rose-200 underline"
-                          >
-                            Gizlilik Politikası
-                          </button>{' '}
-                          ve{' '}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              setLegalModalDoc('kvkk');
-                            }}
-                            className="font-semibold text-rose-300 hover:text-rose-200 underline"
-                          >
-                            KVKK Aydınlatma Metni
-                          </button>
-                          &apos;ni okudum ve kabul ediyorum.
-                        </span>
-                      </label>
+                      <div
+                        className={`p-2.5 rounded-xl border transition space-y-1.5 ${
+                          acceptedTerms
+                            ? 'bg-emerald-500/[0.06] border-emerald-500/30'
+                            : 'bg-amber-500/[0.06] border-amber-500/35'
+                        }`}
+                      >
+                        <label className="flex items-start gap-2.5 text-[11px] text-white/80 leading-relaxed cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            required
+                            checked={acceptedTerms}
+                            onChange={(e) => setAcceptedTerms(e.target.checked)}
+                            className="mt-0.5 rounded border-white/25 bg-white/10 text-emerald-500 focus:ring-emerald-500 shrink-0"
+                          />
+                          <span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setLegalModalDoc('terms');
+                              }}
+                              className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                            >
+                              Kullanıcı Sözleşmesi
+                            </button>
+                            ,{' '}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setLegalModalDoc('privacy');
+                              }}
+                              className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                            >
+                              Gizlilik Politikası
+                            </button>
+                            ,{' '}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setLegalModalDoc('kvkk');
+                              }}
+                              className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                            >
+                              KVKK Aydınlatma Metni
+                            </button>{' '}
+                            ve{' '}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setLegalModalDoc('community');
+                              }}
+                              className="font-semibold text-rose-300 hover:text-rose-200 underline"
+                            >
+                              Topluluk Kuralları
+                            </button>
+                            &apos;nı okudum ve kabul ediyorum.
+                          </span>
+                        </label>
+                        {!acceptedTerms && (
+                          <div className="text-[10px] text-amber-200/85 pl-6">
+                            Kayıt olabilmek için sözleşmeleri onaylamanız zorunludur.
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     <button
                       type="submit"
-                      disabled={loading || !isConnected}
+                      disabled={loading || !isConnected || (isRegister && !acceptedTerms)}
                       className="w-full py-2.5 bg-gradient-to-r from-rose-500 via-red-500 to-rose-600 hover:brightness-110 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 disabled:opacity-50 mt-2"
                     >
                       {loading || !isConnected ? (

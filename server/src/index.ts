@@ -20,7 +20,7 @@ import {
 } from './utils/mailDelivery.js';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule } from './types.js';
+import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule, ContentReport } from './types.js';
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
 import {
   buildPersistentDmChannelId,
@@ -87,6 +87,7 @@ import {
   loadScheduledMessages, saveScheduledMessages,
   loadServerBots, saveServerBots,
   loadServerAutomations, saveServerAutomations,
+  loadContentReports, saveContentReports,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   searchMessagesSmart, initStorageEngine, getStorageEngineInfo, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
@@ -115,6 +116,8 @@ import { registerGroupDmSocketHandlers, getGroupDmsForUser } from './features/gr
 import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTemplatesRoutes.js';
 import { registerPasskeyRoutes } from './features/passkeyRoutes.js';
 import { registerE2eePairingRoutes } from './features/e2eePairingRoutes.js';
+import { registerComplianceAndReportsRoutes } from './features/complianceAndReportsRoutes.js';
+import { registerAuthSocketHandlers } from './features/authSocketHandlers.js';
 import {
   createServerGovernanceHelpers,
   registerServerGovernanceRoutes,
@@ -559,6 +562,7 @@ const serverCases: Record<string, ServerModerationCase[]> = loadServerModeration
 const scheduledMessages: ScheduledMessage[] = loadScheduledMessages();
 const serverBots: ServerBot[] = loadServerBots();
 const serverAutomations: ServerAutomationRule[] = loadServerAutomations();
+const contentReports: ContentReport[] = loadContentReports();
 const automationSpamTracker = new Map<string, number[]>();
 const governanceHelpers = createServerGovernanceHelpers({
   serverAuditLogs,
@@ -1462,23 +1466,6 @@ export function verifySessionToken(token: string): string | null {
   return acc ? acc.username : null;
 }
 
-function parseCookieValue(cookieHeader: string | undefined, name: string): string | null {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx === -1) continue;
-    const k = part.slice(0, idx).trim();
-    if (k === name) {
-      try {
-        return decodeURIComponent(part.slice(idx + 1).trim());
-      } catch {
-        return part.slice(idx + 1).trim();
-      }
-    }
-  }
-  return null;
-}
-
 // HttpOnly session cookie endpoints for Web clients (prevents XSS reading token from localStorage)
 app.post('/api/auth/set-cookie', (req, res) => {
   const token = typeof req.body?.token === 'string' ? req.body.token : '';
@@ -1699,6 +1686,28 @@ registerPasskeyRoutes(app, {
 registerE2eePairingRoutes(app, {
   verifySessionTokenWithMeta,
   getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+});
+
+registerComplianceAndReportsRoutes(app, {
+  io,
+  registeredAccounts,
+  activeUsers,
+  activeSessions,
+  servers,
+  groupDms,
+  messages,
+  contentReports,
+  saveContentReports,
+  saveAccounts,
+  saveChannelMessageDelete,
+  emitToChannelAudience,
+  emitUserUpdated,
+  addAuditLog,
+  sanitizeText,
+  checkServerPermission: (u, s, p) => checkServerPermission(u, s, p),
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  legalVersion: '1.1.0',
 });
 
 const socketEventLimiter = createSocketEventRateLimiter();
@@ -2372,726 +2381,44 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
-  // 1a. Registration Challenge (Bot & Spam protection)
-  socket.on('get_register_challenge', () => {
-    const ch = generateRegisterChallenge();
-    socket.emit('register_challenge', {
-      token: ch.token,
-      question: ch.question,
-      inviteOnly: Boolean(systemConfig.inviteOnlyRegistration && registeredAccounts.size > 0),
-      requireStrongPasswords: Boolean(systemConfig.requireStrongPasswords),
-      requireEmailVerification: Boolean(systemConfig.requireEmailVerification && registeredAccounts.size > 0),
-    });
+  registerAuthSocketHandlers(socket, {
+    registeredAccounts,
+    activeUsers,
+    activeSessions,
+    pendingEmailOtps,
+    ipDailyRegistrations,
+    disposableEmailDomains: DISPOSABLE_EMAIL_DOMAINS,
+    getSystemConfig: () => systemConfig,
+    saveSystemConfig,
+    saveAccounts,
+    sanitizeText,
+    getClientIp,
+    findActiveIpBan,
+    checkLoginRateLimit,
+    recordFailedLogin,
+    clearLoginRateLimit,
+    checkRegisterRateLimit,
+    recordRegisterAttempt,
+    generateRegisterChallenge,
+    verifyRegisterChallenge,
+    generateSessionToken,
+    generateMediaToken,
+    generatePending2faToken,
+    verifyPending2faToken,
+    verifySessionTokenWithMeta,
+    getUserBadges,
+    toPublicUser,
+    emitInitData,
+    getFriendsData,
+    syncUserMembershipProfiles,
+    recordUserConnection,
+    recordUserDisconnection,
+    addAuditLog,
+    sendAdminWebhook,
+    sendSmtpEmail,
+    emitToRelevantUsers,
   });
 
-  // 1b. Send 6-digit Email Verification Code (OTP)
-  socket.on('send_register_email_code', async ({ email }: { email: string }) => {
-    const clientIp = getClientIp(socket);
-    const ipBan = findActiveIpBan(clientIp);
-    if (ipBan) {
-      return socket.emit('register_email_code_result', { success: false, error: `IP adresiniz engellenmiştir.` });
-    }
-    if (!systemConfig.registrationEnabled) {
-      return socket.emit('register_email_code_result', { success: false, error: 'Yeni üye kayıtları kapalıdır.' });
-    }
-    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 64) : '';
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
-      return socket.emit('register_email_code_result', { success: false, error: 'Lütfen geçerli bir e-posta adresi girin.' });
-    }
-    const domain = cleanEmail.split('@')[1] || '';
-    if (DISPOSABLE_EMAIL_DOMAINS.has(domain)) {
-      return socket.emit('register_email_code_result', { success: false, error: 'Geçici e-posta adresleri kullanılamaz.' });
-    }
-    if (systemConfig.requireUniqueEmail !== false) {
-      for (const acc of registeredAccounts.values()) {
-        if ((acc.email || '').toLowerCase() === cleanEmail) {
-          return socket.emit('register_email_code_result', { success: false, error: 'Bu e-posta adresi zaten kayıtlı.' });
-        }
-      }
-    }
-
-    const existing = pendingEmailOtps.get(cleanEmail);
-    if (existing && Date.now() - existing.sentAt < 60_000) {
-      const waitSec = Math.ceil((60_000 - (Date.now() - existing.sentAt)) / 1000);
-      return socket.emit('register_email_code_result', {
-        success: false,
-        error: `Yeni kod istemek için ${waitSec} saniye bekleyin.`,
-      });
-    }
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    pendingEmailOtps.set(cleanEmail, {
-      code,
-      expiresAt: Date.now() + 10 * 60_000,
-      attempts: 0,
-      sentAt: Date.now(),
-    });
-
-    const mailRes = await sendSmtpEmail(
-      cleanEmail,
-      'Çakma - E-Posta Doğrulama Kodunuz',
-      `Kayıt doğrulama kodunuz: ${code} (10 dakika geçerlidir).`,
-      `<div style="font-family:sans-serif;padding:16px;background:#0f172a;color:#f8fafc;border-radius:12px;">
-        <h2 style="margin:0 0 8px;color:#38bdf8;">Çakma E-Posta Doğrulaması</h2>
-        <p style="margin:0 0 12px;color:#cbd5e1;">Kayıt işleminizi tamamlamak için aşağıdaki 6 haneli kodu girin:</p>
-        <div style="font-size:28px;font-weight:bold;letter-spacing:6px;padding:12px 18px;background:#1e293b;border-radius:8px;display:inline-block;color:#34d399;">${code}</div>
-        <p style="margin:12px 0 0;font-size:12px;color:#94a3b8;">Bu kod 10 dakika boyunca geçerlidir.</p>
-      </div>`
-    );
-
-    const maskedTarget = maskEmail(cleanEmail);
-    if (!mailRes.ok) {
-      pendingEmailOtps.delete(cleanEmail);
-      const errDetail = mailRes.error || 'Bilinmeyen gönderim hatası.';
-      console.warn(`⚠️ [OTP] ${maskedTarget} için doğrulama kodu gönderilemedi (${mailRes.transport || 'mail'}): ${errDetail}`);
-      addAuditLog('OTP_MAIL_HATASI', `${maskedTarget} için kayıt OTP maili gönderilemedi: ${errDetail}`, 'warn');
-      return socket.emit('register_email_code_result', {
-        success: false,
-        error: `Doğrulama e-postası gönderilemedi: ${errDetail}`,
-      });
-    }
-
-    console.log(`✉️ [OTP] ${maskedTarget} adresine doğrulama kodu gönderildi (${mailRes.transport || 'mail'}).`);
-    socket.emit('register_email_code_result', {
-      success: true,
-      message: `${cleanEmail} adresine 6 haneli doğrulama kodu gönderildi. Gelmezse Spam / Gereksiz klasörünü kontrol edin.`,
-    });
-  });
-
-  // 1. REGISTER (Kayıt Olma)
-  socket.on('auth_register', async ({
-    username,
-    email,
-    password,
-    avatar,
-    inviteCode,
-    emailCode,
-    challengeToken,
-    challengeAnswer,
-    honeypot,
-  }: any) => {
-    const clientIp = getClientIp(socket);
-    const ipBan = findActiveIpBan(clientIp);
-    if (ipBan) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
-      });
-    }
-    if (honeypot && String(honeypot).trim().length > 0) {
-      addAuditLog('BOT_KAYIT_ENGEL', `Honeypot tetiklendi (IP: ${clientIp})`, 'auth');
-      return socket.emit('auth_response', { success: false, error: 'Kayıt doğrulaması başarısız oldu.' });
-    }
-    if (systemConfig.maintenanceMode) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.'
-      });
-    }
-    if (!systemConfig.registrationEnabled) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: 'Yeni üye kayıtları sistem yöneticisi tarafından geçici olarak kapatılmıştır.'
-      });
-    }
-    const regCheck = checkRegisterRateLimit(clientIp);
-    if (!regCheck.allowed) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: `Çok fazla kayıt denemesi yapıldı! Lütfen ${regCheck.retryAfterSeconds} saniye sonra tekrar deneyin.`
-      });
-    }
-
-    if (!challengeToken || !verifyRegisterChallenge(challengeToken, challengeAnswer)) {
-      recordRegisterAttempt(clientIp);
-      return socket.emit('auth_response', {
-        success: false,
-        error: 'Güvenlik sorusu (doğrulama) hatalı veya süresi doldu. Lütfen yenileyip tekrar deneyin.',
-      });
-    }
-
-    const isFirstUser = registeredAccounts.size === 0;
-    const todayKey = new Date().toISOString().slice(0, 10);
-    const dailyRec = ipDailyRegistrations.get(clientIp);
-    const maxPerIp = systemConfig.maxAccountsPerIpPerDay ?? 3;
-    if (!isFirstUser && dailyRec && dailyRec.date === todayKey && dailyRec.count >= maxPerIp) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: `Bu IP adresinden bugün en fazla ${maxPerIp} hesap oluşturulabilir.`,
-      });
-    }
-
-    const cleanUsername = sanitizeText(username?.trim()).replace(/[\u200B-\u200D\uFEFF]/g, '').slice(0, 24);
-    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 64) : '';
-
-    if (!cleanUsername || !/^[a-zA-Z0-9_.-]{3,24}$/.test(cleanUsername)) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: 'Kullanıcı adı 3-24 karakter arasında olmalı ve yalnızca harf, rakam, _, ., - içermelidir.',
-      });
-    }
-
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: 'Lütfen geçerli bir e-posta adresi girin.',
-      });
-    }
-
-    const emailDomain = cleanEmail.split('@')[1] || '';
-    if (DISPOSABLE_EMAIL_DOMAINS.has(emailDomain)) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: 'Geçici (tek kullanımlık) e-posta adresleri ile kayıt olunamaz.',
-      });
-    }
-
-    if (systemConfig.requireUniqueEmail !== false) {
-      for (const acc of registeredAccounts.values()) {
-        if ((acc.email || '').toLowerCase() === cleanEmail) {
-          return socket.emit('auth_response', {
-            success: false,
-            error: 'Bu e-posta adresi ile zaten kayıtlı bir hesap var.',
-          });
-        }
-      }
-    }
-
-    if (!isFirstUser && systemConfig.requireEmailVerification) {
-      const otp = pendingEmailOtps.get(cleanEmail);
-      const cleanCode = typeof emailCode === 'string' ? emailCode.trim() : '';
-      if (!otp || Date.now() > otp.expiresAt) {
-        pendingEmailOtps.delete(cleanEmail);
-        return socket.emit('auth_response', {
-          success: false,
-          error: 'E-posta doğrulama kodu bulunamadı veya süresi doldu. Lütfen yeni kod isteyin.',
-        });
-      }
-      if (!cleanCode || cleanCode !== otp.code) {
-        otp.attempts += 1;
-        if (otp.attempts >= 5) pendingEmailOtps.delete(cleanEmail);
-        return socket.emit('auth_response', {
-          success: false,
-          error: 'E-posta doğrulama kodu hatalı.',
-        });
-      }
-      pendingEmailOtps.delete(cleanEmail);
-    }
-
-    if (!password || typeof password !== 'string') {
-      return socket.emit('auth_response', { success: false, error: 'Lütfen geçerli bir şifre girin.' });
-    }
-    const regPassCheck = validatePasswordAgainstPolicy(password, cleanUsername, Boolean(systemConfig.requireStrongPasswords));
-    if (!regPassCheck.ok) {
-      return socket.emit('auth_response', { success: false, error: regPassCheck.error });
-    }
-
-    if (registeredAccounts.has(cleanUsername.toLowerCase())) {
-      return socket.emit('auth_response', { success: false, error: 'Bu kullanıcı adı zaten alınmış.' });
-    }
-
-    // Role assignment: only the very first account on a fresh DB becomes admin; prevent admin hijacking
-    const reservedAdminNames = ['admin', 'administrator', 'system', 'root', 'sistem', 'moderator', 'mod', 'destek', 'support', 'yetkili', 'owner', 'kurucu'];
-    if (!isFirstUser && reservedAdminNames.includes(cleanUsername.toLowerCase())) {
-      return socket.emit('auth_response', { success: false, error: 'Bu kullanıcı adı sistem tarafından ayrılmıştır.' });
-    }
-
-    if (!isFirstUser && systemConfig.inviteOnlyRegistration) {
-      const cleanInv = typeof inviteCode === 'string' ? inviteCode.trim().toUpperCase() : '';
-      const invList = systemConfig.registrationInvites || [];
-      const matched = invList.find((inv) => inv.code.toUpperCase() === cleanInv);
-      if (!matched) {
-        recordRegisterAttempt(clientIp);
-        return socket.emit('auth_response', { success: false, error: 'Geçersiz kayıt davet kodu.' });
-      }
-      if (matched.expiresAt && Date.now() > matched.expiresAt) {
-        return socket.emit('auth_response', { success: false, error: 'Bu kayıt davet kodunun süresi dolmuş.' });
-      }
-      if (matched.maxUses > 0 && matched.uses >= matched.maxUses) {
-        return socket.emit('auth_response', { success: false, error: 'Bu kayıt davet kodunun kullanım limiti dolmuş.' });
-      }
-      matched.uses += 1;
-      saveSystemConfig(systemConfig);
-    }
-
-    const role = isFirstUser ? 'admin' : 'user';
-
-    // Hash password with cryptographically secure async scrypt
-    const hashedPassword = await hashPasswordAsync(password);
-    recordRegisterAttempt(clientIp);
-    ipDailyRegistrations.set(clientIp, {
-      date: todayKey,
-      count: dailyRec && dailyRec.date === todayKey ? dailyRec.count + 1 : 1,
-    });
-
-    const newAccount: RegisteredAccount = {
-      id: `usr-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-      username: cleanUsername,
-      email: cleanEmail,
-      password: hashedPassword,
-      avatar: avatar || '🎮',
-      role,
-      createdAt: new Date().toLocaleDateString('tr-TR'),
-      walletBalance: systemConfig.defaultWalletBalance ?? 100,
-      statusMessage: '✨ Yeni Katıldı',
-      bannerColor: 'from-blue-600 via-indigo-600 to-purple-600',
-      bio: 'Sohbet ve sesli odalara yeni katıldı.',
-      badges: getUserBadges(role, cleanUsername, false),
-      friends: []
-    };
-
-    registeredAccounts.set(cleanUsername.toLowerCase(), newAccount);
-    saveAccounts(registeredAccounts);
-    addAuditLog('YENI_KAYIT', `Yeni kullanıcı kaydoldu: ${cleanUsername} (${role}, IP: ${clientIp})`, 'auth');
-
-    // Create session user
-    const user: User = {
-      id: socket.id,
-      accountId: newAccount.id,
-      username: newAccount.username,
-      email: newAccount.email,
-      role: newAccount.role,
-      avatar: newAccount.avatar,
-      status: 'online',
-      isMuted: false,
-      isDeafened: false,
-      isSpeaking: false,
-      createdAt: newAccount.createdAt,
-      walletBalance: newAccount.walletBalance,
-      statusMessage: newAccount.statusMessage,
-      bannerColor: newAccount.bannerColor,
-      bio: newAccount.bio,
-      badges: newAccount.badges,
-      friends: newAccount.friends
-    };
-
-    activeUsers.set(socket.id, user);
-    activeSessions.set(socket.id, {
-      socketId: socket.id,
-      username: user.username,
-      ip: getClientIp(socket),
-      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
-      connectedAt: new Date().toISOString()
-    });
-    if (user.role === 'admin') socket.join('admins');
-    syncUserMembershipProfiles(user);
-    recordUserConnection(socket, user.username, user.role);
-
-    const token = generateSessionToken(user.username);
-    const mediaToken = generateMediaToken(user.username);
-    socket.emit('auth_response', { success: true, user, token, mediaToken, isNewUser: true });
-    newAccount.knownLoginIps = [clientIp];
-    saveAccounts(registeredAccounts);
-    emitInitData(socket, user);
-    socket.emit('friends_data', getFriendsData(user.username));
-
-    socket.broadcast.emit('user_connected', toPublicUser(user));
-  });
-
-  // 2. LOGIN (Giriş Yapma)
-  socket.on('auth_login', async ({ usernameOrEmail, password }: any) => {
-    const clientIp = getClientIp(socket);
-    const ipBan = findActiveIpBan(clientIp);
-    if (ipBan) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
-      });
-    }
-    const rateCheck = checkLoginRateLimit(clientIp);
-    if (!rateCheck.allowed) {
-      addAuditLog('GUVENLIK_ENGELI', `IP (${clientIp}) çok fazla başarısız giriş denemesi nedeniyle engellendi.`, 'auth');
-      sendAdminWebhook('security', 'Brute-Force Giriş Engeli', `IP: ${clientIp} (${rateCheck.retryAfterSeconds}sn kilitlendi)`);
-      return socket.emit('auth_response', {
-        success: false,
-        error: `Çok fazla başarısız giriş denemesi! Güvenlik gereği ${rateCheck.retryAfterSeconds} saniye boyunca giriş engellendi.`
-      });
-    }
-
-    const query = usernameOrEmail?.trim()?.toLowerCase();
-    if (!query || !password) {
-      return socket.emit('auth_response', { success: false, error: 'Lütfen kullanıcı adı ve şifrenizi girin.' });
-    }
-
-    // Find account by username or email
-    let foundAccount: RegisteredAccount | undefined;
-    for (const acc of registeredAccounts.values()) {
-      if (acc.username.toLowerCase() === query || acc.email.toLowerCase() === query) {
-        foundAccount = acc;
-        break;
-      }
-    }
-
-    if (!foundAccount) {
-      recordFailedLogin(clientIp);
-      return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
-    }
-
-    if (foundAccount.isBanned) {
-      if (foundAccount.bannedUntil && Date.now() >= foundAccount.bannedUntil) {
-        foundAccount.isBanned = false;
-        foundAccount.bannedReason = '';
-        foundAccount.bannedUntil = null;
-        saveAccounts(registeredAccounts);
-        addAuditLog('YASAK_SURESI_DOLDU', `"${foundAccount.username}" hesabının süreli yasağı otomatik olarak sona erdi.`, 'info');
-      } else {
-        const remainingText = foundAccount.bannedUntil
-          ? ` (Kalan süre: ~${Math.max(1, Math.ceil((foundAccount.bannedUntil - Date.now()) / 60000))} dk)`
-          : '';
-        return socket.emit('auth_response', {
-          success: false,
-          error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${remainingText}${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
-        });
-      }
-    }
-
-    if (systemConfig.maintenanceMode && foundAccount.role !== 'admin') {
-      return socket.emit('auth_response', {
-        success: false,
-        error: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Yalnızca sistem yöneticileri giriş yapabilir.'
-      });
-    }
-
-    if (foundAccount.lockedUntil && Date.now() < foundAccount.lockedUntil) {
-      const remMins = Math.max(1, Math.ceil((foundAccount.lockedUntil - Date.now()) / 60000));
-      return socket.emit('auth_response', {
-        success: false,
-        error: `Çok fazla başarısız deneme nedeniyle bu hesap geçici olarak kilitlendi. (~${remMins} dk sonra tekrar deneyin.)`,
-      });
-    }
-
-    // Verify password with secure async scrypt (supports legacy plain text with auto-upgrade)
-    const isPasswordValid = await verifyPasswordAsync(password, foundAccount.password);
-    if (isPasswordValid && !foundAccount.password.startsWith('scrypt$')) {
-      // Auto-upgrade legacy plain-text password to scrypt hash on successful login!
-      foundAccount.password = await hashPasswordAsync(password);
-      saveAccounts(registeredAccounts);
-      console.log(`[Security] Account '${foundAccount.username}' legacy password upgraded to scrypt hash.`);
-    }
-
-    if (!isPasswordValid) {
-      recordFailedLogin(clientIp);
-      foundAccount.failedLoginCount = (foundAccount.failedLoginCount || 0) + 1;
-      const maxAttempts = systemConfig.maxLoginAttempts || 5;
-      if (foundAccount.failedLoginCount >= maxAttempts) {
-        const lockMins = systemConfig.loginLockoutMinutes || 15;
-        foundAccount.lockedUntil = Date.now() + lockMins * 60_000;
-        addAuditLog(
-          'HESAP_KILITLENDI',
-          `${foundAccount.username} hesabı ${maxAttempts} başarısız deneme sonrası ${lockMins} dk kilitlendi (Son IP: ${clientIp}).`,
-          'auth'
-        );
-      }
-      saveAccounts(registeredAccounts);
-      return socket.emit('auth_response', { success: false, error: 'Kullanıcı adı veya şifre hatalı!' });
-    }
-
-    // Successful password check -> reset account lockout & check 2FA if enabled
-    if (foundAccount.failedLoginCount || foundAccount.lockedUntil) {
-      foundAccount.failedLoginCount = 0;
-      foundAccount.lockedUntil = undefined;
-      saveAccounts(registeredAccounts);
-    }
-    clearLoginRateLimit(clientIp);
-
-    if (foundAccount.twoFactorEnabled && foundAccount.twoFactorSecret) {
-      const pending2faToken = generatePending2faToken(foundAccount.username);
-      return socket.emit('auth_response', {
-        success: false,
-        requires2fa: true,
-        pending2faToken,
-        username: foundAccount.username,
-      });
-    }
-
-    // Bind socket to account
-    const user: User = {
-      id: socket.id,
-      accountId: foundAccount.id,
-      username: foundAccount.username,
-      email: foundAccount.email,
-      role: foundAccount.role,
-      avatar: foundAccount.avatar,
-      status: 'online',
-      isMuted: false,
-      isDeafened: false,
-      isSpeaking: false,
-      createdAt: foundAccount.createdAt,
-      walletBalance: foundAccount.walletBalance,
-      statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
-      bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
-      bannerImage: foundAccount.bannerImage || '',
-      bannerPosition: foundAccount.bannerPosition || 'center',
-      avatarFrame: foundAccount.avatarFrame || 'none',
-      pinnedBadgeId: foundAccount.pinnedBadgeId || '',
-      socialLinks: foundAccount.socialLinks || {},
-      bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
-      badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
-      friends: foundAccount.friends || [],
-      blockedUsers: foundAccount.blockedUsers || [],
-      twoFactorEnabled: Boolean(foundAccount.twoFactorEnabled),
-      e2eePublicKey: foundAccount.e2eePublicKey,
-    };
-
-    activeUsers.set(socket.id, user);
-    activeSessions.set(socket.id, {
-      socketId: socket.id,
-      username: user.username,
-      ip: getClientIp(socket),
-      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
-      connectedAt: new Date().toISOString()
-    });
-    if (user.role === 'admin') socket.join('admins');
-    syncUserMembershipProfiles(user);
-    addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) sisteme giriş yaptı (IP: ${clientIp}).`, 'auth');
-    recordUserConnection(socket, user.username, user.role);
-
-    const token = generateSessionToken(user.username);
-    const mediaToken = generateMediaToken(user.username);
-    socket.emit('auth_response', { success: true, user, token, mediaToken });
-    const prevIps = Array.isArray(foundAccount.knownLoginIps) ? foundAccount.knownLoginIps : [];
-    if (prevIps.length > 0 && !prevIps.includes(clientIp)) {
-      addAuditLog('YENI_IP_GIRISI', `${user.username} hesabına yeni bir IP adresinden (${clientIp}) giriş yapıldı.`, 'auth');
-      socket.emit('security_new_ip_alert', { ip: clientIp, timestamp: new Date().toISOString() });
-    }
-    if (!prevIps.includes(clientIp)) {
-      foundAccount.knownLoginIps = [...prevIps.slice(-19), clientIp];
-      saveAccounts(registeredAccounts);
-    }
-    emitInitData(socket, user);
-    socket.emit('friends_data', getFriendsData(user.username));
-
-    socket.broadcast.emit('user_connected', toPublicUser(user));
-  });
-
-  // 2.2 VERIFY 2FA LOGIN
-  socket.on('auth_2fa_verify', async ({ pending2faToken, code }: { pending2faToken: string; code: string }) => {
-    const clientIp = getClientIp(socket);
-    const rateCheck = checkLoginRateLimit(clientIp);
-    if (!rateCheck.allowed) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: `Çok fazla başarısız 2FA denemesi! ${rateCheck.retryAfterSeconds} saniye bekleyin.`
-      });
-    }
-
-    const verifiedUsername = verifyPending2faToken(pending2faToken);
-    if (!verifiedUsername) {
-      return socket.emit('auth_response', {
-        success: false,
-        error: '2FA doğrulama süresi doldu, lütfen tekrar giriş yapın.'
-      });
-    }
-
-    const foundAccount = registeredAccounts.get(verifiedUsername.toLowerCase());
-    if (!foundAccount || !foundAccount.twoFactorEnabled || !foundAccount.twoFactorSecret) {
-      return socket.emit('auth_response', { success: false, error: '2FA yapılandırması bulunamadı.' });
-    }
-
-    const cleanCode = (code || '').trim().toUpperCase();
-    let isValid = verifyTotpCode(foundAccount.twoFactorSecret, cleanCode);
-
-    // Check one-time backup codes if TOTP didn't match
-    if (!isValid && Array.isArray(foundAccount.twoFactorBackupCodes) && foundAccount.twoFactorBackupCodes.length > 0) {
-      let matchIdx = -1;
-      for (let i = 0; i < foundAccount.twoFactorBackupCodes.length; i++) {
-        if (await verifyPasswordAsync(cleanCode, foundAccount.twoFactorBackupCodes[i])) {
-          matchIdx = i;
-          break;
-        }
-      }
-      if (matchIdx !== -1) {
-        isValid = true;
-        foundAccount.twoFactorBackupCodes.splice(matchIdx, 1);
-        saveAccounts(registeredAccounts);
-        addAuditLog('2FA_YEDEK_KOD', `${foundAccount.username} yedek kurtarma kodu ile giriş yaptı.`, 'auth');
-      }
-    }
-
-    if (!isValid) {
-      recordFailedLogin(clientIp);
-      return socket.emit('auth_response', {
-        success: false,
-        requires2fa: true,
-        pending2faToken,
-        error: 'Geçersiz 2FA kodu! Lütfen doğrulayıcı uygulamanızdaki güncel 6 haneli kodu girin.'
-      });
-    }
-
-    clearLoginRateLimit(clientIp);
-
-    const user: User = {
-      id: socket.id,
-      accountId: foundAccount.id,
-      username: foundAccount.username,
-      email: foundAccount.email,
-      role: foundAccount.role,
-      avatar: foundAccount.avatar,
-      status: 'online',
-      isMuted: false,
-      isDeafened: false,
-      isSpeaking: false,
-      createdAt: foundAccount.createdAt,
-      walletBalance: foundAccount.walletBalance,
-      statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
-      bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
-      bannerImage: foundAccount.bannerImage || '',
-      bannerPosition: foundAccount.bannerPosition || 'center',
-      avatarFrame: foundAccount.avatarFrame || 'none',
-      pinnedBadgeId: foundAccount.pinnedBadgeId || '',
-      socialLinks: foundAccount.socialLinks || {},
-      bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
-      badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
-      friends: foundAccount.friends || [],
-      blockedUsers: foundAccount.blockedUsers || [],
-      twoFactorEnabled: true,
-    };
-
-    activeUsers.set(socket.id, user);
-    activeSessions.set(socket.id, {
-      socketId: socket.id,
-      username: user.username,
-      ip: getClientIp(socket),
-      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
-      connectedAt: new Date().toISOString()
-    });
-    if (user.role === 'admin') socket.join('admins');
-    syncUserMembershipProfiles(user);
-    addAuditLog('GIRIS_BASARILI', `${user.username} (${user.role}) 2FA ile giriş yaptı (IP: ${clientIp}).`, 'auth');
-    recordUserConnection(socket, user.username, user.role);
-
-    const token = generateSessionToken(user.username);
-    const mediaToken = generateMediaToken(user.username);
-    socket.emit('auth_response', { success: true, user, token, mediaToken });
-    const prevIps = Array.isArray(foundAccount.knownLoginIps) ? foundAccount.knownLoginIps : [];
-    if (prevIps.length > 0 && !prevIps.includes(clientIp)) {
-      addAuditLog('YENI_IP_GIRISI', `${user.username} hesabına yeni bir IP adresinden (${clientIp}) 2FA ile giriş yapıldı.`, 'auth');
-      socket.emit('security_new_ip_alert', { ip: clientIp, timestamp: new Date().toISOString() });
-    }
-    if (!prevIps.includes(clientIp)) {
-      foundAccount.knownLoginIps = [...prevIps.slice(-19), clientIp];
-      saveAccounts(registeredAccounts);
-    }
-    emitInitData(socket, user);
-    socket.emit('friends_data', getFriendsData(user.username));
-    socket.broadcast.emit('user_connected', toPublicUser(user));
-  });
-
-  // 2.5 TOKEN LOGIN (Otomatik Oturum Doğrulama - Şifresiz, destekler: body token veya HttpOnly cookie)
-  socket.on('auth_token_login', ({ token }: { token?: string }) => {
-    const clientIp = getClientIp(socket);
-    const ipBan = findActiveIpBan(clientIp);
-    if (ipBan) {
-      return socket.emit('auth_response', {
-        success: false,
-        tokenExpired: true,
-        error: `IP adresiniz sistemden engellenmiştir. Sebep: ${ipBan.reason}`
-      });
-    }
-    const effectiveToken =
-      token && token !== '__cookie__'
-        ? token
-        : (parseCookieValue(socket.handshake.headers.cookie, 'cakma_session') || '');
-    const verified = verifySessionTokenWithMeta(effectiveToken);
-    if (!verified) {
-      return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' });
-    }
-
-    const foundAccount = registeredAccounts.get(verified.username.toLowerCase());
-    if (!foundAccount) {
-      return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Hesap bulunamadı.' });
-    }
-
-    if (foundAccount.minTokenIssuedAt && verified.iat < foundAccount.minTokenIssuedAt) {
-      return socket.emit('auth_response', { success: false, tokenExpired: true, error: 'Bu oturum başka bir cihazdan sonlandırıldı.' });
-    }
-
-    if (foundAccount.isBanned) {
-      if (foundAccount.bannedUntil && Date.now() >= foundAccount.bannedUntil) {
-        foundAccount.isBanned = false;
-        foundAccount.bannedReason = '';
-        foundAccount.bannedUntil = null;
-        saveAccounts(registeredAccounts);
-      } else {
-        return socket.emit('auth_response', {
-          success: false,
-          tokenExpired: true,
-          error: `Hesabınız sistem yöneticisi tarafından yasaklandı.${foundAccount.bannedReason ? ` Sebep: ${foundAccount.bannedReason}` : ''}`
-        });
-      }
-    }
-
-    if (systemConfig.maintenanceMode && foundAccount.role !== 'admin') {
-      return socket.emit('auth_response', {
-        success: false,
-        tokenExpired: true,
-        error: systemConfig.maintenanceMessage || 'Sistem şu anda planlı bakım modundadır. Lütfen daha sonra tekrar deneyin.'
-      });
-    }
-
-    const user: User = {
-      id: socket.id,
-      accountId: foundAccount.id,
-      username: foundAccount.username,
-      email: foundAccount.email,
-      role: foundAccount.role,
-      avatar: foundAccount.avatar,
-      status: 'online',
-      isMuted: false,
-      isDeafened: false,
-      isSpeaking: false,
-      createdAt: foundAccount.createdAt,
-      walletBalance: foundAccount.walletBalance,
-      statusMessage: foundAccount.statusMessage || 'Çevrimiçi',
-      bannerColor: foundAccount.bannerColor || 'from-indigo-600 to-purple-600',
-      bannerImage: foundAccount.bannerImage || '',
-      bannerPosition: foundAccount.bannerPosition || 'center',
-      avatarFrame: foundAccount.avatarFrame || 'none',
-      pinnedBadgeId: foundAccount.pinnedBadgeId || '',
-      socialLinks: foundAccount.socialLinks || {},
-      bio: foundAccount.bio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
-      badges: foundAccount.badges || getUserBadges(foundAccount.role, foundAccount.username, foundAccount.role === 'admin'),
-      friends: foundAccount.friends || [],
-      blockedUsers: foundAccount.blockedUsers || [],
-      twoFactorEnabled: Boolean(foundAccount.twoFactorEnabled),
-      e2eePublicKey: foundAccount.e2eePublicKey,
-    };
-
-    activeUsers.set(socket.id, user);
-    activeSessions.set(socket.id, {
-      socketId: socket.id,
-      username: user.username,
-      ip: getClientIp(socket),
-      userAgent: (socket.handshake.headers['user-agent'] || 'Bilinmeyen Cihaz').slice(0, 80),
-      connectedAt: new Date().toISOString()
-    });
-    if (user.role === 'admin') socket.join('admins');
-    syncUserMembershipProfiles(user);
-    recordUserConnection(socket, user.username, user.role);
-
-    const refreshedToken = generateSessionToken(user.username);
-    const mediaToken = generateMediaToken(user.username);
-    socket.emit('auth_response', { success: true, user, token: refreshedToken, mediaToken });
-    emitInitData(socket, user);
-    socket.emit('friends_data', getFriendsData(user.username));
-    socket.broadcast.emit('user_connected', toPublicUser(user));
-  });
-
-  // 3. LOGOUT (Çıkış Yapma)
-  socket.on('auth_logout', () => {
-    const user = activeUsers.get(socket.id);
-    if (user) {
-      socket.leave('admins');
-      recordUserDisconnection(socket.id);
-      addAuditLog('CIKIS_YAPILDI', `${user.username} sistemden çıkış yaptı.`, 'auth');
-      if (user.currentVoiceChannelId) {
-        socket.to(user.currentVoiceChannelId).emit('user_left_voice', { userId: socket.id, channelId: user.currentVoiceChannelId });
-      }
-      activeUsers.delete(socket.id);
-      emitToRelevantUsers(user, 'user_disconnected', socket.id);
-      socket.emit('logged_out');
-    }
-  });
 
   // Mandatory Auth Check Helper
   const requireAuth = (): User | null => {

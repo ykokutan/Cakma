@@ -130,6 +130,7 @@ describe('dedicated-server atomic storage', () => {
           categories: state1.categories,
           webhooks: state1.webhooks,
           scheduledMessages: state1.scheduledMessages,
+          nicknames: { admin: 'KlanLideri' },
         }
       );
       flushDedicatedStateSync();
@@ -148,6 +149,7 @@ describe('dedicated-server atomic storage', () => {
       );
       assert.equal(state2.webhooks[0].id, 'dwh-1');
       assert.equal(state2.scheduledMessages[0].repeatIntervalMinutes, 1440);
+      assert.equal(state2.nicknames['admin'], 'KlanLideri');
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

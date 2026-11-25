@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, FileText, Loader2, RefreshCw, Search, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FileText, Flag, Loader2, RefreshCw, Search, ShieldAlert, Trash2, XCircle } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
-import type { ModerationCaseAction, Server, ServerAuditEntry, ServerModerationCase } from '../../types';
+import type { ContentReport, ModerationCaseAction, Server, ServerAuditEntry, ServerModerationCase } from '../../types';
 import { appToast } from '../../utils/appDialogs';
+import { authFetch } from '../../utils/authFetch';
 import { t } from '../../utils/i18n';
 import { isUserServerOwner } from '../../utils/serverIdentity';
 
@@ -27,13 +28,16 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
     fetchServerAuditLogs,
     fetchServerCases,
     createServerModCase,
+    currentServerHost,
     language,
   } = useSocket();
 
-  const [subTab, setSubTab] = useState<'audit' | 'cases'>('audit');
+  const [subTab, setSubTab] = useState<'audit' | 'cases' | 'reports'>('audit');
   const [loading, setLoading] = useState(true);
   const [auditLogs, setAuditLogs] = useState<ServerAuditEntry[]>([]);
   const [cases, setCases] = useState<ServerModerationCase[]>([]);
+  const [reports, setReports] = useState<ContentReport[]>([]);
+  const [reportBusyId, setReportBusyId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Create moderation case form
@@ -45,14 +49,21 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [logsRes, casesRes] = await Promise.all([
+    const [logsRes, casesRes, reportsRes] = await Promise.all([
       fetchServerAuditLogs(server.id),
       fetchServerCases(server.id),
+      authFetch(currentServerHost, `/api/servers/${encodeURIComponent(server.id)}/reports`)
+        .then(async (r) => {
+          const json = (await r.json().catch(() => ({}))) as { ok?: boolean; reports?: ContentReport[] };
+          return r.ok && json.ok && Array.isArray(json.reports) ? json.reports : [];
+        })
+        .catch(() => [] as ContentReport[]),
     ]);
     setAuditLogs(logsRes);
     setCases(casesRes);
+    setReports(reportsRes);
     setLoading(false);
-  }, [fetchServerAuditLogs, fetchServerCases, server.id]);
+  }, [currentServerHost, fetchServerAuditLogs, fetchServerCases, server.id]);
 
   useEffect(() => {
     void loadData();
@@ -95,6 +106,47 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
       c.action.toLowerCase().includes(q) ||
       c.reason.toLowerCase().includes(q)
   );
+  const filteredReports = reports.filter(
+    (r) =>
+      !q ||
+      r.targetUsername.toLowerCase().includes(q) ||
+      r.reporterUsername.toLowerCase().includes(q) ||
+      r.reason.toLowerCase().includes(q)
+  );
+
+  const handleResolveReport = async (
+    reportId: string,
+    status: 'resolved' | 'dismissed',
+    deleteMessage = false
+  ) => {
+    setReportBusyId(reportId);
+    try {
+      const res = await authFetch(currentServerHost, `/api/reports/${encodeURIComponent(reportId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, deleteMessage }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        report?: ContentReport;
+        error?: string;
+        deletedMessage?: boolean;
+      };
+      if (!res.ok || !json.ok || !json.report) {
+        appToast(json.error || 'Şikayet güncellenemedi.', 'error');
+        return;
+      }
+      setReports((prev) => prev.map((r) => (r.id === reportId ? json.report! : r)));
+      appToast(
+        json.deletedMessage ? 'Mesaj silindi ve şikayet çözüldü.' : 'Şikayet güncellendi.',
+        'success'
+      );
+    } catch {
+      appToast('Sunucuya bağlanılamadı.', 'error');
+    } finally {
+      setReportBusyId(null);
+    }
+  };
 
   const selectableMembers = (server.members || []).filter(
     (m) => !m.isOwner && !isUserServerOwner({ id: m.userId, username: m.username }, server)
@@ -144,6 +196,16 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
           >
             <ShieldAlert className="w-3.5 h-3.5" />
             <span>{t(language, 'moderationCases')} ({cases.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('reports')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+              subTab === 'reports' ? 'bg-rose-500 text-white shadow' : 'text-white/60 hover:text-white'
+            }`}
+          >
+            <Flag className="w-3.5 h-3.5" />
+            <span>Şikayetler ({reports.filter((r) => r.status === 'open').length})</span>
           </button>
         </div>
 
@@ -295,6 +357,82 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
                   </span>
                 </div>
                 <div className="text-xs text-white/75">{entry.details}</div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : subTab === 'reports' ? (
+        filteredReports.length === 0 ? (
+          <div className="py-8 text-center text-xs text-white/40 border border-dashed border-white/10 rounded-2xl">
+            Bu sunucu için şikayet kaydı bulunmuyor.
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+            {filteredReports.map((rep) => (
+              <div
+                key={rep.id}
+                className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-1.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0 text-xs">
+                    <span
+                      className={`px-2 py-0.5 rounded-md border text-[10px] font-bold uppercase ${
+                        rep.status === 'open'
+                          ? 'bg-rose-500/20 border-rose-500/35 text-rose-300'
+                          : rep.status === 'resolved'
+                          ? 'bg-emerald-500/20 border-emerald-500/35 text-emerald-300'
+                          : 'bg-white/10 border-white/15 text-white/60'
+                      }`}
+                    >
+                      {rep.status === 'open' ? 'Açık' : rep.status === 'resolved' ? 'Çözüldü' : 'Reddedildi'}
+                    </span>
+                    <span className="text-white/75 truncate">
+                      @{rep.reporterUsername} → <strong className="text-rose-200">@{rep.targetUsername}</strong>
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-white/40 font-mono shrink-0">
+                    {new Date(rep.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <div className="text-xs text-white/80">{rep.reason}</div>
+                {rep.messageExcerpt && (
+                  <div className="text-[11px] text-white/55 italic border-l-2 border-rose-400/40 pl-2">
+                    &ldquo;{rep.messageExcerpt}&rdquo;
+                  </div>
+                )}
+                {rep.status === 'open' && canModerate && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    {rep.channelId && rep.messageId && (
+                      <button
+                        type="button"
+                        disabled={reportBusyId === rep.id}
+                        onClick={() => void handleResolveReport(rep.id, 'resolved', true)}
+                        className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/35 text-rose-200 text-[10px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Mesajı Sil &amp; Çöz</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={reportBusyId === rep.id}
+                      onClick={() => void handleResolveReport(rep.id, 'resolved', false)}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/35 text-emerald-200 text-[10px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Çözüldü</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reportBusyId === rep.id}
+                      onClick={() => void handleResolveReport(rep.id, 'dismissed', false)}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white/75 text-[10px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <XCircle className="w-3 h-3" />
+                      <span>Reddet</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

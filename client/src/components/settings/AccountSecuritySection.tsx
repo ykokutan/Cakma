@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Download, KeyRound, Loader2, Mail, MailCheck, QrCode, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, KeyRound, Loader2, Mail, MailCheck, QrCode, Scale, ShieldAlert, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
+import { LEGAL_DOCUMENTS_VERSION } from '../../data/legalDocuments';
+import { appToast } from '../../utils/appDialogs';
+import { authFetch } from '../../utils/authFetch';
 import { t } from '../../utils/i18n';
 import { normalizeOtpInput, validateEmail } from '../../utils/authValidation';
 import { exportEncryptedE2eeBackup, importEncryptedE2eeBackup } from '../../utils/e2ee';
@@ -17,8 +20,13 @@ export const AccountSecuritySection: React.FC = () => {
     requestEmailChangeCode,
     confirmEmailChange,
     deleteMyAccount,
+    acceptLatestTerms,
     language,
   } = useAuth();
+
+  // KVKK Export & Re-consent State
+  const [exportBusy, setExportBusy] = useState(false);
+  const [reconsentBusy, setReconsentBusy] = useState(false);
 
   // E2EE Encrypted Key Backup State
   const [e2eeExportPass, setE2eeExportPass] = useState('');
@@ -400,6 +408,84 @@ export const AccountSecuritySection: React.FC = () => {
             {e2eeStatus.text}
           </div>
         )}
+      </div>
+
+      <div className="p-4 rounded-2xl bg-white/[0.04] border border-cyan-500/20 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
+              <Scale className="w-4 h-4 text-cyan-400" />
+              <span>{t(language, 'kvkkTitle')}</span>
+            </div>
+            <p className="text-[11px] text-white/55 mt-0.5">{t(language, 'kvkkDesc')}</p>
+          </div>
+          <span className="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] font-mono text-white/75 shrink-0">
+            {currentUser?.acceptedTermsVersion
+              ? `Onaylı: v${currentUser.acceptedTermsVersion}`
+              : `Güncel Sürüm: v${LEGAL_DOCUMENTS_VERSION}`}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            disabled={exportBusy || !currentUser?.username}
+            onClick={async () => {
+              if (!currentUser?.username) return;
+              setExportBusy(true);
+              try {
+                const res = await authFetch(currentServerHost, '/api/account/export');
+                const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+                if (!res.ok || !json.ok) {
+                  appToast(json.error || 'Kişisel veri arşivi indirilemedi.', 'error');
+                  return;
+                }
+                const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `cakma-kisisel-verilerim-${currentUser.username}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                appToast('KVKK kişisel veri arşiviniz (.json) indirildi.', 'success');
+              } catch {
+                appToast('Sunucudan veri alınamadı.', 'error');
+              } finally {
+                setExportBusy(false);
+              }
+            }}
+            className="px-3.5 py-2 rounded-full bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/40 text-cyan-200 text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 transition"
+          >
+            {exportBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            <span>{t(language, 'kvkkExportBtn')}</span>
+          </button>
+
+          {currentUser?.acceptedTermsVersion !== LEGAL_DOCUMENTS_VERSION ? (
+            <button
+              type="button"
+              disabled={reconsentBusy}
+              onClick={async () => {
+                setReconsentBusy(true);
+                const res = await acceptLatestTerms(LEGAL_DOCUMENTS_VERSION);
+                setReconsentBusy(false);
+                if (res.success) {
+                  appToast(`Güncel sözleşme (v${LEGAL_DOCUMENTS_VERSION}) onayınız kaydedildi.`, 'success');
+                } else {
+                  appToast(res.error || 'Sözleşme onayı kaydedilemedi.', 'error');
+                }
+              }}
+              className="px-3.5 py-2 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 transition"
+            >
+              {reconsentBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+              <span>{t(language, 'kvkkReconsentBtn')} (v{LEGAL_DOCUMENTS_VERSION})</span>
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-300 font-medium">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Sözleşmeler güncel sürümde onaylı (v{LEGAL_DOCUMENTS_VERSION})
+            </span>
+          )}
+        </div>
       </div>
 
       <PasskeySettingsCard />

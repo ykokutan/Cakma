@@ -26,7 +26,7 @@ const ServerSettingsModal = lazy(() => import('./components/ServerSettingsModal'
 const ConnectionDiagnosticsModal = lazy(() => import('./components/ConnectionDiagnosticsModal').then((m) => ({ default: m.ConnectionDiagnosticsModal })));
 const ExploreModal = lazy(() => import('./components/ExploreModal').then((m) => ({ default: m.ExploreModal })));
 const LegalDocumentsModal = lazy(() => import('./components/LegalDocumentsModal').then((m) => ({ default: m.LegalDocumentsModal })));
-import { resolveLegalDocFromLocation, type LegalDocumentId } from './data/legalDocuments';
+import { LEGAL_DOCUMENTS_VERSION, resolveLegalDocFromLocation, type LegalDocumentId } from './data/legalDocuments';
 import { User } from './types';
 import { X, Volume2, Check, ShieldAlert } from 'lucide-react';
 
@@ -61,9 +61,11 @@ const MainLayout: React.FC = () => {
     consumeAutoOpenExplore,
     latestModerationNotice,
     dismissModerationNotice,
+    acceptLatestTerms,
   } = useSocket();
   const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [isReconsentOpen, setIsReconsentOpen] = useState(false);
 
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
@@ -185,12 +187,30 @@ const MainLayout: React.FC = () => {
     );
   }
 
+  const needsLegalReconsent = Boolean(
+    currentUser?.acceptedTermsVersion && currentUser.acceptedTermsVersion !== LEGAL_DOCUMENTS_VERSION
+  );
+
   return (
     <div className="flex flex-col h-[100dvh] w-full overflow-hidden bg-transparent text-[#f5f5f7] antialiased selection:bg-blue-500 selection:text-white">
       <WindowTitleBar
         onOpenQuickSwitcher={() => setIsQuickSwitcherOpen(true)}
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
       />
+      {needsLegalReconsent && (
+        <div className="px-4 py-1.5 bg-rose-500/15 border-b border-rose-400/35 flex flex-wrap items-center justify-between gap-2 text-xs text-rose-100 shrink-0">
+          <span>
+            Kullanıcı Sözleşmesi ve KVKK metinleri <strong>v{LEGAL_DOCUMENTS_VERSION}</strong> sürümüne güncellendi.
+          </span>
+          <button
+            type="button"
+            onClick={() => setIsReconsentOpen(true)}
+            className="px-3 py-1 rounded-lg bg-rose-500 hover:bg-rose-400 text-white text-[11px] font-bold transition"
+          >
+            İncele &amp; Onayla
+          </button>
+        </div>
+      )}
       <div className="relative flex flex-1 min-h-0 w-full overflow-hidden md:p-2.5 md:gap-2.5">
       <AppBannerStack
         isDedicatedServer={isDedicatedServer}
@@ -442,6 +462,21 @@ const MainLayout: React.FC = () => {
           isOpen={isShortcutsOpen}
           onClose={() => setIsShortcutsOpen(false)}
         />
+
+        {needsLegalReconsent && isReconsentOpen && (
+          <LegalDocumentsModal
+            isOpen={isReconsentOpen}
+            initialDocId="terms"
+            onClose={() => setIsReconsentOpen(false)}
+            requireReconsent={true}
+            onAcceptReconsent={async () => {
+              const res = await acceptLatestTerms(LEGAL_DOCUMENTS_VERSION);
+              if (res.success) {
+                setIsReconsentOpen(false);
+              }
+            }}
+          />
+        )}
       </Suspense>
 
       <MiniScreenSharePiP />

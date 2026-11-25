@@ -13,8 +13,10 @@ import { User } from '../types';
 import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
 import { appConfirm, appToast } from '../utils/appDialogs';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
+import { ReportContentModal } from './ReportContentModal';
 import {
   X,
+  Flag,
   MessageCircle,
   Phone,
   Shield,
@@ -211,6 +213,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   const [transferAmount, setTransferAmount] = useState('50');
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferFeedback, setTransferFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [isReportOpen, setIsReportOpen] = useState(false);
 
   const avatarFileRef = useRef<HTMLInputElement>(null);
   const bannerFileRef = useRef<HTMLInputElement>(null);
@@ -1422,17 +1425,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                     <span>Bakiye: {user.walletBalance} ₺</span>
                   </div>
                 ) : !isMe ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTransferOpen((v) => !v);
-                      setTransferFeedback(null);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold flex items-center gap-1 transition"
-                  >
-                    <Send className="w-3 h-3" />
-                    <span>₺ Bakiye Gönder</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTransferOpen((v) => !v);
+                        setTransferFeedback(null);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold flex items-center gap-1 transition"
+                    >
+                      <Send className="w-3 h-3" />
+                      <span>₺ Bakiye Gönder</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsReportOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-semibold flex items-center gap-1 transition"
+                    >
+                      <Flag className="w-3 h-3" />
+                      <span>{t(language, 'reportUserBtn')}</span>
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
@@ -1507,6 +1520,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
           onClose={() => setIsActivityModalOpen(false)}
           currentActivity={user.activity}
           onSaveActivity={(act) => updateUserActivity(act)}
+        />
+      )}
+
+      {!isMe && (
+        <ReportContentModal
+          isOpen={isReportOpen}
+          onClose={() => setIsReportOpen(false)}
+          targetUsername={user.username}
+          serverId={activeServer?.id}
         />
       )}
     </div>

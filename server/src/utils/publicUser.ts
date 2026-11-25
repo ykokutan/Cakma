@@ -12,6 +12,8 @@ export function toPublicUser(user: User): User {
     isBanned: _isBanned,
     bannedReason: _bannedReason,
     bannedUntil: _bannedUntil,
+    acceptedTermsAt: _acceptedTermsAt,
+    acceptedTermsVersion: _acceptedTermsVersion,
     ...publicProfile
   } = user;
   return publicProfile;

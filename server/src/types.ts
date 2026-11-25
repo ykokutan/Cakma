@@ -75,6 +75,8 @@ export interface User {
   bannedUntil?: number | null;
   twoFactorEnabled?: boolean;
   e2eePublicKey?: string;
+  acceptedTermsAt?: string;
+  acceptedTermsVersion?: string;
 }
 
 export interface RegisteredAccount {
@@ -114,6 +116,8 @@ export interface RegisteredAccount {
   e2eePublicKey?: string;
   readCursors?: Record<string, string>;
   passkeys?: PasskeyCredential[];
+  acceptedTermsAt?: string;
+  acceptedTermsVersion?: string;
 }
 
 export interface EncryptedAttachmentMeta {
@@ -680,4 +684,24 @@ export interface ServerAnalyticsData {
   channelMessageCounts: { channelName: string; count: number }[];
   popularVoiceChannels: { channelName: string; userCount: number }[];
   tierDistribution: { tier: string; count: number }[];
+}
+
+export type ContentReportCategory = 'harassment' | 'spam' | 'illegal' | 'malware' | 'other';
+export type ContentReportStatus = 'open' | 'resolved' | 'dismissed';
+
+export interface ContentReport {
+  id: string;
+  reporterUsername: string;
+  targetUsername: string;
+  serverId?: string;
+  channelId?: string;
+  messageId?: string;
+  messageExcerpt?: string;
+  category: ContentReportCategory;
+  reason: string;
+  status: ContentReportStatus;
+  createdAt: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
 }
