@@ -3,6 +3,8 @@ import {
   formatCaptionBadge,
   shouldTranslateCaption,
   formatCaptionTranscriptMarkdown,
+  parseClientGtxTranslate,
+  detectSpokenLangHint,
   type LiveCaptionEntry,
 } from '../liveCaptionHelpers';
 
@@ -55,5 +57,37 @@ describe('liveCaptionHelpers', () => {
     expect(md).toContain('🎮 Uygulama · Valorant');
     expect(md).toContain('Spike A bölgesine kuruldu _(Orijinal: Spike planted at A)_');
     expect(md).toContain('👤 Furkan');
+  });
+
+  it('allows auto source language when evaluating shouldTranslateCaption', () => {
+    expect(shouldTranslateCaption('Hello team', 'auto', 'tr')).toBe(true);
+    expect(shouldTranslateCaption('Hello team', 'auto', 'off')).toBe(false);
+    expect(shouldTranslateCaption('A', 'auto', 'tr')).toBe(false);
+  });
+
+  it('parses Google GTX client translation payloads and detected language', () => {
+    const payload = [
+      [
+        ['Merhaba takım, ', 'Hello team, ', null, null, 10],
+        ['saldırıya hazır mısınız?', 'ready to push?', null, null, 10],
+      ],
+      null,
+      'en',
+    ];
+    expect(parseClientGtxTranslate(payload)).toEqual({
+      translatedText: 'Merhaba takım, saldırıya hazır mısınız?',
+      detectedLang: 'en',
+    });
+    expect(parseClientGtxTranslate([[], null, 'en'])).toBeNull();
+    expect(parseClientGtxTranslate(null)).toBeNull();
+  });
+
+  it('detects spoken language hints across supported scripts and tokens', () => {
+    expect(detectSpokenLangHint('Привет команда, идем на точку')).toBe('ru');
+    expect(detectSpokenLangHint('Şimdi B bölgesine geçiyoruz, hazır olun')).toBe('tr');
+    expect(detectSpokenLangHint('Wir müssen die Straße sichern')).toBe('de');
+    expect(detectSpokenLangHint("C'est très bien, allons-y")).toBe('fr');
+    expect(detectSpokenLangHint('Cover me while reloading')).toBe('en');
+    expect(detectSpokenLangHint('42')).toBeNull();
   });
 });
