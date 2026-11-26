@@ -321,6 +321,7 @@ test.describe('Çakma v1.0.0 End-to-End', () => {
 
     await settingsDialog.locator('button[title="Kapat"]').click();
     await expect(settingsDialog).not.toBeVisible();
+    await expect(page.locator('[role="status"]').first()).toBeVisible();
 
     // Open Admin Dashboard & verify Storage Quota & Payment Webhook History card
     await page.getByRole('button', { name: /Sistem Yönetimi/ }).click();

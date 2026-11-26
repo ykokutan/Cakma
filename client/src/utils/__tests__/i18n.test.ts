@@ -41,6 +41,17 @@ describe('i18n translations', () => {
       'colorblindStatusMode',
       'narrowCompactMode',
       'echoLoopbackTest',
+      'activitiesMenu',
+      'foldersLabel',
+      'newFolderAction',
+      'accessibilityTitle',
+      'watchTogetherTitle',
+      'addToQueue',
+      'closeCinema',
+      'statusOnline',
+      'statusIdle',
+      'statusDnd',
+      'statusOffline',
     ];
 
     for (const lang of LANGUAGE_OPTIONS) {

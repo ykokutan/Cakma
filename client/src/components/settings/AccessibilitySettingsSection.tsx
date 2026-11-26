@@ -27,7 +27,7 @@ export const AccessibilitySettingsSection: React.FC<AccessibilitySettingsSection
   return (
     <div className="pt-3 border-t border-white/10 space-y-2.5">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-semibold text-white/90">Erişilebilirlik &amp; Yan Monitör</div>
+        <div className="text-xs font-semibold text-white/90">{t(language, 'accessibilityTitle')}</div>
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/30 border border-white/10">
           <StatusIndicator status="online" />
           <StatusIndicator status="idle" />

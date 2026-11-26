@@ -7,6 +7,7 @@ import { isUserServerOwner } from '../utils/serverIdentity';
 import { QUICK_STATUS_PRESETS, STATUS_EXPIRY_KEY, computeStatusExpiryTimestamp } from '../utils/statusExpiry';
 import { User, Channel } from '../types';
 import { VoiceUserContextMenu } from './VoiceUserContextMenu';
+import { StatusIndicator } from './StatusIndicator';
 import {
   Hash,
   Volume2,
@@ -1173,10 +1174,10 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm overflow-hidden">
                           <AvatarView avatar={user.avatar} alt={user.username} fallback="👤" className="w-full h-full object-cover" />
                         </div>
-                        <div
-                          className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black ${
-                            user.status === 'online' ? 'bg-emerald-400' : 'bg-amber-400'
-                          }`}
+                        <StatusIndicator
+                          status={user.status}
+                          size="sm"
+                          className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#0b0d14]"
                         />
                       </div>
                       <div className="truncate">
@@ -1627,10 +1628,10 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                         : 'bg-white/[0.04] border-white/[0.06] text-white/75 hover:bg-white/10'
                     }`}
                   >
-                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${opt.dot}`} />
+                    <StatusIndicator status={opt.id} size="sm" />
                     <div className="min-w-0">
                       <div className="text-[11px] font-semibold truncate">{opt.label}</div>
-                      <div className="text-[9px] text-white/40 truncate">{opt.desc}</div>
+                      <div className="text-[11px] text-white/50 truncate">{opt.desc}</div>
                     </div>
                   </button>
                 );
@@ -1655,7 +1656,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                     });
                     setIsStatusMenuOpen(false);
                   }}
-                  className="px-2 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/10 border border-white/[0.06] text-left text-[10px] font-semibold text-white/80 hover:text-white truncate transition"
+                  className="px-2 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/10 border border-white/[0.06] text-left text-[11px] font-semibold text-white/80 hover:text-white truncate transition"
                   title={preset.label}
                 >
                   {preset.statusMessage}
@@ -1726,8 +1727,10 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
                   if (isAuthenticated) setIsStatusMenuOpen((p) => !p);
                 }}
                 title={`Durum: ${currentStatusMeta.label} (Değiştirmek için tıkla)`}
-                className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${currentStatusMeta.dot} border-2 border-black shadow hover:scale-125 transition-transform`}
-              />
+                className="absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-black shadow hover:scale-125 transition-transform flex items-center justify-center"
+              >
+                <StatusIndicator status={currentUser?.status || 'online'} size="sm" />
+              </button>
             </div>
 
             <div className="leading-tight min-w-0 flex-1">

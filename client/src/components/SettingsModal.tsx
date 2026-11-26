@@ -365,7 +365,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       appToast('Mikrofon yankı testi başlatılamadı. Mikrofon iznini kontrol edin.', 'warning');
     }
   };
-  const [appVersion, setAppVersion] = useState<string>('1.3.0');
+  const [appVersion, setAppVersion] = useState<string>('1.3.1');
   const [legalModalDoc, setLegalModalDoc] = useState<LegalDocumentId | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;

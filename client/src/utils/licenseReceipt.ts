@@ -71,7 +71,7 @@ export function buildLicenseReceiptHtml(
     <div class="keybox">${escapeHtml(license.licenseKey)}</div>
     <div class="footer">
       <span>Oluşturan Kaynak: ${escapeHtml(license.source || 'store')}</span>
-      <span>Çakma v1.3.0 Store</span>
+      <span>Çakma v1.3.1 Store</span>
     </div>
   </div>
 </body>

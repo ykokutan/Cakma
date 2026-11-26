@@ -567,6 +567,8 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [isSpatialAudioOpen, setIsSpatialAudioOpen] = useState(false);
   const [isGoLiveOpen, setIsGoLiveOpen] = useState(false);
   const [isMiniGamesOpen, setIsMiniGamesOpen] = useState(false);
+  const [isActivitiesMenuOpen, setIsActivitiesMenuOpen] = useState(false);
+  const activitiesMenuRef = useRef<HTMLDivElement | null>(null);
   const [isScreenFocused, setIsScreenFocused] = useState(false);
   const [isMultiStreamGrid, setIsMultiStreamGrid] = useState(false);
   const [liveCaptionsEnabled, setLiveCaptionsEnabled] = useState(false);
@@ -577,6 +579,24 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     window.addEventListener('cakma-toggle-live-captions', handler);
     return () => window.removeEventListener('cakma-toggle-live-captions', handler);
   }, []);
+
+  useEffect(() => {
+    if (!isActivitiesMenuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (activitiesMenuRef.current && !activitiesMenuRef.current.contains(e.target as Node)) {
+        setIsActivitiesMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsActivitiesMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isActivitiesMenuOpen]);
 
   const activeVoiceId = activeChannel?.id || '';
   const currentVoiceMsgsCount = messagesMap[activeVoiceId]?.length || 0;
@@ -1654,18 +1674,18 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                 {isWebcamActive ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </button>
 
-              {/* Camera Background Blur Toggle */}
+              {/* Camera Screen Share & Video already above; keep core controls clean + Activities popover */}
+              {/* Raise Hand Button */}
               <button
-                type="button"
-                onClick={toggleWebcamBlur}
+                onClick={toggleRaiseHand}
                 className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-                  webcamBlurEnabled
-                    ? 'bg-sky-500 text-white shadow-sky-500/30 ring-2 ring-sky-400'
-                    : 'bg-white/10 hover:bg-white/20 text-white/75'
+                  currentUser?.isHandRaised
+                    ? 'bg-amber-500 text-black shadow-amber-500/30 ring-2 ring-amber-300'
+                    : 'bg-white/10 hover:bg-white/20 text-white'
                 }`}
-                title={webcamBlurEnabled ? 'Kamera Arka Plan Bulanıklığı: Açık' : 'Kamera Arka Plan Bulanıklığı: Kapalı'}
+                title="El Kaldır / Söz İste"
               >
-                <Droplet className="w-5 h-5" />
+                <Hand className="w-5 h-5" />
               </button>
 
               {/* Priority Speaker Toggle (Admin) */}
@@ -1683,76 +1703,136 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                 </button>
               )}
 
-              {/* Soundboard Button */}
-              <button
-                onClick={() => setIsSoundboardOpen(true)}
-                className="w-11 h-11 rounded-full bg-gradient-to-tr from-amber-500/20 to-pink-500/20 hover:from-amber-500/30 hover:to-pink-500/30 border border-pink-500/30 text-pink-300 flex items-center justify-center transition shadow-md hover:scale-105 active:scale-95"
-                title="Ses Tahtası (Soundboard Efektleri)"
-              >
-                <Sparkles className="w-5 h-5" />
-              </button>
+              {/* Consolidated Activities & Tools Popover */}
+              <div ref={activitiesMenuRef} className="relative">
+                {isActivitiesMenuOpen && (
+                  <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-40 w-[300px] sm:w-[332px] p-2.5 rounded-2xl ios-glass border border-white/15 shadow-2xl grid grid-cols-2 gap-1.5 animate-fade-in">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWatchTogetherOpen(true);
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 text-red-200 text-xs font-semibold transition text-left"
+                    >
+                      <Film className="w-4 h-4 shrink-0" />
+                      <span className="truncate">Birlikte İzle</span>
+                    </button>
 
-              {/* Raise Hand Button */}
-              <button
-                onClick={toggleRaiseHand}
-                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 shadow-md ${
-                  currentUser?.isHandRaised
-                    ? 'bg-amber-500 text-black shadow-amber-500/30 ring-2 ring-amber-300'
-                    : 'bg-white/10 hover:bg-white/20 text-white'
-                }`}
-                title="El Kaldır / Söz İste"
-              >
-                <Hand className="w-5 h-5" />
-              </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMiniGamesOpen(true);
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/25 text-purple-200 text-xs font-semibold transition text-left"
+                    >
+                      <Gamepad2 className="w-4 h-4 shrink-0" />
+                      <span className="truncate">Mini Oyunlar</span>
+                    </button>
 
-              {/* Whisper Lists Button */}
-              <button
-                onClick={() => setIsWhisperListsOpen(true)}
-                className="w-11 h-11 rounded-full bg-teal-500/15 hover:bg-teal-500/30 border border-teal-500/30 text-teal-300 flex items-center justify-center transition shadow-md"
-                title="Fısıltı Listeleri (Whisper Lists)"
-              >
-                <Radio className="w-5 h-5" />
-              </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWhiteboardOpen(true);
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/25 text-pink-200 text-xs font-semibold transition text-left"
+                    >
+                      <Palette className="w-4 h-4 shrink-0" />
+                      <span className="truncate">Ortak Beyaz Tahta</span>
+                    </button>
 
-              {/* Tauri In-Game Speakers Overlay Toggle */}
-              {typeof window !== 'undefined' &&
-                ('__TAURI_INTERNALS__' in window ||
-                  window.location.hostname === 'tauri.localhost' ||
-                  window.location.protocol === 'tauri:') && (
-                  <button
-                    onClick={toggleOverlayWindow}
-                    className="w-11 h-11 rounded-full bg-indigo-500/15 hover:bg-indigo-500/30 border border-indigo-500/30 text-indigo-300 flex items-center justify-center transition shadow-md"
-                    title="Oyun İçi Konuşanlar Overlay Penceresini Aç/Kapat"
-                  >
-                    <Layers className="w-5 h-5" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSpatialAudioOpen(true);
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/25 text-cyan-200 text-xs font-semibold transition text-left"
+                    >
+                      <Compass className="w-4 h-4 shrink-0" />
+                      <span className="truncate">3D Uzamsal Ses</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSoundboardOpen(true);
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/25 text-amber-200 text-xs font-semibold transition text-left"
+                    >
+                      <Sparkles className="w-4 h-4 shrink-0" />
+                      <span className="truncate">Ses Tahtası</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWhisperListsOpen(true);
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/25 text-teal-200 text-xs font-semibold transition text-left"
+                    >
+                      <Radio className="w-4 h-4 shrink-0" />
+                      <span className="truncate">Fısıltı Listeleri</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        toggleWebcamBlur();
+                        setIsActivitiesMenuOpen(false);
+                      }}
+                      className={`flex items-center justify-between gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-semibold transition text-left ${
+                        webcamBlurEnabled
+                          ? 'bg-sky-500/25 border-sky-400/40 text-sky-100'
+                          : 'bg-white/[0.06] hover:bg-white/10 border-white/10 text-white/80'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Droplet className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">Kamera Blur</span>
+                      </span>
+                      <span className="text-[11px] font-mono opacity-80 shrink-0">
+                        {webcamBlurEnabled ? 'Açık' : 'Kapalı'}
+                      </span>
+                    </button>
+
+                    {typeof window !== 'undefined' &&
+                      ('__TAURI_INTERNALS__' in window ||
+                        window.location.hostname === 'tauri.localhost' ||
+                        window.location.protocol === 'tauri:') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            toggleOverlayWindow();
+                            setIsActivitiesMenuOpen(false);
+                          }}
+                          className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/25 text-indigo-200 text-xs font-semibold transition text-left"
+                        >
+                          <Layers className="w-4 h-4 shrink-0" />
+                          <span className="truncate">Oyun İçi Overlay</span>
+                        </button>
+                      )}
+                  </div>
                 )}
 
-              {/* Mini Games & Activities Button */}
-              <button
-                onClick={() => setIsMiniGamesOpen(true)}
-                className={`w-11 h-11 rounded-full border flex items-center justify-center transition shadow-md hover:scale-105 active:scale-95 ${
-                  isMiniGamesOpen
-                    ? 'bg-purple-600 border-purple-400 text-white shadow-purple-600/30 ring-2 ring-purple-400'
-                    : 'bg-purple-500/20 hover:bg-purple-500/30 border-purple-500/30 text-purple-300'
-                }`}
-                title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma Yarışı)"
-              >
-                <Gamepad2 className="w-5 h-5" />
-              </button>
-
-              {/* Watch Together YouTube Cinema Button */}
-              <button
-                onClick={() => setIsWatchTogetherOpen(true)}
-                className={`w-11 h-11 rounded-full border flex items-center justify-center transition shadow-md hover:scale-105 active:scale-95 ${
-                  isWatchTogetherOpen
-                    ? 'bg-red-600 border-red-400 text-white shadow-red-600/30 ring-2 ring-red-400'
-                    : 'bg-red-500/20 hover:bg-red-500/30 border-red-500/30 text-red-300'
-                }`}
-                title="Birlikte İzle (Canlı YouTube Sineması)"
-              >
-                <Film className="w-5 h-5" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setIsActivitiesMenuOpen((prev) => !prev)}
+                  className={`h-11 px-3.5 rounded-full border flex items-center gap-2 text-xs font-semibold transition-all duration-200 shadow-md ${
+                    isActivitiesMenuOpen
+                      ? 'bg-indigo-600 border-indigo-400 text-white ring-2 ring-indigo-400/60'
+                      : 'bg-white/10 hover:bg-white/20 border-white/15 text-white'
+                  }`}
+                  title={t(language, 'activitiesMenu')}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  <span className="hidden sm:inline">{t(language, 'activitiesMenu')}</span>
+                </button>
+              </div>
 
               <div className="w-[1px] h-6 bg-white/20 mx-1" />
 

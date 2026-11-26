@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { CreditCard, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { authFetch } from '../../utils/authFetch';
+import { CardSkeleton } from '../Skeleton';
 
 interface StorageUsageSnapshot {
   totalBytes: number;
@@ -134,7 +135,9 @@ export const AdminStorageAndWebhooksCard: React.FC<{ currentServerHost: string }
         </div>
       )}
 
-      {usage && (
+      {loading && !usage ? (
+        <CardSkeleton rows={3} />
+      ) : usage ? (
         <div className="p-3.5 rounded-xl bg-black/25 border border-white/5 space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="text-white/70">
@@ -157,7 +160,7 @@ export const AdminStorageAndWebhooksCard: React.FC<{ currentServerHost: string }
             />
           </div>
         </div>
-      )}
+      ) : null}
 
       <div className="space-y-1.5">
         <div className="text-[11px] font-semibold text-white/65 flex items-center gap-1.5">

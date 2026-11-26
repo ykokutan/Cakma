@@ -15,11 +15,23 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.3.0 - Latest */}
+        {/* v1.3.1 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.3.0 — Son Sürüm</span>
+            <span className="text-xs font-bold text-emerald-300">v1.3.1 — Son Sürüm (UI/UX Parlatma)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Erişilebilir Durum İkonları &amp; Tipografi:</strong> <code className="text-emerald-200">StatusIndicator</code> bileşeni üye listesi, DM sohbetleri ve kullanıcı çubuğuna yayıldı; durum menüsü mikro metinleri okunabilir <code className="text-emerald-200">11px</code> düzeyine yükseltildi.</li>
+            <li><strong className="text-white">Sadeleştirilmiş Ses Odası Kontrol Barı:</strong> Alt araç çubuğundaki ikincil araçlar (Birlikte İzle, Mini Oyunlar, Beyaz Tahta, 3D Ses, Ses Tahtası, Fısıltı Listeleri, Kamera Blur, Overlay) tek bir <strong>Aktiviteler</strong> menüsünde toplandı.</li>
+            <li><strong className="text-white">Shimmer İskeletler, Açık Tema &amp; 5 Dil Çevirisi:</strong> <code className="text-emerald-200">Skeleton</code> yükleyicileri, açık temaya uyumlu <code className="text-emerald-200">ui-modal-surface</code> pencere zemini ve sunucu klasörleri/izleme sırası için tam 5 dilli (<code className="text-emerald-200">tr/en/de/ru/fr</code>) etiket desteği eklendi.</li>
+          </ul>
+        </div>
+
+        {/* v1.3.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v1.3.0 — Önceki Sürüm</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">Topluluk, AFK &amp; Etkinlikler:</strong> Daraltılabilir renkli <strong>Sunucu Klasörleri</strong>, konuşurken atmayı önleyen akıllı <strong>AFK Ses Taşıma Koruması</strong>, etkinliklerden 15 dakika önce otomatik <code className="text-emerald-200">event_reminder</code> bildirimi, 2x2 <strong>Hızlı Durum Şablonları</strong> ve davet kaynak takibi (<strong>Invite Analytics</strong>) eklendi.</li>

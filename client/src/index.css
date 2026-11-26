@@ -783,3 +783,55 @@ html[data-narrow-compact="true"] .app-nav-shell > nav,
 html[data-narrow-compact="true"] .app-nav-shell > aside {
   max-width: 196px;
 }
+
+/* v1.3.1 Shimmer Skeletons & Light-Mode Modal Surface */
+@keyframes uiShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.ui-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.06) 25%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.06) 75%
+  );
+  background-size: 200% 100%;
+  animation: uiShimmer 1.4s ease-in-out infinite;
+}
+
+html[data-reduce-motion="true"] .ui-shimmer {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-shimmer {
+    animation: none;
+  }
+}
+
+.ui-modal-surface {
+  background-color: #12131a;
+  color: #f8fafc;
+}
+
+html[data-theme-mode="light"] .ui-modal-surface,
+html[data-theme-mode="light"] .bg-\[\#12131a\] {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+  color: #0f172a !important;
+  border-color: rgba(15, 23, 42, 0.14) !important;
+}
+
+html[data-theme-mode="light"] .ui-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgba(15, 23, 42, 0.07) 25%,
+    rgba(15, 23, 42, 0.15) 50%,
+    rgba(15, 23, 42, 0.07) 75%
+  );
+}

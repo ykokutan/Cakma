@@ -6,6 +6,7 @@ import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX, Search, X } from 'lucide-react';
 import { AvatarView } from './AvatarView';
+import { StatusIndicator } from './StatusIndicator';
 
 interface MemberListProps {
   onOpenProfile: (user: User) => void;
@@ -39,19 +40,6 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
       window.removeEventListener('keydown', handleEsc);
     };
   }, [contextMenu]);
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'online':
-        return 'bg-emerald-400';
-      case 'idle':
-        return 'bg-amber-400';
-      case 'dnd':
-        return 'bg-red-400';
-      default:
-        return 'bg-white/30';
-    }
-  };
 
   // Helper to find member's highest role & server nickname
   const getUserRoleInfo = (user: User): { role: ServerRole | null; isOwner: boolean; nickname?: string } => {
@@ -317,10 +305,10 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                     >
                       <AvatarView avatar={user.avatar} alt={user.username} fallback="🎮" />
                     </div>
-                    <div
-                      className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black ${getStatusColor(
-                        user.status
-                      )}`}
+                    <StatusIndicator
+                      status={user.status}
+                      size="sm"
+                      className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[#0b0d14]"
                     />
                   </div>
 

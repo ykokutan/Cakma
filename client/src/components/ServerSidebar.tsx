@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { t } from '../utils/i18n';
 import { Plus, Compass, MessageCircle, Download, Bell, BellOff, FolderOpen, FolderPlus, FolderMinus } from 'lucide-react';
 import { isImageAvatar } from './AvatarView';
 import type { Server } from '../types';
@@ -42,6 +43,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
     unreadDMByUser,
     notificationPrefs,
     setTargetNotificationPref,
+    language,
   } = useSocket();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [serverMenu, setServerMenu] = useState<{ server: Server; x: number; y: number } | null>(null);
@@ -393,8 +395,8 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
               );
             })}
 
-            <div className="px-2.5 py-1 mt-1 border-t border-white/10 text-[10px] font-bold uppercase tracking-wider text-white/45">
-              Klasörler
+            <div className="px-2.5 py-1 mt-1 border-t border-white/10 text-[11px] font-bold uppercase tracking-wider text-white/50">
+              {t(language, 'foldersLabel')}
             </div>
             <button
               type="button"
@@ -414,7 +416,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
               className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-emerald-300 text-left transition"
             >
               <FolderPlus className="w-3.5 h-3.5" />
-              <span>Yeni Klasöre Ekle</span>
+              <span>{t(language, 'newFolderAction')}</span>
             </button>
             {folders.map((folder) => {
               const inFolder = folder.serverIds.includes(serverMenu.server.id);
