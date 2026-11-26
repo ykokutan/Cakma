@@ -2031,7 +2031,15 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
       )}
       <LiveCaptionsOverlay
         enabled={liveCaptionsEnabled}
+        channelId={activeChannel.id}
         channelName={activeChannel.name}
+        activeStream={activeClipStream}
+        hasActiveStream={hasAnyScreenShare}
+        streamLabel={
+          isScreenSharing
+            ? currentUser?.activity?.name || currentUser?.username || 'Yayın'
+            : activePresenter?.activity?.name || activePresenter?.username || 'Yayın'
+        }
         onClose={() => setLiveCaptionsEnabled(false)}
       />
     </div>

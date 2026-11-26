@@ -54,6 +54,7 @@ import { generateVapidKeyPair, sendWebPush, type VapidKeys } from './utils/webPu
 import { registerCloudSyncAndEvents } from './features/cloudSyncAndEvents.js';
 import { registerHealthAndPushRoutes, pruneGifCache, clearGifCache } from './features/healthAndPushRoutes.js';
 import { registerDedicatedAndMasterRoutes, notifyDedicatedLicenseRevoked } from './features/dedicatedRoutes.js';
+import { registerTranslateRoute } from './features/translateRoute.js';
 import {
   generateBase32Secret,
   generateOtpAuthUri,
@@ -1645,6 +1646,7 @@ const apiAuthMiddlewares = createAuthMiddlewares({
   getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
 });
 registerChatEnhancementsRoutes(app, { authMiddlewares: apiAuthMiddlewares });
+registerTranslateRoute(app, { requireAuth: apiAuthMiddlewares.requireAuth });
 
 const maintenanceService = new MaintenanceService({
   dataDir: getPersistentDir(),
@@ -3617,6 +3619,56 @@ io.on('connection', (socket: Socket) => {
       });
     }
   });
+
+  // Live Captions Relay across Voice Channel Participants
+  socket.on(
+    'voice_caption_emit',
+    (payload: {
+      channelId?: string;
+      id?: string;
+      source?: string;
+      sourceLabel?: string;
+      text?: string;
+      translatedText?: string;
+      sourceLang?: string;
+      targetLang?: string | null;
+      time?: string;
+    }) => {
+      const user = activeUsers.get(socket.id);
+      if (!user || !user.currentVoiceChannelId) return;
+      const channelId = String(payload?.channelId || '').trim();
+      if (!channelId || user.currentVoiceChannelId !== channelId) return;
+
+      const text = String(payload?.text || '').trim().slice(0, 400);
+      if (!text) return;
+
+      const translatedText =
+        typeof payload?.translatedText === 'string' && payload.translatedText.trim()
+          ? payload.translatedText.trim().slice(0, 500)
+          : undefined;
+      const source = payload?.source === 'stream' ? 'stream' : 'user';
+      const sourceLabel =
+        source === 'stream' && typeof payload?.sourceLabel === 'string'
+          ? payload.sourceLabel.trim().slice(0, 64)
+          : undefined;
+
+      socket.to(channelId).emit('voice_caption_received', {
+        id: String(payload?.id || `cap-${Date.now()}`).slice(0, 64),
+        channelId,
+        author: user.username,
+        source,
+        sourceLabel,
+        text,
+        translatedText,
+        sourceLang: String(payload?.sourceLang || 'tr').slice(0, 8),
+        targetLang: payload?.targetLang ? String(payload.targetLang).slice(0, 8) : null,
+        time:
+          typeof payload?.time === 'string' && payload.time.trim()
+            ? payload.time.trim().slice(0, 16)
+            : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      });
+    }
+  );
 
   // Screen Share Status
   socket.on('screen_share_status', ({ isSharing, settings }: { isSharing: boolean; settings?: any }) => {
