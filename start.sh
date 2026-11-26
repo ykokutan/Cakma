@@ -16,10 +16,11 @@ if [ "$AUTO_UPDATE" = "1" ] && [ -d ".git" ]; then
   git reflog expire --expire=now --all 2>/dev/null || true
   git gc --prune=now 2>/dev/null || true
   if [ -d "$ROOT_DIR/server" ]; then
-    cd "$ROOT_DIR/server" && npm install --no-audit --no-fund && npm run build
+    cd "$ROOT_DIR/server" && npm install --no-audit --no-fund --omit=optional && npm run build
   fi
+  npm cache clean --force 2>/dev/null || true
   if [ -d "$ROOT_DIR/client" ]; then
-    cd "$ROOT_DIR/client" && npm install --no-audit --no-fund && npm run build
+    cd "$ROOT_DIR/client" && npm install --no-audit --no-fund --omit=optional && npm run build
   fi
   npm cache clean --force 2>/dev/null || true
   cd "$ROOT_DIR"

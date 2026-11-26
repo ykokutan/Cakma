@@ -68,11 +68,20 @@ export function detectSpokenLangHint(text: string): CaptionLangCode | null {
   if (/[éèêëàâôùûîïœæÉÈÊËÀÂÔÙÛÎÏŒÆ]/.test(trimmed)) return 'fr';
   if (/[öüçÖÜÇ]/.test(trimmed)) return 'tr';
   if (
-    /\b(the|and|is|are|you|we|have|with|from|this|that|cover|reloading|attack|defend)\b/i.test(
+    /\b(the|and|is|are|you|we|have|with|from|this|that|cover|reloading|attack|defend|hello|hey|yes|no|what|how|good|nice)\b/i.test(
       trimmed
     )
   ) {
     return 'en';
+  }
+  if (/\b(merhaba|selam|tamam|evet|hayir|nasil|tesekkur|geliyorum)\b/i.test(trimmed)) {
+    return 'tr';
+  }
+  if (/\b(hallo|danke|bitte|nicht|ich|und|wir|sie)\b/i.test(trimmed)) {
+    return 'de';
+  }
+  if (/\b(bonjour|merci|oui|salut|avec|pour|nous|vous)\b/i.test(trimmed)) {
+    return 'fr';
   }
   return null;
 }

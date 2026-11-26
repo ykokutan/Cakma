@@ -1,7 +1,8 @@
-import { env, pipeline, type ProgressInfo } from '@huggingface/transformers';
-
-env.allowLocalModels = false;
-env.useBrowserCache = true;
+interface ProgressInfoLike {
+  status?: string;
+  progress?: number;
+  file?: string;
+}
 
 type WorkerRequest =
   | { type: 'init' }
@@ -19,39 +20,50 @@ type AsrTranscriber = (
   }
 ) => Promise<AsrChunkOutput | AsrChunkOutput[]>;
 
+interface TransformersModuleLike {
+  env: {
+    allowLocalModels: boolean;
+    useBrowserCache: boolean;
+  };
+  pipeline: (
+    task: 'automatic-speech-recognition',
+    model: string,
+    options: {
+      dtype: string;
+      device: string;
+      progress_callback: (info: ProgressInfoLike) => void;
+    }
+  ) => Promise<AsrTranscriber>;
+}
+
+const TRANSFORMERS_CDN_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.0';
+
 let pipelinePromise: Promise<AsrTranscriber> | null = null;
 
 async function getTranscriber(): Promise<AsrTranscriber> {
   if (!pipelinePromise) {
-    const progressCallback = (info: ProgressInfo) => {
-      const progress =
-        'progress' in info && typeof info.progress === 'number'
-          ? Math.round(info.progress)
-          : 0;
-      const file = 'file' in info && typeof info.file === 'string' ? info.file : undefined;
-      self.postMessage({
-        type: 'progress',
-        progress,
-        status: info.status || 'progress',
-        file,
+    pipelinePromise = (async () => {
+      const mod = (await import(/* @vite-ignore */ TRANSFORMERS_CDN_URL)) as TransformersModuleLike;
+      mod.env.allowLocalModels = false;
+      mod.env.useBrowserCache = true;
+
+      const progressCallback = (info: ProgressInfoLike) => {
+        const progress = typeof info.progress === 'number' ? Math.round(info.progress) : 0;
+        const file = typeof info.file === 'string' ? info.file : undefined;
+        self.postMessage({
+          type: 'progress',
+          progress,
+          status: info.status || 'progress',
+          file,
+        });
+      };
+
+      return mod.pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+        dtype: 'q8',
+        device: 'wasm',
+        progress_callback: progressCallback,
       });
-    };
-
-    const createPipeline = pipeline as unknown as (
-      task: 'automatic-speech-recognition',
-      model: string,
-      options: {
-        dtype: string;
-        device: string;
-        progress_callback: (info: ProgressInfo) => void;
-      }
-    ) => Promise<AsrTranscriber>;
-
-    pipelinePromise = createPipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
-      dtype: 'q8',
-      device: 'wasm',
-      progress_callback: progressCallback,
-    });
+    })();
   }
 
   return pipelinePromise;
