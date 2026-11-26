@@ -151,3 +151,66 @@ export function formatCaptionTranscriptMarkdown(
   }
   return lines.join('\n');
 }
+
+const WHISPER_SILENCE_HALLUCINATIONS = new Set([
+  'thank you',
+  'thanks for watching',
+  'thank you for watching',
+  'you',
+  'bye',
+  'altyazı m.k',
+  'subtitles by',
+  'mbc',
+]);
+
+export function downsampleTo16kHz(samples: Float32Array, inputSampleRate: number): Float32Array {
+  if (inputSampleRate <= 0 || samples.length === 0) {
+    return new Float32Array(0);
+  }
+  if (inputSampleRate === 16000) {
+    return samples;
+  }
+  const ratio = inputSampleRate / 16000;
+  const outLength = Math.max(1, Math.floor(samples.length / ratio));
+  const result = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(samples.length, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    let count = 0;
+    for (let j = start; j < end; j++) {
+      sum += samples[j];
+      count++;
+    }
+    result[i] = count > 0 ? sum / count : samples[Math.min(start, samples.length - 1)];
+  }
+  return result;
+}
+
+export function computeAudioRms(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+  let sumSq = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sumSq += samples[i] * samples[i];
+  }
+  return Math.sqrt(sumSq / samples.length);
+}
+
+export function cleanWhisperTranscript(raw: string): string {
+  const withoutTags = String(raw || '')
+    .replace(/\[[^\]]*\]|\([^)]*\)|♪[^♪]*♪?/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!withoutTags) return '';
+
+  const alnumCount = withoutTags.replace(/[^\p{L}\p{N}]/gu, '').length;
+  if (alnumCount < 2) return '';
+
+  const normalizedForCheck = withoutTags
+    .replace(/^[\p{P}\p{S}\s]+|[\p{P}\p{S}\s]+$/gu, '')
+    .toLowerCase();
+  if (!normalizedForCheck || WHISPER_SILENCE_HALLUCINATIONS.has(normalizedForCheck)) {
+    return '';
+  }
+  return withoutTags;
+}

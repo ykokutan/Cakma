@@ -5,6 +5,9 @@ import {
   formatCaptionTranscriptMarkdown,
   parseClientGtxTranslate,
   detectSpokenLangHint,
+  downsampleTo16kHz,
+  computeAudioRms,
+  cleanWhisperTranscript,
   type LiveCaptionEntry,
 } from '../liveCaptionHelpers';
 
@@ -89,5 +92,34 @@ describe('liveCaptionHelpers', () => {
     expect(detectSpokenLangHint("C'est très bien, allons-y")).toBe('fr');
     expect(detectSpokenLangHint('Cover me while reloading')).toBe('en');
     expect(detectSpokenLangHint('42')).toBeNull();
+  });
+
+  it('downsamples 48kHz audio to 16kHz and passes 16kHz through unchanged', () => {
+    const passthrough = new Float32Array([0.1, -0.2, 0.3]);
+    expect(downsampleTo16kHz(passthrough, 16000)).toBe(passthrough);
+
+    const input48k = new Float32Array([0.3, 0.3, 0.3, -0.6, -0.6, -0.6]);
+    const out16k = downsampleTo16kHz(input48k, 48000);
+    expect(out16k.length).toBe(2);
+    expect(out16k[0]).toBeCloseTo(0.3, 5);
+    expect(out16k[1]).toBeCloseTo(-0.6, 5);
+    expect(downsampleTo16kHz(new Float32Array(0), 48000).length).toBe(0);
+  });
+
+  it('computes audio RMS for silence and constant signal', () => {
+    expect(computeAudioRms(new Float32Array(0))).toBe(0);
+    expect(computeAudioRms(new Float32Array([0, 0, 0, 0]))).toBe(0);
+    expect(computeAudioRms(new Float32Array([0.5, -0.5, 0.5, -0.5]))).toBeCloseTo(0.5, 5);
+  });
+
+  it('cleans Whisper silence hallucinations and preserves real multilingual text', () => {
+    expect(cleanWhisperTranscript('[BLANK_AUDIO]')).toBe('');
+    expect(cleanWhisperTranscript('[Music] (silence) ♪la la♪')).toBe('');
+    expect(cleanWhisperTranscript('Thank you.')).toBe('');
+    expect(cleanWhisperTranscript('...')).toBe('');
+    expect(cleanWhisperTranscript('  [Music] Spike planted at A  ')).toBe('Spike planted at A');
+    expect(cleanWhisperTranscript('Şimdi B bölgesine geçiyoruz')).toBe(
+      'Şimdi B bölgesine geçiyoruz'
+    );
   });
 });

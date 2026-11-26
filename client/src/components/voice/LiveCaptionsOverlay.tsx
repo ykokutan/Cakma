@@ -6,7 +6,10 @@ import {
   type CaptionLangCode,
   type CaptionSourceType,
   type LiveCaptionEntry,
+  cleanWhisperTranscript,
+  computeAudioRms,
   detectSpokenLangHint,
+  downsampleTo16kHz,
   formatCaptionBadge,
   formatCaptionTranscriptMarkdown,
   shouldTranslateCaption,
@@ -72,6 +75,12 @@ interface ReceivedVoiceCaptionPayload {
   time?: string;
 }
 
+type WhisperWorkerResponse =
+  | { type: 'progress'; progress: number; status: string; file?: string }
+  | { type: 'ready' }
+  | { type: 'result'; id: string; text: string }
+  | { type: 'error'; id?: string; message: string };
+
 const LANG_MAP: Record<CaptionLangCode, string> = {
   tr: 'tr-TR',
   en: 'en-US',
@@ -81,6 +90,14 @@ const LANG_MAP: Record<CaptionLangCode, string> = {
 };
 
 const SUPPORTED_LANG_CODES = new Set<CaptionLangCode>(['tr', 'en', 'de', 'ru', 'fr']);
+
+const BROWSER_LANG_CHOICES: Array<{ code: CaptionLangCode; label: string }> = [
+  { code: 'tr', label: 'TR' },
+  { code: 'en', label: 'EN' },
+  { code: 'de', label: 'DE' },
+  { code: 'ru', label: 'RU' },
+  { code: 'fr', label: 'FR' },
+];
 
 const TARGET_CHOICES: Array<{ code: 'off' | CaptionLangCode; label: string }> = [
   { code: 'off', label: 'Çeviri Yok' },
@@ -92,6 +109,10 @@ const TARGET_CHOICES: Array<{ code: 'off' | CaptionLangCode; label: string }> = 
 ];
 
 const MAX_CAPTIONS = 60;
+const VAD_RMS_THRESHOLD = 0.012;
+const VAD_SILENCE_FLUSH_MS = 650;
+const VAD_MIN_SPEECH_MS = 350;
+const VAD_MAX_SPEECH_MS = 4500;
 
 function isSupportedLangCode(lang: string | null | undefined): lang is CaptionLangCode {
   if (!lang) return false;
@@ -105,6 +126,15 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtorLike | null {
     webkitSpeechRecognition?: SpeechRecognitionCtorLike;
   };
   return win.SpeechRecognition || win.webkitSpeechRecognition || null;
+}
+
+function getAudioContextCtor(): (new () => AudioContext) | null {
+  if (typeof window === 'undefined') return null;
+  const win = window as unknown as {
+    AudioContext?: new () => AudioContext;
+    webkitAudioContext?: new () => AudioContext;
+  };
+  return win.AudioContext || win.webkitAudioContext || null;
 }
 
 export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
@@ -122,12 +152,15 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
     'Kullanıcı';
   const defaultUiLang: CaptionLangCode = isSupportedLangCode(language) ? language : 'tr';
 
+  const [engineMode, setEngineMode] = useState<'whisper' | 'browser'>('whisper');
   const [sourceMode, setSourceMode] = useState<'mic' | 'stream'>('mic');
-  const [autoRecLang, setAutoRecLang] = useState<CaptionLangCode>(defaultUiLang);
-  const [detectedLangBadge, setDetectedLangBadge] = useState<string>(defaultUiLang);
+  const [browserLang, setBrowserLang] = useState<CaptionLangCode>(defaultUiLang);
+  const [detectedLangBadge, setDetectedLangBadge] = useState<string>('auto');
   const [translateTarget, setTranslateTarget] = useState<'off' | CaptionLangCode>(defaultUiLang);
+  const [modelStatus, setModelStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [modelProgress, setModelProgress] = useState(0);
+  const [vadActive, setVadActive] = useState(false);
   const [interimText, setInterimText] = useState('');
-  const [interimBadge, setInterimBadge] = useState('');
   const [captions, setCaptions] = useState<LiveCaptionEntry[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -136,11 +169,13 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
     hasActiveStream && sourceMode === 'stream' ? 'stream' : 'mic';
 
   const targetRef = useRef(translateTarget);
-  const autoRecLangRef = useRef(autoRecLang);
+  const browserLangRef = useRef(browserLang);
   const sourceModeRef = useRef(effectiveSourceMode);
   const streamLabelRef = useRef(streamLabel);
   const channelIdRef = useRef(channelId);
   const currentUserRef = useRef(currentUserName);
+  const modelStatusRef = useRef(modelStatus);
+  const isProcessingRef = useRef(false);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const listEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -149,8 +184,8 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
   }, [translateTarget]);
 
   useEffect(() => {
-    autoRecLangRef.current = autoRecLang;
-  }, [autoRecLang]);
+    browserLangRef.current = browserLang;
+  }, [browserLang]);
 
   useEffect(() => {
     sourceModeRef.current = effectiveSourceMode;
@@ -169,8 +204,12 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
   }, [currentUserName]);
 
   useEffect(() => {
+    modelStatusRef.current = modelStatus;
+  }, [modelStatus]);
+
+  useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [captions.length, interimText]);
+  }, [captions.length, interimText, vadActive]);
 
   const appendCaptionEntry = (entry: LiveCaptionEntry) => {
     seenIdsRef.current.add(entry.id);
@@ -253,18 +292,330 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
     };
   }, [enabled, socket]);
 
+  // Client-side Whisper AI Web Worker + VAD audio capture
   useEffect(() => {
-    if (!enabled) {
-      setIsListening(false);
-      setInterimText('');
-      setInterimBadge('');
+    if (!enabled || engineMode !== 'whisper') {
+      return;
+    }
+
+    let cancelled = false;
+    let worker: Worker | null = null;
+    let audioContext: AudioContext | null = null;
+    let sourceNode: MediaStreamAudioSourceNode | null = null;
+    let processor: ScriptProcessorNode | null = null;
+    let muteGain: GainNode | null = null;
+    let ownedStream: MediaStream | null = null;
+
+    const finalizeTranscription = (entryId: string, cleanedText: string) => {
+      const hint = detectSpokenLangHint(cleanedText);
+      const initialLang = hint || 'auto';
+      const target = targetRef.current;
+      const sourceType: CaptionSourceType =
+        sourceModeRef.current === 'stream' ? 'stream' : 'user';
+      const cleanStreamLabel =
+        sourceType === 'stream'
+          ? String(streamLabelRef.current || '').trim() || undefined
+          : undefined;
+      const time = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+
+      const entry: LiveCaptionEntry = {
+        id: entryId,
+        time,
+        author: currentUserRef.current,
+        source: sourceType,
+        sourceLabel: cleanStreamLabel,
+        text: cleanedText,
+        sourceLang: initialLang,
+        targetLang: target === 'off' ? null : target,
+      };
+      appendCaptionEntry(entry);
+
+      const runTranslateAndEmit = async () => {
+        let resolvedLang = initialLang;
+        let translatedText: string | undefined;
+
+        if (shouldTranslateCaption(cleanedText, 'auto', target)) {
+          const res = await translateCaptionClientSide(cleanedText, target as CaptionLangCode);
+          if (cancelled) return;
+          if (res) {
+            resolvedLang = res.detectedLang || initialLang;
+            translatedText = res.translatedText || undefined;
+          }
+        }
+
+        if (cancelled) return;
+        setDetectedLangBadge(resolvedLang);
+
+        setCaptions((prev) =>
+          prev.map((item) =>
+            item.id === entryId
+              ? {
+                  ...item,
+                  sourceLang: resolvedLang,
+                  translatedText,
+                }
+              : item
+          )
+        );
+
+        if (socket && channelIdRef.current) {
+          socket.emit('voice_caption_emit', {
+            id: entryId,
+            channelId: channelIdRef.current,
+            source: sourceType,
+            sourceLabel: cleanStreamLabel,
+            text: cleanedText,
+            translatedText,
+            sourceLang: resolvedLang,
+            targetLang: target === 'off' ? null : target,
+            time,
+          });
+        }
+      };
+
+      void runTranslateAndEmit();
+    };
+
+    try {
+      worker = new Worker(new URL('../../workers/whisperCaptionWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Worker başlatılamadı';
+      Promise.resolve().then(() => {
+        if (!cancelled) {
+          setModelStatus('error');
+          setErrorMsg(`AI Altyazı Worker hatası: ${msg}`);
+        }
+      });
+      return;
+    }
+
+    worker.onmessage = (event: MessageEvent<WhisperWorkerResponse>) => {
+      if (cancelled) return;
+      const msg = event.data;
+      if (!msg) return;
+
+      if (msg.type === 'progress') {
+        setModelStatus('loading');
+        setModelProgress((prev) => (msg.progress > prev ? msg.progress : prev));
+        return;
+      }
+
+      if (msg.type === 'ready') {
+        setModelStatus('ready');
+        setModelProgress(100);
+        setErrorMsg('');
+        setIsListening(true);
+        return;
+      }
+
+      if (msg.type === 'error') {
+        isProcessingRef.current = false;
+        setVadActive(false);
+        if (modelStatusRef.current !== 'ready') {
+          setModelStatus('error');
+          setIsListening(false);
+        }
+        setErrorMsg(`AI Altyazı hatası: ${msg.message}`);
+        return;
+      }
+
+      if (msg.type === 'result') {
+        isProcessingRef.current = false;
+        setVadActive(false);
+        const cleaned = cleanWhisperTranscript(msg.text || '');
+        if (!cleaned) return;
+        finalizeTranscription(msg.id, cleaned);
+      }
+    };
+
+    Promise.resolve().then(() => {
+      if (!cancelled) {
+        setModelStatus('loading');
+        setModelProgress(0);
+        setErrorMsg('');
+      }
+    });
+    worker.postMessage({ type: 'init' });
+
+    const setupAudio = async () => {
+      const AudioCtx = getAudioContextCtor();
+      if (!AudioCtx) {
+        setErrorMsg('Tarayıcı Web Audio API desteklemiyor.');
+        return;
+      }
+
+      let captureStream: MediaStream;
+      try {
+        if (effectiveSourceMode === 'stream' && activeStream?.getAudioTracks?.().length) {
+          // Wrap the existing stream track without taking ownership so cleanup never stops screen share audio
+          captureStream = new MediaStream([activeStream.getAudioTracks()[0]]);
+        } else {
+          if (!navigator.mediaDevices?.getUserMedia) {
+            setErrorMsg('Mikrofon erişimi için güvenli bağlantı (HTTPS veya localhost) gerekiyor.');
+            return;
+          }
+          ownedStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+          captureStream = ownedStream;
+        }
+      } catch {
+        if (!cancelled) {
+          setErrorMsg('Mikrofon veya yayın sesine erişilemedi.');
+        }
+        return;
+      }
+
+      if (cancelled) {
+        ownedStream?.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      if (captureStream.getAudioTracks().length === 0) {
+        setErrorMsg('Seçilen kaynakta ses izi (audio track) bulunamadı.');
+        return;
+      }
+
+      audioContext = new AudioCtx();
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume().catch(() => {});
+      }
+
+      const sampleRate = audioContext.sampleRate || 48000;
+      sourceNode = audioContext.createMediaStreamSource(captureStream);
+      processor = audioContext.createScriptProcessor(4096, 1, 1);
+      muteGain = audioContext.createGain();
+      muteGain.gain.value = 0;
+
+      sourceNode.connect(processor);
+      processor.connect(muteGain);
+      muteGain.connect(audioContext.destination);
+
+      let chunks: Float32Array[] = [];
+      let speechMs = 0;
+      let silenceMs = 0;
+      let speechStarted = false;
+      const frameMs = (4096 / sampleRate) * 1000;
+
+      const flushBuffer = () => {
+        const totalLength = chunks.reduce((acc, item) => acc + item.length, 0);
+        const merged = new Float32Array(totalLength);
+        let offset = 0;
+        for (const piece of chunks) {
+          merged.set(piece, offset);
+          offset += piece.length;
+        }
+        chunks = [];
+        speechMs = 0;
+        silenceMs = 0;
+        speechStarted = false;
+
+        if (isProcessingRef.current || !worker) {
+          setVadActive(false);
+          return;
+        }
+
+        const pcm16k = downsampleTo16kHz(merged, sampleRate);
+        if (pcm16k.length < 1600) {
+          setVadActive(false);
+          return;
+        }
+
+        isProcessingRef.current = true;
+        const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        worker.postMessage({ type: 'transcribe', id, audio: pcm16k }, [pcm16k.buffer]);
+      };
+
+      processor.onaudioprocess = (audioEvent) => {
+        if (cancelled || modelStatusRef.current !== 'ready') return;
+        const input = audioEvent.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(input);
+        const rms = computeAudioRms(copy);
+
+        if (rms >= VAD_RMS_THRESHOLD) {
+          if (!speechStarted) {
+            speechStarted = true;
+            setVadActive(true);
+          }
+          chunks.push(copy);
+          speechMs += frameMs;
+          silenceMs = 0;
+        } else if (speechStarted) {
+          chunks.push(copy);
+          silenceMs += frameMs;
+        }
+
+        if (
+          speechStarted &&
+          ((silenceMs >= VAD_SILENCE_FLUSH_MS && speechMs >= VAD_MIN_SPEECH_MS) ||
+            speechMs >= VAD_MAX_SPEECH_MS)
+        ) {
+          flushBuffer();
+        }
+      };
+    };
+
+    void setupAudio();
+
+    return () => {
+      cancelled = true;
+      isProcessingRef.current = false;
+      if (processor) {
+        processor.onaudioprocess = null;
+        try {
+          processor.disconnect();
+        } catch {
+          // Ignore disconnect errors
+        }
+      }
+      if (sourceNode) {
+        try {
+          sourceNode.disconnect();
+        } catch {
+          // Ignore disconnect errors
+        }
+      }
+      if (muteGain) {
+        try {
+          muteGain.disconnect();
+        } catch {
+          // Ignore disconnect errors
+        }
+      }
+      if (audioContext) {
+        void audioContext.close().catch(() => {});
+      }
+      if (ownedStream) {
+        ownedStream.getTracks().forEach((track) => track.stop());
+      }
+      if (worker) {
+        worker.terminate();
+      }
+    };
+  }, [enabled, engineMode, effectiveSourceMode, activeStream, socket]);
+
+  // Browser fallback mode (Web Speech API)
+  useEffect(() => {
+    if (!enabled || engineMode !== 'browser') {
       return;
     }
 
     const RecognitionCtor = getSpeechRecognitionCtor();
     if (!RecognitionCtor) {
-      setErrorMsg('Bu tarayıcı Web Speech API canlı altyazıyı desteklemiyor.');
-      setIsListening(false);
+      Promise.resolve().then(() => {
+        setErrorMsg('Bu tarayıcı Web Speech API canlı altyazıyı desteklemiyor.');
+        setIsListening(false);
+      });
       return;
     }
 
@@ -273,7 +624,7 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
     const recognition = new RecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = LANG_MAP[autoRecLang] || 'tr-TR';
+    recognition.lang = LANG_MAP[browserLang] || 'tr-TR';
 
     const startRecognition = () => {
       if (cancelled) return;
@@ -285,7 +636,7 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
             recognition.start(audioTrack);
             return;
           } catch {
-            // Fallback to default audio input when MediaStreamTrack overload is unsupported
+            // Fallback to default audio input
           }
         }
         recognition.start();
@@ -316,26 +667,15 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
 
       const cleanInterim = interimChunk.trim();
       if (cleanInterim) {
-        const hint = detectSpokenLangHint(cleanInterim);
-        if (hint) {
-          setDetectedLangBadge(hint);
-        }
         setInterimText(cleanInterim);
-        setInterimBadge(hint || autoRecLangRef.current);
       }
 
       const finalText = finalChunk.trim();
       if (!finalText) return;
 
       setInterimText('');
-      setInterimBadge('');
 
-      const hint = detectSpokenLangHint(finalText);
-      const initialDetected = hint || autoRecLangRef.current;
-      if (hint) {
-        setDetectedLangBadge(hint);
-      }
-
+      const selectedLang = browserLangRef.current;
       const target = targetRef.current;
       const sourceType: CaptionSourceType =
         sourceModeRef.current === 'stream' ? 'stream' : 'user';
@@ -343,7 +683,6 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
         sourceType === 'stream'
           ? String(streamLabelRef.current || '').trim() || undefined
           : undefined;
-      const authorName = String(currentUserRef.current || '').trim() || 'Kullanıcı';
       const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const time = new Date().toLocaleTimeString([], {
         hour: '2-digit',
@@ -354,34 +693,30 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
       const baseEntry: LiveCaptionEntry = {
         id: entryId,
         time,
-        author: authorName,
+        author: currentUserRef.current,
         source: sourceType,
         sourceLabel: cleanStreamLabel,
         text: finalText,
-        sourceLang: initialDetected,
+        sourceLang: selectedLang,
         targetLang: target === 'off' ? null : target,
       };
       appendCaptionEntry(baseEntry);
 
       const processFinal = async () => {
-        let resolvedLang: string = initialDetected;
+        let resolvedLang: string = selectedLang;
         let translatedText: string | undefined;
 
-        if (shouldTranslateCaption(finalText, 'auto', target)) {
+        if (shouldTranslateCaption(finalText, selectedLang, target)) {
           const translated = await translateCaptionClientSide(finalText, target as CaptionLangCode);
           if (cancelled) return;
           if (translated) {
-            resolvedLang = translated.detectedLang || initialDetected;
+            resolvedLang = translated.detectedLang || selectedLang;
             translatedText = translated.translatedText || undefined;
           }
         }
 
         if (cancelled) return;
         setDetectedLangBadge(resolvedLang);
-
-        if (isSupportedLangCode(resolvedLang) && resolvedLang !== autoRecLangRef.current) {
-          setAutoRecLang(resolvedLang);
-        }
 
         setCaptions((prev) =>
           prev.map((item) =>
@@ -447,19 +782,31 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
         recognition.onstart = null;
         recognition.stop();
       } catch {
-        // Ignore cleanup stop errors
+        // Ignore cleanup errors
       }
     };
-  }, [enabled, effectiveSourceMode, autoRecLang, activeStream, socket]);
+  }, [enabled, engineMode, effectiveSourceMode, browserLang, activeStream, socket]);
 
   if (!enabled) return null;
+
+  const handleSelectEngine = (mode: 'whisper' | 'browser') => {
+    setEngineMode(mode);
+    setInterimText('');
+    setVadActive(false);
+    setErrorMsg('');
+    setIsListening(false);
+    if (mode === 'whisper') {
+      setDetectedLangBadge('auto');
+    } else {
+      setDetectedLangBadge(browserLang);
+    }
+  };
 
   const handleSelectSource = (mode: 'mic' | 'stream') => {
     if (mode === 'stream' && !hasActiveStream) return;
     setSourceMode(mode);
-    const nextDefaultLang: CaptionLangCode = mode === 'stream' ? 'en' : defaultUiLang;
-    setAutoRecLang(nextDefaultLang);
-    setDetectedLangBadge(nextDefaultLang);
+    setInterimText('');
+    setVadActive(false);
   };
 
   const handleExportTranscript = () => {
@@ -469,6 +816,8 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
     downloadTextFile(`canli-altyazi-${safeName}-${Date.now()}.md`, md, 'text/markdown');
   };
 
+  const indicatorActive = engineMode === 'whisper' ? modelStatus === 'ready' : isListening;
+
   return (
     <div className="pointer-events-auto mx-auto mb-3 w-full max-w-3xl rounded-2xl border border-white/10 bg-zinc-950/90 p-3 shadow-2xl backdrop-blur-xl">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2">
@@ -476,11 +825,38 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
           <span className="flex items-center gap-1.5 text-xs font-semibold text-white">
             <span
               className={`h-2 w-2 rounded-full ${
-                isListening ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'
+                indicatorActive ? 'animate-pulse bg-emerald-400' : 'bg-amber-400'
               }`}
             />
             {t(language, 'liveCaptions')}
           </span>
+
+          <div className="flex items-center rounded-lg border border-white/10 bg-black/40 p-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => handleSelectEngine('whisper')}
+              title="İstemci içinde çok dilli Whisper AI ile konuşulan dili otomatik algılar"
+              className={`rounded-md px-2 py-0.5 transition ${
+                engineMode === 'whisper'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'text-zinc-300 hover:text-white'
+              }`}
+            >
+              🤖 AI Oto
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectEngine('browser')}
+              title="Hızlı tarayıcı konuşma tanıma motorunu kullan"
+              className={`rounded-md px-2 py-0.5 transition ${
+                engineMode === 'browser'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'text-zinc-300 hover:text-white'
+              }`}
+            >
+              ⚡ Tarayıcı
+            </button>
+          </div>
 
           <div className="flex items-center rounded-lg border border-white/10 bg-black/40 p-0.5 text-[11px]">
             <button
@@ -513,12 +889,28 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
             </button>
           </div>
 
-          <span
-            className="rounded border border-indigo-400/30 bg-indigo-500/20 px-2 py-0.5 text-[11px] font-medium text-indigo-200"
-            title="Konuşulan dil tarayıcıda/istemcide otomatik algılanır"
-          >
-            Oto ({detectedLangBadge.toUpperCase()})
-          </span>
+          {engineMode === 'whisper' ? (
+            <span
+              className="rounded border border-indigo-400/30 bg-indigo-500/20 px-2 py-0.5 text-[11px] font-medium text-indigo-200"
+              title="Konuşulan dil doğrudan sesten otomatik algılanır"
+            >
+              Oto ({detectedLangBadge.toUpperCase()})
+            </span>
+          ) : (
+            <select
+              aria-label="Konuşulan dil (Tarayıcı)"
+              value={browserLang}
+              onChange={(e) => setBrowserLang(e.target.value as CaptionLangCode)}
+              className="rounded-lg border border-white/15 bg-zinc-900 px-1.5 py-0.5 text-[11px] font-medium text-zinc-100 outline-none focus:border-indigo-400"
+              title="Tarayıcı tanıma dilini seçin"
+            >
+              {BROWSER_LANG_CHOICES.map((choice) => (
+                <option key={choice.code} value={choice.code}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -572,6 +964,23 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
         </div>
       </div>
 
+      {engineMode === 'whisper' && modelStatus === 'loading' && (
+        <div className="mb-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1.5">
+          <div className="mb-1 flex items-center justify-between text-[11px] text-indigo-200">
+            <span>
+              AI Dil Modeli hazırlanıyor... %{modelProgress} — ilk seferde indirilir, sonra
+              önbellekten açılır
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/40">
+            <div
+              className="h-full rounded-full bg-indigo-400 transition-all duration-300"
+              style={{ width: `${Math.min(100, Math.max(5, modelProgress))}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {errorMsg && (
         <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-200">
           {errorMsg}
@@ -579,9 +988,11 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
       )}
 
       <div className="max-h-40 space-y-1.5 overflow-y-auto pr-1 text-sm">
-        {captions.length === 0 && !interimText && (
+        {captions.length === 0 && !interimText && !vadActive && (
           <p className="py-2 text-center text-xs text-zinc-400">
-            Konuşma veya yayın sesi bekleniyor... Dil istemcide otomatik algılanır.
+            {engineMode === 'whisper'
+              ? 'Konuşma veya yayın sesi bekleniyor... Çok dilli AI sesi doğrudan çözümler ve dili otomatik algılar.'
+              : 'Tarayıcı konuşma tanıma aktif... Seçili dilde konuşma bekleniyor.'}
           </p>
         )}
 
@@ -620,7 +1031,14 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
           </div>
         ))}
 
-        {interimText && (
+        {engineMode === 'whisper' && vadActive && (
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-200">
+            <span className="h-2 w-2 animate-ping rounded-full bg-emerald-400" />
+            <span>Dinleniyor / Konuşma algılandı...</span>
+          </div>
+        )}
+
+        {engineMode === 'browser' && interimText && (
           <div className="rounded-lg border border-indigo-400/20 bg-indigo-500/10 px-2.5 py-1.5">
             <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-indigo-300">
               <span>
@@ -630,9 +1048,7 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
                   sourceLabel: effectiveSourceMode === 'stream' ? streamLabel : undefined,
                 })}
               </span>
-              <span className="rounded bg-indigo-500/20 px-1 uppercase">
-                Oto ({(interimBadge || detectedLangBadge).toUpperCase()})
-              </span>
+              <span className="rounded bg-indigo-500/20 px-1 uppercase">{browserLang}</span>
             </div>
             <p className="text-xs italic text-zinc-200">{interimText}...</p>
           </div>
