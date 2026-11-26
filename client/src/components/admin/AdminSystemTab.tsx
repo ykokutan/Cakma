@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Activity, Check, Download, RotateCcw, Search, Wifi } from 'lucide-react';
 import type { AdminDashboardData, RequestAdminDialogFn } from './adminTypes';
 import type { AdminSystemFormController, SystemConfigUpdatePayload } from './useAdminSystemForm';
@@ -6,7 +6,13 @@ import { authFetch } from '../../utils/authFetch';
 import { downloadTextFile } from '../../utils/adminHelpers';
 import { AdminMaintenanceCard } from './AdminMaintenanceCard';
 
-type SystemSectionId = 'all' | 'general' | 'security' | 'email' | 'media' | 'backup';
+export type SystemSectionId = 'all' | 'general' | 'security' | 'email' | 'media' | 'backup';
+
+export interface SystemFocusRequest {
+  section: SystemSectionId;
+  query?: string;
+  nonce: number;
+}
 
 interface LiveKitTestResult {
   ok: boolean;
@@ -59,6 +65,7 @@ interface AdminSystemTabProps {
   ) => Promise<{ ok: boolean; message: string }>;
   onRequestDialog: RequestAdminDialogFn;
   onNotify: (type: 'success' | 'error', message: string) => void;
+  focusRequest?: SystemFocusRequest | null;
 }
 
 export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
@@ -82,9 +89,16 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
   onTestSmtp,
   onRequestDialog,
   onNotify,
+  focusRequest,
 }) => {
   const [section, setSection] = useState<SystemSectionId>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    setSection(focusRequest.section);
+    setSearchQuery(focusRequest.query || '');
+  }, [focusRequest]);
   const [newInviteMaxUses, setNewInviteMaxUses] = useState<number>(5);
   const [newInviteHours, setNewInviteHours] = useState<number>(24);
   const [showGiphyKey, setShowGiphyKey] = useState(false);
