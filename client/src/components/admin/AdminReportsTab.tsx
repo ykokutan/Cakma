@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Flag, Loader2, RefreshCw, Trash2, XCircle } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
 import type { ContentReport } from '../../types';
 import { appToast } from '../../utils/appDialogs';
 import { authFetch } from '../../utils/authFetch';
 
 interface AdminReportsTabProps {
+  currentServerHost: string;
+  initialReports?: ContentReport[];
   onNotify: (type: 'success' | 'error', message: string) => void;
 }
 
@@ -17,33 +18,52 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'Diğer',
 };
 
-export const AdminReportsTab: React.FC<AdminReportsTabProps> = ({ onNotify }) => {
-  const { currentServerHost } = useAuth();
-  const [reports, setReports] = useState<ContentReport[]>([]);
-  const [loading, setLoading] = useState(true);
+export const AdminReportsTab: React.FC<AdminReportsTabProps> = ({
+  currentServerHost,
+  initialReports,
+  onNotify,
+}) => {
+  const [reports, setReports] = useState<ContentReport[]>(() => initialReports || []);
+  const [loading, setLoading] = useState(() => !Array.isArray(initialReports));
   const [filter, setFilter] = useState<'open' | 'all'>('open');
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  const loadReports = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await authFetch(currentServerHost, '/api/admin/reports');
-      const json = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        reports?: ContentReport[];
-      };
-      if (res.ok && json.ok && Array.isArray(json.reports)) {
-        setReports(json.reports);
-      }
-    } catch {
-      onNotify('error', 'Şikayet kayıtları alınamadı.');
-    } finally {
-      setLoading(false);
-    }
-  }, [currentServerHost, onNotify]);
+  const hasSocketReportsRef = useRef(Array.isArray(initialReports));
 
   useEffect(() => {
-    void loadReports();
+    if (Array.isArray(initialReports)) {
+      hasSocketReportsRef.current = true;
+      setReports(initialReports);
+      setLoading(false);
+    }
+  }, [initialReports]);
+
+  const loadReports = useCallback(
+    async (manual = false) => {
+      setLoading(true);
+      try {
+        const res = await authFetch(currentServerHost, '/api/admin/reports');
+        const json = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          reports?: ContentReport[];
+        };
+        if (res.ok && json.ok && Array.isArray(json.reports)) {
+          setReports(json.reports);
+        } else if (manual || !hasSocketReportsRef.current) {
+          onNotify('error', 'Şikayet kayıtları alınamadı.');
+        }
+      } catch {
+        if (manual || !hasSocketReportsRef.current) {
+          onNotify('error', 'Şikayet kayıtları alınamadı.');
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentServerHost, onNotify]
+  );
+
+  useEffect(() => {
+    void loadReports(false);
   }, [loadReports]);
 
   const handleAction = async (
@@ -122,7 +142,7 @@ export const AdminReportsTab: React.FC<AdminReportsTabProps> = ({ onNotify }) =>
           </div>
           <button
             type="button"
-            onClick={() => void loadReports()}
+            onClick={() => void loadReports(true)}
             className="p-2 rounded-xl bg-white/10 hover:bg-white/15 text-white/80 transition"
             title="Yenile"
           >

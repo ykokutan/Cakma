@@ -14,7 +14,8 @@ export function resolveBackendBaseUrl(host: string): string {
     return cleaned;
   }
   const lower = cleaned.toLowerCase();
-  if (lower.startsWith('localhost') || lower.startsWith('127.0.0.1')) {
+  const isBareIpv4 = /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(lower);
+  if (lower.startsWith('localhost') || lower.startsWith('127.0.0.1') || isBareIpv4) {
     return `http://${cleaned}`;
   }
   if (isTauriRuntime()) {

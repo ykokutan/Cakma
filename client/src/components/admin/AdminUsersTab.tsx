@@ -703,7 +703,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                     u.isBanned ? 'bg-rose-500/[0.04]' : isSelected ? 'bg-amber-500/[0.06]' : ''
                   }`}
                 >
-                  <td className="px-3 py-3">
+                  <td className="px-3 py-3 align-middle">
                     <input
                       type="checkbox"
                       checked={isSelected}
@@ -711,24 +711,28 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                       className="rounded border-white/25 bg-black/40 text-amber-500"
                     />
                   </td>
-                  <td className="px-4 py-3 flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-white/10 overflow-hidden shrink-0 flex items-center justify-center">
-                      <AvatarView avatar={u.avatar} alt={u.username} fallback="👤" className="w-full h-full object-cover" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-white flex items-center gap-1.5">
-                        <span className="truncate">{u.username}</span>
-                        {u.isBanned && (
-                          <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-bold shrink-0">
-                            YASAKLI
-                          </span>
-                        )}
+                  <td className="px-4 py-3 align-middle">
+                    <div className="flex items-center gap-2.5 min-w-[155px]">
+                      <div className="w-8 h-8 rounded-xl bg-white/10 overflow-hidden shrink-0 flex items-center justify-center">
+                        <AvatarView avatar={u.avatar} alt={u.username} fallback="👤" className="w-full h-full object-cover" />
                       </div>
-                      <div className="text-[10px] text-white/35">Kayıt: {u.createdAt || '-'}</div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-white flex items-center gap-1.5">
+                          <span className="truncate">{u.username}</span>
+                          {u.isBanned && (
+                            <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[9px] font-bold shrink-0">
+                              YASAKLI
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-white/35">Kayıt: {u.createdAt || '-'}</div>
+                      </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-white/50">{u.email}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-middle text-white/50 max-w-[190px] truncate" title={u.email}>
+                    {u.email}
+                  </td>
+                  <td className="px-4 py-3 align-middle whitespace-nowrap">
                     {u.role === 'admin' ? (
                       <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30">
                         YÖNETİCİ
@@ -739,7 +743,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-middle whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono font-bold text-emerald-400">₺{u.walletBalance ?? 0}</span>
                       <button
@@ -759,7 +763,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                       </button>
                     </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 align-middle whitespace-nowrap">
                     <span
                       className={`inline-flex items-center gap-1.5 text-[11px] ${
                         isOnline ? 'text-emerald-400' : 'text-white/30'
@@ -769,12 +773,12 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                       {isOnline ? 'Çevrimiçi' : 'Çevrimdışı'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                  <td className="px-3 py-3 align-middle text-right min-w-[240px]">
+                    <div className="inline-flex items-center justify-end gap-1 flex-wrap">
                       <button
                         type="button"
                         onClick={() => setInspectedUsername(isInspected ? null : u.username)}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition border flex items-center gap-1 ${
+                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition border flex items-center gap-1 whitespace-nowrap ${
                           isInspected
                             ? 'bg-teal-500/25 border-teal-400/50 text-teal-200'
                             : 'bg-white/5 hover:bg-white/15 border-white/10 text-white/80'
@@ -789,7 +793,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                         <button
                           type="button"
                           onClick={() => onChangeRole(u.username, 'user')}
-                          className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-medium transition"
+                          className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-medium transition whitespace-nowrap"
                         >
                           Standart Yap
                         </button>
@@ -797,7 +801,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                         <button
                           type="button"
                           onClick={() => onChangeRole(u.username, 'admin')}
-                          className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black text-[10px] font-bold transition border border-amber-500/30"
+                          className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-black text-[10px] font-bold transition border border-amber-500/30 whitespace-nowrap"
                         >
                           Yönetici Yap
                         </button>
@@ -812,7 +816,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                             onSubmit: (pw) => onResetUserPassword(u.username, pw),
                           })
                         }
-                        className="px-2 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-semibold transition border border-indigo-500/20"
+                        className="px-2 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-[10px] font-semibold transition border border-indigo-500/20 whitespace-nowrap"
                         title="Şifre Sıfırla"
                       >
                         Şifre
@@ -831,7 +835,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                               onConfirm: () => onResetUser2fa(u.username),
                             })
                           }
-                          className="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold transition border border-amber-500/20"
+                          className="px-2 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 text-[10px] font-semibold transition border border-amber-500/20 whitespace-nowrap"
                           title="2FA Sıfırla"
                         >
                           2FA Sıfırla
@@ -842,7 +846,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                         <button
                           type="button"
                           onClick={() => onUnbanUser(u.username)}
-                          className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-bold transition border border-emerald-500/30"
+                          className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-bold transition border border-emerald-500/30 whitespace-nowrap"
                         >
                           Yasağı Kaldır
                         </button>
@@ -856,7 +860,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                               onSubmit: (reason, mins) => onBanUser(u.username, reason, mins),
                             })
                           }
-                          className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white text-[10px] font-bold transition border border-rose-500/30"
+                          className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white text-[10px] font-bold transition border border-rose-500/30 whitespace-nowrap"
                         >
                           Yasakla
                         </button>
@@ -872,7 +876,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                               onSubmit: (reason) => onKickUser(onlineUser.id, reason),
                             })
                           }
-                          className="px-2 py-1 rounded-lg bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white text-[10px] font-medium transition"
+                          className="px-2 py-1 rounded-lg bg-red-500/20 hover:bg-red-500 text-red-300 hover:text-white text-[10px] font-medium transition whitespace-nowrap"
                           title="Anlık Bağlantıyı Kes"
                         >
                           At

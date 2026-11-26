@@ -362,6 +362,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
     : [];
 
   const securityScore = typedAdminData?.securityAudit?.score;
+  const openReportsCount = (typedAdminData?.contentReports || []).filter(
+    (r) => r.status === 'open'
+  ).length;
   const securityBadgeClass =
     typeof securityScore === 'number'
       ? securityScore >= 80
@@ -597,6 +600,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
                       label: 'Şikayetler (5651)',
                       icon: Flag,
                       dirty: false,
+                      badge: openReportsCount > 0 ? String(openReportsCount) : undefined,
+                      badgeClass: 'bg-rose-500/20 text-rose-200 border-rose-400/35',
                     },
                   ],
                 },
@@ -787,7 +792,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ onClos
               />
             )}
 
-            {activeTab === 'reports' && <AdminReportsTab onNotify={notify} />}
+            {activeTab === 'reports' && (
+              <AdminReportsTab
+                currentServerHost={currentServerHost}
+                initialReports={typedAdminData?.contentReports}
+                onNotify={notify}
+              />
+            )}
 
             {activeTab === 'broadcast' && (
               <AdminBroadcastTab

@@ -1,5 +1,6 @@
 import type {
   AuditLog,
+  ContentReport,
   DedicatedServerInfo,
   IssuedLicense,
   Server,
@@ -124,6 +125,7 @@ export interface AdminDashboardData {
     bytes: number;
     createdAt: string;
   }[];
+  contentReports?: ContentReport[];
   securityAudit?: {
     score: number;
     checkedAt: string;

@@ -3826,6 +3826,7 @@ io.on('connection', (socket: Socket) => {
       pinnedBanner: systemConfig.pinnedBanner || null,
       activeSessions: Array.from(activeSessions.values()),
       scheduledBackups: listScheduledBackups(),
+      contentReports,
       securityAudit: (() => {
         const admins = Array.from(registeredAccounts.values()).filter((a) => a.role === 'admin');
         const adminsWithout2fa = admins.filter((a) => !a.twoFactorEnabled).map((a) => a.username);

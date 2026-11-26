@@ -154,7 +154,7 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
   };
 
   return (
-    <div className="space-y-5 max-w-3xl pb-16 relative">
+    <div className="space-y-5 w-full pb-16 relative">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 className="text-base font-bold text-white">Detaylı Sistem &amp; Güvenlik Ayarları</h3>
