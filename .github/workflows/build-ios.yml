@@ -1,0 +1,111 @@
+name: Build iOS App / IPA (Tauri 2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "simulator (no Apple cert needed) or unsigned-ipa (for sideload/signing)"
+        required: false
+        type: choice
+        default: "simulator"
+        options:
+          - simulator
+          - unsigned-ipa
+  workflow_call:
+    inputs:
+      build_mode:
+        required: false
+        type: string
+        default: "simulator"
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure CocoaPods Is Available
+        run: |
+          if ! command -v pod >/dev/null 2>&1; then
+            brew install cocoapods
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Setup Rust & iOS Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache Rust Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+
+      - name: Install Client Dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build Client Dist Assets
+        working-directory: client
+        run: npm run build
+
+      - name: Initialize Tauri iOS Project (if absent)
+        working-directory: client
+        run: |
+          if [ ! -d "src-tauri/gen/apple" ]; then
+            npx tauri ios init --ci
+          fi
+
+      - name: Build iOS Bundle
+        working-directory: client
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+        run: |
+          MODE="${{ inputs.build_mode || 'simulator' }}"
+          mkdir -p dist-ios-artifacts
+          if [ "$MODE" = "unsigned-ipa" ]; then
+            npx tauri ios build --ci --target aarch64 --export-method ad-hoc || true
+            IPA_FOUND="$(find src-tauri/gen/apple/build -name '*.ipa' | head -n 1 || true)"
+            if [ -n "$IPA_FOUND" ]; then
+              cp "$IPA_FOUND" dist-ios-artifacts/Cakma-iOS.ipa
+            else
+              echo "No signed IPA produced; building unsigned Release archive & packaging Cakma-iOS-Unsigned.ipa..."
+              XPROJ="$(find src-tauri/gen/apple -maxdepth 2 -name '*.xcodeproj' | head -n 1)"
+              SCHEME="$(xcodebuild -project "$XPROJ" -list | awk '/Schemes:/{flag=1; next} flag && NF {print $1; exit}')"
+              xcodebuild -project "$XPROJ" -scheme "$SCHEME" -configuration Release -sdk iphoneos \
+                -derivedDataPath src-tauri/gen/apple/build-unsigned \
+                CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+              APP_DIR="$(find src-tauri/gen/apple/build-unsigned/Build/Products -name '*.app' | head -n 1)"
+              mkdir -p Payload
+              cp -R "$APP_DIR" Payload/
+              zip -r -y dist-ios-artifacts/Cakma-iOS-Unsigned.ipa Payload
+              rm -rf Payload
+            fi
+          else
+            npx tauri ios build --debug --ci --target aarch64-sim || true
+            SIM_APP="$(find src-tauri/gen/apple -path '*iphonesimulator*' -name '*.app' | head -n 1 || true)"
+            if [ -z "$SIM_APP" ]; then
+              XPROJ="$(find src-tauri/gen/apple -maxdepth 2 -name '*.xcodeproj' | head -n 1)"
+              SCHEME="$(xcodebuild -project "$XPROJ" -list | awk '/Schemes:/{flag=1; next} flag && NF {print $1; exit}')"
+              xcodebuild -project "$XPROJ" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
+                -destination 'generic/platform=iOS Simulator' \
+                -derivedDataPath src-tauri/gen/apple/build-sim \
+                CODE_SIGNING_ALLOWED=NO build
+              SIM_APP="$(find src-tauri/gen/apple/build-sim/Build/Products -name '*.app' | head -n 1)"
+            fi
+            (cd "$(dirname "$SIM_APP")" && zip -r -y "$GITHUB_WORKSPACE/client/dist-ios-artifacts/Cakma-iOS-Simulator.app.zip" "$(basename "$SIM_APP")")
+          fi
+
+      - name: Upload iOS Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cakma-iOS
+          if-no-files-found: warn
+          path: client/dist-ios-artifacts/*

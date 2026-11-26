@@ -2,9 +2,23 @@ name: Build macOS Desktop (Universal DMG)
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+    inputs:
+      target:
+        description: "Apple Silicon (aarch64), Intel (x86_64), or Universal binary"
+        required: false
+        type: choice
+        default: "universal-apple-darwin"
+        options:
+          - universal-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+  workflow_call:
+    inputs:
+      target:
+        description: "macOS build target triple"
+        required: false
+        type: string
+        default: "universal-apple-darwin"
 
 jobs:
   build-macos:
@@ -16,7 +30,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: client/package-lock.json
 
@@ -25,21 +39,36 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      - name: Cache Rust Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+
       - name: Install Client Dependencies
         working-directory: client
         run: npm ci
 
-      - name: Build Tauri macOS Universal (.dmg & .app)
+      - name: Build Tauri macOS Bundle (.dmg & .app)
         working-directory: client
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target universal-apple-darwin --bundles dmg,app
+        run: |
+          TARGET_TRIPLE="${{ inputs.target || 'universal-apple-darwin' }}"
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            npx tauri build --target "${TARGET_TRIPLE}" --bundles dmg,app
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is not set; building unsigned macOS bundles."
+            npx tauri build --target "${TARGET_TRIPLE}" --bundles dmg,app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
 
-      - name: Upload macOS DMG Artifact
+      - name: Upload macOS DMG & App Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Cakma-macOS-Universal
+          name: Cakma-macOS
+          if-no-files-found: warn
           path: |
-            client/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            client/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.tar.gz
+            client/src-tauri/target/${{ inputs.target || 'universal-apple-darwin' }}/release/bundle/dmg/*.dmg
+            client/src-tauri/target/${{ inputs.target || 'universal-apple-darwin' }}/release/bundle/macos/*.tar.gz
+            client/src-tauri/target/${{ inputs.target || 'universal-apple-darwin' }}/release/bundle/macos/*.sig
+            client/src-tauri/target/${{ inputs.target || 'universal-apple-darwin' }}/release/bundle/macos/*.app/**

@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::Emitter;
+#[cfg(desktop)]
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 static REMOTE_ASSIST_HOST_ACTIVE: AtomicBool = AtomicBool::new(false);
 static REMOTE_ASSIST_SAFE_MODE: AtomicBool = AtomicBool::new(true);
@@ -675,12 +677,17 @@ pub fn simulate_remote_input(payload: RemoteInputPayload) -> Result<(), String> 
 }
 
 pub(crate) fn close_remote_assist_windows(app: &tauri::AppHandle) {
-    if let Some(hud) = app.get_webview_window("remote-assist-hud") {
-        let _ = hud.close();
+    #[cfg(desktop)]
+    {
+        if let Some(hud) = app.get_webview_window("remote-assist-hud") {
+            let _ = hud.close();
+        }
+        if let Some(overlay) = app.get_webview_window("remote-assist-overlay") {
+            let _ = overlay.close();
+        }
     }
-    if let Some(overlay) = app.get_webview_window("remote-assist-overlay") {
-        let _ = overlay.close();
-    }
+    #[cfg(not(desktop))]
+    let _ = app;
 }
 
 #[tauri::command]
@@ -744,90 +751,107 @@ pub async fn set_remote_assist_host_hud(
     monitor_w: Option<i32>,
     monitor_h: Option<i32>,
 ) -> Result<(), String> {
-    if !active {
-        close_remote_assist_windows(&app);
-        return Ok(());
-    }
+    #[cfg(desktop)]
+    {
+        if !active {
+            close_remote_assist_windows(&app);
+            return Ok(());
+        }
 
-    let (mx, my, mw, mh) = (
-        monitor_x.unwrap_or(0),
-        monitor_y.unwrap_or(0),
-        monitor_w.unwrap_or(1920).max(640),
-        monitor_h.unwrap_or(1080).max(480),
-    );
+        let (mx, my, mw, mh) = (
+            monitor_x.unwrap_or(0),
+            monitor_y.unwrap_or(0),
+            monitor_w.unwrap_or(1920).max(640),
+            monitor_h.unwrap_or(1080).max(480),
+        );
 
-    let overlay_win = if let Some(existing) = app.get_webview_window("remote-assist-overlay") {
-        let _ = existing.show();
-        existing
-    } else {
-        WebviewWindowBuilder::new(
-            &app,
-            "remote-assist-overlay",
-            WebviewUrl::App("remote-assist-overlay.html".into()),
-        )
-        .title("Çakma Uzaktan Yardım Overlay")
-        .inner_size(mw as f64, mh as f64)
-        .position(mx as f64, my as f64)
-        .transparent(true)
-        .background_color(tauri::window::Color(0, 0, 0, 0))
-        .shadow(false)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .focused(false)
-        .build()
-        .map_err(|e| e.to_string())?
-    };
-    let _ = overlay_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-        mx, my,
-    )));
-    let _ = overlay_win.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
-        mw as u32, mh as u32,
-    )));
-    let _ = overlay_win.set_ignore_cursor_events(true);
+        let overlay_win = if let Some(existing) = app.get_webview_window("remote-assist-overlay") {
+            let _ = existing.show();
+            existing
+        } else {
+            WebviewWindowBuilder::new(
+                &app,
+                "remote-assist-overlay",
+                WebviewUrl::App("remote-assist-overlay.html".into()),
+            )
+            .title("Çakma Uzaktan Yardım Overlay")
+            .inner_size(mw as f64, mh as f64)
+            .position(mx as f64, my as f64)
+            .transparent(true)
+            .background_color(tauri::window::Color(0, 0, 0, 0))
+            .shadow(false)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .build()
+            .map_err(|e| e.to_string())?
+        };
+        let _ = overlay_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+            mx, my,
+        )));
+        let _ = overlay_win.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+            mw as u32, mh as u32,
+        )));
+        let _ = overlay_win.set_ignore_cursor_events(true);
 
-    let hud_win = if let Some(existing) = app.get_webview_window("remote-assist-hud") {
-        let _ = existing.show();
-        existing
-    } else {
-        WebviewWindowBuilder::new(
-            &app,
+        let hud_win = if let Some(existing) = app.get_webview_window("remote-assist-hud") {
+            let _ = existing.show();
+            existing
+        } else {
+            WebviewWindowBuilder::new(
+                &app,
+                "remote-assist-hud",
+                WebviewUrl::App("remote-assist-hud.html".into()),
+            )
+            .title("Çakma Uzaktan Yardım")
+            .inner_size(430.0, 46.0)
+            .position(mx as f64 + 120.0, my as f64 + 10.0)
+            .transparent(true)
+            .background_color(tauri::window::Color(0, 0, 0, 0))
+            .shadow(false)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .focused(false)
+            .build()
+            .map_err(|e| e.to_string())?
+        };
+        let scale = hud_win.scale_factor().unwrap_or(1.0);
+        let phys_hud_w = (430.0 * scale).round() as i32;
+        let hud_x = mx + ((mw - phys_hud_w) / 2).max(0);
+        let hud_y = my + 10;
+        let _ = hud_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+            hud_x, hud_y,
+        )));
+
+        let _ = app.emit_to(
             "remote-assist-hud",
-            WebviewUrl::App("remote-assist-hud.html".into()),
-        )
-        .title("Çakma Uzaktan Yardım")
-        .inner_size(430.0, 46.0)
-        .position(mx as f64 + 120.0, my as f64 + 10.0)
-        .transparent(true)
-        .background_color(tauri::window::Color(0, 0, 0, 0))
-        .shadow(false)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .focused(false)
-        .build()
-        .map_err(|e| e.to_string())?
-    };
-    let scale = hud_win.scale_factor().unwrap_or(1.0);
-    let phys_hud_w = (430.0 * scale).round() as i32;
-    let hud_x = mx + ((mw - phys_hud_w) / 2).max(0);
-    let hud_y = my + 10;
-    let _ = hud_win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-        hud_x, hud_y,
-    )));
+            "remote-assist-hud-state",
+            serde_json::json!({
+              "controllerName": controller_name.unwrap_or_else(|| "Uzaktan Yardımcı".to_string()),
+              "paused": paused.unwrap_or(false),
+            }),
+        );
 
-    let _ = app.emit_to(
-        "remote-assist-hud",
-        "remote-assist-hud-state",
-        serde_json::json!({
-          "controllerName": controller_name.unwrap_or_else(|| "Uzaktan Yardımcı".to_string()),
-          "paused": paused.unwrap_or(false),
-        }),
-    );
-
-    Ok(())
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (
+            app,
+            active,
+            controller_name,
+            paused,
+            monitor_x,
+            monitor_y,
+            monitor_w,
+            monitor_h,
+        );
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -835,6 +859,7 @@ pub fn push_remote_assist_overlay_event(
     app: tauri::AppHandle,
     payload: serde_json::Value,
 ) -> Result<(), String> {
+    #[cfg(desktop)]
     if app.get_webview_window("remote-assist-overlay").is_some() {
         let _ = app.emit_to(
             "remote-assist-overlay",
@@ -842,6 +867,8 @@ pub fn push_remote_assist_overlay_event(
             payload,
         );
     }
+    #[cfg(not(desktop))]
+    let _ = (app, payload);
     Ok(())
 }
 

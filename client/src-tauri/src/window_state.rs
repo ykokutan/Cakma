@@ -4,7 +4,9 @@ use std::sync::{
 };
 use tauri::Manager;
 
+#[cfg_attr(not(desktop), allow(dead_code))]
 pub(crate) static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(true);
+#[cfg_attr(not(desktop), allow(dead_code))]
 pub(crate) static LAST_WIN_SAVE_MS: AtomicU64 = AtomicU64::new(0);
 static PENDING_DEEP_LINK: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -42,6 +44,7 @@ fn window_state_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     })
 }
 
+#[cfg_attr(not(desktop), allow(dead_code))]
 pub(crate) fn load_window_state(app: &tauri::AppHandle) -> WindowState {
     if let Some(p) = window_state_path(app)
         && let Ok(raw) = std::fs::read_to_string(&p)
@@ -52,6 +55,7 @@ pub(crate) fn load_window_state(app: &tauri::AppHandle) -> WindowState {
     WindowState::default()
 }
 
+#[cfg_attr(not(desktop), allow(dead_code))]
 pub(crate) fn save_window_state(app: &tauri::AppHandle, state: &WindowState) {
     if let Some(p) = window_state_path(app)
         && let Ok(json) = serde_json::to_string_pretty(state)
@@ -60,6 +64,7 @@ pub(crate) fn save_window_state(app: &tauri::AppHandle, state: &WindowState) {
     }
 }
 
+#[cfg(desktop)]
 pub(crate) fn capture_and_persist_window_state(win: &tauri::WebviewWindow) {
     let app = win.app_handle();
     let mut st = load_window_state(app);

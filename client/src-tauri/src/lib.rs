@@ -3,7 +3,9 @@ mod platform;
 mod remote_assist;
 mod window_state;
 
+#[cfg(desktop)]
 use std::sync::atomic::Ordering;
+#[cfg(desktop)]
 use tauri::{
     Emitter, Manager, WindowEvent,
     menu::{Menu, MenuItem},
@@ -73,19 +75,20 @@ pub fn run() {
                 window_state::take_pending_deep_link
             ]);
 
-    builder
-        .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+    builder = builder.setup(|app| {
+        if cfg!(debug_assertions) {
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
+        }
 
-            #[cfg(target_os = "windows")]
-            window_state::register_cakma_protocol_windows();
+        #[cfg(target_os = "windows")]
+        window_state::register_cakma_protocol_windows();
 
+        #[cfg(desktop)]
+        {
             let saved_state = window_state::load_window_state(app.handle());
             window_state::CLOSE_TO_TRAY.store(saved_state.close_to_tray, Ordering::Relaxed);
             if let Some(win) = app.get_webview_window("main") {
@@ -104,125 +107,122 @@ pub fn run() {
                     let _ = win.maximize();
                 }
             }
+        }
 
-            #[cfg(desktop)]
-            {
-                let show_item =
-                    MenuItem::with_id(app, "show", "Çakma'yı Göster", true, None::<&str>)?;
-                let mute_item = MenuItem::with_id(
-                    app,
-                    "toggle_mute",
-                    "Mikrofonu Kapat / Aç",
-                    true,
-                    None::<&str>,
-                )?;
-                let deafen_item = MenuItem::with_id(
-                    app,
-                    "toggle_deafen",
-                    "Kulaklığı Sağırlaştır / Aç",
-                    true,
-                    None::<&str>,
-                )?;
-                let leave_voice_item = MenuItem::with_id(
-                    app,
-                    "leave_voice",
-                    "Ses Odasından Ayrıl",
-                    true,
-                    None::<&str>,
-                )?;
-                let status_online_item = MenuItem::with_id(
-                    app,
-                    "status_online",
-                    "Durum: Çevrimiçi",
-                    true,
-                    None::<&str>,
-                )?;
-                let status_idle_item =
-                    MenuItem::with_id(app, "status_idle", "Durum: Boşta", true, None::<&str>)?;
-                let status_dnd_item = MenuItem::with_id(
-                    app,
-                    "status_dnd",
-                    "Durum: Rahatsız Etme",
-                    true,
-                    None::<&str>,
-                )?;
-                let quit_item =
-                    MenuItem::with_id(app, "quit", "Tamamen Kapat", true, None::<&str>)?;
-                let menu = Menu::with_items(
-                    app,
-                    &[
-                        &show_item,
-                        &mute_item,
-                        &deafen_item,
-                        &leave_voice_item,
-                        &status_online_item,
-                        &status_idle_item,
-                        &status_dnd_item,
-                        &quit_item,
-                    ],
-                )?;
+        #[cfg(desktop)]
+        {
+            let show_item = MenuItem::with_id(app, "show", "Çakma'yı Göster", true, None::<&str>)?;
+            let mute_item = MenuItem::with_id(
+                app,
+                "toggle_mute",
+                "Mikrofonu Kapat / Aç",
+                true,
+                None::<&str>,
+            )?;
+            let deafen_item = MenuItem::with_id(
+                app,
+                "toggle_deafen",
+                "Kulaklığı Sağırlaştır / Aç",
+                true,
+                None::<&str>,
+            )?;
+            let leave_voice_item = MenuItem::with_id(
+                app,
+                "leave_voice",
+                "Ses Odasından Ayrıl",
+                true,
+                None::<&str>,
+            )?;
+            let status_online_item =
+                MenuItem::with_id(app, "status_online", "Durum: Çevrimiçi", true, None::<&str>)?;
+            let status_idle_item =
+                MenuItem::with_id(app, "status_idle", "Durum: Boşta", true, None::<&str>)?;
+            let status_dnd_item = MenuItem::with_id(
+                app,
+                "status_dnd",
+                "Durum: Rahatsız Etme",
+                true,
+                None::<&str>,
+            )?;
+            let quit_item = MenuItem::with_id(app, "quit", "Tamamen Kapat", true, None::<&str>)?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &show_item,
+                    &mute_item,
+                    &deafen_item,
+                    &leave_voice_item,
+                    &status_online_item,
+                    &status_idle_item,
+                    &status_dnd_item,
+                    &quit_item,
+                ],
+            )?;
 
-                let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                    .menu(&menu)
-                    .tooltip("Çakma")
-                    .on_menu_event(|app, event| match event.id.as_ref() {
-                        "show" => {
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.unminimize();
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
+                .menu(&menu)
+                .tooltip("Çakma")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.unminimize();
+                            let _ = win.show();
+                            let _ = win.set_focus();
                         }
-                        "toggle_mute" => {
-                            let _ = app.emit("tray-toggle-mute", ());
+                    }
+                    "toggle_mute" => {
+                        let _ = app.emit("tray-toggle-mute", ());
+                    }
+                    "toggle_deafen" => {
+                        let _ = app.emit("tray-toggle-deafen", ());
+                    }
+                    "leave_voice" => {
+                        let _ = app.emit("tray-leave-voice", ());
+                    }
+                    "status_online" => {
+                        let _ = app.emit("tray-set-status", "online");
+                    }
+                    "status_idle" => {
+                        let _ = app.emit("tray-set-status", "idle");
+                    }
+                    "status_dnd" => {
+                        let _ = app.emit("tray-set-status", "dnd");
+                    }
+                    "quit" => {
+                        remote_assist::close_remote_assist_windows(app);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.unminimize();
+                            let _ = win.show();
+                            let _ = win.set_focus();
                         }
-                        "toggle_deafen" => {
-                            let _ = app.emit("tray-toggle-deafen", ());
-                        }
-                        "leave_voice" => {
-                            let _ = app.emit("tray-leave-voice", ());
-                        }
-                        "status_online" => {
-                            let _ = app.emit("tray-set-status", "online");
-                        }
-                        "status_idle" => {
-                            let _ = app.emit("tray-set-status", "idle");
-                        }
-                        "status_dnd" => {
-                            let _ = app.emit("tray-set-status", "dnd");
-                        }
-                        "quit" => {
-                            remote_assist::close_remote_assist_windows(app);
-                            app.exit(0);
-                        }
-                        _ => {}
-                    })
-                    .on_tray_icon_event(|tray, event| {
-                        if let TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } = event
-                        {
-                            let app = tray.app_handle();
-                            if let Some(win) = app.get_webview_window("main") {
-                                let _ = win.unminimize();
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
-                        }
-                    });
+                    }
+                });
 
-                if let Some(icon) = app.default_window_icon() {
-                    tray_builder = tray_builder.icon(icon.clone());
-                }
-
-                let _tray = tray_builder.build(app)?;
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
             }
 
-            Ok(())
-        })
-        .on_window_event(|window, event| {
+            let _tray = tray_builder.build(app)?;
+        }
+
+        Ok(())
+    });
+
+    #[cfg(desktop)]
+    {
+        builder = builder.on_window_event(|window, event| {
             if window.label() == "main" {
                 match event {
                     WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
@@ -254,7 +254,10 @@ pub fn run() {
                     _ => {}
                 }
             }
-        })
+        });
+    }
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
 }

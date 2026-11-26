@@ -2,9 +2,7 @@ name: Build Linux Desktop (AppImage & DEB)
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
 
 jobs:
   build-linux:
@@ -37,6 +35,11 @@ jobs:
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+
       - name: Install Client Dependencies
         working-directory: client
         run: npm ci
@@ -44,14 +47,24 @@ jobs:
       - name: Build Tauri Linux Bundles (.AppImage & .deb)
         working-directory: client
         env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --bundles appimage,deb
+        run: |
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            npx tauri build --bundles appimage,deb
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is not set; building unsigned Linux bundles."
+            npx tauri build --bundles appimage,deb --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
 
       - name: Upload Linux Desktop Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Cakma-Linux-x86_64
+          if-no-files-found: warn
           path: |
             client/src-tauri/target/release/bundle/appimage/*.AppImage
+            client/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            client/src-tauri/target/release/bundle/appimage/*.sig
             client/src-tauri/target/release/bundle/deb/*.deb

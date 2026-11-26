@@ -237,12 +237,15 @@ pub fn detect_running_game() -> Option<String> {
 
 #[tauri::command]
 pub fn request_window_attention(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
         let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
     }
+    #[cfg(not(desktop))]
+    let _ = app;
     Ok(())
 }
 
@@ -344,16 +347,20 @@ pub fn set_autostart(enabled: bool) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
     }
+    #[cfg(not(desktop))]
+    let _ = app;
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_taskbar_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(tray) = app.tray_by_id("main-tray") {
         let tip = if count > 0 {
             format!("Çakma ({} okunmamış)", count)
@@ -363,6 +370,10 @@ pub fn set_taskbar_badge(app: tauri::AppHandle, count: u32) -> Result<(), String
         let _ = tray.set_tooltip(Some(tip));
     }
 
+    #[cfg(not(desktop))]
+    let _ = (&app, count);
+
+    #[cfg(desktop)]
     if let Some(win) = app.get_webview_window("main") {
         #[cfg(target_os = "windows")]
         {
@@ -701,7 +712,8 @@ unsafe fn resolve_window_process_info(hwnd: isize) -> (u32, String) {
         if pid == 0 {
             return (0, String::new());
         }
-        let handle = win_windows::OpenProcess(win_windows::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        let handle =
+            win_windows::OpenProcess(win_windows::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle == 0 {
             return (pid, String::new());
         }
@@ -741,7 +753,9 @@ unsafe extern "system" fn enum_capturable_windows_proc(hwnd: isize, l_param: isi
         let mut buf = vec![0u16; buf_len];
         let copied = win_windows::GetWindowTextW(hwnd, buf.as_mut_ptr(), buf_len as i32);
         if copied > 0 {
-            let title = String::from_utf16_lossy(&buf[..copied as usize]).trim().to_string();
+            let title = String::from_utf16_lossy(&buf[..copied as usize])
+                .trim()
+                .to_string();
             if is_capturable_window_title(&title) {
                 let is_minimized = win_windows::IsIconic(hwnd) != 0;
                 let (pid, process_name) = resolve_window_process_info(hwnd);
@@ -794,26 +808,33 @@ pub fn update_tray_state(
         [16, 185, 129, 255] // Emerald: active mic
     };
 
-    if let Some(tray) = app.tray_by_id("main-tray") {
-        let tip = format_tray_tooltip(
-            in_voice,
-            is_muted,
-            is_deafened,
-            &status,
-            channel_name.as_deref(),
-        );
-        let _ = tray.set_tooltip(Some(tip));
+    #[cfg(desktop)]
+    {
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            let tip = format_tray_tooltip(
+                in_voice,
+                is_muted,
+                is_deafened,
+                &status,
+                channel_name.as_deref(),
+            );
+            let _ = tray.set_tooltip(Some(tip));
 
-        if in_voice {
-            if let Some(base) = app.default_window_icon() {
-                let badged = render_tray_badge_rgba(base.rgba(), base.width(), base.height(), voice_dot);
-                let img = tauri::image::Image::new_owned(badged, base.width(), base.height());
-                let _ = tray.set_icon(Some(img));
+            if in_voice {
+                if let Some(base) = app.default_window_icon() {
+                    let badged =
+                        render_tray_badge_rgba(base.rgba(), base.width(), base.height(), voice_dot);
+                    let img = tauri::image::Image::new_owned(badged, base.width(), base.height());
+                    let _ = tray.set_icon(Some(img));
+                }
+            } else if let Some(base) = app.default_window_icon() {
+                let _ = tray.set_icon(Some(base.clone()));
             }
-        } else if let Some(base) = app.default_window_icon() {
-            let _ = tray.set_icon(Some(base.clone()));
         }
     }
+
+    #[cfg(not(desktop))]
+    let _ = (&app, in_voice, status, channel_name, voice_dot);
 
     #[cfg(target_os = "windows")]
     if let Some(win) = app.get_webview_window("main") {
@@ -832,9 +853,9 @@ pub fn update_tray_state(
 mod tests {
     use super::{
         clamp_ptt_release_delay_ms, current_platform_capabilities,
-        format_linux_autostart_desktop_entry, format_tray_tooltip,
-        get_audio_capture_capabilities, is_capturable_window_title,
-        map_ptt_key_to_vk, render_taskbar_voice_overlay_rgba, render_tray_badge_rgba,
+        format_linux_autostart_desktop_entry, format_tray_tooltip, get_audio_capture_capabilities,
+        is_capturable_window_title, map_ptt_key_to_vk, render_taskbar_voice_overlay_rgba,
+        render_tray_badge_rgba,
     };
 
     #[test]

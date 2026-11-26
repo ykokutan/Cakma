@@ -1,5 +1,7 @@
+#[cfg(desktop)]
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(desktop)]
 fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.show();
@@ -26,35 +28,60 @@ fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn toggle_overlay_window(app: tauri::AppHandle) -> Result<bool, String> {
-    if let Some(win) = app.get_webview_window("overlay") {
-        win.close().map_err(|e| e.to_string())?;
-        return Ok(false);
-    }
+    #[cfg(desktop)]
+    {
+        if let Some(win) = app.get_webview_window("overlay") {
+            win.close().map_err(|e| e.to_string())?;
+            return Ok(false);
+        }
 
-    open_overlay_window(&app)?;
-    Ok(true)
+        open_overlay_window(&app)?;
+        Ok(true)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Ok(false)
+    }
 }
 
 #[tauri::command]
 pub async fn set_overlay_window(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
-    if enabled {
-        open_overlay_window(&app)?;
-        Ok(true)
-    } else {
-        if let Some(win) = app.get_webview_window("overlay") {
-            win.close().map_err(|e| e.to_string())?;
+    #[cfg(desktop)]
+    {
+        if enabled {
+            open_overlay_window(&app)?;
+            Ok(true)
+        } else {
+            if let Some(win) = app.get_webview_window("overlay") {
+                win.close().map_err(|e| e.to_string())?;
+            }
+            Ok(false)
         }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, enabled);
         Ok(false)
     }
 }
 
 #[tauri::command]
 pub fn get_overlay_window_state(app: tauri::AppHandle) -> bool {
-    app.get_webview_window("overlay").is_some()
+    #[cfg(desktop)]
+    {
+        app.get_webview_window("overlay").is_some()
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        false
+    }
 }
 
 #[tauri::command]
 pub async fn position_overlay_window(app: tauri::AppHandle, corner: String) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(overlay) = app.get_webview_window("overlay") {
         let margin = 16i32;
         let overlay_w = 290i32;
@@ -82,16 +109,21 @@ pub async fn position_overlay_window(app: tauri::AppHandle, corner: String) -> R
             x as f64, y as f64,
         )));
     }
+    #[cfg(not(desktop))]
+    let _ = (app, corner);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn set_overlay_ignore_cursor(app: tauri::AppHandle, ignore: bool) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(overlay) = app.get_webview_window("overlay") {
         overlay
             .set_ignore_cursor_events(ignore)
             .map_err(|e| e.to_string())?;
     }
+    #[cfg(not(desktop))]
+    let _ = (app, ignore);
     Ok(())
 }
 
@@ -101,6 +133,7 @@ pub async fn resize_overlay_window(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    #[cfg(desktop)]
     if let Some(overlay) = app.get_webview_window("overlay") {
         let w = width.clamp(220.0, 460.0);
         let h = height.clamp(140.0, 480.0);
@@ -108,5 +141,7 @@ pub async fn resize_overlay_window(
             .set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)))
             .map_err(|e| e.to_string())?;
     }
+    #[cfg(not(desktop))]
+    let _ = (app, width, height);
     Ok(())
 }

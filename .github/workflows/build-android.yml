@@ -1,4 +1,4 @@
-name: Build Android APK (Tauri 2)
+name: Build Android APK / AAB (Tauri 2)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,41 @@ on:
       build_mode:
         description: "Android build target (debug or release)"
         required: false
+        type: choice
         default: "debug"
+        options:
+          - debug
+          - release
+      target_arch:
+        description: "ABI target (aarch64 for arm64 devices, or universal for all ABIs)"
+        required: false
+        type: choice
+        default: "aarch64"
+        options:
+          - aarch64
+          - universal
+      bundle_format:
+        description: "Output format (apk or aab)"
+        required: false
+        type: choice
+        default: "apk"
+        options:
+          - apk
+          - aab
+  workflow_call:
+    inputs:
+      build_mode:
+        required: false
+        type: string
+        default: "release"
+      target_arch:
+        required: false
+        type: string
+        default: "aarch64"
+      bundle_format:
+        required: false
+        type: string
+        default: "apk"
 
 jobs:
   build-android:
@@ -24,11 +58,21 @@ jobs:
       - name: Setup Android SDK & NDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK 27
+      - name: Install Android SDK Platform 35 & NDK 27
         run: |
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
           echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-cakma-${{ runner.os }}-${{ hashFiles('client/package-lock.json', 'client/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            gradle-cakma-${{ runner.os }}-
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,7 +84,12 @@ jobs:
       - name: Setup Rust & Android Targets
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Cache Rust Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
 
       - name: Install Client Dependencies
         working-directory: client
@@ -53,17 +102,55 @@ jobs:
             npx tauri android init --ci
           fi
 
-      - name: Build Android APK
+      - name: Configure Optional Android Signing Keystore
+        if: ${{ (inputs.build_mode || 'debug') == 'release' && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        working-directory: client
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_PATH="${{ runner.temp }}/cakma-release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          cat <<EOF > src-tauri/gen/android/keystore.properties
+          password=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=$KEYSTORE_PATH
+          EOF
+
+      - name: Build Android Package
         working-directory: client
         run: |
-          if [ "${{ github.event.inputs.build_mode }}" = "release" ]; then
-            npx tauri android build --apk --target aarch64
+          MODE="${{ inputs.build_mode || 'debug' }}"
+          ARCH="${{ inputs.target_arch || 'aarch64' }}"
+          FMT="${{ inputs.bundle_format || 'apk' }}"
+          ARGS=()
+          if [ "$FMT" = "aab" ]; then
+            ARGS+=(--aab)
           else
-            npx tauri android build --apk --debug --target aarch64
+            ARGS+=(--apk)
           fi
+          if [ "$MODE" != "release" ]; then
+            ARGS+=(--debug)
+          fi
+          if [ "$ARCH" != "universal" ]; then
+            ARGS+=(--target "$ARCH")
+          fi
+          echo "Running: npx tauri android build ${ARGS[*]}"
+          npx tauri android build "${ARGS[@]}"
 
-      - name: Upload Android APK Artifact
+      - name: Cleanup Temporary Keystore
+        if: always()
+        run: |
+          rm -f "${{ runner.temp }}/cakma-release.keystore" client/src-tauri/gen/android/keystore.properties
+
+      - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Cakma-Android-APK
-          path: client/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: Cakma-Android
+          if-no-files-found: warn
+          path: |
+            client/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            client/src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
