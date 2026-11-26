@@ -917,47 +917,6 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             )}
           </button>
 
-          {/* Whiteboard / Live Canvas */}
-          <button
-            onClick={() => setIsWhiteboardOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-pink-500/30 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 transition text-xs font-medium shadow-sm shrink-0"
-            title="Ortak Canlı Çizim & Tuval (Whiteboard)"
-          >
-            <Palette className="w-3.5 h-3.5" />
-            <span>Ortak Çizim</span>
-          </button>
-
-          {/* Watch Together */}
-          <button
-            onClick={() => setIsWatchTogetherOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 transition text-xs font-medium shadow-sm shrink-0"
-            title="Birlikte YouTube İzle (Watch Together)"
-          >
-            <Film className="w-3.5 h-3.5" />
-            <span>Birlikte İzle</span>
-          </button>
-
-          {/* 3D Spatial Audio */}
-          <button
-            onClick={() => setIsSpatialAudioOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 transition text-xs font-medium shadow-sm shrink-0"
-            title="TeamSpeak 3D Konumsal Ses (Stereo Panning)"
-          >
-            <Compass className="w-3.5 h-3.5" />
-            <span>3D Ses</span>
-          </button>
-
-          {/* Mini Games */}
-          <button
-            onClick={() => setIsMiniGamesOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-purple-500/50 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 transition text-xs font-bold shadow-md shadow-purple-600/20 shrink-0 animate-pulse hover:animate-none"
-            title="Aktiviteler & Mini Oyunlar (XOX, Hızlı Yazma)"
-          >
-            <Gamepad2 className="w-4 h-4 text-purple-300" />
-            <span>Mini Oyunlar</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-          </button>
-
           {hasAnyScreenShare && (
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/15 text-red-400 border border-red-500/30 text-[11px] font-medium">
               <Tv className="w-3.5 h-3.5 animate-pulse" />

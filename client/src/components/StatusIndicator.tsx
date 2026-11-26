@@ -30,7 +30,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
       role="status"
       aria-label={meta.label}
       title={meta.label}
-      className={`inline-flex items-center justify-center rounded-full ${dims} ${meta.colorClass} relative shrink-0 ${className}`}
+      className={`inline-flex items-center justify-center rounded-full ${dims} ${meta.colorClass} shrink-0 ${className}`}
     >
       <svg
         viewBox="0 0 12 12"
