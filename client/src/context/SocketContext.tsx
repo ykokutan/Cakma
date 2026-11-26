@@ -2585,7 +2585,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      appToast('Mikrofon erişimi için güvenli bağlantı (HTTPS veya localhost) gereklidir. Tarayıcınız HTTP üzerinden mikrofon iznine izin vermiyor.', 'error');
+      const isTauriDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+      appToast(
+        isTauriDesktop
+          ? 'Mikrofon erişimi alınamadı. macOS/sistem gizlilik ayarlarından Çakma uygulamasına Mikrofon izni verildiğini kontrol edin ve uygulamayı yeniden başlatın.'
+          : 'Mikrofon erişimi için güvenli bağlantı (HTTPS veya localhost) gereklidir. Tarayıcınız HTTP üzerinden mikrofon iznine izin vermiyor.',
+        'error'
+      );
       return null;
     }
 

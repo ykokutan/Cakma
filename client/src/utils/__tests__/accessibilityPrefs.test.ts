@@ -10,8 +10,7 @@ import { clampEchoDelayMs } from '../micEchoTester';
 describe('accessibilityPrefs & micEchoTester helpers', () => {
   beforeEach(() => {
     const store = new Map<string, string>();
-    (globalThis as unknown as { window?: object; localStorage?: Storage }).window = globalThis;
-    (globalThis as unknown as { localStorage: Storage }).localStorage = {
+    const mockStorage: Storage = {
       get length() {
         return store.size;
       },
@@ -25,6 +24,16 @@ describe('accessibilityPrefs & micEchoTester helpers', () => {
         store.set(k, v);
       },
     };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      writable: true,
+      value: globalThis,
+    });
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: mockStorage,
+    });
   });
 
   it('loads default preferences when empty or malformed, and round-trips saved prefs', () => {

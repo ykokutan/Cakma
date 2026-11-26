@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Çakma sesli sohbet, sesli mesaj ve arama özellikleri için mikrofon erişimine ihtiyaç duyar.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Çakma görüntülü sohbet ve video notu özellikleri için kamera erişimine ihtiyaç duyar.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Çakma ekran paylaşımı özelliği için ekran kaydı iznine ihtiyaç duyar.</string>
+</dict>
+</plist>

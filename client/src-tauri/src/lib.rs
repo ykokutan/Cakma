@@ -12,6 +12,17 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
+#[cfg(all(any(target_os = "macos", target_os = "linux"), not(debug_assertions)))]
+fn pick_localhost_port() -> u16 {
+    if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:17420") {
+        return listener.local_addr().map(|a| a.port()).unwrap_or(17420);
+    }
+    if let Ok(listener) = std::net::TcpListener::bind("127.0.0.1:0") {
+        return listener.local_addr().map(|a| a.port()).unwrap_or(17420);
+    }
+    17420
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Some(url) = window_state::extract_deep_link_from_args(std::env::args())
@@ -20,7 +31,15 @@ pub fn run() {
         *g = Some(url);
     }
 
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), not(debug_assertions)))]
+    let localhost_port = pick_localhost_port();
+
     let mut builder = tauri::Builder::default();
+
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), not(debug_assertions)))]
+    {
+        builder = builder.plugin(tauri_plugin_localhost::Builder::new(localhost_port).build());
+    }
 
     #[cfg(desktop)]
     {
@@ -75,7 +94,7 @@ pub fn run() {
                 window_state::take_pending_deep_link
             ]);
 
-    builder = builder.setup(|app| {
+    builder = builder.setup(move |app| {
         if cfg!(debug_assertions) {
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
@@ -215,6 +234,13 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+        }
+
+        #[cfg(all(any(target_os = "macos", target_os = "linux"), not(debug_assertions)))]
+        if let Some(win) = app.get_webview_window("main")
+            && let Ok(url) = format!("http://localhost:{localhost_port}").parse::<tauri::Url>()
+        {
+            let _ = win.navigate(url);
         }
 
         Ok(())

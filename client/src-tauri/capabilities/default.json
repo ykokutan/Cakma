@@ -8,6 +8,12 @@
     "remote-assist-hud",
     "remote-assist-overlay"
   ],
+  "remote": {
+    "urls": [
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ]
+  },
   "permissions": [
     "core:default",
     "core:window:allow-minimize",

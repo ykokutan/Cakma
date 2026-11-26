@@ -275,6 +275,8 @@ const ALLOWED_ORIGINS = [
   'http://tauri.localhost',
   'https://tauri.localhost',
   'tauri://localhost',
+  'http://localhost:17420',
+  'http://127.0.0.1:17420',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://localhost:4000',
