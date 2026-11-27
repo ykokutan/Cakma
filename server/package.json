@@ -1,6 +1,6 @@
 {
   "name": "discord-clone-server",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Discord / TeamSpeak Clone Backend with Real-Time WebSockets & WebRTC Signaling",
   "main": "src/index.ts",
   "scripts": {

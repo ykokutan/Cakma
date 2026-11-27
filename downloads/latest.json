@@ -1,11 +1,17 @@
 {
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUUh6WnBnYXJlMlF3VzRONHE0dXdFNzRHQVcvMUo1b1VYd3lBNHdoSWE1eW9Fc0RzU2ptbDBiN2IyWmtBVThVV21JbnlTaFN0YlRGM2MwdHoxQ3BIb0FwVG41eE9CVncwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1NzkwMTk2CWZpbGU6w4dha21hXzEuNS4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjoxLjUuMApnZGtnUWQwWG44TTIxdXZHeTllMy9OUll3QVV6Zys2RDFIY0hNNVdmbnVPVURESzI0L0YzTi9zbk1QL0lPb0wxZmhNSmNJOS8vSTUyaG5GTi9JdXpBZz09Cg==",
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUUh6WnBnYXJlMlFMN3NWUEVmRFYybzd2VWkyWmkyTFJTRG5tRFRXek5VcktUMUxvQzZVa21pQmdzcW5xcjgzUWVSUERJb0RrYWQ0dmJ0VkRRS2RaQ21WSEV1UGI3bkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk1Nzk0MDc1CWZpbGU6w4dha21hXzEuNi4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjoxLjYuMApGZklsdlc1ZjYyTDh6SEtGMWVOVHlxR0xUM0NrSzJsQUl1bWpUcXVJYWJ5WFkzNnRBbXFodUplYWF0NFcxMXVoWExING1vM0NycVFxcVVhS0R4bG9BZz09Cg==",
                                              "url":  "https://ses.yahyakemalokutan.com/downloads/Cakma-Setup.exe"
                                          }
                   },
-    "pub_date":  "2026-11-27T14:36:37Z",
-    "version":  "1.5.0",
-    "notes":  "Çakma v1.5.0 güncellemesi"
+    "notes":  "Ã‡akma v1.6.0 gÃ¼ncellemesi",
+    "pub_date":  "2026-11-27T15:41:16Z",
+    "android":  {
+                    "pub_date":  "2026-11-27T15:42:19Z",
+                    "url":  "https://ses.yahyakemalokutan.com/downloads/Cakma.apk",
+                    "version":  "1.6.0",
+                    "sha256":  "bd7b22ac505d3967116a4b574e914dc2018d1a263246db9f6c0f325f2444b81d"
+                },
+    "version":  "1.6.0"
 }

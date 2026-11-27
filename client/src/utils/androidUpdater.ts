@@ -1,7 +1,7 @@
 import pkg from '../../package.json';
 import { isCapacitorRuntime, isTauriRuntime, resolveBackendBaseUrl } from './authFetch';
 
-export const APP_MANIFEST_VERSION: string = pkg.version || '1.5.0';
+export const APP_MANIFEST_VERSION: string = pkg.version || '1.6.0';
 
 export interface AndroidApkUpdateInfo {
   available: boolean;

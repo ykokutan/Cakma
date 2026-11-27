@@ -15,11 +15,27 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.5.0 - Latest */}
+        {/* v1.6.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.5.0 — Son Sürüm (Entegrasyon &amp; Altyapı Ölçekleme Paketi)</span>
+            <span className="text-xs font-bold text-emerald-300">v1.6.0 — Son Sürüm (Mobil, Ses, Topluluk &amp; Ölçeklenebilirlik Paketi)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-zinc-300 space-y-1 list-disc list-inside leading-relaxed">
+            <li><span className="text-white font-semibold">Mobil Android OTA &amp; Etkileşimli Ses Bildirimi:</span> Android APK için dahili sürüm/SHA-256 güncelleme denetimi (<code className="text-emerald-200">/api/releases/latest</code>), ayarlar içinden tek dokunuşla APK indirme ve kilit ekranından çalışan <code className="text-emerald-200">Sustur / Sağırlaştır / Ayrıl</code> aksiyon butonları + dokunsal geri bildirim eklendi.</li>
+            <li><span className="text-white font-semibold">Oyun İçi Overlay v2 &amp; Profiller:</span> <code className="text-emerald-200">Ses / Odalar / Sohbet</code> sekmeli etkileşimli overlay, konuşmacı başına %0–200 ses ayarı, 5 sn yüzen sohbet bildirimi ve oyun .exe kurallarına bağlı otomatik mikrofon / gürültü profili eklendi.</li>
+            <li><span className="text-white font-semibold">Çoklu Yayın Grid, %200 Yayın Sesi &amp; Sanal Arka Plan:</span> Aynı odada yerel kamera + ekran paylaşımı + uzak yayınlar yan yana; yayın başına WebAudio kazanç artırımı ve 4 modlu (<code className="text-emerald-200">Yumuşak / Güçlü Bulanıklık &amp; Stüdyo Karartma</code>) sanal kamera arka planı eklendi.</li>
+            <li><span className="text-white font-semibold">LFG Takım Bulucu &amp; Sunucu Boost (Vanity URL):</span> <code className="text-emerald-200">/lfg</code> ile etkileşimli takım kartları ve tek tıkla ses odasına katılım; cüzdan coini ile Kademe 1–3 sunucu takviyesi, 384 kbps ses, artırılmış emoji/sticker kotası ve özel <code className="text-emerald-200">/c/slug</code> davet bağlantısı eklendi.</li>
+            <li><span className="text-white font-semibold">Medya Kalitesi, Destek Talepleri &amp; Anti-Raid Kalkanı:</span> Gönderim öncesi WebP sıkıştırma kontrolü, canlı yükleme hızı (KB/s), kırık/süresi dolmuş CDN medya koruyucusu (<code className="text-emerald-200">SafeChatImage</code>), özel destek kanallı Ticket + Markdown transkript + başvuru formları ve otomatik Anti-Raid kilit modu eklendi.</li>
+            <li><span className="text-white font-semibold">Köprü Medyası, S3 Çöp Toplayıcı, Redis Küme &amp; Arama v2:</span> Telegram/Discord köprülerinde güvenli ek/görüntü aktarımı, sahipsiz S3/R2 nesnelerini temizleyen çöp toplayıcı, sıfır-bağımlılıklı Redis Pub/Sub küme veri yolu (<code className="text-emerald-200">REDIS_URL</code>) ve <code className="text-emerald-200">has:code / has:video / has:ses / ext: / lang:</code> destekli FTS5 Arama v2 eklendi.</li>
+          </ul>
+        </div>
+
+        {/* v1.5.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-zinc-200">v1.5.0 — Entegrasyon &amp; Altyapı Ölçekleme Paketi</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-400 font-medium">Önceki</span>
           </div>
           <ul className="text-[11px] text-zinc-300 space-y-1 list-disc list-inside leading-relaxed">
             <li><span className="text-white font-semibold">S3 / Cloudflare R2 Medya &amp; CDN Aktarımı:</span> Yüklenen dosya ve eklerin otomatik S3/R2 nesne depolamaya aktarımı, 1 saatlik AWS SigV4 imzalı yönlendirme (CORS gerektiren istekler için proxy akışı), isteğe bağlı özel CDN alan adı, boyut eşiği ve yedekleme S3 kimlik bilgilerini tek tıkla paylaşma.</li>
