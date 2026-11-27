@@ -142,5 +142,26 @@ if ($LASTEXITCODE -ne 0) { throw 'apksigner verify başarısız.' }
 $hash = (Get-FileHash -Path $finalApk -Algorithm SHA256).Hash.ToLower()
 Set-Content -Path "$finalApk.sha256" -Value "$hash  Cakma.apk" -Encoding ASCII
 
+$clientPkg = Get-Content (Join-Path $clientDir 'package.json') -Raw | ConvertFrom-Json
+$androidVersion = $clientPkg.version
+$latestJsonPath = Join-Path $downloadsDir 'latest.json'
+$latestMap = @{}
+if (Test-Path $latestJsonPath) {
+  try {
+    $parsedLatest = Get-Content $latestJsonPath -Raw | ConvertFrom-Json
+    foreach ($prop in $parsedLatest.PSObject.Properties) {
+      $latestMap[$prop.Name] = $prop.Value
+    }
+  } catch {}
+}
+$latestMap['android'] = @{
+  version = $androidVersion
+  url = 'https://ses.yahyakemalokutan.com/downloads/Cakma.apk'
+  sha256 = $hash
+  pub_date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+$latestOut = $latestMap | ConvertTo-Json -Depth 6
+[System.IO.File]::WriteAllText($latestJsonPath, $latestOut, [System.Text.UTF8Encoding]::new($false))
+
 $sizeMb = [Math]::Round((Get-Item $finalApk).Length / 1MB, 2)
 Write-Host "✅ İmzalı Android APK hazır: $finalApk ($sizeMb MB | sha256: $hash)"

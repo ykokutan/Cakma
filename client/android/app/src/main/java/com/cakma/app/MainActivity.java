@@ -2,9 +2,11 @@ package com.cakma.app;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.HapticFeedbackConstants;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebSettings;
@@ -19,16 +21,39 @@ import com.getcapacitor.BridgeWebChromeClient;
 import java.util.ArrayList;
 import java.util.List;
 
-public class MainActivity extends BridgeActivity {
+public class MainActivity extends BridgeActivity implements VoiceForegroundService.ActionListener {
     private static final int PERMISSION_REQUEST_CODE = 4201;
     private volatile String lastRoomName = "Ses Odası";
     private volatile String lastUsername = "Çakma";
+    private volatile boolean lastMuted = false;
+    private volatile boolean lastDeafened = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        VoiceForegroundService.setActionListener(this);
         requestVoicePermissionsIfNeeded();
         configureWebViewForWebRtc();
+    }
+
+    @Override
+    public void onDestroy() {
+        VoiceForegroundService.setActionListener(null);
+        super.onDestroy();
+    }
+
+    @Override
+    public void onVoiceNotificationAction(String action) {
+        if (action == null) return;
+        final String safeAction = action.replaceAll("[^a-zA-Z0-9_.-]", "");
+        runOnUiThread(() -> {
+            try {
+                if (this.bridge == null || this.bridge.getWebView() == null) return;
+                String js = "window.dispatchEvent(new CustomEvent('cakma:android-voice-action',{detail:'" + safeAction + "'}));";
+                this.bridge.getWebView().evaluateJavascript(js, null);
+            } catch (Throwable ignored) {
+            }
+        });
     }
 
     private void requestVoicePermissionsIfNeeded() {
@@ -74,33 +99,38 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
+    private void pushVoiceStateToService() {
+        Intent intent = new Intent(MainActivity.this, VoiceForegroundService.class);
+        intent.putExtra(VoiceForegroundService.EXTRA_ROOM_NAME, lastRoomName);
+        intent.putExtra(VoiceForegroundService.EXTRA_USERNAME, lastUsername);
+        intent.putExtra(VoiceForegroundService.EXTRA_MUTED, lastMuted);
+        intent.putExtra(VoiceForegroundService.EXTRA_DEAFENED, lastDeafened);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+    }
+
     private class CakmaAndroidBridge {
         @JavascriptInterface
         public void startVoiceService(String roomName, String username) {
             lastRoomName = (roomName != null && !roomName.isEmpty()) ? roomName : "Ses Odası";
             lastUsername = (username != null && !username.isEmpty()) ? username : "Çakma";
-            Intent intent = new Intent(MainActivity.this, VoiceForegroundService.class);
-            intent.putExtra(VoiceForegroundService.EXTRA_ROOM_NAME, lastRoomName);
-            intent.putExtra(VoiceForegroundService.EXTRA_USERNAME, lastUsername);
-            intent.putExtra(VoiceForegroundService.EXTRA_MUTED, false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent);
-            } else {
-                startService(intent);
-            }
+            pushVoiceStateToService();
         }
 
         @JavascriptInterface
         public void updateMuteState(boolean muted) {
-            Intent intent = new Intent(MainActivity.this, VoiceForegroundService.class);
-            intent.putExtra(VoiceForegroundService.EXTRA_ROOM_NAME, lastRoomName);
-            intent.putExtra(VoiceForegroundService.EXTRA_USERNAME, lastUsername);
-            intent.putExtra(VoiceForegroundService.EXTRA_MUTED, muted);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent);
-            } else {
-                startService(intent);
-            }
+            lastMuted = muted;
+            pushVoiceStateToService();
+        }
+
+        @JavascriptInterface
+        public void updateVoiceState(boolean muted, boolean deafened) {
+            lastMuted = muted;
+            lastDeafened = deafened;
+            pushVoiceStateToService();
         }
 
         @JavascriptInterface
@@ -108,6 +138,30 @@ public class MainActivity extends BridgeActivity {
             Intent intent = new Intent(MainActivity.this, VoiceForegroundService.class);
             intent.setAction("STOP");
             startService(intent);
+        }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            try {
+                PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+                return info != null && info.versionName != null ? info.versionName : "1.5.0";
+            } catch (Throwable ignored) {
+                return "1.5.0";
+            }
+        }
+
+        @JavascriptInterface
+        public void triggerHaptic(String style) {
+            runOnUiThread(() -> {
+                try {
+                    if (MainActivity.this.bridge == null || MainActivity.this.bridge.getWebView() == null) return;
+                    int feedback = "heavy".equals(style)
+                            ? HapticFeedbackConstants.LONG_PRESS
+                            : HapticFeedbackConstants.VIRTUAL_KEY;
+                    MainActivity.this.bridge.getWebView().performHapticFeedback(feedback);
+                } catch (Throwable ignored) {
+                }
+            });
         }
     }
 }

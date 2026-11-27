@@ -1,5 +1,22 @@
-import React, { useEffect, useState } from 'react';
-import { Mic, MicOff, Hand, Radio, Headphones, X, VolumeX, Lock, Unlock, PhoneOff, Minimize2, Maximize2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Mic,
+  MicOff,
+  Hand,
+  Radio,
+  Headphones,
+  X,
+  VolumeX,
+  Volume2,
+  Lock,
+  Unlock,
+  PhoneOff,
+  Minimize2,
+  Maximize2,
+  MessageSquare,
+  Send,
+  Hash,
+} from 'lucide-react';
 import { AvatarView } from './AvatarView';
 
 interface OverlaySpeaker {
@@ -10,11 +27,29 @@ interface OverlaySpeaker {
   isMuted: boolean;
   isDeafened?: boolean;
   isHandRaised?: boolean;
+  volume?: number;
+}
+
+interface OverlayVoiceChannel {
+  id: string;
+  name: string;
+  userCount: number;
+}
+
+interface OverlayRecentMessage {
+  id: string;
+  author: string;
+  content: string;
+  timestamp: string;
 }
 
 interface OverlayPayload {
   speakers: OverlaySpeaker[];
+  voiceChannels?: OverlayVoiceChannel[];
+  recentMessages?: OverlayRecentMessage[];
+  activeChatName?: string;
   inVoice: boolean;
+  channelId?: string;
   channelName?: string;
   ping?: number;
   isMuted?: boolean;
@@ -23,11 +58,23 @@ interface OverlayPayload {
 
 export const SpeakersOverlay: React.FC = () => {
   const [speakers, setSpeakers] = useState<OverlaySpeaker[]>([]);
+  const [voiceChannels, setVoiceChannels] = useState<OverlayVoiceChannel[]>([]);
+  const [recentMessages, setRecentMessages] = useState<OverlayRecentMessage[]>([]);
+  const [activeChatName, setActiveChatName] = useState<string>('');
+  const [currentChannelId, setCurrentChannelId] = useState<string>('');
   const [inVoice, setInVoice] = useState(false);
   const [channelName, setChannelName] = useState<string>('');
   const [ping, setPing] = useState<number>(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [activeTab, setActiveTab] = useState<'speakers' | 'channels' | 'chat'>('speakers');
+  const [expandedSpeakerId, setExpandedSpeakerId] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState('');
+  const [msgToast, setMsgToast] = useState<{ author: string; content: string } | null>(null);
+  const lastSeenMsgIdRef = useRef<string | null>(null);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+
   const [isClickThrough, setIsClickThrough] = useState<boolean>(() => {
     try { return localStorage.getItem('dc_overlay_locked') === '1'; } catch { return false; }
   });
@@ -52,10 +99,12 @@ export const SpeakersOverlay: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let toastTimer: number | null = null;
     let unlisten: (() => void) | null = null;
     let unlistenLock: (() => void) | null = null;
     let unlistenOpacity: (() => void) | null = null;
     let unlistenInteractive: (() => void) | null = null;
+
     import('@tauri-apps/api/core')
       .then(({ invoke }) => {
         const corner = localStorage.getItem('dc_overlay_corner') || 'top-left';
@@ -69,12 +118,29 @@ export const SpeakersOverlay: React.FC = () => {
     import('@tauri-apps/api/event')
       .then(async ({ listen, emit }) => {
         unlisten = await listen<OverlayPayload>('overlay-speakers-update', (event) => {
-          setSpeakers(event.payload.speakers || []);
-          setInVoice(Boolean(event.payload.inVoice));
-          setChannelName(event.payload.channelName || '');
-          setPing(event.payload.ping || 0);
-          setIsMuted(Boolean(event.payload.isMuted));
-          setIsDeafened(Boolean(event.payload.isDeafened));
+          const p = event.payload;
+          setSpeakers(p.speakers || []);
+          setVoiceChannels(p.voiceChannels || []);
+          const incomingMsgs = p.recentMessages || [];
+          setRecentMessages(incomingMsgs);
+          setActiveChatName(p.activeChatName || '');
+          setCurrentChannelId(p.channelId || '');
+          setInVoice(Boolean(p.inVoice));
+          setChannelName(p.channelName || '');
+          setPing(p.ping || 0);
+          setIsMuted(Boolean(p.isMuted));
+          setIsDeafened(Boolean(p.isDeafened));
+
+          const newest = incomingMsgs[incomingMsgs.length - 1];
+          if (newest && newest.id !== lastSeenMsgIdRef.current) {
+            const hadPrev = lastSeenMsgIdRef.current !== null;
+            lastSeenMsgIdRef.current = newest.id;
+            if (hadPrev && activeTabRef.current !== 'chat' && newest.content?.trim()) {
+              setMsgToast({ author: newest.author, content: newest.content });
+              if (toastTimer) window.clearTimeout(toastTimer);
+              toastTimer = window.setTimeout(() => setMsgToast(null), 5000);
+            }
+          }
         });
         unlistenLock = await listen<boolean>('overlay-lock-changed', (event) => {
           setIsClickThrough(Boolean(event.payload));
@@ -93,6 +159,7 @@ export const SpeakersOverlay: React.FC = () => {
       .catch(() => {});
 
     return () => {
+      if (toastTimer) window.clearTimeout(toastTimer);
       if (unlisten) unlisten();
       if (unlistenLock) unlistenLock();
       if (unlistenOpacity) unlistenOpacity();
@@ -103,11 +170,12 @@ export const SpeakersOverlay: React.FC = () => {
   const toggleCompactHud = () => {
     const next = !isCompactHud;
     setIsCompactHud(next);
+    if (next) setActiveTab('speakers');
     import('@tauri-apps/api/core')
       .then(({ invoke }) =>
         invoke('resize_overlay_window', {
-          width: next ? 250 : 300,
-          height: next ? 130 : 280,
+          width: next ? 250 : 310,
+          height: next ? 130 : 320,
         })
       )
       .catch(() => {});
@@ -122,10 +190,18 @@ export const SpeakersOverlay: React.FC = () => {
       .catch(() => {});
   };
 
-  const emitAction = (eventName: string) => {
+  const emitAction = (eventName: string, payload?: unknown) => {
     import('@tauri-apps/api/event')
-      .then(({ emit }) => emit(eventName))
+      .then(({ emit }) => emit(eventName, payload))
       .catch(() => {});
+  };
+
+  const handleSendQuickChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text) return;
+    emitAction('overlay-send-chat', { text });
+    setChatInput('');
   };
 
   return (
@@ -188,47 +264,190 @@ export const SpeakersOverlay: React.FC = () => {
         </div>
       </div>
 
-      {/* Speakers List */}
+      {/* Live New Message Toast Banner */}
+      {msgToast && (
+        <button
+          type="button"
+          onClick={() => {
+            setMsgToast(null);
+            if (!isCompactHud && !isClickThrough) setActiveTab('chat');
+          }}
+          className="px-2.5 py-1.5 bg-indigo-500/25 border-b border-indigo-400/30 text-left flex items-center gap-1.5 text-[11px] hover:bg-indigo-500/35 transition shrink-0"
+        >
+          <MessageSquare className="w-3 h-3 text-indigo-300 shrink-0" />
+          <span className="font-bold text-indigo-200 shrink-0">{msgToast.author}:</span>
+          <span className="text-white/90 truncate">{msgToast.content}</span>
+        </button>
+      )}
+
+      {/* Interactive Sub-Tabs */}
+      {!isCompactHud && !isClickThrough && (
+        <div className="px-2 py-1 bg-white/[0.02] border-b border-white/10 flex items-center gap-1 shrink-0 text-[10px]">
+          <button
+            type="button"
+            onClick={() => setActiveTab('speakers')}
+            className={`flex-1 py-1 rounded-lg font-semibold transition flex items-center justify-center gap-1 ${
+              activeTab === 'speakers' ? 'bg-emerald-500/20 text-emerald-200' : 'text-white/55 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Radio className="w-3 h-3" />
+            <span>Ses ({speakers.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('channels')}
+            className={`flex-1 py-1 rounded-lg font-semibold transition flex items-center justify-center gap-1 ${
+              activeTab === 'channels' ? 'bg-cyan-500/20 text-cyan-200' : 'text-white/55 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Hash className="w-3 h-3" />
+            <span>Odalar ({voiceChannels.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('chat')}
+            className={`flex-1 py-1 rounded-lg font-semibold transition flex items-center justify-center gap-1 ${
+              activeTab === 'chat' ? 'bg-indigo-500/20 text-indigo-200' : 'text-white/55 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <MessageSquare className="w-3 h-3" />
+            <span>Sohbet</span>
+          </button>
+        </div>
+      )}
+
+      {/* Body Content */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-        {!inVoice || speakers.length === 0 ? (
+        {activeTab === 'channels' && !isCompactHud && !isClickThrough ? (
+          voiceChannels.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-[11px] text-white/45 text-center px-3">
+              Sunucuda görüntülenecek ses kanalı yok.
+            </div>
+          ) : (
+            voiceChannels.map((ch) => {
+              const isCurr = ch.id === currentChannelId;
+              return (
+                <button
+                  key={ch.id}
+                  type="button"
+                  onClick={() => emitAction('overlay-switch-voice-channel', { channelId: ch.id })}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl border text-left transition ${
+                    isCurr
+                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                      : 'bg-white/[0.04] border-white/[0.06] text-white/80 hover:bg-white/10'
+                  }`}
+                >
+                  <span className="text-xs font-medium truncate flex items-center gap-1.5">
+                    <Volume2 className="w-3 h-3 shrink-0 text-white/50" />
+                    <span className="truncate">{ch.name}</span>
+                  </span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/35 text-white/70">
+                    {ch.userCount}
+                  </span>
+                </button>
+              );
+            })
+          )
+        ) : activeTab === 'chat' && !isCompactHud && !isClickThrough ? (
+          <div className="h-full flex flex-col gap-1.5">
+            {activeChatName && (
+              <div className="text-[10px] text-white/45 px-1 truncate">#{activeChatName}</div>
+            )}
+            <div className="flex-1 overflow-y-auto space-y-1 pr-0.5">
+              {recentMessages.length === 0 ? (
+                <div className="text-[11px] text-white/40 text-center py-4">Henüz mesaj yok.</div>
+              ) : (
+                recentMessages.slice(-8).map((m) => (
+                  <div key={m.id} className="px-2 py-1 rounded-lg bg-white/[0.04] text-[11px] leading-snug">
+                    <span className="font-semibold text-indigo-300">{m.author}: </span>
+                    <span className="text-white/85 break-words">{m.content || '(Ek/Medya)'}</span>
+                  </div>
+                ))
+              )}
+            </div>
+            <form onSubmit={handleSendQuickChat} className="flex items-center gap-1 pt-1 shrink-0">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Hızlı yanıt gönder..."
+                className="flex-1 bg-black/45 border border-white/15 rounded-lg px-2 py-1 text-[11px] text-white outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <button
+                type="submit"
+                className="p-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white transition"
+                title="Gönder"
+              >
+                <Send className="w-3 h-3" />
+              </button>
+            </form>
+          </div>
+        ) : !inVoice || speakers.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-[11px] text-white/45 text-center px-3 gap-1.5">
             <Radio className="w-5 h-5 text-white/25" />
             <span>Ses odasına katıldığınızda konuşanlar burada görünür.</span>
           </div>
         ) : (
-          (isCompactHud ? speakers.filter((s) => s.isSpeaking).slice(0, 3) : speakers).map((s) => (
-            <div
-              key={s.id}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl border transition-all ${
-                s.isSpeaking
-                  ? 'bg-emerald-500/20 border-emerald-400/60 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                  : 'bg-white/[0.04] border-white/[0.06]'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className={`w-5 h-5 rounded-full overflow-hidden bg-white/10 flex items-center justify-center text-[10px] shrink-0 ${
-                    s.isSpeaking ? 'ring-2 ring-emerald-400' : ''
-                  }`}
+          (isCompactHud ? speakers.filter((s) => s.isSpeaking).slice(0, 3) : speakers).map((s) => {
+            const isExpanded = !isClickThrough && !isCompactHud && expandedSpeakerId === s.id;
+            return (
+              <div
+                key={s.id}
+                className={`rounded-xl border transition-all ${
+                  s.isSpeaking
+                    ? 'bg-emerald-500/20 border-emerald-400/60 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                    : 'bg-white/[0.04] border-white/[0.06]'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setExpandedSpeakerId((prev) => (prev === s.id ? null : s.id))}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 text-left"
                 >
-                  <AvatarView avatar={s.avatar} alt={s.username} fallback="👤" className="w-full h-full object-cover" />
-                </div>
-                <span className={`text-xs truncate ${s.isSpeaking ? 'font-bold text-emerald-300' : 'text-white/85'}`}>
-                  {s.username}
-                </span>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {s.isHandRaised && <Hand className="w-3 h-3 text-amber-400" />}
-                {s.isDeafened ? (
-                  <VolumeX className="w-3 h-3 text-rose-400" />
-                ) : s.isMuted ? (
-                  <MicOff className="w-3 h-3 text-rose-400" />
-                ) : (
-                  <Mic className={`w-3 h-3 ${s.isSpeaking ? 'text-emerald-400' : 'text-white/40'}`} />
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div
+                      className={`w-5 h-5 rounded-full overflow-hidden bg-white/10 flex items-center justify-center text-[10px] shrink-0 ${
+                        s.isSpeaking ? 'ring-2 ring-emerald-400' : ''
+                      }`}
+                    >
+                      <AvatarView avatar={s.avatar} alt={s.username} fallback="👤" className="w-full h-full object-cover" />
+                    </div>
+                    <span className={`text-xs truncate ${s.isSpeaking ? 'font-bold text-emerald-300' : 'text-white/85'}`}>
+                      {s.username}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {s.isHandRaised && <Hand className="w-3 h-3 text-amber-400" />}
+                    {s.isDeafened ? (
+                      <VolumeX className="w-3 h-3 text-rose-400" />
+                    ) : s.isMuted ? (
+                      <MicOff className="w-3 h-3 text-rose-400" />
+                    ) : (
+                      <Mic className={`w-3 h-3 ${s.isSpeaking ? 'text-emerald-400' : 'text-white/40'}`} />
+                    )}
+                  </div>
+                </button>
+                {isExpanded && (
+                  <div className="px-2.5 pb-2 pt-0.5 flex items-center gap-2 text-[10px] text-white/70">
+                    <span>Ses: %{s.volume ?? 100}</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={200}
+                      value={s.volume ?? 100}
+                      onChange={(e) =>
+                        emitAction('overlay-set-user-volume', {
+                          userId: s.id,
+                          volume: Number(e.target.value),
+                        })
+                      }
+                      className="flex-1 h-1 accent-emerald-400 cursor-pointer"
+                    />
+                  </div>
                 )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 

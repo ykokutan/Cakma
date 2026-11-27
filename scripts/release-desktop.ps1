@@ -56,6 +56,17 @@ try {
   $signature = (Get-Content $sigFilePath -Raw).Trim()
   $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
+  $latestPath = Join-Path $downloadsDir "latest.json"
+  $existingAndroid = $null
+  if (Test-Path $latestPath) {
+    try {
+      $prevLatest = Get-Content $latestPath -Raw | ConvertFrom-Json
+      if ($prevLatest.PSObject.Properties['android']) {
+        $existingAndroid = $prevLatest.android
+      }
+    } catch {}
+  }
+
   $latestObj = @{
     version = $version
     notes = "Çakma v$version güncellemesi"
@@ -67,9 +78,12 @@ try {
       }
     }
   }
+  if ($existingAndroid) {
+    $latestObj["android"] = $existingAndroid
+  }
 
   $latestJson = $latestObj | ConvertTo-Json -Depth 5
-  [System.IO.File]::WriteAllText((Join-Path $downloadsDir "latest.json"), $latestJson, [System.Text.UTF8Encoding]::new($false))
+  [System.IO.File]::WriteAllText($latestPath, $latestJson, [System.Text.UTF8Encoding]::new($false))
 
   Write-Host "Release v$version ready in downloads/ (Cakma-Setup.exe + Cakma-Setup.exe.sha256 + latest.json)" -ForegroundColor Green
 }

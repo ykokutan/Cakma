@@ -9,6 +9,8 @@ import {
   DEFAULT_INTERACTIVE_OVERLAY_HOTKEY,
   INTERACTIVE_OVERLAY_HOTKEY_KEY,
   loadCustomGameRules,
+  resolveGameAudioProfile,
+  type CustomGameRule,
 } from '../utils/gameDetectionRules';
 import { setVoiceMicVolume, resetVoiceMetrics } from './VoiceMetricsContext';
 import {
@@ -28,6 +30,8 @@ import {
   setupBluetoothVoiceMediaSession,
   startNativeVoiceForegroundService,
   stopNativeVoiceForegroundService,
+  subscribeNativeVoiceActions,
+  triggerMobileHaptic,
 } from '../utils/mobileVoiceBridge';
 import { getDirectScreenShareConstraints, pruneExpiredAnnotations } from '../utils/remoteAssistHelpers';
 import { buildPersistentDmChannelId, parseDmChannelParticipants } from '../utils/dmChannel';
@@ -1462,6 +1466,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const autoGameDndRef = useRef(autoGameDnd);
   autoGameDndRef.current = autoGameDnd;
   const preGameStatusRef = useRef<'online' | 'idle' | null>(null);
+  const inputModeRef = useRef(inputMode);
+  inputModeRef.current = inputMode;
+  const preGameAudioProfileRef = useRef<{ inputMode: 'vad' | 'ptt'; noiseProfile: NoiseDspProfile } | null>(null);
   const [isPttActive, setIsPttActive] = useState<boolean>(false);
 
   // Advanced Audio Hardware & Processing States
@@ -1507,6 +1514,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const raw = typeof window !== 'undefined' ? localStorage.getItem('dc_noise_profile') : null;
     return normalizeNoiseDspProfile(raw);
   });
+  const noiseProfileRef = useRef<NoiseDspProfile>(noiseProfile);
+  noiseProfileRef.current = noiseProfile;
   const [voiceE2eeEnabled, setVoiceE2eeEnabled] = useState(false);
   const [voiceE2eePassphrase, setVoiceE2eePassphrase] = useState('');
   const [voiceE2eeFingerprint, setVoiceE2eeFingerprint] = useState<string | null>(null);
@@ -6694,6 +6703,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const leaveVoiceChannel = () => {
     lastVoiceChannelIdRef.current = null;
     if (!socket || !connectedVoiceChannelId) return;
+    triggerMobileHaptic('heavy');
     cleanupWebRTC();
     socket.emit('leave_voice');
     setConnectedVoiceChannelId(null);
@@ -6706,6 +6716,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
+    triggerMobileHaptic('light');
 
     if (tsSoundEffectsRef.current) {
       playTeamSpeakChime(nextMuted ? 'mute' : 'unmute');
@@ -6727,6 +6738,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     const nextDeafened = !isDeafened;
     setIsDeafened(nextDeafened);
+    triggerMobileHaptic('light');
 
     if (tsSoundEffectsRef.current) {
       playTeamSpeakChime(nextDeafened ? 'mute' : 'unmute');
@@ -6758,13 +6770,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       roomName: chName,
       username: uname,
       isMuted,
-      onToggleMute: () => toggleMute(),
-      onDisconnect: () => leaveVoiceChannel(),
+      isDeafened,
+      onToggleMute: () => toggleMuteRef.current(),
+      onDisconnect: () => leaveVoiceChannelRef.current(),
+    });
+    const cleanupNativeActions = subscribeNativeVoiceActions({
+      onToggleMute: () => toggleMuteRef.current(),
+      onToggleDeafen: () => toggleDeafenRef.current(),
+      onDisconnect: () => leaveVoiceChannelRef.current(),
     });
     return () => {
       cleanupSession();
+      cleanupNativeActions();
     };
-  }, [connectedVoiceChannelId, isMuted, currentUser?.username]);
+  }, [connectedVoiceChannelId, isMuted, isDeafened, currentUser?.username]);
 
   const screenShareAudioCtxRef = useRef<AudioContext | null>(null);
 
@@ -7971,10 +7990,30 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 socket.emit('user_update_activity', {
                   activity: { type: 'playing', name: game, startedAt },
                 });
+                const prof = resolveGameAudioProfile(game, customRules as CustomGameRule[]);
+                if (prof) {
+                  if (!preGameAudioProfileRef.current) {
+                    preGameAudioProfileRef.current = {
+                      inputMode: inputModeRef.current,
+                      noiseProfile: noiseProfileRef.current,
+                    };
+                  }
+                  if (prof.inputMode) setInputMode(prof.inputMode);
+                  if (prof.dspProfile) setNoiseProfile(prof.dspProfile);
+                  if (prof.autoOpenOverlay) {
+                    invoke('set_overlay_window', { enabled: true }).catch(() => {});
+                  }
+                }
               } else {
                 detectedGameStartedAtRef.current = null;
                 if (currentUserRef.current?.activity?.type !== 'custom') {
                   socket.emit('user_update_activity', { activity: null });
+                }
+                if (preGameAudioProfileRef.current) {
+                  const prev = preGameAudioProfileRef.current;
+                  preGameAudioProfileRef.current = null;
+                  setInputMode(prev.inputMode);
+                  setNoiseProfile(prev.noiseProfile);
                 }
               }
               if (autoGameDndRef.current) {

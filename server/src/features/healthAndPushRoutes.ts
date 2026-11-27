@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import type { Express, Request } from 'express';
 import {
   AuthenticatedRequest,
@@ -114,6 +116,24 @@ export function registerHealthAndPushRoutes(app: Express, deps: HealthAndPushDep
       status: 'ok',
       uptimeSeconds: m.uptimeSeconds,
     });
+  });
+
+  app.get('/api/releases/latest', (_req, res) => {
+    const candidates = [
+      path.resolve(process.cwd(), 'downloads/latest.json'),
+      path.resolve(process.cwd(), '../downloads/latest.json'),
+    ];
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        const raw = fs.readFileSync(candidate, 'utf-8');
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        return res.json({ ok: true, ...parsed });
+      } catch {
+        break;
+      }
+    }
+    return res.status(404).json({ ok: false, error: 'Sürüm bildirimi bulunamadı.' });
   });
 
   app.get('/api/metrics', (req, res) => {

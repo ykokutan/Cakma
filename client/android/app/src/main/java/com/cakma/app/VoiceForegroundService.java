@@ -21,8 +21,27 @@ public class VoiceForegroundService extends Service {
     public static final String EXTRA_ROOM_NAME = "roomName";
     public static final String EXTRA_USERNAME = "username";
     public static final String EXTRA_MUTED = "muted";
+    public static final String EXTRA_DEAFENED = "deafened";
+
+    public static final String ACTION_TOGGLE_MUTE = "com.cakma.app.ACTION_TOGGLE_MUTE";
+    public static final String ACTION_TOGGLE_DEAFEN = "com.cakma.app.ACTION_TOGGLE_DEAFEN";
+    public static final String ACTION_LEAVE_VOICE = "com.cakma.app.ACTION_LEAVE_VOICE";
+
+    public interface ActionListener {
+        void onVoiceNotificationAction(String action);
+    }
+
+    private static volatile ActionListener actionListener;
+
+    public static void setActionListener(@Nullable ActionListener listener) {
+        actionListener = listener;
+    }
 
     private PowerManager.WakeLock wakeLock;
+    private String lastRoomName = "Ses Odası";
+    private String lastUsername = "Çakma";
+    private boolean lastMuted = false;
+    private boolean lastDeafened = false;
 
     @Override
     public void onCreate() {
@@ -32,22 +51,50 @@ public class VoiceForegroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && "STOP".equals(intent.getAction())) {
+        String action = intent != null ? intent.getAction() : null;
+        if ("STOP".equals(action)) {
             stopForegroundCompat();
             stopSelf();
             return START_NOT_STICKY;
         }
 
-        String roomName = intent != null ? intent.getStringExtra(EXTRA_ROOM_NAME) : "Ses Odası";
-        String username = intent != null ? intent.getStringExtra(EXTRA_USERNAME) : "Çakma";
-        boolean muted = intent != null && intent.getBooleanExtra(EXTRA_MUTED, false);
+        if (ACTION_TOGGLE_MUTE.equals(action) || ACTION_TOGGLE_DEAFEN.equals(action) || ACTION_LEAVE_VOICE.equals(action)) {
+            ActionListener listener = actionListener;
+            if (listener != null) {
+                listener.onVoiceNotificationAction(action);
+            }
+            if (ACTION_LEAVE_VOICE.equals(action)) {
+                stopForegroundCompat();
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (ACTION_TOGGLE_MUTE.equals(action)) {
+                lastMuted = !lastMuted;
+            } else if (ACTION_TOGGLE_DEAFEN.equals(action)) {
+                lastDeafened = !lastDeafened;
+            }
+            Notification updated = buildNotification(lastRoomName, lastUsername, lastMuted, lastDeafened);
+            startForegroundWithTypes(updated);
+            return START_STICKY;
+        }
 
-        if (roomName == null || roomName.isEmpty()) roomName = "Ses Odası";
-        if (username == null || username.isEmpty()) username = "Çakma";
+        if (intent != null) {
+            String incomingRoom = intent.getStringExtra(EXTRA_ROOM_NAME);
+            String incomingUser = intent.getStringExtra(EXTRA_USERNAME);
+            if (incomingRoom != null && !incomingRoom.isEmpty()) lastRoomName = incomingRoom;
+            if (incomingUser != null && !incomingUser.isEmpty()) lastUsername = incomingUser;
+            lastMuted = intent.getBooleanExtra(EXTRA_MUTED, false);
+            lastDeafened = intent.getBooleanExtra(EXTRA_DEAFENED, false);
+        }
 
         acquireWakeLock();
-        Notification notification = buildNotification(roomName, username, muted);
+        Notification notification = buildNotification(lastRoomName, lastUsername, lastMuted, lastDeafened);
+        startForegroundWithTypes(notification);
 
+        return START_STICKY;
+    }
+
+    private void startForegroundWithTypes(Notification notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             int serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -57,11 +104,19 @@ public class VoiceForegroundService extends Service {
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
-
-        return START_STICKY;
     }
 
-    private Notification buildNotification(String roomName, String username, boolean muted) {
+    private PendingIntent createActionPendingIntent(String action, int requestCode) {
+        Intent actionIntent = new Intent(this, VoiceForegroundService.class);
+        actionIntent.setAction(action);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.getService(this, requestCode, actionIntent, flags);
+    }
+
+    private Notification buildNotification(String roomName, String username, boolean muted, boolean deafened) {
         Intent launchIntent = new Intent(this, MainActivity.class);
         launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
@@ -70,9 +125,18 @@ public class VoiceForegroundService extends Service {
         }
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, launchIntent, pendingFlags);
 
-        String statusText = muted
-                ? username + " · Mikrofon susturuldu"
-                : username + " · Arka plan sesli iletişim aktif";
+        String statusText;
+        if (deafened) {
+            statusText = username + " · Kulaklık ve mikrofon kapalı";
+        } else if (muted) {
+            statusText = username + " · Mikrofon susturuldu";
+        } else {
+            statusText = username + " · Arka plan sesli iletişim aktif";
+        }
+
+        PendingIntent mutePi = createActionPendingIntent(ACTION_TOGGLE_MUTE, 101);
+        PendingIntent deafenPi = createActionPendingIntent(ACTION_TOGGLE_DEAFEN, 102);
+        PendingIntent leavePi = createActionPendingIntent(ACTION_LEAVE_VOICE, 103);
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("🔊 " + roomName)
@@ -83,6 +147,9 @@ public class VoiceForegroundService extends Service {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setContentIntent(contentIntent)
+                .addAction(0, muted ? "Sesi Aç" : "Sustur", mutePi)
+                .addAction(0, deafened ? "Kulaklık Aç" : "Sağırlaştır", deafenPi)
+                .addAction(0, "Ayrıl", leavePi)
                 .build();
     }
 

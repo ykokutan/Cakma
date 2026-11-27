@@ -32,7 +32,14 @@ import {
   removeCustomGameRule,
   DEFAULT_INTERACTIVE_OVERLAY_HOTKEY,
   type CustomGameRule,
+  type GameInputModePref,
+  type GameDspProfilePref,
 } from '../utils/gameDetectionRules';
+import {
+  checkAndroidApkUpdate,
+  getInstalledAppVersion,
+  isCapacitorAndroid,
+} from '../utils/androidUpdater';
 import { isTauriRuntime } from '../utils/authFetch';
 import {
   X,
@@ -288,6 +295,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [customGameRules, setCustomGameRules] = useState<CustomGameRule[]>(() => loadCustomGameRules());
   const [customGameExeInput, setCustomGameExeInput] = useState('');
   const [customGameNameInput, setCustomGameNameInput] = useState('');
+  const [customGameInputMode, setCustomGameInputMode] = useState<GameInputModePref>('auto');
+  const [customGameDspProfile, setCustomGameDspProfile] = useState<GameDspProfilePref>('auto');
+  const [customGameAutoOverlay, setCustomGameAutoOverlay] = useState(false);
   const [runningProcesses, setRunningProcesses] = useState<string[]>([]);
   const [loadingProcesses, setLoadingProcesses] = useState(false);
 
@@ -383,7 +393,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       appToast('Mikrofon yankı testi başlatılamadı. Mikrofon iznini kontrol edin.', 'warning');
     }
   };
-  const [appVersion, setAppVersion] = useState<string>('1.3.1');
+  const [appVersion, setAppVersion] = useState<string>('1.5.0');
   const [legalModalDoc, setLegalModalDoc] = useState<LegalDocumentId | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{
     percent: number;
@@ -568,16 +578,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   };
 
   React.useEffect(() => {
-    const isTauri =
-      typeof window !== 'undefined' &&
-      ('__TAURI_INTERNALS__' in window ||
-        window.location.hostname === 'tauri.localhost' ||
-        window.location.protocol === 'tauri:');
-    if (!isTauri) return;
-    import('@tauri-apps/api/app')
-      .then(({ getVersion }) => getVersion())
-      .then((v) => setAppVersion(v))
-      .catch(() => {});
+    void getInstalledAppVersion().then((v) => setAppVersion(v));
   }, []);
 
   React.useEffect(() => {
@@ -629,6 +630,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           window.location.hostname === 'tauri.localhost' ||
           window.location.protocol === 'tauri:');
       if (!isTauri) {
+        if (isCapacitorAndroid()) {
+          const info = await checkAndroidApkUpdate(currentServerHost, appVersion);
+          if (info.available) {
+            setUpdateStatusMsg(`Yeni Android APK bulundu (v${info.latestVersion}). İndirme başlatılıyor...`);
+            window.open(info.apkUrl, '_system');
+          } else {
+            setUpdateStatusMsg(`Android uygulaması güncel (v${info.currentVersion}).`);
+          }
+          return;
+        }
         setUpdateStatusMsg('Web sürümünde her zaman en güncel sürümü kullanıyorsunuz.');
         return;
       }
@@ -3039,12 +3050,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     <button
                       type="button"
                       onClick={() => {
-                        const next = addCustomGameRule(customGameRules, customGameExeInput, customGameNameInput);
+                        const next = addCustomGameRule(customGameRules, customGameExeInput, customGameNameInput, {
+                          inputMode: customGameInputMode,
+                          dspProfile: customGameDspProfile,
+                          autoOpenOverlay: customGameAutoOverlay,
+                        });
                         if (next !== customGameRules) {
                           setCustomGameRules(next);
                           saveCustomGameRules(next);
                           setCustomGameExeInput('');
                           setCustomGameNameInput('');
+                          setCustomGameInputMode('auto');
+                          setCustomGameDspProfile('auto');
+                          setCustomGameAutoOverlay(false);
                           void refreshDetectedGame();
                         }
                       }}
@@ -3052,6 +3070,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     >
                       Kural Ekle
                     </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    <select
+                      value={customGameInputMode}
+                      onChange={(e) => setCustomGameInputMode(e.target.value as GameInputModePref)}
+                      className="bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-[11px] text-white outline-none"
+                      title="Oyun açılınca mikrofon modu"
+                    >
+                      <option value="auto">İletim: Değiştirme</option>
+                      <option value="vad">İletim: Ses Aktivasyonu (VAD)</option>
+                      <option value="ptt">İletim: Bas-Konuş (PTT)</option>
+                    </select>
+                    <select
+                      value={customGameDspProfile}
+                      onChange={(e) => setCustomGameDspProfile(e.target.value as GameDspProfilePref)}
+                      className="bg-black/40 border border-white/10 rounded-xl px-2.5 py-1.5 text-[11px] text-white outline-none"
+                      title="Oyun açılınca DSP gürültü profili"
+                    >
+                      <option value="auto">DSP: Değiştirme</option>
+                      <option value="studio">DSP: Stüdyo</option>
+                      <option value="balanced">DSP: Dengeli</option>
+                      <option value="aggressive">DSP: Agresif</option>
+                      <option value="keyboard_guard">DSP: Klavye Koruması</option>
+                      <option value="voice_isolation">DSP: Ses İzolasyonu</option>
+                    </select>
+                    <label className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-black/30 border border-white/10 text-[11px] text-white/80 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={customGameAutoOverlay}
+                        onChange={(e) => setCustomGameAutoOverlay(e.target.checked)}
+                        className="rounded accent-purple-500"
+                      />
+                      <span>Overlay Otomatik Aç</span>
+                    </label>
                   </div>
 
                   {customGameRules.length > 0 && (
@@ -3064,6 +3117,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           <span className="font-mono text-white/70">{rule.exe}</span>
                           <span>→</span>
                           <span className="font-semibold">{rule.name}</span>
+                          {rule.inputMode && rule.inputMode !== 'auto' && (
+                            <span className="px-1 rounded bg-white/10 text-[9px] uppercase">{rule.inputMode}</span>
+                          )}
+                          {rule.dspProfile && rule.dspProfile !== 'auto' && (
+                            <span className="px-1 rounded bg-cyan-500/20 text-cyan-200 text-[9px]">{rule.dspProfile}</span>
+                          )}
+                          {rule.autoOpenOverlay && (
+                            <span className="px-1 rounded bg-emerald-500/20 text-emerald-200 text-[9px]">HUD</span>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
