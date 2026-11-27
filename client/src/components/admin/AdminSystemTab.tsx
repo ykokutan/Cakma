@@ -751,6 +751,57 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Hybrid AI Channel Summary Settings */}
+          <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-bold text-white">Yapay Zeka Kanal &amp; Toplantı Özetleme</div>
+                <div className="text-[11px] text-white/50">
+                  &quot;Ben Yokken Ne Oldu?&quot; özetleri için varsayılan yerleşik motor veya isteğe bağlı harici LLM seçin (E2EE kanallar her zaman yerel kalır).
+                </div>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-indigo-500/15 border-indigo-400/30 text-indigo-300 shrink-0 uppercase">
+                {fields.sysAiProvider}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <select
+                value={fields.sysAiProvider}
+                onChange={(e) => {
+                  fields.setSysAiProvider(e.target.value as 'builtin' | 'gemini' | 'openai');
+                  setIsSystemDirty(true);
+                }}
+                className="px-3 py-2 rounded-xl bg-black/35 border border-white/10 text-xs text-white outline-none"
+              >
+                <option value="builtin">Yerleşik Akıllı Motor (Ücretsiz)</option>
+                <option value="gemini">Google Gemini API</option>
+                <option value="openai">OpenAI ChatGPT API</option>
+              </select>
+              <input
+                type="text"
+                value={fields.sysAiModel}
+                onChange={(e) => {
+                  fields.setSysAiModel(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                disabled={fields.sysAiProvider === 'builtin'}
+                placeholder={fields.sysAiProvider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.0-flash'}
+                className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none disabled:opacity-40"
+              />
+              <input
+                type="password"
+                value={fields.sysAiApiKey}
+                onChange={(e) => {
+                  fields.setSysAiApiKey(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                disabled={fields.sysAiProvider === 'builtin'}
+                placeholder="API Anahtarı (İsteğe bağlı)..."
+                className="px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none disabled:opacity-40"
+              />
+            </div>
+          </div>
         </>
       )}
 

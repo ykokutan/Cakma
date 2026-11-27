@@ -72,6 +72,10 @@ export interface AdminSystemConfig {
   maxBackupsToKeep?: number;
   webhookUrl?: string;
   giphyApiKey?: string;
+  aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
+  aiSummaryApiKey?: string;
+  aiSummaryModel?: string;
+  hasAiSummaryApiKey?: boolean;
   webhookEvents?: {
     security?: boolean;
     bans?: boolean;

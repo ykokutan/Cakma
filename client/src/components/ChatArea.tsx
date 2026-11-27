@@ -28,7 +28,10 @@ import {
 } from '../utils/chatExportAndFilters';
 import { t } from '../utils/i18n';
 import { uploadAttachmentFile, uploadDataUrlAttachment, uploadEncryptedAttachmentFile, uploadGroupEncryptedAttachmentFile } from '../utils/uploadAttachment';
-import { resolveMediaUrl } from '../utils/authFetch';
+import { authFetch, resolveMediaUrl } from '../utils/authFetch';
+import { ChannelSummaryCard } from './chat/ChannelSummaryCard';
+import { RichAttachmentPreview } from './chat/RichAttachmentPreview';
+import { summarizeConversationLocally, type ClientConversationDigest } from '../utils/clientSummarizer';
 import { appConfirm, appToast } from '../utils/appDialogs';
 import { ChatLightbox } from './ChatLightbox';
 import { getDraft, setDraft, clearDraft } from '../utils/channelDrafts';
@@ -384,6 +387,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       cancelled = true;
     };
   }, [activeServer?.id, activeGroupDm, messages, groupE2eeVersion, decryptedDmMap]);
+
+  const [summaryModal, setSummaryModal] = useState<{ digest: ClientConversationDigest; isE2eeLocalOnly: boolean } | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
 
   const dmCallPartnerStream = directCall?.partner?.id
     ? remoteScreenStreams.get(directCall.partner.id)
@@ -1693,6 +1699,52 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </div>
             )}
           </div>
+
+          {activeChannel.type !== 'wiki' && activeChannel.type !== 'kanban' && (
+            <button
+              type="button"
+              disabled={isSummarizing || messages.length === 0}
+              onClick={async () => {
+                if (isSummarizing || messages.length === 0) return;
+                setIsSummarizing(true);
+                const e2eeLocalOnly = Boolean(isDM || activeGroupDm?.e2eeEnabled);
+                const entries = messages.slice(-100).map((m) => ({
+                  author: m.author.username,
+                  content: decryptedDmMap[m.id] || m.content || '',
+                  timestamp: m.timestamp,
+                }));
+                try {
+                  if (e2eeLocalOnly) {
+                    const localDigest = summarizeConversationLocally(entries, { channelName: activeChannel.name });
+                    setSummaryModal({ digest: localDigest, isE2eeLocalOnly: true });
+                  } else {
+                    const resp = await authFetch(currentServerHost, '/api/chat/summarize', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ channelName: activeChannel.name, entries }),
+                    });
+                    const data = await resp.json().catch(() => null);
+                    if (resp.ok && data?.ok && data.digest) {
+                      setSummaryModal({ digest: data.digest, isE2eeLocalOnly: false });
+                    } else {
+                      const localDigest = summarizeConversationLocally(entries, { channelName: activeChannel.name });
+                      setSummaryModal({ digest: localDigest, isE2eeLocalOnly: false });
+                    }
+                  }
+                } catch {
+                  const localDigest = summarizeConversationLocally(entries, { channelName: activeChannel.name });
+                  setSummaryModal({ digest: localDigest, isE2eeLocalOnly: e2eeLocalOnly });
+                } finally {
+                  setIsSummarizing(false);
+                }
+              }}
+              className="px-2.5 h-8 rounded-full bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 text-indigo-200 text-[11px] font-semibold flex items-center gap-1.5 transition disabled:opacity-40"
+              title="Ben yokken ne oldu? Son konuşmaları özetle"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isSummarizing ? 'animate-spin' : ''}`} />
+              <span className="hidden md:inline">{isSummarizing ? 'Özetleniyor...' : 'Özetle'}</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -3176,11 +3228,34 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             );
                           }
                           const resolvedUrl = resolveMediaUrl(att.url, currentServerHost);
-                          if (att.type.startsWith('audio/')) {
+                          const lowerAttName = att.name.toLowerCase();
+                          const isVoiceNoteAudio =
+                            lowerAttName.includes('ses-notu') ||
+                            lowerAttName.includes('voice-note') ||
+                            lowerAttName.includes('ses notu');
+                          if (att.type.startsWith('audio/') && isVoiceNoteAudio) {
                             return (
                               <div key={att.id} className="pt-1">
                                 <VoiceNotePlayer url={resolvedUrl} authorName={msg.author.username} />
                               </div>
+                            );
+                          }
+                          if (
+                            att.type.startsWith('audio/') ||
+                            att.type === 'application/pdf' ||
+                            att.type === 'application/zip' ||
+                            att.type === 'text/csv' ||
+                            att.type === 'application/json' ||
+                            /\.(mp3|wav|ogg|m4a|flac|pdf|zip|csv|json)$/i.test(lowerAttName)
+                          ) {
+                            return (
+                              <RichAttachmentPreview
+                                key={att.id}
+                                url={resolvedUrl}
+                                name={att.name}
+                                mimeType={att.type}
+                                sizeBytes={att.size}
+                              />
                             );
                           }
 
@@ -4126,6 +4201,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           onUnpin={(mId) => togglePinMessage(mId)}
         />
       </Suspense>
+
+      {summaryModal && (
+        <ChannelSummaryCard
+          digest={summaryModal.digest}
+          isE2eeLocalOnly={summaryModal.isE2eeLocalOnly}
+          onClose={() => setSummaryModal(null)}
+        />
+      )}
 
       {/* Bookmarked Messages Modal */}
       {isBookmarksModalOpen && (

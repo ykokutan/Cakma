@@ -32,6 +32,9 @@ export interface SystemConfigUpdatePayload {
   maxBackupsToKeep?: number;
   webhookUrl?: string;
   giphyApiKey?: string;
+  aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
+  aiSummaryApiKey?: string;
+  aiSummaryModel?: string;
   sfuEnabled?: boolean;
   sfuThreshold?: number;
   livekitUrl?: string;
@@ -72,6 +75,9 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
   const [sysMaxBackups, setSysMaxBackups] = useState<number>(7);
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
   const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
+  const [sysAiProvider, setSysAiProvider] = useState<'builtin' | 'gemini' | 'openai'>('builtin');
+  const [sysAiApiKey, setSysAiApiKey] = useState<string>('');
+  const [sysAiModel, setSysAiModel] = useState<string>('');
   const [sysSfuEnabled, setSysSfuEnabled] = useState<boolean>(true);
   const [sysSfuThreshold, setSysSfuThreshold] = useState<number>(6);
   const [sysLivekitUrl, setSysLivekitUrl] = useState<string>('');
@@ -126,6 +132,9 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     setSysMaxBackups(cfg.maxBackupsToKeep ?? 7);
     setSysWebhookUrl(cfg.webhookUrl || '');
     setSysGiphyApiKey(cfg.giphyApiKey || '');
+    setSysAiProvider(cfg.aiSummaryProvider || 'builtin');
+    setSysAiApiKey(cfg.aiSummaryApiKey || '');
+    setSysAiModel(cfg.aiSummaryModel || '');
     setSysSfuEnabled(cfg.sfuEnabled !== false);
     setSysSfuThreshold(cfg.sfuThreshold || 6);
     setSysLivekitUrl(cfg.livekitUrl || '');
@@ -191,6 +200,9 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       maxBackupsToKeep: sysMaxBackups,
       webhookUrl: sysWebhookUrl,
       giphyApiKey: sysGiphyApiKey,
+      aiSummaryProvider: sysAiProvider,
+      aiSummaryApiKey: sysAiApiKey,
+      aiSummaryModel: sysAiModel,
       sfuEnabled: sysSfuEnabled,
       sfuThreshold: sysSfuThreshold,
       livekitUrl: sysLivekitUrl,
@@ -232,6 +244,9 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     sysMaxBackups,
     sysWebhookUrl,
     sysGiphyApiKey,
+    sysAiProvider,
+    sysAiApiKey,
+    sysAiModel,
     sysSfuEnabled,
     sysSfuThreshold,
     sysLivekitUrl,
@@ -300,6 +315,12 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       setSysWebhookUrl,
       sysGiphyApiKey,
       setSysGiphyApiKey,
+      sysAiProvider,
+      setSysAiProvider,
+      sysAiApiKey,
+      setSysAiApiKey,
+      sysAiModel,
+      setSysAiModel,
       sysSfuEnabled,
       setSysSfuEnabled,
       sysSfuThreshold,

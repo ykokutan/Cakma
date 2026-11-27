@@ -540,6 +540,9 @@ export interface SystemConfig {
   maxBackupsToKeep?: number;
   webhookUrl?: string;
   giphyApiKey?: string;
+  aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
+  aiSummaryApiKey?: string;
+  aiSummaryModel?: string;
   sfuEnabled?: boolean;
   sfuThreshold?: number;
   livekitUrl?: string;

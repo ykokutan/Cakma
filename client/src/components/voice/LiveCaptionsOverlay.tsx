@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSocket } from '../../context/SocketContext';
 import { downloadTextFile } from '../../utils/chatExportAndFilters';
+import { formatDigestAsMarkdown, summarizeConversationLocally } from '../../utils/clientSummarizer';
+import { appToast } from '../../utils/appDialogs';
 import { t } from '../../utils/i18n';
 import {
   type CaptionLangCode,
@@ -23,6 +25,7 @@ interface LiveCaptionsOverlayProps {
   activeStream?: MediaStream | null;
   streamLabel?: string;
   hasActiveStream?: boolean;
+  onPostMeetingSummary?: (markdown: string) => void;
   onClose?: () => void;
 }
 
@@ -144,6 +147,7 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
   activeStream,
   streamLabel,
   hasActiveStream = false,
+  onPostMeetingSummary,
   onClose,
 }) => {
   const { socket, currentUser, language } = useSocket();
@@ -816,6 +820,25 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
     downloadTextFile(`canli-altyazi-${safeName}-${Date.now()}.md`, md, 'text/markdown');
   };
 
+  const handleGenerateMeetingNotes = () => {
+    if (captions.length === 0) return;
+    const digest = summarizeConversationLocally(
+      captions.map((c) => ({
+        author: c.author || (c.source === 'stream' ? 'Yayın' : 'Konuşmacı'),
+        content: c.translatedText || c.text,
+        timestamp: c.time,
+      })),
+      { channelName: channelName || 'Ses Odası' }
+    );
+    const md = formatDigestAsMarkdown(digest, `${channelName || 'Ses Odası'} — Toplantı Notları`);
+    if (onPostMeetingSummary) {
+      onPostMeetingSummary(md);
+      appToast('Sesli toplantı özeti oda sohbetine gönderildi!', 'success');
+    } else {
+      downloadTextFile(`toplanti-ozeti-${Date.now()}.md`, md, 'text/markdown');
+    }
+  };
+
   const indicatorActive = engineMode === 'whisper' ? modelStatus === 'ready' : isListening;
 
   return (
@@ -930,6 +953,16 @@ export const LiveCaptionsOverlay: React.FC<LiveCaptionsOverlayProps> = ({
               </option>
             ))}
           </select>
+
+          <button
+            type="button"
+            onClick={handleGenerateMeetingNotes}
+            disabled={captions.length === 0}
+            className="rounded-lg border border-indigo-400/35 bg-indigo-500/20 px-2 py-1 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/30 disabled:opacity-40"
+            title="Konuşmalardan özet çıkar ve oda sohbetine toplantı tutanağı gönder"
+          >
+            📝 Özet
+          </button>
 
           <button
             type="button"

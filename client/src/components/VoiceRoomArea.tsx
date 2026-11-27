@@ -2121,6 +2121,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
             ? currentUser?.activity?.name || currentUser?.username || 'Yayın'
             : activePresenter?.activity?.name || activePresenter?.username || 'Yayın'
         }
+        onPostMeetingSummary={(md) => sendMessage(md)}
         onClose={() => setLiveCaptionsEnabled(false)}
       />
       {pendingClipTrimBlob && (

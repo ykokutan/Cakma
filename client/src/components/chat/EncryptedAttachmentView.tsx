@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Download, FileText, Lock, ShieldAlert, Volume2 } from 'lucide-react';
+import { Download, FileText, Lock, ShieldAlert } from 'lucide-react';
 import type { MessageAttachment } from '../../types';
 import { authFetch, resolveMediaUrl } from '../../utils/authFetch';
 import { decryptBinaryFromPeer } from '../../utils/e2ee';
 import { decryptGroupAttachmentBytes, getCachedGroupSenderKey } from '../../utils/groupE2ee';
 import { t, type AppLanguage } from '../../utils/i18n';
+import { RichAttachmentPreview } from './RichAttachmentPreview';
 
 interface EncryptedAttachmentViewProps {
   attachment: MessageAttachment;
@@ -198,18 +199,31 @@ export const EncryptedAttachmentView: React.FC<EncryptedAttachmentViewProps> = (
 
   if (origType.startsWith('audio/')) {
     return (
-      <div className="p-2.5 rounded-xl bg-black/25 border border-emerald-500/25 max-w-sm space-y-2">
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 min-w-0">
-            <Volume2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="truncate font-medium text-white">{origName}</span>
-          </div>
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300 shrink-0">
-            <Lock className="w-2.5 h-2.5" />
-            E2EE
-          </span>
+      <div className="space-y-1">
+        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300">
+          <Lock className="w-2.5 h-2.5" />
+          E2EE ÇÖZÜLDÜ
         </div>
-        <audio controls src={blobUrl} className="w-full h-8" />
+        <RichAttachmentPreview url={blobUrl} name={origName} mimeType={origType} sizeBytes={origSize} isBlobUrl />
+      </div>
+    );
+  }
+
+  const lowerOrig = origName.toLowerCase();
+  if (
+    origType === 'application/pdf' ||
+    origType === 'application/zip' ||
+    origType === 'text/csv' ||
+    origType === 'application/json' ||
+    /\.(pdf|zip|csv|json)$/i.test(lowerOrig)
+  ) {
+    return (
+      <div className="space-y-1">
+        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/35 text-[9px] font-bold text-emerald-300">
+          <Lock className="w-2.5 h-2.5" />
+          E2EE ÇÖZÜLDÜ
+        </div>
+        <RichAttachmentPreview url={blobUrl} name={origName} mimeType={origType} sizeBytes={origSize} isBlobUrl />
       </div>
     );
   }

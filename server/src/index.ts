@@ -55,6 +55,7 @@ import { registerCloudSyncAndEvents } from './features/cloudSyncAndEvents.js';
 import { registerHealthAndPushRoutes, pruneGifCache, clearGifCache } from './features/healthAndPushRoutes.js';
 import { registerDedicatedAndMasterRoutes, notifyDedicatedLicenseRevoked } from './features/dedicatedRoutes.js';
 import { registerTranslateRoute } from './features/translateRoute.js';
+import { registerSummaryRoutes } from './features/summaryRoutes.js';
 import {
   generateBase32Secret,
   generateOtpAuthUri,
@@ -961,6 +962,9 @@ const defaultSystemConfig: SystemConfig = {
   maxBackupsToKeep: 7,
   webhookUrl: '',
   giphyApiKey: '',
+  aiSummaryProvider: 'builtin',
+  aiSummaryApiKey: '',
+  aiSummaryModel: '',
   sfuEnabled: true,
   sfuThreshold: SFU_THRESHOLD,
   livekitUrl: '',
@@ -1648,6 +1652,10 @@ const apiAuthMiddlewares = createAuthMiddlewares({
 });
 registerChatEnhancementsRoutes(app, { authMiddlewares: apiAuthMiddlewares });
 registerTranslateRoute(app, { requireAuth: apiAuthMiddlewares.requireAuth });
+registerSummaryRoutes(app, {
+  requireAuth: apiAuthMiddlewares.requireAuth,
+  getSystemConfig: () => systemConfig,
+});
 
 const maintenanceService = new MaintenanceService({
   dataDir: getPersistentDir(),
@@ -3858,7 +3866,11 @@ io.on('connection', (socket: Socket) => {
       issuedLicenses: Array.from(issuedLicenses.values()),
       storeSettings,
       connectionLogs,
-      systemConfig,
+      systemConfig: {
+        ...systemConfig,
+        aiSummaryApiKey: systemConfig.aiSummaryApiKey ? '********' : '',
+        hasAiSummaryApiKey: Boolean(systemConfig.aiSummaryApiKey),
+      },
       bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
       storageStats: getStorageStats(),
       storageEngine: getStorageEngineInfo().engine,
@@ -3973,6 +3985,15 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.giphyApiKey === 'string') {
       systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);
       clearGifCache();
+    }
+    if (nextCfg.aiSummaryProvider === 'builtin' || nextCfg.aiSummaryProvider === 'gemini' || nextCfg.aiSummaryProvider === 'openai') {
+      systemConfig.aiSummaryProvider = nextCfg.aiSummaryProvider;
+    }
+    if (typeof nextCfg.aiSummaryApiKey === 'string' && nextCfg.aiSummaryApiKey.trim() !== '********') {
+      systemConfig.aiSummaryApiKey = nextCfg.aiSummaryApiKey.trim().slice(0, 200);
+    }
+    if (typeof nextCfg.aiSummaryModel === 'string') {
+      systemConfig.aiSummaryModel = nextCfg.aiSummaryModel.trim().slice(0, 80);
     }
     if (typeof nextCfg.sfuEnabled === 'boolean') systemConfig.sfuEnabled = nextCfg.sfuEnabled;
     if (typeof nextCfg.sfuThreshold === 'number') systemConfig.sfuThreshold = Math.min(Math.max(Math.floor(nextCfg.sfuThreshold), 2), 30);
