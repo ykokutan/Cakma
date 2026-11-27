@@ -5,6 +5,7 @@ import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { Server, ServerCategory, ServerRole, ServerPermission } from '../types';
 import { AvatarView, isImageAvatar, processUploadedImage } from './AvatarView';
 import { appConfirm, appPrompt, appToast } from '../utils/appDialogs';
+import { BOOST_COST_COINS, computeServerBoostSummary } from '../utils/serverBoosts';
 import { t } from '../utils/i18n';
 import {
   X,
@@ -29,6 +30,7 @@ import {
   Webhook,
   GripVertical,
   RotateCcw,
+  Zap,
 } from 'lucide-react';
 
 import {
@@ -115,8 +117,10 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     hasServerPermission,
     addServerEmoji,
     deleteServerEmoji,
+    boostServer,
     language,
   } = useSocket();
+  const boostSummary = computeServerBoostSummary(server);
 
   const [activeTab, setActiveTab] = useState<
     | 'overview'
@@ -994,6 +998,43 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Server Boost Card */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-fuchsia-950/50 via-purple-950/35 to-indigo-950/40 border border-fuchsia-500/30 space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-fuchsia-500/20 border border-fuchsia-400/35 text-fuchsia-300 flex items-center justify-center shrink-0">
+                      <Zap className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>Sunucu Takviyesi (Boost)</span>
+                        <span className="px-2 py-0.5 rounded-full bg-fuchsia-500/25 text-fuchsia-200 border border-fuchsia-400/35 text-[10px]">
+                          Seviye {boostSummary.tier} · {boostSummary.activeBoostCount} Boost
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-white/60 mt-0.5">
+                        Limitler: {boostSummary.maxEmojis} Emoji · {boostSummary.maxStickers} Çıkartma · {boostSummary.maxBitrateKbps} kbps Ses
+                        {boostSummary.vanityUnlocked ? ' · Özel URL Açık' : ' · Özel URL (Seviye 2 / 5 Boost)'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => boostServer(server.id)}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-fuchsia-500 to-indigo-500 hover:opacity-95 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-fuchsia-500/25 transition shrink-0"
+                    title={`Bakiyeniz: ${currentUser?.walletBalance ?? 0} Coin`}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Takviye Et ({BOOST_COST_COINS} Coin)</span>
+                  </button>
+                </div>
+                {boostSummary.nextTierAt !== null && (
+                  <div className="text-[10px] text-fuchsia-200/75">
+                    Sonraki seviye için kalan: {boostSummary.nextTierAt - boostSummary.activeBoostCount} takviye.
+                  </div>
+                )}
               </div>
 
               {/* Vanity URL / Custom Invite Link */}

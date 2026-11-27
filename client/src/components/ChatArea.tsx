@@ -65,6 +65,8 @@ const WikiChannelView = lazy(() => import('./chat/WikiChannelView').then((m) => 
 const KanbanChannelView = lazy(() => import('./chat/KanbanChannelView').then((m) => ({ default: m.KanbanChannelView })));
 const ForwardMessageModal = lazy(() => import('./chat/ForwardMessageModal').then((m) => ({ default: m.ForwardMessageModal })));
 const VideoNoteRecorderModal = lazy(() => import('./chat/VideoNoteRecorderModal').then((m) => ({ default: m.VideoNoteRecorderModal })));
+import { LfgCardView } from './chat/LfgCardView';
+import { CreateLfgModal } from './chat/CreateLfgModal';
 import {
   DirectScreenShareOptions,
   Message,
@@ -212,6 +214,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     togglePinMessage,
     createPoll,
     votePoll,
+    createLfgPost,
+    toggleLfgSlot,
+    closeLfgPost,
+    joinVoiceChannel,
+    detectedGame,
     updateChannelNotice,
     editMessage,
     deleteMessage,
@@ -449,6 +456,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [scrollMetrics, setScrollMetrics] = useState<{ top: number; height: number }>({ top: 0, height: 600 });
   const [isPollModalOpen, setIsPollModalOpen] = useState(false);
+  const [isLfgModalOpen, setIsLfgModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isBookmarksModalOpen, setIsBookmarksModalOpen] = useState(false);
   const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
@@ -1059,6 +1067,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         setIsPollModalOpen(true);
         return;
       }
+      if (cmd === '/lfg' && !isDirectSpace) {
+        setInputText('');
+        setIsLfgModalOpen(true);
+        return;
+      }
       if (cmd === '/temizle' && activeServer && activeChannel && !isDirectSpace) {
         const count = Math.min(Math.max(parseInt(args[0] || '10', 10) || 10, 1), 100);
         clearChannelMessages(activeServer.id, activeChannel.id, count);
@@ -1094,12 +1107,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         return;
       }
       if (cmd === '/yardim') {
-        sendMessage('⚡ **Slash Komutları:** `/zar`, `/yazitura`, `/anket`, `/hatirlat <süre> <mesaj>`, `/temizle [sayı]`, `/davet`, `/yardim`');
+        sendMessage('⚡ **Slash Komutları:** `/zar`, `/yazitura`, `/anket`, `/lfg`, `/hatirlat <süre> <mesaj>`, `/temizle [sayı]`, `/davet`, `/yardim`');
         setInputText('');
         return;
       }
       if (!isDirectSpace && activeServer && activeChannel && /^\/[a-zA-Z0-9_-]+/.test(cmd)) {
-        const builtin = ['/zar', '/yazitura', '/anket', '/hatirlat', '/temizle', '/davet', '/yardim'];
+        const builtin = ['/zar', '/yazitura', '/anket', '/lfg', '/hatirlat', '/temizle', '/davet', '/yardim'];
         if (!builtin.includes(cmd)) {
           executeCustomCommand(
             activeServer.id,
@@ -3209,6 +3222,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       );
                     })()}
 
+                    {/* Interactive LFG / Team Finder Card */}
+                    {msg.lfg && (
+                      <LfgCardView
+                        lfg={msg.lfg}
+                        currentUsername={currentUser?.username || ''}
+                        authorUsername={msg.author.username}
+                        isAdmin={
+                          currentUser?.role === 'admin' ||
+                          isUserServerOwner(currentUser, activeServer)
+                        }
+                        onToggleSlot={() => toggleLfgSlot(msg.id)}
+                        onClose={() => closeLfgPost(msg.id)}
+                        onJoinVoice={(chId) => joinVoiceChannel(chId)}
+                      />
+                    )}
+
                     {/* Attachments rendering */}
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="space-y-2 pt-1">
@@ -4032,15 +4061,26 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               )}
 
               {!isDirectSpace && (
-                <button
-                  type="button"
-                  onClick={() => setIsPollModalOpen(true)}
-                  className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
-                  title="Anket Başlat (Poll)"
-                  aria-label="Anket Başlat"
-                >
-                  <BarChart2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsPollModalOpen(true)}
+                    className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center transition shrink-0"
+                    title="Anket Başlat (Poll)"
+                    aria-label="Anket Başlat"
+                  >
+                    <BarChart2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsLfgModalOpen(true)}
+                    className="w-8 h-8 rounded-full bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 flex items-center justify-center transition shrink-0"
+                    title="Takım Arama (LFG) Kartı Oluştur"
+                    aria-label="Takım Arama Kartı"
+                  >
+                    <Gamepad2 className="w-4 h-4" />
+                  </button>
+                </div>
               )}
 
               {slowmodeRemaining > 0 ? (
@@ -4192,6 +4232,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           isOpen={isPollModalOpen}
           onClose={() => setIsPollModalOpen(false)}
           onCreatePoll={(question, options, config) => createPoll(question, options, config)}
+        />
+
+        {/* LFG Creation Modal */}
+        <CreateLfgModal
+          isOpen={isLfgModalOpen}
+          onClose={() => setIsLfgModalOpen(false)}
+          voiceChannels={(activeServer?.channels || []).filter(
+            (c) => c.type === 'voice' || c.type === 'stage'
+          )}
+          defaultGame={detectedGame}
+          onSubmit={(payload) => createLfgPost(payload)}
         />
 
         {/* Pinned Messages Modal */}

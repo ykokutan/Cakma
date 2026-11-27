@@ -16,6 +16,7 @@ import { createAuthMiddlewares, type AuthenticatedRequest } from '../utils/admin
 import { sanitizePermissionOverrides } from '../utils/channelPermissions.js';
 import { findServerMember, isServerOwner } from '../utils/serverIdentity.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
+import { computeServerBoostSummary } from '../utils/serverBoosts.js';
 
 const PRIVILEGED_ROLE_PERMS: ReadonlySet<ServerPermission> = new Set([
   'manage_server',
@@ -459,8 +460,12 @@ export function registerServerGovernanceSocketHandlers(
       return socket.emit('server_action_error', { message: 'Geçersiz çıkartma görseli.' });
     }
     if (!srv.stickers) srv.stickers = [];
-    if (srv.stickers.length >= 40) {
-      return socket.emit('server_action_error', { message: 'Sunucu başına en fazla 40 çıkartma eklenebilir.' });
+    const boostSummary = computeServerBoostSummary(srv);
+    const maxStickers = actor.role === 'admin' ? 100 : boostSummary.maxStickers;
+    if (srv.stickers.length >= maxStickers) {
+      return socket.emit('server_action_error', {
+        message: `Bu sunucuda (Seviye ${boostSummary.tier}) en fazla ${maxStickers} çıkartma eklenebilir.`,
+      });
     }
     const sticker: ServerSticker = {
       id: `stk-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,

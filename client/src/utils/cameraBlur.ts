@@ -1,18 +1,31 @@
+export type VirtualBgMode = 'none' | 'blur-soft' | 'blur-strong' | 'studio-dim';
+
 export interface BlurredWebcamController {
   stream: MediaStream;
   setBlurred: (blurred: boolean) => void;
   isBlurred: () => boolean;
+  setMode: (mode: VirtualBgMode) => void;
+  getMode: () => VirtualBgMode;
   stop: () => void;
 }
 
 /**
- * Wraps a raw camera MediaStream with a zero-dependency Canvas2D center-portrait focus blur.
+ * Wraps a raw camera MediaStream with Canvas2D virtual background modes:
+ * - none: passthrough draw
+ * - blur-soft: light halo bokeh behind speaker
+ * - blur-strong: deep privacy bokeh behind speaker
+ * - studio-dim: darkened background vignette + sharp portrait center
  */
 export function createBlurredWebcamStream(
   rawStream: MediaStream,
-  initiallyBlurred = true
+  initiallyBlurredOrMode: boolean | VirtualBgMode = true
 ): BlurredWebcamController {
-  let blurred = initiallyBlurred;
+  let mode: VirtualBgMode =
+    typeof initiallyBlurredOrMode === 'boolean'
+      ? initiallyBlurredOrMode
+        ? 'blur-soft'
+        : 'none'
+      : initiallyBlurredOrMode;
   let stopped = false;
   let rafId = 0;
 
@@ -34,9 +47,17 @@ export function createBlurredWebcamStream(
   const renderFrame = () => {
     if (stopped) return;
     if (ctx && video.readyState >= 2) {
-      if (blurred) {
+      if (mode === 'none') {
+        ctx.drawImage(video, 0, 0, width, height);
+      } else {
         ctx.save();
-        ctx.filter = 'blur(14px) brightness(0.88)';
+        if (mode === 'blur-strong') {
+          ctx.filter = 'blur(22px) brightness(0.78)';
+        } else if (mode === 'studio-dim') {
+          ctx.filter = 'blur(10px) brightness(0.45) contrast(1.1)';
+        } else {
+          ctx.filter = 'blur(12px) brightness(0.88)';
+        }
         ctx.drawImage(video, 0, 0, width, height);
         ctx.restore();
 
@@ -47,8 +68,6 @@ export function createBlurredWebcamStream(
         ctx.clip();
         ctx.drawImage(video, 0, 0, width, height);
         ctx.restore();
-      } else {
-        ctx.drawImage(video, 0, 0, width, height);
       }
     }
     rafId = window.requestAnimationFrame(renderFrame);
@@ -65,9 +84,13 @@ export function createBlurredWebcamStream(
   return {
     stream: canvasStream,
     setBlurred: (next: boolean) => {
-      blurred = next;
+      mode = next ? (mode === 'none' ? 'blur-soft' : mode) : 'none';
     },
-    isBlurred: () => blurred,
+    isBlurred: () => mode !== 'none',
+    setMode: (nextMode: VirtualBgMode) => {
+      mode = nextMode;
+    },
+    getMode: () => mode,
     stop: () => {
       stopped = true;
       if (rafId) {

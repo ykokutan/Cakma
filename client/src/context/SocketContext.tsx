@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, AvatarFrameId, NameGradientId, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, GroupDmRoom, ForumPostMeta, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
+import { User, AvatarFrameId, NameGradientId, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, GroupDmRoom, ForumPostMeta, LfgPostData, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -24,7 +24,11 @@ import { isUserServerOwner } from '../utils/serverIdentity';
 import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } from '../utils/themeBuilder';
 import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, shouldShowUnreadForChannel } from '../utils/notificationPrefs';
 import { parseDeepLinkUrl } from '../utils/deepLink';
-import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
+import {
+  createBlurredWebcamStream,
+  BlurredWebcamController,
+  type VirtualBgMode,
+} from '../utils/cameraBlur';
 import { authFetch, isNativeAppRuntime, resolveMediaUrl } from '../utils/authFetch';
 import {
   setupBluetoothVoiceMediaSession,
@@ -619,6 +623,16 @@ interface SocketContextType {
     config?: { allowMultiple?: boolean; isAnonymous?: boolean; durationMinutes?: number }
   ) => void;
   votePoll: (messageId: string, optionId: string) => void;
+  createLfgPost: (payload: {
+    game: string;
+    title: string;
+    rankOrNote?: string;
+    maxSlots?: number;
+    voiceChannelId?: string | null;
+  }) => void;
+  toggleLfgSlot: (messageId: string) => void;
+  closeLfgPost: (messageId: string) => void;
+  boostServer: (serverId: string) => void;
 
   // Message Edit/Delete, Typing & Unread Badges
   editMessage: (messageId: string, newContent: string) => void;
@@ -760,6 +774,8 @@ interface SocketContextType {
   webcamStream: MediaStream | null;
   webcamBlurEnabled: boolean;
   toggleWebcamBlur: () => void;
+  webcamBgMode: VirtualBgMode;
+  setWebcamBgMode: (mode: VirtualBgMode) => void;
   remoteWebcamUserIds: string[];
   isPrioritySpeakerActive: boolean;
   prioritySpeakerUsername: string | null;
@@ -2287,9 +2303,20 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const rawWebcamStreamRef = useRef<MediaStream | null>(null);
   const webcamBlurCtrlRef = useRef<BlurredWebcamController | null>(null);
-  const [webcamBlurEnabled, setWebcamBlurEnabled] = useState<boolean>(() => {
-    try { return localStorage.getItem('cakma_webcam_blur') === 'true'; } catch { return false; }
+  const [webcamBgMode, setWebcamBgModeState] = useState<VirtualBgMode>(() => {
+    try {
+      const savedMode = localStorage.getItem('cakma_webcam_vbg_mode') as VirtualBgMode | null;
+      if (savedMode && ['none', 'blur-soft', 'blur-strong', 'studio-dim'].includes(savedMode)) {
+        return savedMode;
+      }
+      return localStorage.getItem('cakma_webcam_blur') === 'true' ? 'blur-soft' : 'none';
+    } catch {
+      return 'none';
+    }
   });
+  const webcamBgModeRef = useRef<VirtualBgMode>(webcamBgMode);
+  webcamBgModeRef.current = webcamBgMode;
+  const webcamBlurEnabled = webcamBgMode !== 'none';
   const webcamBlurEnabledRef = useRef<boolean>(webcamBlurEnabled);
   webcamBlurEnabledRef.current = webcamBlurEnabled;
   const [remoteWebcamUserIds, setRemoteWebcamUserIds] = useState<string[]>([]);
@@ -2306,6 +2333,36 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
   }, []);
+
+  const setWebcamBgMode = useCallback((nextMode: VirtualBgMode) => {
+    setWebcamBgModeState(nextMode);
+    try {
+      localStorage.setItem('cakma_webcam_vbg_mode', nextMode);
+      localStorage.setItem('cakma_webcam_blur', nextMode === 'none' ? 'false' : 'true');
+    } catch {}
+    const rawStream = rawWebcamStreamRef.current;
+    if (!rawStream) return;
+    if (nextMode === 'none') {
+      if (webcamBlurCtrlRef.current) {
+        webcamBlurCtrlRef.current.stop();
+        webcamBlurCtrlRef.current = null;
+      }
+      webcamStreamRef.current = rawStream;
+      setWebcamStream(rawStream);
+      replaceOutboundWebcamTrack(rawStream.getVideoTracks()[0] || null, rawStream);
+    } else {
+      let ctrl = webcamBlurCtrlRef.current;
+      if (!ctrl) {
+        ctrl = createBlurredWebcamStream(rawStream, nextMode);
+        webcamBlurCtrlRef.current = ctrl;
+      } else {
+        ctrl.setMode(nextMode);
+      }
+      webcamStreamRef.current = ctrl.stream;
+      setWebcamStream(ctrl.stream);
+      replaceOutboundWebcamTrack(ctrl.stream.getVideoTracks()[0] || null, ctrl.stream);
+    }
+  }, [replaceOutboundWebcamTrack]);
 
   const toggleWebcam = useCallback(async () => {
     if (isWebcamActive) {
@@ -2340,8 +2397,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
         rawWebcamStreamRef.current = rawStream;
         let outStream = rawStream;
-        if (webcamBlurEnabledRef.current) {
-          const ctrl = createBlurredWebcamStream(rawStream, true);
+        if (webcamBgModeRef.current !== 'none') {
+          const ctrl = createBlurredWebcamStream(rawStream, webcamBgModeRef.current);
           webcamBlurCtrlRef.current = ctrl;
           outStream = ctrl.stream;
         }
@@ -2361,35 +2418,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [isWebcamActive, socket, replaceOutboundWebcamTrack]);
 
   const toggleWebcamBlur = useCallback(() => {
-    setWebcamBlurEnabled((prev) => {
-      const next = !prev;
-      try { localStorage.setItem('cakma_webcam_blur', next ? 'true' : 'false'); } catch {}
-      const rawStream = rawWebcamStreamRef.current;
-      if (rawStream) {
-        if (next) {
-          let ctrl = webcamBlurCtrlRef.current;
-          if (!ctrl) {
-            ctrl = createBlurredWebcamStream(rawStream, true);
-            webcamBlurCtrlRef.current = ctrl;
-          } else {
-            ctrl.setBlurred(true);
-          }
-          webcamStreamRef.current = ctrl.stream;
-          setWebcamStream(ctrl.stream);
-          replaceOutboundWebcamTrack(ctrl.stream.getVideoTracks()[0] || null, ctrl.stream);
-        } else {
-          if (webcamBlurCtrlRef.current) {
-            webcamBlurCtrlRef.current.stop();
-            webcamBlurCtrlRef.current = null;
-          }
-          webcamStreamRef.current = rawStream;
-          setWebcamStream(rawStream);
-          replaceOutboundWebcamTrack(rawStream.getVideoTracks()[0] || null, rawStream);
-        }
-      }
-      return next;
-    });
-  }, [replaceOutboundWebcamTrack]);
+    setWebcamBgMode(webcamBgModeRef.current === 'none' ? 'blur-soft' : 'none');
+  }, [setWebcamBgMode]);
 
   // Priority Speaker State
   const [isPrioritySpeakerActive, setIsPrioritySpeakerActive] = useState<boolean>(false);
@@ -3683,6 +3713,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           [channelId]: channelList.map(m => m.id === messageId ? { ...m, poll } : m)
         };
       });
+    });
+
+    newSocket.on('lfg_updated', ({ channelId, messageId, lfg }: { channelId: string; messageId: string; lfg: LfgPostData }) => {
+      setMessagesMap(prev => {
+        const channelList = prev[channelId];
+        if (!channelList) return prev;
+        return {
+          ...prev,
+          [channelId]: channelList.map(m => m.id === messageId ? { ...m, lfg } : m)
+        };
+      });
+    });
+
+    newSocket.on('boost_server_response', (res: { success: boolean; error?: string; tier?: number; activeBoostCount?: number }) => {
+      if (res.success) {
+        appToast(`Sunucu takviye edildi! (Seviye ${res.tier ?? 0} · ${res.activeBoostCount ?? 1} Boost)`, 'success');
+      } else if (res.error) {
+        appToast(res.error, 'error');
+      }
     });
 
     newSocket.on('forum_post_updated', ({ channelId, messageId, forumPost }: { channelId: string; messageId: string; forumPost: ForumPostMeta }) => {
@@ -6670,6 +6719,36 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     socket.emit('vote_poll', { channelId: activeChannel.id, messageId, optionId });
   }, [socket, activeChannel]);
 
+  const createLfgPost = useCallback((payload: {
+    game: string;
+    title: string;
+    rankOrNote?: string;
+    maxSlots?: number;
+    voiceChannelId?: string | null;
+  }) => {
+    if (!socket || !activeServer || !activeChannel) return;
+    socket.emit('create_lfg_post', {
+      serverId: activeServer.id,
+      channelId: activeChannel.id,
+      ...payload,
+    });
+  }, [socket, activeServer, activeChannel]);
+
+  const toggleLfgSlot = useCallback((messageId: string) => {
+    if (!socket || !activeChannel) return;
+    socket.emit('toggle_lfg_slot', { channelId: activeChannel.id, messageId });
+  }, [socket, activeChannel]);
+
+  const closeLfgPost = useCallback((messageId: string) => {
+    if (!socket || !activeChannel) return;
+    socket.emit('close_lfg_post', { channelId: activeChannel.id, messageId });
+  }, [socket, activeChannel]);
+
+  const boostServer = useCallback((serverId: string) => {
+    if (!socket || !serverId) return;
+    socket.emit('boost_server', { serverId });
+  }, [socket]);
+
   const joinVoiceChannel = async (channelId: string, password?: string) => {
     if (!socket) return;
     if (connectedVoiceChannelId === channelId) return;
@@ -8532,6 +8611,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       toggleForumSolved,
       createPoll,
       votePoll,
+      createLfgPost,
+      toggleLfgSlot,
+      closeLfgPost,
+      boostServer,
 
       // Diagnostics & Network Telemetry
       ping,
@@ -8565,6 +8648,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       webcamStream,
       webcamBlurEnabled,
       toggleWebcamBlur,
+      webcamBgMode,
+      setWebcamBgMode,
       remoteWebcamUserIds,
       isPrioritySpeakerActive,
       prioritySpeakerUsername,
@@ -8806,6 +8891,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isWebcamActive,
       webcamStream,
       webcamBlurEnabled,
+      webcamBgMode,
       remoteWebcamUserIds,
       isPrioritySpeakerActive,
       prioritySpeakerUsername,

@@ -698,6 +698,34 @@ export interface Server {
   onboarding?: ServerOnboardingConfig;
   serverSounds?: ServerSoundClip[];
   stickers?: ServerSticker[];
+  boosts?: ServerBoostEntry[];
+}
+
+export interface ServerBoostEntry {
+  id: string;
+  username: string;
+  coinsSpent: number;
+  boostedAt: string;
+  expiresAt: string;
+}
+
+export interface LfgParticipant {
+  username: string;
+  avatar: string;
+  joinedAt: string;
+}
+
+export interface LfgPostData {
+  id: string;
+  game: string;
+  title: string;
+  rankOrNote?: string;
+  maxSlots: number;
+  voiceChannelId?: string | null;
+  voiceChannelName?: string;
+  participants: LfgParticipant[];
+  closed?: boolean;
+  createdAt: string;
 }
 
 export interface ServerEvent {
@@ -768,6 +796,7 @@ export interface Message {
   replyTo?: { id: string; username: string; content: string };
   forwardedFrom?: ForwardedFromMeta;
   forumPost?: ForumPostMeta;
+  lfg?: LfgPostData;
   threadMessages?: ThreadMessage[];
 }
 

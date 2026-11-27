@@ -115,6 +115,7 @@ import { logger, createRequestIdMiddleware, type RequestWithId } from './utils/l
 import { createCorsOptionsDelegate, createSocketCorsOriginValidator } from './utils/corsConfig.js';
 import { createSocketEventRateLimiter, validatePayload } from './utils/socketGuard.js';
 import { shouldMoveUserToAfk } from './utils/afkVoiceHelper.js';
+import { computeServerBoostSummary } from './utils/serverBoosts.js';
 import { registerWatchTogetherAndGamesHandlers } from './features/watchTogetherAndGamesHandlers.js';
 import {
   createAccountSecurityManager,
@@ -2421,6 +2422,7 @@ io.on('connection', (socket: Socket) => {
     checkServerPermission,
     addUserToServer,
     saveServers,
+    saveAccounts,
     saveChannelMessageBulkReplace,
     emitToServerMembers,
     emitServerUpdatedToMembers,
@@ -2751,6 +2753,13 @@ io.on('connection', (socket: Socket) => {
     if (user.role !== 'admin' && !isServerOwner(user, srv) && !checkServerPermission(user, srv, 'manage_server')) return;
     if (url.length > 512 * 1024) return;
     if (!srv.customEmojis) srv.customEmojis = [];
+    const boostSummary = computeServerBoostSummary(srv);
+    const maxEmojis = user.role === 'admin' ? 150 : boostSummary.maxEmojis;
+    if (srv.customEmojis.length >= maxEmojis) {
+      return socket.emit('server_action_error', {
+        message: `Bu sunucuda (Seviye ${boostSummary.tier}) en fazla ${maxEmojis} özel emoji eklenebilir.`,
+      });
+    }
     const cleanName = sanitizeText(name).replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24) || 'emoji';
     srv.customEmojis.push({ id: `emj-${Date.now()}`, name: cleanName, url });
     saveServers(servers);

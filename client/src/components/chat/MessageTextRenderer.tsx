@@ -5,6 +5,7 @@ export const SLASH_COMMANDS = [
   { cmd: '/zar', desc: '1-6 arası rastgele zar atar' },
   { cmd: '/yazitura', desc: 'Yazı veya Tura atar' },
   { cmd: '/anket', desc: 'Hızlı anket oluşturma penceresini açar' },
+  { cmd: '/lfg', desc: 'Takım arama (LFG) lobi kartı oluşturur' },
   { cmd: '/hatirlat', desc: 'Hatırlatıcı kurar (Örn: /hatirlat 10dk Mola bitti)' },
   { cmd: '/temizle', desc: 'Son N mesajı temizler (Örn: /temizle 10)' },
   { cmd: '/davet', desc: 'Sunucu davet bağlantısı oluşturup paylaşır' },

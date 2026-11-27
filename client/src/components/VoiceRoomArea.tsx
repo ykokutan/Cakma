@@ -111,6 +111,7 @@ const VideoStreamPlayer: React.FC<{
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLaserSentRef = useRef(0);
+  const gainCtxRef = useRef<{ ctx: AudioContext; gain: GainNode } | null>(null);
   const [hdrBoost, setHdrBoost] = useState(false);
   const [isStreamMuted, setIsStreamMuted] = useState<boolean>(isLocalStream);
   const [streamVolume, setStreamVolume] = useState<number>(() => {
@@ -138,9 +139,45 @@ const VideoStreamPlayer: React.FC<{
 
   useEffect(() => {
     if (!videoRef.current) return;
-    videoRef.current.muted = isLocalStream || isStreamMuted || streamVolume === 0;
-    videoRef.current.volume = streamVolume;
-  }, [isLocalStream, isStreamMuted, streamVolume]);
+    const effectiveMuted = isLocalStream || isStreamMuted || streamVolume === 0;
+    if (!effectiveMuted && streamVolume > 1 && stream) {
+      videoRef.current.muted = true;
+      try {
+        if (!gainCtxRef.current) {
+          const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (Ctx && stream.getAudioTracks().length > 0) {
+            const ctx = new Ctx();
+            const src = ctx.createMediaStreamSource(stream);
+            const gain = ctx.createGain();
+            gain.gain.value = streamVolume;
+            src.connect(gain);
+            gain.connect(ctx.destination);
+            gainCtxRef.current = { ctx, gain };
+          }
+        } else {
+          gainCtxRef.current.gain.gain.value = streamVolume;
+          if (gainCtxRef.current.ctx.state === 'suspended') {
+            void gainCtxRef.current.ctx.resume().catch(() => {});
+          }
+        }
+      } catch {}
+    } else {
+      if (gainCtxRef.current) {
+        gainCtxRef.current.gain.gain.value = 0;
+      }
+      videoRef.current.muted = effectiveMuted;
+      videoRef.current.volume = Math.min(1, Math.max(0, streamVolume));
+    }
+  }, [isLocalStream, isStreamMuted, streamVolume, stream]);
+
+  useEffect(() => {
+    return () => {
+      if (gainCtxRef.current) {
+        gainCtxRef.current.ctx.close().catch(() => {});
+        gainCtxRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!showStats || !getStreamStats) return;
@@ -441,7 +478,7 @@ const VideoStreamPlayer: React.FC<{
           <input
             type="range"
             min={0}
-            max={1}
+            max={2}
             step={0.05}
             value={isStreamMuted ? 0 : streamVolume}
             onChange={(e) => {
@@ -452,6 +489,9 @@ const VideoStreamPlayer: React.FC<{
             className="w-20 accent-emerald-400 cursor-pointer"
             title={`Yayın Sesi: %${Math.round((isStreamMuted ? 0 : streamVolume) * 100)}`}
           />
+          <span className="text-[10px] font-mono text-white/75 w-8 text-right">
+            %{Math.round((isStreamMuted ? 0 : streamVolume) * 100)}
+          </span>
         </div>
       )}
     </div>
@@ -502,6 +542,8 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     webcamStream,
     webcamBlurEnabled,
     toggleWebcamBlur,
+    webcamBgMode,
+    setWebcamBgMode,
     isPrioritySpeakerActive,
     prioritySpeakerUsername,
     togglePrioritySpeaker,
@@ -714,9 +756,13 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     (u) => u.currentVoiceChannelId === activeChannel.id
   );
 
-  // Determine active screen share (local or remote) with multi-stream switching
+  // Determine active screen share / camera streams with multi-stream switching
   const remoteEntries = Array.from(remoteScreenStreams.entries());
-  const totalActiveStreams = (isScreenSharing && screenStream ? 1 : 0) + remoteEntries.length;
+  const localCamActive = Boolean(isWebcamActive && webcamStream);
+  const totalActiveStreams =
+    (isScreenSharing && screenStream ? 1 : 0) +
+    (localCamActive ? 1 : 0) +
+    remoteEntries.length;
   const activeRemoteStreamEntry =
     (selectedScreenPresenterId && remoteEntries.find(([uid]) => uid === selectedScreenPresenterId)) ||
     remoteEntries[0];
@@ -1246,6 +1292,16 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                       onSendLaser={currentUser?.id ? (x, y) => sendScreenShareLaser(currentUser.id, x, y) : undefined}
                       annotateLabel={t(language, 'annotateScreen')}
                       clearAnnotateLabel={t(language, 'clearAnnotations')}
+                    />
+                  </div>
+                )}
+                {localCamActive && webcamStream && (
+                  <div className="min-h-[220px] rounded-2xl overflow-hidden border border-white/10 bg-black/50">
+                    <VideoStreamPlayer
+                      stream={webcamStream}
+                      title={`${currentUser?.username || 'Sen'} (Kamera)`}
+                      isLocalStream
+                      viewerNames={usersInRoom.filter((u) => u.id !== currentUser?.id).map((u) => u.username)}
                     />
                   </div>
                 )}
@@ -1819,26 +1875,49 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                       <span className="truncate">Fısıltı Listeleri</span>
                     </button>
 
+                    <div className="col-span-2 flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl border bg-white/[0.05] border-white/10 text-xs">
+                      <span className="flex items-center gap-1.5 text-sky-200 font-semibold shrink-0">
+                        <Droplet className="w-3.5 h-3.5" />
+                        <span>Sanal Arka Plan</span>
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {(
+                          [
+                            { id: 'none', label: 'Yok' },
+                            { id: 'blur-soft', label: 'Hafif' },
+                            { id: 'blur-strong', label: 'Güçlü' },
+                            { id: 'studio-dim', label: 'Stüdyo' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setWebcamBgMode(opt.id);
+                              setIsActivitiesMenuOpen(false);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition ${
+                              webcamBgMode === opt.id
+                                ? 'bg-sky-500 text-white'
+                                : 'bg-black/40 text-white/65 hover:text-white'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => {
                         toggleWebcamBlur();
                         setIsActivitiesMenuOpen(false);
                       }}
-                      className={`flex items-center justify-between gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-semibold transition text-left ${
-                        webcamBlurEnabled
-                          ? 'bg-sky-500/25 border-sky-400/40 text-sky-100'
-                          : 'bg-white/[0.06] hover:bg-white/10 border-white/10 text-white/80'
+                      className={`hidden ${
+                        webcamBlurEnabled ? 'text-sky-100' : 'text-white/80'
                       }`}
-                    >
-                      <span className="flex items-center gap-1.5 truncate">
-                        <Droplet className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">Kamera Blur</span>
-                      </span>
-                      <span className="text-[11px] font-mono opacity-80 shrink-0">
-                        {webcamBlurEnabled ? 'Açık' : 'Kapalı'}
-                      </span>
-                    </button>
+                    />
 
                     {typeof window !== 'undefined' &&
                       ('__TAURI_INTERNALS__' in window ||

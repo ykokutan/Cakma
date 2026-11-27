@@ -25,6 +25,7 @@ import { resolveChannelPermissions } from '../utils/channelPermissions.js';
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
 import { isServerOwner, resolveServerLevelRecord } from '../utils/serverIdentity.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
+import { closeLfgData, createLfgData, toggleLfgParticipant } from '../utils/lfgHelper.js';
 
 export interface ChatMessageHandlerDeps {
   io: Pick<SocketIOServer, 'to'>;
@@ -1151,5 +1152,118 @@ export function registerChatMessageHandlers(socket: Socket, deps: ChatMessageHan
         `#${ch?.name || channelId}`
       );
     }
+  });
+
+  // LFG / Takım Arama Kartı Oluşturma
+  socket.on(
+    'create_lfg_post',
+    ({
+      serverId,
+      channelId,
+      game,
+      title,
+      rankOrNote,
+      maxSlots,
+      voiceChannelId,
+    }: {
+      serverId: string;
+      channelId: string;
+      game: string;
+      title: string;
+      rankOrNote?: string;
+      maxSlots?: number;
+      voiceChannelId?: string | null;
+    }) => {
+      const sender = activeUsers.get(socket.id);
+      if (!sender || !serverId || !channelId) return;
+      if (!socketEventLimiter.allow(socket.id, 'create_lfg_post', 6, 30_000)) return;
+      if (!canUserAccessChannel(sender, channelId, servers, undefined, messages[channelId], groupDms)) {
+        return;
+      }
+      const targetSrv = servers.find((s) => s.id === serverId);
+      if (!targetSrv) return;
+      if (!checkServerPermission(sender, targetSrv, 'send_messages')) {
+        return socket.emit('message_error', { message: 'Bu kanala LFG kartı gönderme yetkiniz yok.' });
+      }
+      const voiceCh = voiceChannelId
+        ? targetSrv.channels.find((c) => c.id === voiceChannelId && (c.type === 'voice' || c.type === 'stage'))
+        : undefined;
+      const lfg = createLfgData({
+        game: sanitizeText(game || ''),
+        title: sanitizeText(title || ''),
+        rankOrNote: rankOrNote ? sanitizeText(rankOrNote) : undefined,
+        maxSlots,
+        voiceChannelId: voiceCh ? voiceCh.id : null,
+        voiceChannelName: voiceCh?.name,
+        creatorUsername: sender.username,
+        creatorAvatar: sender.avatar,
+      });
+      if (!lfg) return;
+
+      const msg: Message = {
+        id: `msg-lfg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        serverId,
+        channelId,
+        author: { id: sender.id, username: sender.username, avatar: sender.avatar },
+        content: `🎮 **Takım Arama (${lfg.game}):** ${lfg.title}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        reactions: {},
+        isPinned: false,
+        lfg,
+      };
+      if (!messages[channelId]) messages[channelId] = [];
+      messages[channelId].push(msg);
+      saveChannelMessageUpsert(channelId, messages[channelId], msg);
+      onMessageCreated?.();
+      emitToChannelAudience(channelId, serverId, 'new_message', msg);
+      onAfterMessageBroadcast?.({ sender, server: targetSrv, message: msg });
+    }
+  );
+
+  socket.on('toggle_lfg_slot', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !channelId || !messageId) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
+    const msg = channelMsgs.find((m) => m.id === messageId);
+    if (!msg || !msg.lfg) return;
+
+    const result = toggleLfgParticipant(msg.lfg, user.username, user.avatar);
+    if (!result.updated) {
+      if (result.reason) socket.emit('message_error', { message: result.reason });
+      return;
+    }
+    msg.lfg = result.lfg;
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
+    emitToChannelAudience(channelId, msg.serverId, 'lfg_updated', {
+      channelId,
+      messageId,
+      lfg: msg.lfg,
+    });
+  });
+
+  socket.on('close_lfg_post', ({ channelId, messageId }: { channelId: string; messageId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !channelId || !messageId) return;
+    const channelMsgs = messages[channelId];
+    if (!channelMsgs) return;
+    if (!canUserAccessChannel(user, channelId, servers, undefined, channelMsgs, groupDms)) return;
+    const msg = channelMsgs.find((m) => m.id === messageId);
+    if (!msg || !msg.lfg || msg.lfg.closed) return;
+    const srv = findServerByChannelId(servers, channelId);
+    const canManage =
+      msg.author.username.toLowerCase() === user.username.toLowerCase() ||
+      user.role === 'admin' ||
+      (srv ? checkServerPermission(user, srv, 'manage_server') : false);
+    if (!canManage) return;
+
+    msg.lfg = closeLfgData(msg.lfg);
+    saveChannelMessageUpsert(channelId, channelMsgs, msg);
+    emitToChannelAudience(channelId, msg.serverId, 'lfg_updated', {
+      channelId,
+      messageId,
+      lfg: msg.lfg,
+    });
   });
 }

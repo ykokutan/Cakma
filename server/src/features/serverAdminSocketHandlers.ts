@@ -17,6 +17,11 @@ import { findServerMember, getPersistentUserId, isServerOwner } from '../utils/s
 import { isUserMemberOfServer } from '../utils/serverDiscovery.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
 import { normalizeInviteSourceLabel } from '../utils/inviteAnalytics.js';
+import {
+  BOOST_COST_COINS,
+  BOOST_DURATION_DAYS,
+  computeServerBoostSummary,
+} from '../utils/serverBoosts.js';
 
 export interface ServerAdminHandlerDeps {
   io: Pick<SocketIOServer, 'to'>;
@@ -31,6 +36,7 @@ export interface ServerAdminHandlerDeps {
   checkServerPermission: (user: User, server: Server, permission: ServerPermission) => boolean;
   addUserToServer: (user: User, srv: Server) => boolean;
   saveServers: (servers: Server[]) => void;
+  saveAccounts?: (accounts: Map<string, RegisteredAccount>) => void;
   saveChannelMessageBulkReplace: (channelId: string, channelMessages: Message[]) => void;
   emitToServerMembers: (srv: Server, event: string, payload: unknown) => void;
   emitServerUpdatedToMembers: (srv: Server) => void;
@@ -71,6 +77,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     checkServerPermission,
     addUserToServer,
     saveServers,
+    saveAccounts,
     saveChannelMessageBulkReplace,
     emitToServerMembers,
     emitServerUpdatedToMembers,
@@ -392,14 +399,36 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       if (data.description !== undefined) s.description = sanitizeText(data.description).trim().slice(0, 500);
       if (data.afkChannelId !== undefined) s.afkChannelId = data.afkChannelId;
       if (data.afkTimeoutMinutes !== undefined) s.afkTimeoutMinutes = data.afkTimeoutMinutes;
-      if (data.bitrateKbps !== undefined) s.bitrateKbps = data.bitrateKbps;
+      const boostSummary = computeServerBoostSummary(s);
+      if (data.bitrateKbps !== undefined) {
+        const cap = user.role === 'admin' ? 384 : boostSummary.maxBitrateKbps;
+        const clamped = Math.max(64, Math.min(cap, Number(data.bitrateKbps) || 128));
+        s.bitrateKbps = clamped;
+      }
       if (data.voiceRegion !== undefined) s.voiceRegion = data.voiceRegion;
       if (data.systemChannelId !== undefined) s.systemChannelId = data.systemChannelId;
       if (data.verificationLevel !== undefined) s.verificationLevel = data.verificationLevel;
       if (data.defaultNotification !== undefined) s.defaultNotification = data.defaultNotification;
       if (data.autoModEnabled !== undefined) s.autoModEnabled = data.autoModEnabled;
-      if (data.vanityCode !== undefined)
-        s.vanityCode = data.vanityCode.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
+      if (data.vanityCode !== undefined) {
+        const nextVanity = data.vanityCode.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
+        if (nextVanity) {
+          if (user.role !== 'admin' && !boostSummary.vanityUnlocked) {
+            return socket.emit('server_action_error', {
+              message: 'Özel davet bağlantısı (Vanity URL) için Sunucu Takviyesi Seviye 2 (5+ Boost) gereklidir.',
+            });
+          }
+          const collision = servers.find(
+            (other) => other.id !== s.id && (other.vanityCode || '').toLowerCase() === nextVanity.toLowerCase()
+          );
+          if (collision) {
+            return socket.emit('server_action_error', {
+              message: `"/c/${nextVanity}" özel adresi başka bir sunucu tarafından kullanılıyor.`,
+            });
+          }
+        }
+        s.vanityCode = nextVanity;
+      }
       if (data.welcomeChannelId !== undefined) s.welcomeChannelId = data.welcomeChannelId;
       if (data.welcomeMessage !== undefined) s.welcomeMessage = sanitizeText(data.welcomeMessage).trim().slice(0, 500);
       if (data.welcomeEnabled !== undefined) s.welcomeEnabled = data.welcomeEnabled;
@@ -769,13 +798,15 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       return socket.emit('preview_invite_response', { success: false, error: 'Davet kodu boş olamaz.' });
     }
 
+    const lowerVanity = (code || '').trim().toLowerCase();
     for (const s of servers) {
       const inv = s.invites?.find((i) => i.code === cleanCode);
-      if (inv) {
-        if (inv.expiresAt && inv.expiresAt < Date.now()) {
+      const isVanityMatch = Boolean(s.vanityCode && s.vanityCode.toLowerCase() === lowerVanity);
+      if (inv || isVanityMatch) {
+        if (inv && inv.expiresAt && inv.expiresAt < Date.now()) {
           return socket.emit('preview_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
         }
-        if (inv.maxUses && inv.uses >= inv.maxUses) {
+        if (inv && inv.maxUses && inv.uses >= inv.maxUses) {
           return socket.emit('preview_invite_response', {
             success: false,
             error: 'Bu davet linki maksimum kullanım sınırına ulaşmış.',
@@ -803,14 +834,16 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     const user = activeUsers.get(socket.id);
     if (!user || !code) return;
     const cleanCode = code.trim().toUpperCase();
+    const lowerVanity = code.trim().toLowerCase();
 
     for (const s of servers) {
       const inv = s.invites?.find((i) => i.code === cleanCode);
-      if (inv) {
-        if (inv.expiresAt && inv.expiresAt < Date.now()) {
+      const isVanityMatch = Boolean(s.vanityCode && s.vanityCode.toLowerCase() === lowerVanity);
+      if (inv || isVanityMatch) {
+        if (inv && inv.expiresAt && inv.expiresAt < Date.now()) {
           return socket.emit('join_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
         }
-        if (inv.maxUses && inv.uses >= inv.maxUses) {
+        if (inv && inv.maxUses && inv.uses >= inv.maxUses) {
           return socket.emit('join_invite_response', {
             success: false,
             error: 'Bu davet linki maksimum kullanım sınırına ulaşmış.',
@@ -818,10 +851,12 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
         }
 
         addUserToServer(user, s);
-        inv.uses += 1;
-        const joiners = Array.isArray(inv.recentJoiners) ? inv.recentJoiners : [];
-        joiners.push({ username: user.username, joinedAt: new Date().toISOString() });
-        inv.recentJoiners = joiners.slice(-50);
+        if (inv) {
+          inv.uses += 1;
+          const joiners = Array.isArray(inv.recentJoiners) ? inv.recentJoiners : [];
+          joiners.push({ username: user.username, joinedAt: new Date().toISOString() });
+          inv.recentJoiners = joiners.slice(-50);
+        }
         saveServers(servers);
         emitServerUpdatedToMembers(s);
         const srvMsgs = getInitialMessagesForServers([s], user.username);
@@ -837,6 +872,52 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     }
 
     socket.emit('join_invite_response', { success: false, error: 'Geçersiz veya bulunamayan davet kodu.' });
+  });
+
+  socket.on('boost_server', ({ serverId }: { serverId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !serverId) return;
+    if (!socketEventLimiter.allow(socket.id, 'boost_server', 5, 30_000)) return;
+    const s = servers.find((srv) => srv.id === serverId);
+    if (!s) {
+      return socket.emit('boost_server_response', { success: false, error: 'Sunucu bulunamadı.' });
+    }
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc || (acc.walletBalance ?? 0) < BOOST_COST_COINS) {
+      return socket.emit('boost_server_response', {
+        success: false,
+        error: `Sunucu takviyesi için ${BOOST_COST_COINS} Coin gerekir. Mevcut bakiyeniz: ${acc?.walletBalance ?? 0} Coin.`,
+      });
+    }
+
+    acc.walletBalance = (acc.walletBalance ?? 0) - BOOST_COST_COINS;
+    user.walletBalance = acc.walletBalance;
+    const now = Date.now();
+    if (!s.boosts) s.boosts = [];
+    s.boosts.push({
+      id: `bst-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      username: user.username,
+      coinsSpent: BOOST_COST_COINS,
+      boostedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + BOOST_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    saveAccounts?.(registeredAccounts);
+    saveServers(servers);
+    emitUserUpdated(user);
+    emitServerUpdatedToMembers(s);
+    const summary = computeServerBoostSummary(s);
+    addAuditLog(
+      'SUNUCU_TAKVIYE',
+      `${user.username}, "${s.name}" sunucusunu takviye etti (Seviye ${summary.tier}, ${summary.activeBoostCount} Boost).`,
+      'info'
+    );
+    socket.emit('boost_server_response', {
+      success: true,
+      serverId: s.id,
+      tier: summary.tier,
+      activeBoostCount: summary.activeBoostCount,
+      walletBalance: acc.walletBalance,
+    });
   });
 
   socket.on('create_category', (rawPayload: unknown) => {
