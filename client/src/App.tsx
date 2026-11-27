@@ -169,7 +169,7 @@ const MainLayout: React.FC = () => {
   }, [isAuthenticated, shouldAutoOpenExplore, consumeAutoOpenExplore]);
   const [createChannelModal, setCreateChannelModal] = useState<{
     isOpen: boolean;
-    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
+    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban';
     categoryId?: string | null;
   }>({ isOpen: false, type: 'text', categoryId: null });
 

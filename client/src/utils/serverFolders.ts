@@ -100,3 +100,71 @@ export function toggleFolderCollapsed(folders: ServerFolder[], folderId: string)
 export function removeServerFolder(folders: ServerFolder[], folderId: string): ServerFolder[] {
   return folders.filter((f) => f.id !== folderId);
 }
+
+export function renameOrRecolorFolder(
+  folders: ServerFolder[],
+  folderId: string,
+  patch: { name?: string; color?: string }
+): ServerFolder[] {
+  return folders.map((f) => {
+    if (f.id !== folderId) return f;
+    return {
+      ...f,
+      ...(typeof patch.name === 'string' && patch.name.trim()
+        ? { name: patch.name.trim().slice(0, 32) }
+        : {}),
+      ...(typeof patch.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(patch.color)
+        ? { color: patch.color }
+        : {}),
+    };
+  });
+}
+
+export function moveServerToFolder(
+  folders: ServerFolder[],
+  serverId: string,
+  targetFolderId: string
+): ServerFolder[] {
+  if (!serverId || !targetFolderId) return folders;
+  return folders
+    .map((f) => {
+      const cleanedIds = f.serverIds.filter((id) => id !== serverId);
+      if (f.id === targetFolderId) {
+        return { ...f, serverIds: [...cleanedIds, serverId], collapsed: false };
+      }
+      return { ...f, serverIds: cleanedIds };
+    })
+    .filter((f) => f.serverIds.length > 0);
+}
+
+export function mergeServersIntoNewFolder(
+  folders: ServerFolder[],
+  draggedServerId: string,
+  targetServerId: string,
+  defaultName = 'Yeni Klasör'
+): ServerFolder[] {
+  if (!draggedServerId || !targetServerId || draggedServerId === targetServerId) {
+    return folders;
+  }
+  const targetFolder = folders.find((f) => f.serverIds.includes(targetServerId));
+  if (targetFolder) {
+    return moveServerToFolder(folders, draggedServerId, targetFolder.id);
+  }
+  const cleaned = folders
+    .map((f) => ({
+      ...f,
+      serverIds: f.serverIds.filter((id) => id !== draggedServerId && id !== targetServerId),
+    }))
+    .filter((f) => f.serverIds.length > 0);
+
+  return [
+    ...cleaned,
+    {
+      id: `fld-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: String(defaultName || 'Yeni Klasör').trim().slice(0, 32) || 'Yeni Klasör',
+      color: DEFAULT_FOLDER_COLORS[cleaned.length % DEFAULT_FOLDER_COLORS.length],
+      serverIds: [targetServerId, draggedServerId],
+      collapsed: false,
+    },
+  ];
+}

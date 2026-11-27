@@ -275,7 +275,7 @@ interface SocketContextType {
   fetchDiscoverableServers: () => Promise<DiscoverableServerSummary[]>;
   joinPublicServer: (serverId: string) => Promise<{ success: boolean; server?: Server; error?: string }>;
   leaveServer: (serverId: string) => Promise<{ success: boolean; error?: string }>;
-  createChannel: (name: string, type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage', options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }) => void;
+  createChannel: (name: string, type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban', options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean; collabMode?: 'members' | 'admins_only' }) => void;
   createCategory: (serverId: string, name: string) => void;
   renameCategory: (serverId: string, categoryId: string, name: string) => void;
   deleteCategory: (serverId: string, categoryId: string) => void;
@@ -3201,6 +3201,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('auth_response', (res: { success: boolean; user?: User; token?: string; mediaToken?: string; tokenExpired?: boolean; isNewUser?: boolean; error?: string }) => {
       if (res.success && res.user) {
+        if (Array.isArray(res.user.serverFolders) && res.user.serverFolders.length > 0) {
+          try {
+            localStorage.setItem('dc_server_folders_v1', JSON.stringify(res.user.serverFolders));
+            window.dispatchEvent(new CustomEvent('cakma-server-folders-synced', { detail: res.user.serverFolders }));
+          } catch {}
+        }
         if (res.isNewUser) {
           setShouldAutoOpenExplore(true);
         }
@@ -4578,6 +4584,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     newSocket.on('profile_updated', (updatedUser: User) => {
       setCurrentUser(updatedUser);
+    });
+
+    newSocket.on('user_server_folders_synced', (payload: { folders?: any[] }) => {
+      if (Array.isArray(payload?.folders)) {
+        try {
+          localStorage.setItem('dc_server_folders_v1', JSON.stringify(payload.folders));
+          window.dispatchEvent(new CustomEvent('cakma-server-folders-synced', { detail: payload.folders }));
+        } catch {}
+      }
     });
 
     // Friends System Listeners
@@ -7101,8 +7116,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const createChannel = (
     name: string,
-    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage',
-    options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean }
+    type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban',
+    options?: { categoryId?: string | null; isLocked?: boolean; password?: string; topic?: string; bitrateKbps?: number; userLimit?: number; isTempCreatorChannel?: boolean; collabMode?: 'members' | 'admins_only' }
   ) => {
     if (!socket || !activeServer || !name.trim()) return;
     socket.emit('create_channel', {
@@ -7116,6 +7131,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       bitrateKbps: options?.bitrateKbps,
       userLimit: options?.userLimit,
       isTempCreatorChannel: options?.isTempCreatorChannel,
+      collabMode: options?.collabMode,
     });
   };
 

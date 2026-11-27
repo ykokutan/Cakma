@@ -57,6 +57,8 @@ const GlobalInboxModal = lazy(() => import('./GlobalInboxModal').then((m) => ({ 
 const ServerEventsModal = lazy(() => import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal })));
 const E2eeSafetyModal = lazy(() => import('./chat/E2eeSafetyModal').then((m) => ({ default: m.E2eeSafetyModal })));
 const ForumChannelView = lazy(() => import('./chat/ForumChannelView').then((m) => ({ default: m.ForumChannelView })));
+const WikiChannelView = lazy(() => import('./chat/WikiChannelView').then((m) => ({ default: m.WikiChannelView })));
+const KanbanChannelView = lazy(() => import('./chat/KanbanChannelView').then((m) => ({ default: m.KanbanChannelView })));
 const ForwardMessageModal = lazy(() => import('./chat/ForwardMessageModal').then((m) => ({ default: m.ForwardMessageModal })));
 const VideoNoteRecorderModal = lazy(() => import('./chat/VideoNoteRecorderModal').then((m) => ({ default: m.VideoNoteRecorderModal })));
 import {
@@ -134,6 +136,7 @@ import {
   KeyRound,
   SlidersHorizontal,
   Flag,
+  BookOpen,
 } from 'lucide-react';
 
 interface ChatAreaProps {
@@ -1394,6 +1397,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   <Megaphone className="w-4 h-4 text-amber-400" />
                 ) : activeChannel.type === 'forum' ? (
                   <MessagesSquare className="w-4 h-4 text-cyan-400" />
+                ) : activeChannel.type === 'wiki' ? (
+                  <BookOpen className="w-4 h-4 text-emerald-400" />
+                ) : activeChannel.type === 'kanban' ? (
+                  <LayoutGrid className="w-4 h-4 text-indigo-400" />
                 ) : (
                   <Hash className="w-4 h-4" />
                 )}
@@ -1409,6 +1416,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   {activeChannel.type === 'forum' && (
                     <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-500/20 border border-cyan-400/30 text-cyan-300 font-bold shrink-0">
                       Forum
+                    </span>
+                  )}
+                  {activeChannel.type === 'wiki' && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold shrink-0">
+                      Wiki
+                    </span>
+                  )}
+                  {activeChannel.type === 'kanban' && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 font-bold shrink-0">
+                      Kanban
                     </span>
                   )}
                 </div>
@@ -2571,7 +2588,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {!isDirectSpace && activeChannel.type === 'forum' ? (
+      {!isDirectSpace && activeChannel.type === 'wiki' ? (
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center text-white/40 text-xs">
+              Wiki yükleniyor...
+            </div>
+          }
+        >
+          <WikiChannelView server={activeServer} channel={activeChannel} />
+        </Suspense>
+      ) : !isDirectSpace && activeChannel.type === 'kanban' ? (
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center text-white/40 text-xs">
+              Görev Panosu yükleniyor...
+            </div>
+          }
+        >
+          <KanbanChannelView server={activeServer} channel={activeChannel} />
+        </Suspense>
+      ) : !isDirectSpace && activeChannel.type === 'forum' ? (
         <Suspense
           fallback={
             <div className="flex-1 flex items-center justify-center text-white/40 text-xs">

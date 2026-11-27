@@ -1033,14 +1033,21 @@ io.on('connection', (socket: Socket) => {
   });
 
   // Channel & Category Admin Management (Parity v1.0.0)
-  socket.on('create_channel', ({ name, type, categoryId, topic, isLocked, password }: any) => {
+  socket.on('create_channel', ({ name, type, categoryId, topic, isLocked, password, collabMode }: any) => {
     if (user.role !== 'admin') {
       return socket.emit('server_action_error', { message: 'Kanal oluşturmak için yönetici yetkisi gerekir.' });
     }
     const cleanName = String(name || '').trim().slice(0, 48);
     if (!cleanName) return;
     const chType: DedicatedStoredChannel['type'] =
-      type === 'voice' || type === 'announcement' || type === 'forum' || type === 'stage' ? type : 'text';
+      type === 'voice' ||
+      type === 'announcement' ||
+      type === 'forum' ||
+      type === 'stage' ||
+      type === 'wiki' ||
+      type === 'kanban'
+        ? type
+        : 'text';
     const validCatId =
       typeof categoryId === 'string' && serverCategories.some((c) => c.id === categoryId) ? categoryId : null;
     const newCh: DedicatedStoredChannel = {
@@ -1053,8 +1060,155 @@ io.on('connection', (socket: Socket) => {
       ...(typeof topic === 'string' && topic.trim() ? { topic: topic.trim().slice(0, 100) } : {}),
       ...(isLocked ? { isLocked: true } : {}),
       ...(typeof password === 'string' && password.trim() ? { password: password.trim() } : {}),
+      ...((chType === 'wiki' || chType === 'kanban')
+        ? {
+            collabMode: collabMode === 'admins_only' ? 'admins_only' : 'members',
+            ...(chType === 'wiki' ? { wikiPages: [] } : { kanbanCards: [] }),
+          }
+        : {}),
     };
     serverChannels.push(newCh);
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('wiki_page_upsert', (raw: any) => {
+    if (!raw || typeof raw !== 'object') return;
+    const ch = serverChannels.find((c) => c.id === String(raw.channelId || ''));
+    if (!ch || ch.type !== 'wiki') return;
+    if (ch.collabMode === 'admins_only' && user.role !== 'admin') {
+      return socket.emit('server_action_error', { message: 'Bu Wiki kanalını yalnızca yöneticiler düzenleyebilir.' });
+    }
+    const title = String(raw.title || '').trim().slice(0, 100);
+    const content = String(raw.content || '').slice(0, 40_000);
+    if (!title) return;
+    if (!Array.isArray(ch.wikiPages)) ch.wikiPages = [];
+    const now = new Date().toISOString();
+    const existing = raw.pageId ? ch.wikiPages.find((p) => p.id === String(raw.pageId)) : undefined;
+    if (existing) {
+      if (existing.content !== content) {
+        existing.revisions = [
+          {
+            id: `rev-${Date.now()}`,
+            content: existing.content,
+            editedBy: existing.updatedBy,
+            editedAt: existing.updatedAt,
+            summary: raw.summary ? String(raw.summary).slice(0, 120) : undefined,
+          },
+          ...(existing.revisions || []),
+        ].slice(0, 15);
+      }
+      existing.title = title;
+      existing.content = content;
+      existing.updatedBy = user.username;
+      existing.updatedAt = now;
+    } else {
+      ch.wikiPages.push({
+        id: `wiki-${Date.now()}`,
+        title,
+        slug: title.toLowerCase().replace(/\s+/g, '-').slice(0, 60),
+        content,
+        updatedBy: user.username,
+        updatedAt: now,
+        revisions: [],
+      });
+    }
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('wiki_page_delete', (raw: any) => {
+    if (!raw || typeof raw !== 'object') return;
+    const ch = serverChannels.find((c) => c.id === String(raw.channelId || ''));
+    if (!ch || ch.type !== 'wiki') return;
+    if (ch.collabMode === 'admins_only' && user.role !== 'admin') return;
+    ch.wikiPages = (ch.wikiPages || []).filter((p) => p.id !== String(raw.pageId || ''));
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('wiki_page_restore_revision', (raw: any) => {
+    if (!raw || typeof raw !== 'object') return;
+    const ch = serverChannels.find((c) => c.id === String(raw.channelId || ''));
+    if (!ch || ch.type !== 'wiki') return;
+    if (ch.collabMode === 'admins_only' && user.role !== 'admin') return;
+    const page = (ch.wikiPages || []).find((p) => p.id === String(raw.pageId || ''));
+    const rev = page?.revisions?.find((r) => r.id === String(raw.revisionId || ''));
+    if (!page || !rev) return;
+    page.revisions = [
+      {
+        id: `rev-${Date.now()}`,
+        content: page.content,
+        editedBy: page.updatedBy,
+        editedAt: page.updatedAt,
+        summary: 'Sürüm geri alma öncesi yedek',
+      },
+      ...(page.revisions || []),
+    ].slice(0, 15);
+    page.content = rev.content;
+    page.updatedBy = user.username;
+    page.updatedAt = new Date().toISOString();
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('kanban_card_upsert', (raw: any) => {
+    if (!raw || typeof raw !== 'object') return;
+    const ch = serverChannels.find((c) => c.id === String(raw.channelId || ''));
+    if (!ch || ch.type !== 'kanban') return;
+    if (ch.collabMode === 'admins_only' && user.role !== 'admin') return;
+    const title = String(raw.title || '').trim().slice(0, 140);
+    if (!title) return;
+    const columnId = raw.columnId === 'in_progress' || raw.columnId === 'done' ? raw.columnId : 'todo';
+    if (!Array.isArray(ch.kanbanCards)) ch.kanbanCards = [];
+    const now = new Date().toISOString();
+    const existing = raw.cardId ? ch.kanbanCards.find((c) => c.id === String(raw.cardId)) : undefined;
+    if (existing) {
+      existing.title = title;
+      existing.description = raw.description ? String(raw.description).slice(0, 2000) : undefined;
+      existing.columnId = columnId;
+      existing.assigneeUsername = raw.assigneeUsername ? String(raw.assigneeUsername).slice(0, 48) : undefined;
+      existing.dueDate = raw.dueDate ? String(raw.dueDate).slice(0, 24) : undefined;
+      existing.labels = Array.isArray(raw.labels) ? raw.labels.map(String).slice(0, 5) : undefined;
+      existing.updatedAt = now;
+    } else {
+      ch.kanbanCards.push({
+        id: `kbn-${Date.now()}`,
+        title,
+        description: raw.description ? String(raw.description).slice(0, 2000) : undefined,
+        columnId,
+        assigneeUsername: raw.assigneeUsername ? String(raw.assigneeUsername).slice(0, 48) : undefined,
+        dueDate: raw.dueDate ? String(raw.dueDate).slice(0, 24) : undefined,
+        labels: Array.isArray(raw.labels) ? raw.labels.map(String).slice(0, 5) : undefined,
+        position: ch.kanbanCards.filter((c) => c.columnId === columnId).length,
+        createdBy: user.username,
+        updatedAt: now,
+      });
+    }
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('kanban_card_move', (raw: any) => {
+    if (!raw || typeof raw !== 'object') return;
+    const ch = serverChannels.find((c) => c.id === String(raw.channelId || ''));
+    if (!ch || ch.type !== 'kanban') return;
+    if (ch.collabMode === 'admins_only' && user.role !== 'admin') return;
+    const card = (ch.kanbanCards || []).find((c) => c.id === String(raw.cardId || ''));
+    if (!card) return;
+    card.columnId = raw.toColumnId === 'in_progress' || raw.toColumnId === 'done' ? raw.toColumnId : 'todo';
+    card.position = typeof raw.toPosition === 'number' ? raw.toPosition : card.position;
+    card.updatedAt = new Date().toISOString();
+    persistDedicatedState();
+    io.emit('servers_updated', [buildDedicatedServerPayload()]);
+  });
+
+  socket.on('kanban_card_delete', (raw: any) => {
+    if (!raw || typeof raw !== 'object') return;
+    const ch = serverChannels.find((c) => c.id === String(raw.channelId || ''));
+    if (!ch || ch.type !== 'kanban') return;
+    if (ch.collabMode === 'admins_only' && user.role !== 'admin') return;
+    ch.kanbanCards = (ch.kanbanCards || []).filter((c) => c.id !== String(raw.cardId || ''));
     persistDedicatedState();
     io.emit('servers_updated', [buildDedicatedServerPayload()]);
   });

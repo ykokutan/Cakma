@@ -56,7 +56,7 @@ import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
 import { AvatarView, isImageAvatar } from './AvatarView';
 
-import { Radio as StageRadioIcon, Shield as ChannelShieldIcon, Sparkles as OnboardingSparklesIcon } from 'lucide-react';
+import { Radio as StageRadioIcon, Shield as ChannelShieldIcon, Sparkles as OnboardingSparklesIcon, BookOpen, LayoutGrid } from 'lucide-react';
 
 const ServerEventsModal = lazy(() =>
   import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal }))
@@ -72,7 +72,7 @@ const OnboardingModal = lazy(() =>
 );
 
 interface ChannelSidebarProps {
-  onOpenCreateChannel: (type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage', categoryId?: string | null) => void;
+  onOpenCreateChannel: (type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban', categoryId?: string | null) => void;
   onOpenSettings: () => void;
   onOpenServerSettings: () => void;
   onOpenAuth: () => void;
@@ -298,6 +298,20 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       return (
         <MessagesSquare
           className={`w-4 h-4 shrink-0 text-cyan-400 ${isMutedPref ? 'opacity-40' : ''}`}
+        />
+      );
+    }
+    if (channel.type === 'wiki') {
+      return (
+        <BookOpen
+          className={`w-4 h-4 shrink-0 text-emerald-400 ${isMutedPref ? 'opacity-40' : ''}`}
+        />
+      );
+    }
+    if (channel.type === 'kanban') {
+      return (
+        <LayoutGrid
+          className={`w-4 h-4 shrink-0 text-indigo-400 ${isMutedPref ? 'opacity-40' : ''}`}
         />
       );
     }

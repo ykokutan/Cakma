@@ -29,16 +29,50 @@ export interface DedicatedStoredAccount {
   friends?: string[];
 }
 
+export interface DedicatedWikiRevision {
+  id: string;
+  content: string;
+  editedBy: string;
+  editedAt: string;
+  summary?: string;
+}
+
+export interface DedicatedWikiPage {
+  id: string;
+  title: string;
+  slug: string;
+  content: string;
+  updatedBy: string;
+  updatedAt: string;
+  revisions: DedicatedWikiRevision[];
+}
+
+export interface DedicatedKanbanCard {
+  id: string;
+  title: string;
+  description?: string;
+  columnId: 'todo' | 'in_progress' | 'done';
+  assigneeUsername?: string;
+  labels?: string[];
+  dueDate?: string;
+  position: number;
+  createdBy: string;
+  updatedAt: string;
+}
+
 export interface DedicatedStoredChannel {
   id: string;
   name: string;
-  type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
+  type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban';
   serverId: string;
   categoryId?: string | null;
   position?: number;
   topic?: string;
   isLocked?: boolean;
   password?: string;
+  collabMode?: 'members' | 'admins_only';
+  wikiPages?: DedicatedWikiPage[];
+  kanbanCards?: DedicatedKanbanCard[];
 }
 
 export interface DedicatedChannelCategory {

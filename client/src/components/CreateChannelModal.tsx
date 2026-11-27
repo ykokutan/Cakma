@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
-import { X, Hash, Volume2, Lock, Tag, Megaphone, MessagesSquare, Folder, Radio } from 'lucide-react';
+import { X, Hash, Volume2, Lock, Tag, Megaphone, MessagesSquare, Folder, Radio, BookOpen, LayoutGrid } from 'lucide-react';
 
-type CreatableChannelType = 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
+type CreatableChannelType = 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban';
 
 interface CreateChannelModalProps {
   initialType: CreatableChannelType;
@@ -26,6 +26,7 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
   const [bitrateKbps, setBitrateKbps] = useState<number>(128);
   const [userLimit, setUserLimit] = useState<number>(0);
   const [isTempCreatorChannel, setIsTempCreatorChannel] = useState<boolean>(false);
+  const [collabMode, setCollabMode] = useState<'members' | 'admins_only'>('members');
 
   const categories = [...(activeServer?.categories || [])].sort(
     (a, b) => a.position - b.position
@@ -46,6 +47,7 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
             ...(channelType === 'voice' ? { isTempCreatorChannel } : {}),
           }
         : {}),
+      ...(channelType === 'wiki' || channelType === 'kanban' ? { collabMode } : {}),
     });
     onClose();
   };
@@ -75,6 +77,18 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
       icon: <MessagesSquare className="w-4 h-4 text-cyan-400" />,
     },
     {
+      id: 'wiki',
+      label: 'Wiki / Rehber',
+      desc: 'Kurallar, rehberler ve sürüm geçmişli bilgi bankası',
+      icon: <BookOpen className="w-4 h-4 text-emerald-400" />,
+    },
+    {
+      id: 'kanban',
+      label: 'Görev Panosu (Kanban)',
+      desc: 'Yapılacak / Sürüyor / Tamamlandı görev kartları',
+      icon: <LayoutGrid className="w-4 h-4 text-indigo-400" />,
+    },
+    {
       id: 'voice',
       label: t(language, 'channelTypeVoice'),
       desc: 'Canlı konuşma ve ekran yayını',
@@ -95,6 +109,10 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
       ? 'Yönetici duyuru kanalı ekleyin.'
       : channelType === 'forum'
       ? 'Etiketli tartışma forumu ekleyin.'
+      : channelType === 'wiki'
+      ? 'Ortak düzenlenebilir Wiki rehber kanalı ekleyin.'
+      : channelType === 'kanban'
+      ? 'Ekip görev takip (Kanban) panosu ekleyin.'
       : 'Metin kanalı ekleyin.';
 
   return (
@@ -178,6 +196,10 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
                   ? '📣'
                   : channelType === 'forum'
                   ? '💬'
+                  : channelType === 'wiki'
+                  ? '📖'
+                  : channelType === 'kanban'
+                  ? '📋'
                   : '#'}
               </span>
               <input
@@ -204,6 +226,40 @@ export const CreateChannelModal: React.FC<CreateChannelModalProps> = ({
               className="w-full bg-white/5 border border-white/10 text-white text-xs rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+
+          {(channelType === 'wiki' || channelType === 'kanban') && (
+            <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 space-y-2">
+              <div className="text-[11px] font-semibold text-emerald-300 uppercase">
+                Düzenleme Yetkisi
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCollabMode('members')}
+                  className={`p-2.5 rounded-xl border text-left text-xs transition ${
+                    collabMode === 'members'
+                      ? 'border-emerald-400 bg-emerald-500/20 text-white'
+                      : 'border-white/10 text-white/65 hover:border-white/20'
+                  }`}
+                >
+                  <div className="font-bold">Ortak Ekip Düzenlemesi</div>
+                  <div className="text-[10px] text-white/55">Tüm yazabilen üyeler katkı sunabilir</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCollabMode('admins_only')}
+                  className={`p-2.5 rounded-xl border text-left text-xs transition ${
+                    collabMode === 'admins_only'
+                      ? 'border-amber-400 bg-amber-500/20 text-white'
+                      : 'border-white/10 text-white/65 hover:border-white/20'
+                  }`}
+                >
+                  <div className="font-bold">Yalnızca Yöneticiler</div>
+                  <div className="text-[10px] text-white/55">Üyeler sadece salt okunur inceler</div>
+                </button>
+              </div>
+            </div>
+          )}
 
           {(channelType === 'voice' || channelType === 'stage') && (
             <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 space-y-2.5">

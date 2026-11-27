@@ -2,18 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
 import { t } from '../utils/i18n';
-import { Plus, Compass, MessageCircle, Download, Bell, BellOff, FolderOpen, FolderPlus, FolderMinus } from 'lucide-react';
+import { Plus, Compass, MessageCircle, Download, Bell, BellOff, FolderOpen, FolderPlus, FolderMinus, Trash2 } from 'lucide-react';
 import { isImageAvatar } from './AvatarView';
 import type { Server } from '../types';
 import type { NotificationLevel } from '../utils/notificationPrefs';
 import { appPrompt } from '../utils/appDialogs';
 import {
   type ServerFolder,
+  DEFAULT_FOLDER_COLORS,
   loadServerFolders,
   saveServerFolders,
   createServerFolder,
   toggleServerInFolder,
   toggleFolderCollapsed,
+  removeServerFolder,
+  renameOrRecolorFolder,
+  moveServerToFolder,
+  mergeServersIntoNewFolder,
 } from '../utils/serverFolders';
 
 interface ServerSidebarProps {
@@ -35,6 +40,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   onOpenDownload,
 }) => {
   const {
+    socket,
     servers,
     activeServer,
     selectServer,
@@ -47,21 +53,41 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
   } = useSocket();
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [serverMenu, setServerMenu] = useState<{ server: Server; x: number; y: number } | null>(null);
+  const [folderMenu, setFolderMenu] = useState<{ folder: ServerFolder; x: number; y: number } | null>(null);
+  const [draggingServerId, setDraggingServerId] = useState<string | null>(null);
   const [folders, setFolders] = useState<ServerFolder[]>(() => loadServerFolders());
 
   const updateFolders = (updater: (prev: ServerFolder[]) => ServerFolder[]) => {
     setFolders((prev) => {
       const next = updater(prev);
       saveServerFolders(next);
+      socket?.emit('user_sync_server_folders', { folders: next });
       return next;
     });
   };
 
   useEffect(() => {
-    if (!serverMenu) return;
-    const handleClose = () => setServerMenu(null);
+    const onSynced = (e: Event) => {
+      const custom = e as CustomEvent<ServerFolder[]>;
+      if (Array.isArray(custom.detail)) {
+        setFolders(custom.detail);
+      }
+    };
+    window.addEventListener('cakma-server-folders-synced', onSynced);
+    return () => window.removeEventListener('cakma-server-folders-synced', onSynced);
+  }, []);
+
+  useEffect(() => {
+    if (!serverMenu && !folderMenu) return;
+    const handleClose = () => {
+      setServerMenu(null);
+      setFolderMenu(null);
+    };
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setServerMenu(null);
+      if (e.key === 'Escape') {
+        setServerMenu(null);
+        setFolderMenu(null);
+      }
     };
     window.addEventListener('click', handleClose);
     window.addEventListener('keydown', handleEsc);
@@ -69,7 +95,7 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
       window.removeEventListener('click', handleClose);
       window.removeEventListener('keydown', handleEsc);
     };
-  }, [serverMenu]);
+  }, [serverMenu, folderMenu]);
 
   const isDMActive = activeServer?.id === 'direct-messages';
   const totalDmUnreads = Object.values(unreadDMByUser || {}).reduce(
@@ -120,10 +146,30 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
         <button
           type="button"
+          draggable
+          onDragStart={(e) => {
+            setDraggingServerId(server.id);
+            e.dataTransfer.setData('text/plain', server.id);
+          }}
+          onDragEnd={() => setDraggingServerId(null)}
+          onDragOver={(e) => {
+            if (draggingServerId && draggingServerId !== server.id) {
+              e.preventDefault();
+            }
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            const srcId = draggingServerId || e.dataTransfer.getData('text/plain');
+            setDraggingServerId(null);
+            if (srcId && srcId !== server.id) {
+              updateFolders((prev) => mergeServersIntoNewFolder(prev, srcId, server.id, 'Klasör'));
+            }
+          }}
           onClick={() => selectServer(server.id)}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            setFolderMenu(null);
             setServerMenu({
               server,
               x: Math.max(8, Math.min(e.clientX, window.innerWidth - 230)),
@@ -243,10 +289,32 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
 
           if (folder.collapsed) {
             return (
-              <div key={folder.id} className="relative flex items-center justify-center w-full shrink-0">
+              <div
+                key={folder.id}
+                onDragOver={(e) => {
+                  if (draggingServerId) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const srcId = draggingServerId || e.dataTransfer.getData('text/plain');
+                  setDraggingServerId(null);
+                  if (srcId) updateFolders((prev) => moveServerToFolder(prev, srcId, folder.id));
+                }}
+                className="relative flex items-center justify-center w-full shrink-0"
+              >
                 <button
                   type="button"
                   onClick={() => updateFolders((prev) => toggleFolderCollapsed(prev, folder.id))}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setServerMenu(null);
+                    setFolderMenu({
+                      folder,
+                      x: Math.max(8, Math.min(e.clientX, window.innerWidth - 230)),
+                      y: Math.max(8, Math.min(e.clientY, window.innerHeight - 260)),
+                    });
+                  }}
                   onMouseEnter={(e) => showTooltip(e, folder.name, `${folderServers.length} sunucu`)}
                   onMouseLeave={hideTooltip}
                   style={{ borderColor: `${folder.color}66`, backgroundColor: `${folder.color}22` }}
@@ -274,12 +342,31 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
           return (
             <div
               key={folder.id}
+              onDragOver={(e) => {
+                if (draggingServerId) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const srcId = draggingServerId || e.dataTransfer.getData('text/plain');
+                setDraggingServerId(null);
+                if (srcId) updateFolders((prev) => moveServerToFolder(prev, srcId, folder.id));
+              }}
               style={{ borderColor: `${folder.color}45`, backgroundColor: `${folder.color}12` }}
               className="w-[58px] rounded-2xl border py-1.5 flex flex-col items-center gap-2 shrink-0"
             >
               <button
                 type="button"
                 onClick={() => updateFolders((prev) => toggleFolderCollapsed(prev, folder.id))}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setServerMenu(null);
+                  setFolderMenu({
+                    folder,
+                    x: Math.max(8, Math.min(e.clientX, window.innerWidth - 230)),
+                    y: Math.max(8, Math.min(e.clientY, window.innerHeight - 260)),
+                  });
+                }}
                 onMouseEnter={(e) => showTooltip(e, folder.name, 'Daraltmak için tıkla')}
                 onMouseLeave={hideTooltip}
                 className="w-8 h-6 rounded-lg bg-white/5 hover:bg-white/15 flex items-center justify-center transition"
@@ -458,6 +545,64 @@ export const ServerSidebar: React.FC<ServerSidebarProps> = ({
             {tooltip.sublabel && (
               <div className="text-[10px] text-white/50 mt-0.5 leading-tight">{tooltip.sublabel}</div>
             )}
+          </div>,
+          document.body
+        )}
+
+      {/* Folder Rename / Color / Dissolve Menu */}
+      {folderMenu &&
+        createPortal(
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ left: folderMenu.x, top: folderMenu.y }}
+            className="fixed z-[9999] w-52 rounded-2xl bg-[#13151d]/95 border border-white/15 shadow-2xl backdrop-blur-2xl p-2 text-xs text-white space-y-2"
+          >
+            <div className="font-bold text-white/90 truncate px-1">{folderMenu.folder.name}</div>
+            <div className="flex items-center gap-1.5 px-1">
+              {DEFAULT_FOLDER_COLORS.map((hex) => (
+                <button
+                  key={hex}
+                  type="button"
+                  onClick={() => {
+                    updateFolders((prev) => renameOrRecolorFolder(prev, folderMenu.folder.id, { color: hex }));
+                    setFolderMenu(null);
+                  }}
+                  style={{ backgroundColor: hex }}
+                  className={`w-5 h-5 rounded-full border transition ${
+                    folderMenu.folder.color === hex ? 'border-white scale-110' : 'border-transparent opacity-75 hover:opacity-100'
+                  }`}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const fld = folderMenu.folder;
+                setFolderMenu(null);
+                const nextName = await appPrompt({
+                  title: 'Klasörü Yeniden Adlandır',
+                  message: 'Yeni klasör adı:',
+                  defaultValue: fld.name,
+                });
+                if (nextName && nextName.trim()) {
+                  updateFolders((prev) => renameOrRecolorFolder(prev, fld.id, { name: nextName.trim() }));
+                }
+              }}
+              className="w-full px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/15 text-left text-white/85 transition"
+            >
+              Adını Değiştir
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                updateFolders((prev) => removeServerFolder(prev, folderMenu.folder.id));
+                setFolderMenu(null);
+              }}
+              className="w-full px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-left text-rose-300 flex items-center gap-1.5 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Klasörü Dağıt</span>
+            </button>
           </div>,
           document.body
         )}

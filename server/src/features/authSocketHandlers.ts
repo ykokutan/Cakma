@@ -104,6 +104,7 @@ export function buildSessionUser(
     e2eePublicKey: acc.e2eePublicKey,
     acceptedTermsAt: acc.acceptedTermsAt,
     acceptedTermsVersion: acc.acceptedTermsVersion,
+    serverFolders: acc.serverFolders || [],
   };
 }
 

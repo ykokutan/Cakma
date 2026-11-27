@@ -132,6 +132,7 @@ import {
   ScheduledMessagesService,
   registerScheduledMessagesRoutes,
 } from './features/scheduledMessagesService.js';
+import { registerWikiAndKanbanHandlers } from './features/wikiAndKanbanHandlers.js';
 import {
   ensureStageState,
   handleUserLeaveStage,
@@ -2351,6 +2352,15 @@ io.on('connection', (socket: Socket) => {
     addAuditLog,
   });
   registerServerGovernanceSocketHandlers(socket, governanceDeps, governanceHelpers);
+  registerWikiAndKanbanHandlers(socket, {
+    activeUsers,
+    servers,
+    socketEventLimiter,
+    sanitizeText,
+    checkServerPermission,
+    saveServers,
+    emitServerUpdatedToMembers,
+  });
   registerStageAndMediaSocketHandlers(socket, {
     activeUsers,
     servers,
@@ -2719,6 +2729,35 @@ io.on('connection', (socket: Socket) => {
     }
 
     emitUserUpdated(user);
+  });
+
+  socket.on('user_sync_server_folders', (rawPayload: unknown) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !rawPayload || typeof rawPayload !== 'object') return;
+    if (!socketEventLimiter.allow(socket.id, 'user_sync_server_folders', 20, 30_000)) return;
+    const rawFolders = (rawPayload as { folders?: unknown }).folders;
+    if (!Array.isArray(rawFolders)) return;
+    const sanitized = rawFolders
+      .filter((f): f is Record<string, unknown> => Boolean(f && typeof f === 'object'))
+      .slice(0, 25)
+      .map((f, idx) => ({
+        id: String(f.id || `fld-${idx}`).slice(0, 48),
+        name: sanitizeText(String(f.name || 'Klasör')).trim().slice(0, 32) || 'Klasör',
+        color: /^#[0-9a-fA-F]{6}$/.test(String(f.color || '')) ? String(f.color) : '#3b82f6',
+        serverIds: Array.isArray(f.serverIds)
+          ? Array.from(new Set(f.serverIds.map((id) => String(id).slice(0, 80)).filter(Boolean))).slice(0, 50)
+          : [],
+        collapsed: Boolean(f.collapsed),
+      }))
+      .filter((f) => f.serverIds.length > 0);
+
+    user.serverFolders = sanitized;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (acc) {
+      acc.serverFolders = sanitized;
+      saveAccounts(registeredAccounts);
+    }
+    emitToUserSockets(user.username, 'user_server_folders_synced', { folders: sanitized });
   });
 
   // Profile Update (Status message, bio, bannerColor, bannerImage, bannerPosition, avatarFrame, pinnedBadgeId, socialLinks, avatar, status - with XSS sanitization & size limits)

@@ -15,7 +15,7 @@ export interface DiscoverableServerSummary {
   voiceActiveCount: number;
   textChannelCount: number;
   voiceChannelCount: number;
-  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' }>;
+  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban' }>;
   bitrateKbps: number;
   sfuMode: 'auto' | 'p2p' | 'sfu';
   isJoined: boolean;

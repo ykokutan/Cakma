@@ -93,7 +93,7 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
     const check = validatePayload<{
       serverId: string;
       name: string;
-      type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
+      type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban';
       categoryId?: string | null;
       isLocked?: boolean;
       password?: string;
@@ -101,10 +101,11 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       bitrateKbps?: number;
       userLimit?: number;
       isTempCreatorChannel?: boolean;
+      collabMode?: 'members' | 'admins_only';
     }>(rawPayload, {
       serverId: { type: 'string', required: true, minLen: 1, maxLen: 120 },
       name: { type: 'string', required: true, minLen: 1, maxLen: 48 },
-      type: { type: 'string', required: true, enum: ['text', 'voice', 'announcement', 'forum', 'stage'] },
+      type: { type: 'string', required: true, enum: ['text', 'voice', 'announcement', 'forum', 'stage', 'wiki', 'kanban'] },
       categoryId: { type: 'string', required: false, maxLen: 120 },
       isLocked: { type: 'boolean', required: false },
       password: { type: 'string', required: false, maxLen: 64 },
@@ -112,11 +113,12 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       bitrateKbps: { type: 'number', required: false, min: 32, max: 320 },
       userLimit: { type: 'number', required: false, min: 0, max: 99 },
       isTempCreatorChannel: { type: 'boolean', required: false },
+      collabMode: { type: 'string', required: false, enum: ['members', 'admins_only'] },
     });
     if (!check.ok) {
       return socket.emit('server_action_error', { message: check.error });
     }
-    const { serverId, name, type, categoryId, isLocked, password, topic, bitrateKbps, userLimit, isTempCreatorChannel } = check.data;
+    const { serverId, name, type, categoryId, isLocked, password, topic, bitrateKbps, userLimit, isTempCreatorChannel, collabMode } = check.data;
     const targetServer = servers.find((s) => s.id === serverId);
     if (!targetServer) return;
 
@@ -147,6 +149,12 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       ...(isVoiceOrStage && userLimit !== undefined ? { userLimit: Math.min(99, Math.max(0, Number(userLimit) || 0)) } : {}),
       ...(type === 'voice' && isTempCreatorChannel ? { isTempCreatorChannel: true } : {}),
       ...(type === 'stage' ? { stageState: { topic: cleanTopic || '', speakerUsernames: [user.username], raisedHands: [] } } : {}),
+      ...((type === 'wiki' || type === 'kanban')
+        ? {
+            collabMode: collabMode === 'admins_only' ? 'admins_only' : 'members',
+            ...(type === 'wiki' ? { wikiPages: [] } : { kanbanCards: [] }),
+          }
+        : {}),
     };
 
     targetServer.channels.push(newChannel);

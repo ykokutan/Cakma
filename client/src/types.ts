@@ -41,6 +41,14 @@ export interface FriendUser {
   e2eePublicKey?: string;
 }
 
+export interface ServerFolderEntry {
+  id: string;
+  name: string;
+  color: string;
+  serverIds: string[];
+  collapsed: boolean;
+}
+
 export interface User {
   id: string;
   accountId?: string;
@@ -77,6 +85,7 @@ export interface User {
   e2eePublicKey?: string;
   acceptedTermsAt?: string;
   acceptedTermsVersion?: string;
+  serverFolders?: ServerFolderEntry[];
 }
 
 export interface EncryptedAttachmentMeta {
@@ -497,10 +506,44 @@ export interface ChannelStickyNotice {
   updatedAt: string;
 }
 
+export interface WikiRevision {
+  id: string;
+  content: string;
+  editedBy: string;
+  editedAt: string;
+  summary?: string;
+}
+
+export interface WikiPage {
+  id: string;
+  title: string;
+  slug: string;
+  content: string;
+  updatedBy: string;
+  updatedAt: string;
+  revisions: WikiRevision[];
+}
+
+export interface KanbanCard {
+  id: string;
+  title: string;
+  description?: string;
+  columnId: 'todo' | 'in_progress' | 'done';
+  assigneeUsername?: string;
+  labels?: string[];
+  dueDate?: string;
+  position: number;
+  createdBy: string;
+  updatedAt: string;
+}
+
 export interface Channel {
   id: string;
   name: string;
-  type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage';
+  type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban';
+  collabMode?: 'members' | 'admins_only';
+  wikiPages?: WikiPage[];
+  kanbanCards?: KanbanCard[];
   serverId: string;
   categoryId?: string | null;
   position?: number;
@@ -548,7 +591,7 @@ export interface DiscoverableServerSummary {
   voiceActiveCount: number;
   textChannelCount: number;
   voiceChannelCount: number;
-  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' }>;
+  channelPreview: Array<{ id: string; name: string; type: 'text' | 'voice' | 'announcement' | 'forum' | 'stage' | 'wiki' | 'kanban' }>;
   bitrateKbps: number;
   sfuMode: 'auto' | 'p2p' | 'sfu';
   isJoined: boolean;
