@@ -27,9 +27,27 @@ export interface S3BufferUploadOptions {
   skipDns?: boolean;
 }
 
+export interface S3DeleteOptions {
+  endpoint: string;
+  bucket: string;
+  region?: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  objectKey: string;
+  skipDns?: boolean;
+  timeoutMs?: number;
+}
+
 export interface S3UploadResult {
   ok: boolean;
   url?: string;
+  key?: string;
+  error?: string;
+}
+
+export interface S3DeleteResult {
+  ok: boolean;
+  deleted?: boolean;
   key?: string;
   error?: string;
 }
@@ -106,7 +124,7 @@ export function resolveEffectiveMediaS3Config(cfg?: SystemConfig | null): Resolv
 }
 
 export function buildAwsSigV4Headers(params: {
-  method: 'PUT' | 'GET' | 'HEAD';
+  method: 'PUT' | 'GET' | 'HEAD' | 'DELETE';
   url: URL;
   region: string;
   service: string;
@@ -375,5 +393,57 @@ export async function fetchBufferFromS3(opts: {
     };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'S3 okuma hatası.' };
+  }
+}
+
+export async function deleteObjectFromS3(opts: S3DeleteOptions): Promise<S3DeleteResult> {
+  const target = await validateS3TargetConfig(opts);
+  if (!target.ok) {
+    return { ok: false, error: target.error };
+  }
+  const { endpointUrl, bucket, accessKeyId, secretAccessKey, region } = target;
+  const cleanKey = String(opts.objectKey || '').trim().replace(/^\/+/, '');
+  if (!cleanKey) {
+    return { ok: false, error: 'Silinecek S3 nesne anahtarı boş olamaz.' };
+  }
+
+  try {
+    const baseUrl = new URL(endpointUrl);
+    const basePath = baseUrl.pathname.replace(/\/+$/, '');
+    const encodedKey = encodeS3PathSegments(cleanKey);
+    baseUrl.pathname = `${basePath}/${encodeURIComponent(bucket)}/${encodedKey}`;
+
+    const sigHeaders = buildAwsSigV4Headers({
+      method: 'DELETE',
+      url: baseUrl,
+      region,
+      service: 's3',
+      accessKeyId,
+      secretAccessKey,
+      payloadHash: EMPTY_SHA256,
+    });
+    const resp = await fetch(baseUrl.toString(), {
+      method: 'DELETE',
+      redirect: 'error',
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
+      headers: sigHeaders,
+    });
+    if (!resp.ok && resp.status !== 404) {
+      const detail = await resp.text().catch(() => '');
+      return {
+        ok: false,
+        error: `S3 silme hatası (HTTP ${resp.status})${detail ? `: ${detail.slice(0, 140)}` : ''}`,
+      };
+    }
+    return {
+      ok: true,
+      deleted: true,
+      key: cleanKey,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: err?.message || 'S3 nesnesi silinemedi.',
+    };
   }
 }

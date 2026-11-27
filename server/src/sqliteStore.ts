@@ -9,6 +9,89 @@ export interface FtsSearchHit {
   content: string;
 }
 
+const CODE_LANG_ALIASES: Record<string, string[]> = {
+  ts: ['ts', 'typescript'],
+  typescript: ['ts', 'typescript'],
+  js: ['js', 'javascript'],
+  javascript: ['js', 'javascript'],
+  py: ['py', 'python'],
+  python: ['py', 'python'],
+  cs: ['cs', 'csharp'],
+  csharp: ['cs', 'csharp'],
+  sh: ['sh', 'bash', 'shell'],
+  bash: ['sh', 'bash', 'shell'],
+  cpp: ['cpp', 'c++'],
+  yml: ['yml', 'yaml'],
+  yaml: ['yml', 'yaml'],
+};
+
+/**
+ * Builds the searchable FTS5 document combining message body, attachment names/extensions,
+ * media flags (has_video / has_audio / has_image), LFG/forum metadata, and fenced code languages.
+ */
+export function buildMessageFtsDocument(
+  msg: Partial<Pick<Message, 'content' | 'attachments' | 'forumPost' | 'lfg'>>
+): string {
+  const parts: string[] = [];
+  const rawContent = String(msg.content || '');
+  if (rawContent.trim()) {
+    parts.push(rawContent);
+  }
+
+  // Fenced code blocks: ```ts ... ```
+  const codeBlockRe = /```([a-zA-Z0-9_+-]*)\s*[\r\n][\s\S]*?```/g;
+  let hasCode = false;
+  let match: RegExpExecArray | null;
+  while ((match = codeBlockRe.exec(rawContent)) !== null) {
+    hasCode = true;
+    const rawLang = (match[1] || '').trim().toLowerCase().replace(/[^a-z0-9_+-]/g, '');
+    if (rawLang) {
+      const variants = CODE_LANG_ALIASES[rawLang] || [rawLang];
+      for (const v of variants) {
+        parts.push(`lang_${v.replace(/[^a-z0-9_]/g, '')}`);
+      }
+    }
+  }
+  if (hasCode) {
+    parts.push('has_code');
+  }
+
+  if (Array.isArray(msg.attachments)) {
+    for (const att of msg.attachments) {
+      if (!att) continue;
+      const name = String(att.e2ee?.origName || att.name || '').trim();
+      if (name) {
+        parts.push(name);
+        const dotIdx = name.lastIndexOf('.');
+        if (dotIdx > 0 && dotIdx < name.length - 1) {
+          const ext = name.slice(dotIdx + 1).toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (ext) parts.push(`ext_${ext}`);
+        }
+      }
+      const mime = String(att.e2ee?.origType || att.type || '').toLowerCase();
+      if (mime.startsWith('image/')) parts.push('has_image');
+      if (mime.startsWith('video/')) parts.push('has_video');
+      if (mime.startsWith('audio/')) parts.push('has_audio');
+    }
+  }
+
+  if (msg.forumPost?.title) {
+    parts.push(msg.forumPost.title);
+    if (Array.isArray(msg.forumPost.tags) && msg.forumPost.tags.length > 0) {
+      parts.push(msg.forumPost.tags.join(' '));
+    }
+  }
+
+  if (msg.lfg) {
+    parts.push(msg.lfg.game, msg.lfg.title);
+    if (msg.lfg.rankOrNote) {
+      parts.push(msg.lfg.rankOrNote);
+    }
+  }
+
+  return parts.join(' ').trim();
+}
+
 /**
  * Zero-native optional SQLite (WAL + FTS5) primary message & snapshot adapter powered by `node:sqlite`.
  * Gracefully stays disabled on runtimes without `node:sqlite` or when `STORAGE_ENGINE=json`.
@@ -267,8 +350,8 @@ export class SqliteStore {
         this.nextSeq += 1;
         insMsg.run(msg.id, channelId, this.nextSeq, JSON.stringify(msg));
         const author = String(msg.author?.username || '');
-        const content = String(msg.content || '');
-        if (content.trim() || author.trim()) {
+        const content = buildMessageFtsDocument(msg);
+        if (content || author.trim()) {
           insFts.run(msg.id, channelId, author, content);
         }
       }
@@ -306,8 +389,8 @@ export class SqliteStore {
           if (info && Number(info.changes) > 0) {
             imported++;
             const author = String(msg.author?.username || '');
-            const content = String(msg.content || '');
-            if (content.trim() || author.trim()) {
+            const content = buildMessageFtsDocument(msg);
+            if (content || author.trim()) {
               delFts.run(msg.id);
               insFts.run(msg.id, channelId, author, content);
             }
@@ -564,13 +647,16 @@ export class SqliteStore {
     }
   }
 
-  indexMessage(channelId: string, msg: Pick<Message, 'id' | 'content' | 'author'>): void {
+  indexMessage(
+    channelId: string,
+    msg: Pick<Message, 'id' | 'content' | 'author'> & Partial<Pick<Message, 'attachments' | 'forumPost' | 'lfg'>>
+  ): void {
     if (!this.isActive() || !msg?.id) return;
     try {
       this.db.prepare('DELETE FROM messages_fts WHERE id = ?').run(msg.id);
       const author = String(msg.author?.username || '');
-      const content = String(msg.content || '');
-      if (content.trim() || author.trim()) {
+      const content = buildMessageFtsDocument(msg);
+      if (content || author.trim()) {
         this.db
           .prepare('INSERT INTO messages_fts (id, channel_id, author, content) VALUES (?, ?, ?, ?)')
           .run(msg.id, channelId, author, content);
@@ -599,8 +685,8 @@ export class SqliteStore {
         for (const msg of list) {
           if (!msg?.id) continue;
           const author = String(msg.author?.username || '');
-          const content = String(msg.content || '');
-          if (content.trim() || author.trim()) {
+          const content = buildMessageFtsDocument(msg);
+          if (content || author.trim()) {
             ins.run(msg.id, channelId, author, content);
             count++;
           }
@@ -617,12 +703,38 @@ export class SqliteStore {
 
   searchMessagesFts(query: string, limit = 50): FtsSearchHit[] {
     if (!this.isActive()) return [];
-    const tokens = String(query || '')
+    const rawParts = String(query || '')
       .trim()
       .split(/\s+/)
-      .map((t) => t.replace(/[^\p{L}\p{N}_-]/gu, ''))
-      .filter(Boolean)
-      .slice(0, 6);
+      .filter(Boolean);
+    const tokens: string[] = [];
+    for (const part of rawParts) {
+      const lower = part.toLowerCase();
+      if (lower === 'has:code' || lower === 'has:kod') {
+        tokens.push('has_code');
+      } else if (lower === 'has:video') {
+        tokens.push('has_video');
+      } else if (lower === 'has:audio' || lower === 'has:ses' || lower === 'has:voice') {
+        tokens.push('has_audio');
+      } else if (lower === 'has:image' || lower === 'has:resim') {
+        tokens.push('has_image');
+      } else if (lower.startsWith('ext:')) {
+        const ext = lower.slice(4).replace(/^\./, '').replace(/[^a-z0-9]/g, '');
+        if (ext) tokens.push(`ext_${ext}`);
+      } else if (lower.startsWith('lang:')) {
+        const lang = lower.slice(5).replace(/[^a-z0-9_+-]/g, '');
+        if (lang) tokens.push(`lang_${lang.replace(/[^a-z0-9_]/g, '')}`);
+      } else if (lower.startsWith('from:')) {
+        const user = lower.slice(5).replace(/^@/, '').replace(/[^\p{L}\p{N}_-]/gu, '');
+        if (user) tokens.push(user);
+      } else if (lower === 'has:file' || lower === 'has:dosya' || lower === 'has:link' || lower === 'is:pinned' || lower === 'is:sabit') {
+        continue;
+      } else {
+        const clean = part.replace(/[^\p{L}\p{N}_-]/gu, '');
+        if (clean) tokens.push(clean);
+      }
+      if (tokens.length >= 6) break;
+    }
     if (tokens.length === 0) return [];
 
     const matchQuery = tokens.map((t) => `"${t}"*`).join(' AND ');

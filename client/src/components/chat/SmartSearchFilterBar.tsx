@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Image as ImageIcon, Link2, Pin, User, X } from 'lucide-react';
+import { Code2, FileText, Film, Image as ImageIcon, Link2, Mic, Pin, User, X } from 'lucide-react';
 
 interface SmartSearchFilterBarProps {
   searchQuery: string;
@@ -11,6 +11,9 @@ interface SmartSearchFilterBarProps {
 const TOKEN_CHIPS = [
   { token: 'has:image', label: 'has:image', icon: ImageIcon },
   { token: 'has:file', label: 'has:file', icon: FileText },
+  { token: 'has:code', label: 'has:code', icon: Code2 },
+  { token: 'has:video', label: 'has:video', icon: Film },
+  { token: 'has:ses', label: 'has:ses', icon: Mic },
   { token: 'has:link', label: 'has:link', icon: Link2 },
   { token: 'is:pinned', label: 'is:pinned', icon: Pin },
 ] as const;

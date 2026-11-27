@@ -3,7 +3,14 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { RegisteredAccount, Server, Message, IssuedLicense, StoreSettings, AuditLog, FriendRequest, UserConnectionRecord, MemberLevelData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule, ContentReport } from './types.js';
-import { ShardedMessageStore, getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages } from './messageStore.js';
+import {
+  ShardedMessageStore,
+  getInitialMessagesSlice,
+  getChannelMessagesPage,
+  searchAllMessages,
+  parseServerSearchQuery,
+  matchesServerSearchQuery,
+} from './messageStore.js';
 import { SqliteStore } from './sqliteStore.js';
 
 export { getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages };
@@ -100,6 +107,7 @@ export function searchMessagesSmart(
           byId.set(msg.id, msg);
         }
       }
+      const parsed = parseServerSearchQuery(query);
       const hydrated: Array<{ channelId: string; message: Message }> = [];
       for (const hit of ftsHits) {
         if (allowedChannelIds && !allowedChannelIds.has(hit.channelId)) continue;
@@ -110,7 +118,9 @@ export function searchMessagesSmart(
             found = fromDb.message;
           }
         }
-        if (found) hydrated.push({ channelId: hit.channelId, message: found });
+        if (found && matchesServerSearchQuery(found, parsed)) {
+          hydrated.push({ channelId: hit.channelId, message: found });
+        }
         if (hydrated.length >= limit) break;
       }
       if (hydrated.length > 0) return hydrated;

@@ -192,23 +192,168 @@ export function getChannelMessagesPage(
   };
 }
 
+export interface ParsedServerSearchQuery {
+  text: string;
+  hasImage: boolean;
+  hasFile: boolean;
+  hasLink: boolean;
+  hasCode: boolean;
+  hasVideo: boolean;
+  hasAudio: boolean;
+  isPinned: boolean;
+  extensions: string[];
+  codeLanguages: string[];
+  fromUser?: string;
+}
+
+const URL_RE = /(https?:\/\/[^\s]+|www\.[^\s]+)/i;
+const FENCED_CODE_RE = /```([a-zA-Z0-9_+-]*)\s*[\r\n][\s\S]*?```/g;
+const LANG_ALIASES: Record<string, string[]> = {
+  js: ['js', 'javascript'],
+  javascript: ['js', 'javascript'],
+  ts: ['ts', 'typescript'],
+  typescript: ['ts', 'typescript'],
+  py: ['py', 'python'],
+  python: ['py', 'python'],
+  cs: ['cs', 'csharp'],
+  csharp: ['cs', 'csharp'],
+  sh: ['sh', 'bash', 'shell'],
+  bash: ['sh', 'bash', 'shell'],
+};
+
+export function parseServerSearchQuery(rawQuery: string): ParsedServerSearchQuery {
+  const parts = String(rawQuery || '').trim().split(/\s+/).filter(Boolean);
+  const textTokens: string[] = [];
+  let hasImage = false;
+  let hasFile = false;
+  let hasLink = false;
+  let hasCode = false;
+  let hasVideo = false;
+  let hasAudio = false;
+  let isPinned = false;
+  const extensions: string[] = [];
+  const codeLanguages: string[] = [];
+  let fromUser: string | undefined;
+
+  for (const token of parts) {
+    const lower = token.toLowerCase();
+    if (lower === 'has:image' || lower === 'has:resim') hasImage = true;
+    else if (lower === 'has:file' || lower === 'has:dosya') hasFile = true;
+    else if (lower === 'has:link') hasLink = true;
+    else if (lower === 'has:code' || lower === 'has:kod') hasCode = true;
+    else if (lower === 'has:video') hasVideo = true;
+    else if (lower === 'has:audio' || lower === 'has:ses' || lower === 'has:voice') hasAudio = true;
+    else if (lower === 'is:pinned' || lower === 'is:sabit') isPinned = true;
+    else if (lower.startsWith('from:')) {
+      const candidate = token.slice(5).replace(/^@/, '').trim().toLowerCase();
+      if (candidate) fromUser = candidate;
+    } else if (lower.startsWith('ext:')) {
+      const ext = lower.slice(4).replace(/^\./, '').trim();
+      if (ext && !extensions.includes(ext)) extensions.push(ext);
+    } else if (lower.startsWith('lang:')) {
+      const lang = lower.slice(5).trim();
+      if (lang && !codeLanguages.includes(lang)) codeLanguages.push(lang);
+    } else {
+      textTokens.push(token);
+    }
+  }
+
+  return {
+    text: textTokens.join(' ').toLowerCase(),
+    hasImage,
+    hasFile,
+    hasLink,
+    hasCode,
+    hasVideo,
+    hasAudio,
+    isPinned,
+    extensions,
+    codeLanguages,
+    ...(fromUser ? { fromUser } : {}),
+  };
+}
+
+export function matchesServerSearchQuery(msg: Message, parsed: ParsedServerSearchQuery): boolean {
+  const content = String(msg.content || '');
+  const attachments = msg.attachments || [];
+
+  if (parsed.isPinned && !msg.isPinned) return false;
+  if (parsed.fromUser && !(msg.author?.username || '').toLowerCase().includes(parsed.fromUser)) {
+    return false;
+  }
+  if (parsed.hasImage) {
+    const ok = attachments.some((a) => (a.e2ee?.origType || a.type || '').startsWith('image/'));
+    if (!ok) return false;
+  }
+  if (parsed.hasVideo) {
+    const ok = attachments.some((a) => (a.e2ee?.origType || a.type || '').startsWith('video/'));
+    if (!ok) return false;
+  }
+  if (parsed.hasAudio) {
+    const ok = attachments.some((a) => (a.e2ee?.origType || a.type || '').startsWith('audio/'));
+    if (!ok) return false;
+  }
+  if (parsed.hasFile && attachments.length === 0) return false;
+  if (parsed.hasLink && !URL_RE.test(content)) return false;
+
+  if (parsed.extensions.length > 0) {
+    const extOk = parsed.extensions.every((reqExt) =>
+      attachments.some((a) => {
+        const name = String(a.e2ee?.origName || a.name || '').toLowerCase();
+        const dot = name.lastIndexOf('.');
+        const actual = dot > 0 ? name.slice(dot + 1) : '';
+        return actual === reqExt;
+      })
+    );
+    if (!extOk) return false;
+  }
+
+  if (parsed.hasCode || parsed.codeLanguages.length > 0) {
+    FENCED_CODE_RE.lastIndex = 0;
+    const foundLangs: string[] = [];
+    let match: RegExpExecArray | null;
+    let foundAnyBlock = false;
+    while ((match = FENCED_CODE_RE.exec(content)) !== null) {
+      foundAnyBlock = true;
+      const lang = (match[1] || '').trim().toLowerCase();
+      if (lang) foundLangs.push(lang);
+    }
+    if (!foundAnyBlock) return false;
+    if (parsed.codeLanguages.length > 0) {
+      const langOk = parsed.codeLanguages.every((req) => {
+        const variants = LANG_ALIASES[req] || [req];
+        return foundLangs.some((fl) => variants.includes(fl));
+      });
+      if (!langOk) return false;
+    }
+  }
+
+  if (parsed.text) {
+    const attNames = attachments.map((a) => a.e2ee?.origName || a.name || '').join(' ');
+    const lfgText = msg.lfg ? `${msg.lfg.game} ${msg.lfg.title}` : '';
+    const hay = `${msg.author?.username || ''} ${content} ${attNames} ${msg.forumPost?.title || ''} ${lfgText}`.toLowerCase();
+    if (!hay.includes(parsed.text)) return false;
+  }
+
+  return true;
+}
+
 export function searchAllMessages(
   allMessages: Record<string, Message[]>,
   query: string,
   allowedChannelIds?: Set<string>,
   limit = 50
 ): SearchHit[] {
-  const q = (query || '').trim().toLowerCase();
-  if (!q) return [];
+  const raw = (query || '').trim();
+  if (!raw) return [];
+  const parsed = parseServerSearchQuery(raw);
   const hits: SearchHit[] = [];
   for (const [chId, list] of Object.entries(allMessages)) {
     if (allowedChannelIds && !allowedChannelIds.has(chId)) continue;
     if (!Array.isArray(list)) continue;
     for (let i = list.length - 1; i >= 0; i--) {
       const m = list[i];
-      const text = (m.content || '').toLowerCase();
-      const author = (m.author?.username || '').toLowerCase();
-      if (text.includes(q) || author.includes(q)) {
+      if (matchesServerSearchQuery(m, parsed)) {
         hits.push({ channelId: chId, message: m });
       }
     }

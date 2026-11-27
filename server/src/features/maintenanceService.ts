@@ -4,8 +4,20 @@ import type { Express, Request } from 'express';
 import type { Message, MetricsHistoryPoint, RegisteredAccount, Server } from '../types.js';
 import { extractSessionToken } from '../utils/adminAuth.js';
 import { collectReferencedMediaUrls, scanAndCleanOrphanUploads, type OrphanScanResult } from '../utils/uploadCleaner.js';
-import { uploadFileToS3, type S3UploadResult } from '../utils/s3BackupUploader.js';
-import { exportAllDataBundle, sqliteStore, type SystemConfig } from '../storage.js';
+import {
+  deleteObjectFromS3,
+  resolveEffectiveMediaS3Config,
+  uploadFileToS3,
+  type S3UploadResult,
+} from '../utils/s3BackupUploader.js';
+import {
+  exportAllDataBundle,
+  loadS3UploadsIndex,
+  saveS3UploadsIndex,
+  sqliteStore,
+  type S3UploadRecord,
+  type SystemConfig,
+} from '../storage.js';
 
 export interface MaintenanceSqliteAdapter {
   isActive: () => boolean;
@@ -42,8 +54,19 @@ export interface MaintenanceServiceDeps {
   sqlite?: MaintenanceSqliteAdapter;
   exportJsonBundle?: () => unknown;
   getSystemConfig?: () => SystemConfig;
+  getS3UploadsIndex?: () => Record<string, S3UploadRecord>;
+  saveS3UploadsIndex?: (idx: Record<string, S3UploadRecord>) => void;
   sendBackupWebhook?: (title: string, details: string) => Promise<boolean>;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
+}
+
+export interface S3OrphanScanResult {
+  s3ScannedCount: number;
+  s3OrphanCount: number;
+  s3OrphanBytes: number;
+  s3DeletedCount: number;
+  s3FreedBytes: number;
+  s3Orphans: string[];
 }
 
 const BACKUP_NAME_RE = /^cakma-backup-[a-zA-Z0-9._-]+\.(sqlite|json)$/;
@@ -289,6 +312,100 @@ export class MaintenanceService {
     return result;
   }
 
+  async scanOrphanS3Uploads(options?: {
+    minAgeMs?: number;
+    dryRun?: boolean;
+    nowMs?: number;
+  }): Promise<S3OrphanScanResult> {
+    const sqlite = this.deps.sqlite ?? sqliteStore;
+    const refs = collectReferencedMediaUrls({
+      dataDir: this.deps.dataDir,
+      messagesMap: this.deps.messages,
+      accounts: this.deps.registeredAccounts,
+      servers: this.deps.servers,
+      extraReferencedUrls: sqlite.getAllReferencedAttachmentUrls(),
+    });
+    const minAgeMs = options?.minAgeMs ?? 24 * 3600 * 1000;
+    const dryRun = options?.dryRun ?? true;
+    const nowMs = options?.nowMs ?? Date.now();
+    const s3Index = this.deps.getS3UploadsIndex?.() ?? loadS3UploadsIndex();
+
+    const entries = Object.entries(s3Index || {});
+    let s3OrphanCount = 0;
+    let s3OrphanBytes = 0;
+    let s3DeletedCount = 0;
+    let s3FreedBytes = 0;
+    const s3Orphans: string[] = [];
+
+    const orphanPairs: Array<{ storedName: string; record: S3UploadRecord }> = [];
+    for (const [storedName, record] of entries) {
+      if (!record || !record.objectKey) continue;
+      const createdTs = record.createdAt ? new Date(record.createdAt).getTime() : 0;
+      if (Number.isFinite(createdTs) && nowMs - createdTs < minAgeMs) continue;
+      const keyBase = path.basename(record.objectKey);
+      if (refs.has(storedName) || refs.has(keyBase)) continue;
+      s3OrphanCount += 1;
+      s3OrphanBytes += Number(record.size) || 0;
+      if (s3Orphans.length < 50) s3Orphans.push(record.objectKey);
+      orphanPairs.push({ storedName, record });
+    }
+
+    if (!dryRun && orphanPairs.length > 0) {
+      const s3Cfg = resolveEffectiveMediaS3Config(this.deps.getSystemConfig?.());
+      if (s3Cfg.enabled) {
+        let mutated = false;
+        for (const item of orphanPairs) {
+          const delRes = await deleteObjectFromS3({
+            endpoint: s3Cfg.endpoint,
+            bucket: s3Cfg.bucket,
+            region: s3Cfg.region,
+            accessKeyId: s3Cfg.accessKeyId,
+            secretAccessKey: s3Cfg.secretAccessKey,
+            objectKey: item.record.objectKey,
+          });
+          if (delRes.ok) {
+            delete s3Index[item.storedName];
+            mutated = true;
+            s3DeletedCount += 1;
+            s3FreedBytes += Number(item.record.size) || 0;
+          }
+        }
+        if (mutated) {
+          if (this.deps.saveS3UploadsIndex) {
+            this.deps.saveS3UploadsIndex(s3Index);
+          } else {
+            saveS3UploadsIndex(s3Index);
+          }
+          if (s3DeletedCount > 0) {
+            this.deps.addAuditLog?.(
+              'S3_MEDYA_TEMIZLIK',
+              `${s3DeletedCount} sahipsiz S3/R2 medya nesnesi silindi (${s3FreedBytes} B kazanıldı).`,
+              'info'
+            );
+          }
+        }
+      }
+    }
+
+    return {
+      s3ScannedCount: entries.length,
+      s3OrphanCount,
+      s3OrphanBytes,
+      s3DeletedCount,
+      s3FreedBytes,
+      s3Orphans,
+    };
+  }
+
+  async scanAllOrphanMedia(options?: { minAgeMs?: number; dryRun?: boolean }) {
+    const local = this.scanOrphanMedia(options);
+    const s3 = await this.scanOrphanS3Uploads(options);
+    return {
+      ...local,
+      ...s3,
+    };
+  }
+
   startSchedulers(opts?: { sampleIntervalMs?: number; backupIntervalMs?: number }): void {
     this.stopSchedulers();
     const sampleMs = Math.max(5_000, opts?.sampleIntervalMs ?? 30_000);
@@ -435,21 +552,23 @@ export function registerMaintenanceRoutes(app: Express, deps: MaintenanceRoutesD
     return res.json({ ok: true, backups: maintenance.listSqliteBackups() });
   });
 
-  app.get('/api/admin/orphan-media', (req, res) => {
+  app.get('/api/admin/orphan-media', async (req, res) => {
     if (!isAuthorizedAdmin(req)) {
       return res.status(401).json({ ok: false, error: 'Yönetici yetkisi gerekli.' });
     }
     const minAgeHours = Number(req.query.minAgeHours);
     const minAgeMs = Number.isFinite(minAgeHours) && minAgeHours >= 0 ? minAgeHours * 3600 * 1000 : 24 * 3600 * 1000;
-    return res.json({ ok: true, scan: maintenance.scanOrphanMedia({ dryRun: true, minAgeMs }) });
+    const scan = await maintenance.scanAllOrphanMedia({ dryRun: true, minAgeMs });
+    return res.json({ ok: true, scan });
   });
 
-  app.post('/api/admin/orphan-media/cleanup', (req, res) => {
+  app.post('/api/admin/orphan-media/cleanup', async (req, res) => {
     if (!isAuthorizedAdmin(req)) {
       return res.status(401).json({ ok: false, error: 'Yönetici yetkisi gerekli.' });
     }
     const minAgeHours = Number(req.body?.minAgeHours);
     const minAgeMs = Number.isFinite(minAgeHours) && minAgeHours >= 0 ? minAgeHours * 3600 * 1000 : 24 * 3600 * 1000;
-    return res.json({ ok: true, scan: maintenance.scanOrphanMedia({ dryRun: false, minAgeMs }) });
+    const scan = await maintenance.scanAllOrphanMedia({ dryRun: false, minAgeMs });
+    return res.json({ ok: true, scan });
   });
 }

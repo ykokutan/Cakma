@@ -5,6 +5,7 @@ import {
   FileText,
   Image as ImageIcon,
   Link as LinkIcon,
+  Code2,
   CornerDownRight,
   User as UserIcon,
   Globe,
@@ -48,7 +49,7 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
   const [scope, setScope] = useState<'local' | 'server'>('local');
   const [query, setQuery] = useState('');
   const [authorFilter, setAuthorFilter] = useState('');
-  const [filterType, setFilterType] = useState<'all' | 'media' | 'files' | 'links'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'media' | 'files' | 'links' | 'code'>('all');
   const [serverHits, setServerHits] = useState<SearchDisplayEntry[]>([]);
   const [serverLoading, setServerLoading] = useState(false);
 
@@ -137,6 +138,9 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
       } else if (filterType === 'links') {
         const hasUrl = msg.content.match(/https?:\/\/[^\s]+/i);
         if (!hasUrl) return false;
+      } else if (filterType === 'code') {
+        const hasCode = /```[\s\S]*?```/.test(msg.content);
+        if (!hasCode) return false;
       }
 
       if (scope === 'local' && q) {
@@ -251,8 +255,8 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
               onChange={(e) => setQuery(e.target.value)}
               placeholder={
                 scope === 'server'
-                  ? 'Tüm sunucu geçmişinde aranacak kelimeyi yazın...'
-                  : 'Kelime ara veya has:image has:file has:link is:pinned from:@kullanici...'
+                  ? 'Kelime, has:code, has:video, ext:pdf, lang:ts yazın...'
+                  : 'Kelime veya has:code has:ses ext:pdf lang:ts from:@...'
               }
               className="w-full pl-10 pr-9 py-2.5 bg-white/[0.05] border border-white/10 rounded-xl text-xs text-white placeholder:text-white/30 outline-none focus:border-blue-500 transition"
             />
@@ -315,6 +319,18 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
               >
                 <LinkIcon className="w-3.5 h-3.5" />
                 <span>Linkler</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('code')}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  filterType === 'code'
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'bg-white/5 text-white/60 hover:text-white'
+                }`}
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                <span>Kod</span>
               </button>
             </div>
 

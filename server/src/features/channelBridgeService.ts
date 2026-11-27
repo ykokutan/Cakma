@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import express, { type Express, type Request } from 'express';
-import type { BridgeDirection, BridgePlatform, Channel, ChannelBridge, Message, RegisteredAccount, Server, ServerPermission, User } from '../types.js';
+import type { BridgeDirection, BridgePlatform, Channel, ChannelBridge, Message, MessageAttachment, RegisteredAccount, Server, ServerPermission, User } from '../types.js';
 import { createAuthMiddlewares, validateExternalWebhookUrl, type AuthenticatedRequest } from '../utils/adminAuth.js';
 import { isServerOwner } from '../utils/serverIdentity.js';
 
@@ -18,6 +18,7 @@ export interface ChannelBridgeDeps {
   emitToChannelAudience: (channelId: string, serverId: string, event: string, payload: unknown) => void;
   addAuditLog: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
   onMessageCreated?: () => void;
+  getPublicBaseUrl?: () => string;
 }
 
 export interface PublicChannelBridgeView {
@@ -139,14 +140,31 @@ export class ChannelBridgeService {
     return true;
   }
 
-  deliverInboundMessage(bridge: ChannelBridge, senderName: string, rawText: string, sourceLabel: string): Message | null {
+  deliverInboundMessage(
+    bridge: ChannelBridge,
+    senderName: string,
+    rawText: string,
+    sourceLabel: string,
+    attachments: MessageAttachment[] = []
+  ): Message | null {
     const srv = this.deps.servers.find((s) => s.id === bridge.serverId);
     const ch = srv?.channels.find((c) => c.id === bridge.channelId);
     if (!srv || !isEligibleBridgeChannel(ch)) return null;
 
     const cleanSender = this.deps.sanitizeText(String(senderName || sourceLabel)).trim().slice(0, 32) || sourceLabel;
     const cleanText = this.deps.sanitizeText(String(rawText || '')).trim().slice(0, 2000);
-    if (!cleanText) return null;
+    const cleanAttachments = (attachments || [])
+      .filter((a) => a && typeof a.url === 'string' && /^https?:\/\//i.test(a.url))
+      .slice(0, 6)
+      .map((a, idx) => ({
+        id: String(a.id || `br-att-${Date.now()}-${idx}`).slice(0, 64),
+        name: this.deps.sanitizeText(String(a.name || `dosya-${idx + 1}`)).slice(0, 120),
+        size: Number.isFinite(a.size) ? Math.max(0, Math.round(a.size)) : 0,
+        type: String(a.type || 'application/octet-stream').slice(0, 100),
+        url: a.url.slice(0, 1024),
+      }));
+
+    if (!cleanText && cleanAttachments.length === 0) return null;
 
     const tag = bridge.platform === 'telegram' ? 'TG' : 'DC';
     const avatar = bridge.platform === 'telegram' ? '✈️' : '🎮';
@@ -162,9 +180,11 @@ export class ChannelBridgeService {
       content: cleanText,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       reactions: {},
+      ...(cleanAttachments.length > 0 ? { attachments: cleanAttachments } : {}),
     };
 
-    this.rememberInboundContent(ch!.id, cleanText);
+    const hashSeed = cleanText || cleanAttachments.map((a) => a.url).join('|');
+    this.rememberInboundContent(ch!.id, hashSeed);
     if (!this.deps.messages[ch!.id]) this.deps.messages[ch!.id] = [];
     this.deps.messages[ch!.id].push(msg);
     if (this.deps.messages[ch!.id].length > 500) {
@@ -179,15 +199,52 @@ export class ChannelBridgeService {
     return msg;
   }
 
+  private resolveOutboundAttachments(items: Array<MessageAttachment | string>): {
+    lines: string[];
+    imageEmbeds: Array<{ title: string; image: { url: string } }>;
+  } {
+    const base = String(this.deps.getPublicBaseUrl?.() || '').trim().replace(/\/+$/, '');
+    const lines: string[] = [];
+    const imageEmbeds: Array<{ title: string; image: { url: string } }> = [];
+
+    for (const item of items || []) {
+      if (typeof item === 'string') {
+        const clean = item.trim();
+        if (clean) lines.push(`📎 ${clean}`);
+        continue;
+      }
+      if (!item || !item.name) continue;
+      let publicUrl = '';
+      if (typeof item.url === 'string') {
+        if (/^https?:\/\//i.test(item.url)) {
+          publicUrl = item.url;
+        } else if (item.url.startsWith('/uploads/') && base && /^https?:\/\//i.test(base)) {
+          publicUrl = `${base}${item.url}`;
+        }
+      }
+      const sizeKb = Math.max(1, Math.round((Number(item.size) || 0) / 1024));
+      if (publicUrl) {
+        if ((item.type || '').startsWith('image/') && imageEmbeds.length < 4) {
+          imageEmbeds.push({ title: item.name.slice(0, 100), image: { url: publicUrl } });
+        }
+        lines.push(`📎 ${item.name} (${sizeKb} KB): ${publicUrl}`);
+      } else {
+        lines.push(`📎 ${item.name} (${sizeKb} KB)`);
+      }
+    }
+    return { lines, imageEmbeds };
+  }
+
   async sendOutboundToBridge(
     bridge: ChannelBridge,
     channelName: string,
     authorName: string,
     text: string,
-    attachmentNames: string[] = []
+    attachmentsOrNames: Array<MessageAttachment | string> = []
   ): Promise<{ ok: boolean; error?: string }> {
-    const suffix = attachmentNames.length > 0 ? `\n📎 ${attachmentNames.join(', ')}` : '';
-    const formatted = `[#${channelName}] ${authorName}: ${text}${suffix}`.slice(0, 1950);
+    const { lines, imageEmbeds } = this.resolveOutboundAttachments(attachmentsOrNames);
+    const suffix = lines.length > 0 ? `\n${lines.join('\n')}` : '';
+    const formatted = `[#${channelName}] ${authorName}: ${text}${suffix}`.trim().slice(0, 1950);
 
     try {
       if (bridge.platform === 'telegram') {
@@ -227,6 +284,7 @@ export class ChannelBridgeService {
           this.deps.saveBridges(this.deps.bridges);
           return { ok: false, error: bridge.lastError };
         }
+        const discordContent = `${text}${suffix}`.trim().slice(0, 1950);
         const resp = await fetch(check.normalizedUrl, {
           method: 'POST',
           redirect: 'error',
@@ -234,7 +292,8 @@ export class ChannelBridgeService {
           signal: AbortSignal.timeout(8000),
           body: JSON.stringify({
             username: `${authorName} (#${channelName})`.slice(0, 80),
-            content: `${text}${suffix}`.slice(0, 1950) || '(Ek)',
+            content: discordContent || (imageEmbeds.length > 0 ? '' : '(Ek)'),
+            ...(imageEmbeds.length > 0 ? { embeds: imageEmbeds } : {}),
             allowed_mentions: { parse: [] },
           }),
         });
@@ -262,6 +321,7 @@ export class ChannelBridgeService {
             signal: AbortSignal.timeout(8000),
             body: JSON.stringify({
               content: formatted,
+              ...(imageEmbeds.length > 0 ? { embeds: imageEmbeds } : {}),
               allowed_mentions: { parse: [] },
             }),
           }
@@ -300,15 +360,41 @@ export class ChannelBridgeService {
     );
     if (matching.length === 0) return;
 
-    const attNames = Array.isArray(message.attachments)
-      ? message.attachments.map((a) => a.name).filter(Boolean)
-      : [];
+    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
 
     await Promise.all(
       matching.map((b) =>
-        this.sendOutboundToBridge(b, ch!.name, message.author.username, message.content || '', attNames)
+        this.sendOutboundToBridge(b, ch!.name, message.author.username, message.content || '', attachments)
       )
     );
+  }
+
+  private extractTelegramSafeText(m: any): string {
+    const baseText = String(m?.text || m?.caption || m?.content || '').trim();
+    const tags: string[] = [];
+    if (Array.isArray(m?.photo) && m.photo.length > 0) tags.push('[📷 Telegram Fotoğraf]');
+    if (m?.video) tags.push(`[🎬 Telegram Video${m.video.file_name ? `: ${m.video.file_name}` : ''}]`);
+    if (m?.voice || m?.audio) tags.push('[🎙️ Telegram Sesli Mesaj]');
+    if (m?.document) tags.push(`[📎 ${m.document.file_name || 'Telegram Belgesi'}]`);
+    if (m?.sticker?.emoji) tags.push(`[Sticker ${m.sticker.emoji}]`);
+    return [baseText, ...tags].filter(Boolean).join('\n').trim();
+  }
+
+  private extractDiscordInboundAttachments(rawList: any): MessageAttachment[] {
+    if (!Array.isArray(rawList)) return [];
+    const out: MessageAttachment[] = [];
+    for (let i = 0; i < rawList.length && out.length < 6; i++) {
+      const att = rawList[i];
+      if (!att || typeof att.url !== 'string' || !/^https?:\/\//i.test(att.url)) continue;
+      out.push({
+        id: String(att.id || `dc-att-${Date.now()}-${i}`).slice(0, 64),
+        name: String(att.filename || att.name || `dosya-${i + 1}`).slice(0, 120),
+        size: Number.isFinite(att.size) ? Math.max(0, Math.round(att.size)) : 0,
+        type: String(att.content_type || att.type || 'application/octet-stream').slice(0, 100),
+        url: att.url.slice(0, 1024),
+      });
+    }
+    return out;
   }
 
   private async pollTelegramUpdates(): Promise<void> {
@@ -348,7 +434,7 @@ export class ChannelBridgeService {
             if (m.from?.is_bot) continue;
             const chatIdStr = String(m.chat?.id ?? '');
             if (chatIdStr !== String(b.telegramChatId).trim()) continue;
-            const text = String(m.text || m.caption || '').trim();
+            const text = this.extractTelegramSafeText(m);
             if (!text) continue;
             const senderName =
               m.from?.username ||
@@ -411,17 +497,11 @@ export class ChannelBridgeService {
 
           for (const m of ordered) {
             if (m.author?.bot || m.webhook_id) continue;
-            const contentParts: string[] = [];
-            if (typeof m.content === 'string' && m.content.trim()) contentParts.push(m.content.trim());
-            if (Array.isArray(m.attachments)) {
-              for (const att of m.attachments) {
-                if (att?.url) contentParts.push(String(att.url));
-              }
-            }
-            const combined = contentParts.join('\n').trim();
-            if (!combined) continue;
+            const baseText = typeof m.content === 'string' ? m.content.trim() : '';
+            const attachments = this.extractDiscordInboundAttachments(m.attachments);
+            if (!baseText && attachments.length === 0) continue;
             const sender = m.author?.global_name || m.author?.username || 'Discord';
-            this.deliverInboundMessage(b, sender, combined, 'Discord');
+            this.deliverInboundMessage(b, sender, baseText, 'Discord', attachments);
           }
         } catch (err: any) {
           b.lastError = err?.message || 'Discord polling hatası';
@@ -616,7 +696,13 @@ export function registerChannelBridgeRoutes(
     const upd = (req.body || {}) as any;
     const m = upd.message || upd.channel_post || upd;
     if (m && !m.from?.is_bot) {
-      const text = String(m.text || m.caption || m.content || '').trim();
+      const tags: string[] = [];
+      if (Array.isArray(m?.photo) && m.photo.length > 0) tags.push('[📷 Telegram Fotoğraf]');
+      if (m?.video) tags.push('[🎬 Telegram Video]');
+      if (m?.voice || m?.audio) tags.push('[🎙️ Telegram Sesli Mesaj]');
+      if (m?.document) tags.push(`[📎 ${m.document.file_name || 'Telegram Belgesi'}]`);
+      const baseText = String(m.text || m.caption || m.content || '').trim();
+      const text = [baseText, ...tags].filter(Boolean).join('\n').trim();
       const sender =
         m.from?.username ||
         [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') ||
@@ -645,9 +731,21 @@ export function registerChannelBridgeRoutes(
       return res.json({ ok: true, skipped: true });
     }
     const text = String(body.content || body.text || '').trim();
+    const attachments: MessageAttachment[] = Array.isArray(body.attachments)
+      ? body.attachments
+          .filter((a: any) => a && typeof a.url === 'string' && /^https?:\/\//i.test(a.url))
+          .slice(0, 6)
+          .map((a: any, idx: number) => ({
+            id: String(a.id || `dc-att-${Date.now()}-${idx}`).slice(0, 64),
+            name: String(a.filename || a.name || `dosya-${idx + 1}`).slice(0, 120),
+            size: Number.isFinite(a.size) ? Math.max(0, Math.round(a.size)) : 0,
+            type: String(a.content_type || a.type || 'application/octet-stream').slice(0, 100),
+            url: String(a.url).slice(0, 1024),
+          }))
+      : [];
     const sender = String(body.author?.global_name || body.author?.username || body.username || 'Discord');
-    if (text) {
-      service.deliverInboundMessage(bridge, sender, text, 'Discord');
+    if (text || attachments.length > 0) {
+      service.deliverInboundMessage(bridge, sender, text, 'Discord', attachments);
     }
     return res.json({ ok: true });
   });
