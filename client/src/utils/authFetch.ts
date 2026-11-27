@@ -7,9 +7,33 @@ export function isTauriRuntime(): boolean {
   );
 }
 
+export function isCapacitorRuntime(): boolean {
+  if (typeof window === 'undefined') return false;
+  const w = window as unknown as {
+    Capacitor?: { isNativePlatform?: () => boolean };
+  };
+  if (typeof w.Capacitor?.isNativePlatform === 'function') {
+    try {
+      return Boolean(w.Capacitor.isNativePlatform());
+    } catch {
+      return false;
+    }
+  }
+  return Boolean(w.Capacitor) || /; wv\)/i.test(navigator.userAgent || '');
+}
+
+export function isNativeAppRuntime(): boolean {
+  return isTauriRuntime() || isCapacitorRuntime();
+}
+
 export function resolveBackendBaseUrl(host: string): string {
   const cleaned = String(host || '').trim().replace(/\/+$/, '');
-  if (!cleaned) return '';
+  if (!cleaned) {
+    if (isNativeAppRuntime()) {
+      return 'https://ses.yahyakemalokutan.com';
+    }
+    return '';
+  }
   if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) {
     return cleaned;
   }
@@ -18,7 +42,7 @@ export function resolveBackendBaseUrl(host: string): string {
   if (lower.startsWith('localhost') || lower.startsWith('127.0.0.1') || isBareIpv4) {
     return `http://${cleaned}`;
   }
-  if (isTauriRuntime()) {
+  if (isNativeAppRuntime()) {
     return `https://${cleaned}`;
   }
   if (typeof window !== 'undefined' && window.location?.protocol) {

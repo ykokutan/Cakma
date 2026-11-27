@@ -21,6 +21,7 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
   const [isStandalone, setIsStandalone] = useState<boolean>(false);
   const [installSuccess, setInstallSuccess] = useState<boolean>(false);
   const [hasMacDmg, setHasMacDmg] = useState<boolean>(false);
+  const [hasAndroidApk, setHasAndroidApk] = useState<boolean>(false);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,6 +53,12 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
         setHasMacDmg(res.ok && !ct.includes('text/html'));
       })
       .catch(() => setHasMacDmg(false));
+    fetch('/downloads/Cakma.apk', { method: 'HEAD' })
+      .then((res) => {
+        const ct = res.headers.get('content-type') || '';
+        setHasAndroidApk(res.ok && !ct.includes('text/html'));
+      })
+      .catch(() => setHasAndroidApk(false));
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -111,13 +118,13 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
             </div>
           )}
 
-          {/* 1. Native Desktop Installers (.exe / .dmg) */}
+          {/* 1. Native Desktop & Mobile Installers (.exe / .apk / .dmg) */}
           <div className="space-y-3">
             <div className="text-xs font-bold text-white/70 uppercase tracking-wider px-1">
-              Masaüstü Kurulum Dosyaları
+              Masaüstü &amp; Mobil Kurulum Dosyaları
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* Windows .exe */}
               <div className="p-4 rounded-2xl ios-glass-card border border-cyan-500/25 flex flex-col justify-between gap-3">
                 <div className="flex items-start gap-3">
@@ -192,6 +199,51 @@ export const DownloadAppModal: React.FC<DownloadAppModalProps> = ({ isOpen, onCl
                   >
                     <Apple className="w-3.5 h-3.5" />
                     <span>.dmg Henüz Mevcut Değil</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Android .apk */}
+              <div className="p-4 rounded-2xl ios-glass-card border border-emerald-500/25 flex flex-col justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-300 shrink-0">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>Android</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                        .APK
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-white/50 mt-0.5">
+                      {hasAndroidApk
+                        ? 'Arka plan ses servisi + Bluetooth destekli APK'
+                        : 'Android .apk paketi derlendikten sonra buradan indirilebilir.'}
+                    </div>
+                  </div>
+                </div>
+                {hasAndroidApk ? (
+                  <a
+                    href="/downloads/Cakma.apk"
+                    download="Cakma.apk"
+                    onClick={() => {
+                      setDownloadNotice('Cakma.apk indiriliyor...');
+                      setTimeout(() => setDownloadNotice(null), 4000);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold flex items-center justify-center gap-1.5 transition shadow-lg shadow-emerald-500/20"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Android İndir (.apk)</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-2.5 rounded-xl bg-white/5 text-white/40 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-not-allowed"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>.apk Hazırlanıyor</span>
                   </button>
                 )}
               </div>

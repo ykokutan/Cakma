@@ -23,7 +23,12 @@ import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } fr
 import { NotificationLevel, getTargetNotificationPref, shouldNotifyForMessage, shouldShowUnreadForChannel } from '../utils/notificationPrefs';
 import { parseDeepLinkUrl } from '../utils/deepLink';
 import { createBlurredWebcamStream, BlurredWebcamController } from '../utils/cameraBlur';
-import { authFetch, resolveMediaUrl } from '../utils/authFetch';
+import { authFetch, isNativeAppRuntime, resolveMediaUrl } from '../utils/authFetch';
+import {
+  setupBluetoothVoiceMediaSession,
+  startNativeVoiceForegroundService,
+  stopNativeVoiceForegroundService,
+} from '../utils/mobileVoiceBridge';
 import { getDirectScreenShareConstraints, pruneExpiredAnnotations } from '../utils/remoteAssistHelpers';
 import { buildPersistentDmChannelId, parseDmChannelParticipants } from '../utils/dmChannel';
 import { uploadAttachmentFile, uploadDataUrlAttachment } from '../utils/uploadAttachment';
@@ -3135,13 +3140,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Initialize socket & Auto-Login
   useEffect(() => {
-    const isTauriApp = typeof window !== 'undefined' && (
-      '__TAURI_INTERNALS__' in window ||
-      window.location.hostname === 'tauri.localhost' ||
-      window.location.protocol === 'tauri:'
-    );
+    const isNativeApp = isNativeAppRuntime();
     const isDevVite = typeof window !== 'undefined' && window.location.port === '5173';
-    const defaultHost = isTauriApp
+    const defaultHost = isNativeApp
       ? 'ses.yahyakemalokutan.com'
       : (!isDevVite && typeof window !== 'undefined' && window.location.host)
         ? window.location.host
@@ -3151,7 +3152,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCurrentServerHost(savedHost);
     const backendUrl = savedHost.startsWith('http://') || savedHost.startsWith('https://')
       ? savedHost
-      : isTauriApp
+      : isNativeApp
         ? `${(savedHost.startsWith('localhost') || savedHost.startsWith('127.0.0.1')) ? 'http:' : 'https:'}//${savedHost}`
         : `${window.location.protocol}//${savedHost}`;
 
@@ -3234,7 +3235,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setShouldAutoOpenExplore(true);
         }
         if (res.token || res.mediaToken) {
-          const isSameOriginWeb = !isTauriApp && typeof window !== 'undefined' && backendUrl.startsWith(window.location.origin);
+          const isSameOriginWeb = !isNativeApp && typeof window !== 'undefined' && backendUrl.startsWith(window.location.origin);
           if (isSameOriginWeb && res.token) {
             fetch(`${backendUrl}/api/auth/set-cookie`, {
               method: 'POST',
@@ -5621,13 +5622,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const resetToMainServer = () => {
     localStorage.removeItem('dc_dedicated_server_host');
-    const isTauriApp = typeof window !== 'undefined' && (
-      '__TAURI_INTERNALS__' in window ||
-      window.location.hostname === 'tauri.localhost' ||
-      window.location.protocol === 'tauri:'
-    );
+    const isNativeApp = isNativeAppRuntime();
     const isDevVite = typeof window !== 'undefined' && window.location.port === '5173';
-    const defaultHost = isTauriApp
+    const defaultHost = isNativeApp
       ? 'ses.yahyakemalokutan.com'
       : (!isDevVite && typeof window !== 'undefined' && window.location.host)
         ? window.location.host
@@ -6745,6 +6742,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     socket?.emit('update_user_state', { isDeafened: nextDeafened });
   };
+
+  useEffect(() => {
+    if (!connectedVoiceChannelId) {
+      stopNativeVoiceForegroundService();
+      return;
+    }
+    const chName =
+      servers.flatMap((s) => s.channels).find((c) => c.id === connectedVoiceChannelId)?.name ||
+      groupDms.find((g) => g.voiceChannelId === connectedVoiceChannelId || g.id === connectedVoiceChannelId)?.name ||
+      'Ses Odası';
+    const uname = currentUser?.username || 'Kullanıcı';
+    startNativeVoiceForegroundService(chName, uname);
+    const cleanupSession = setupBluetoothVoiceMediaSession({
+      roomName: chName,
+      username: uname,
+      isMuted,
+      onToggleMute: () => toggleMute(),
+      onDisconnect: () => leaveVoiceChannel(),
+    });
+    return () => {
+      cleanupSession();
+    };
+  }, [connectedVoiceChannelId, isMuted, currentUser?.username]);
 
   const screenShareAudioCtxRef = useRef<AudioContext | null>(null);
 

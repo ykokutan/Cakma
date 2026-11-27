@@ -23,6 +23,18 @@ Thumbs.db
 # Rust / Tauri build artifacts (if building desktop client)
 client/src-tauri/target/
 
+# Android / Capacitor build artifacts & signing keys
+client/android/.gradle/
+client/android/build/
+client/android/app/build/
+client/android/capacitor-cordova-android-plugins/build/
+client/android/local.properties
+client/android/captures/
+client/android/app/src/main/assets/public/
+*.jks
+*.keystore
+*.idsig
+
 # Persistent Application Databases (Users, servers, channels, messages, licenses)
 data/
 !client/src/data/

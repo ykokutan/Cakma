@@ -5075,8 +5075,18 @@ for (const cand of downloadsDirCandidates) {
 }
 
 if (activeDownloadsDir) {
-  app.use('/downloads', express.static(activeDownloadsDir));
-  console.log(`📦 [İndirmeler] Masaüstü paketleri yayında: ${activeDownloadsDir}`);
+  app.use(
+    '/downloads',
+    express.static(activeDownloadsDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.toLowerCase().endsWith('.apk')) {
+          res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+          res.setHeader('Content-Disposition', 'attachment; filename="Cakma.apk"');
+        }
+      },
+    })
+  );
+  console.log(`📦 [İndirmeler] Masaüstü/Mobil paketleri yayında: ${activeDownloadsDir}`);
 }
 
 // Production Static Client Serving (Single-Port Pelican / Docker Deployment)
