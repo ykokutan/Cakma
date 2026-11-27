@@ -3,7 +3,13 @@ import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
-import { getPersistentDir, getStorageEngineInfo } from '../storage.js';
+import { getPersistentDir, getStorageEngineInfo, type S3UploadRecord, type SystemConfig } from '../storage.js';
+import {
+  buildAwsSigV4PresignedGetUrl,
+  fetchBufferFromS3,
+  resolveEffectiveMediaS3Config,
+  uploadBufferToS3,
+} from '../utils/s3BackupUploader.js';
 import { collectReferencedMediaUrls, scanAndCleanOrphanUploads } from '../utils/uploadCleaner.js';
 import { validateAttachmentSafety } from '../utils/security.js';
 import { isServerOwner } from '../utils/serverIdentity.js';
@@ -128,6 +134,9 @@ export interface CloudSyncContext extends OrphanCleanupContext {
   getEffectiveLiveKitConfig?: () => EffectiveLiveKitConfigSnapshot;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
   getMaxUploadSizeMb?: () => number;
+  getSystemConfig?: () => SystemConfig;
+  getS3UploadsIndex?: () => Record<string, S3UploadRecord>;
+  saveS3UploadsIndex?: () => void;
   uploadsDir?: string;
   maxUploadsDiskMb?: number;
   isUserMemberOfServer?: (
@@ -766,6 +775,59 @@ export function registerCloudSyncAndEvents(
       };
     }
 
+    const rawExt = path.extname(cleanName).toLowerCase().replace(/^\./, '');
+    const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
+    const isVideoUpload = params.mimeType.toLowerCase().startsWith('video/');
+    const storedName = `${isVideoUpload ? 'upl-vid' : 'upl'}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
+
+    // Try S3 / Cloudflare R2 offload when enabled and above size threshold
+    const sysCfg = context?.getSystemConfig?.();
+    const s3Media = resolveEffectiveMediaS3Config(sysCfg);
+    if (s3Media.enabled && params.buffer.length >= s3Media.minSizeBytes) {
+      const objectKey = `${s3Media.prefix}${storedName}`;
+      const s3Res = await uploadBufferToS3({
+        endpoint: s3Media.endpoint,
+        bucket: s3Media.bucket,
+        region: s3Media.region,
+        accessKeyId: s3Media.accessKeyId,
+        secretAccessKey: s3Media.secretAccessKey,
+        objectKey,
+        body: params.buffer,
+        contentType: params.mimeType,
+      });
+      if (s3Res.ok) {
+        const s3Idx = context?.getS3UploadsIndex?.();
+        if (s3Idx) {
+          s3Idx[storedName] = {
+            objectKey,
+            mimeType: params.mimeType.slice(0, 120),
+            size: params.buffer.length,
+            createdAt: new Date().toISOString(),
+          };
+          context?.saveS3UploadsIndex?.();
+        }
+        q.count += 1;
+        q.bytes += params.buffer.length;
+        uploadQuotaMap.set(uKey, q);
+        context?.addAuditLog?.(
+          'BULUT_MEDYA_YUKLENDI',
+          `${params.username} S3/R2 bulutuna dosya yükledi: ${cleanName} (${params.buffer.length} B -> ${objectKey})`,
+          'info'
+        );
+        return {
+          ok: true,
+          attachment: {
+            id: `att-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+            name: cleanName.slice(0, 140),
+            size: params.buffer.length,
+            type: params.mimeType.slice(0, 120),
+            url: `/uploads/${storedName}`,
+          },
+        };
+      }
+      console.warn('⚠️ [S3 Medya] S3 yükleme başarısız, yerel diske düşülüyor:', s3Res.error);
+    }
+
     const maxDiskMb = Math.max(
       0.01,
       context?.maxUploadsDiskMb ?? (Number(process.env.MAX_UPLOADS_DISK_MB) || 2048)
@@ -780,10 +842,6 @@ export function registerCloudSyncAndEvents(
       };
     }
 
-    const rawExt = path.extname(cleanName).toLowerCase().replace(/^\./, '');
-    const ext = SAFE_UPLOAD_EXTS.has(rawExt) ? rawExt : 'bin';
-    const isVideoUpload = params.mimeType.toLowerCase().startsWith('video/');
-    const storedName = `${isVideoUpload ? 'upl-vid' : 'upl'}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
     try {
       ensureUploadsDir();
       await fs.promises.writeFile(path.join(uploadsDir, storedName), params.buffer);
@@ -872,7 +930,7 @@ export function registerCloudSyncAndEvents(
     }
   );
 
-  app.get('/uploads/:filename', (req, res) => {
+  app.get('/uploads/:filename', async (req, res) => {
     const sessionToken = extractSessionToken(req);
     const queryMt = typeof req.query?.mt === 'string' ? req.query.mt.trim() : '';
     const sessionUser =
@@ -904,24 +962,111 @@ export function registerCloudSyncAndEvents(
     if (!/^[a-zA-Z0-9._-]+$/.test(safeName)) {
       return res.status(400).json({ error: 'Geçersiz dosya adı' });
     }
-    const filePath = path.join(uploadsDir, safeName);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Dosya bulunamadı' });
-    }
     const ext = path.extname(safeName).toLowerCase();
     const inlineMime =
       ext === '.webm' && safeName.startsWith('upl-vid-') ? 'video/webm' : INLINE_MEDIA_MIME[ext];
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'private, max-age=3600');
-    if (inlineMime) {
-      res.setHeader('Content-Type', inlineMime);
-      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
-    } else {
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+
+    const filePath = path.join(uploadsDir, safeName);
+    if (fs.existsSync(filePath)) {
+      if (inlineMime) {
+        res.setHeader('Content-Type', inlineMime);
+        res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+      } else {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      }
+      return res.sendFile(filePath);
     }
-    res.sendFile(filePath);
+
+    const sysCfg = context?.getSystemConfig?.();
+    const s3Media = resolveEffectiveMediaS3Config(sysCfg);
+    const s3Record = context?.getS3UploadsIndex?.()?.[safeName];
+    if (s3Media.endpoint && s3Media.bucket && s3Media.accessKeyId && s3Media.secretAccessKey && (s3Record || s3Media.enabled)) {
+      const objectKey = s3Record?.objectKey || `${s3Media.prefix}${safeName}`;
+      // XHR / fetch callers with Authorization header or ?proxy=1 receive streamed bytes so cross-origin S3 CORS never blocks WebAudio/Whisper/E2EE
+      const wantsProxy = Boolean(req.headers.authorization) || req.query?.proxy === '1';
+      if (wantsProxy) {
+        const fetched = await fetchBufferFromS3({
+          endpoint: s3Media.endpoint,
+          bucket: s3Media.bucket,
+          region: s3Media.region,
+          accessKeyId: s3Media.accessKeyId,
+          secretAccessKey: s3Media.secretAccessKey,
+          objectKey,
+        });
+        if (!fetched.ok || !fetched.buffer) {
+          return res.status(404).json({ error: 'Dosya S3/R2 bulutunda bulunamadı.' });
+        }
+        const contentType = inlineMime || s3Record?.mimeType || fetched.contentType || 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `${inlineMime ? 'inline' : 'attachment'}; filename="${safeName}"`);
+        return res.send(fetched.buffer);
+      }
+
+      if (s3Media.publicBaseUrl) {
+        const cleanKey = objectKey.replace(/^\/+/, '');
+        return res.redirect(302, `${s3Media.publicBaseUrl}/${cleanKey}`);
+      }
+
+      const presigned = buildAwsSigV4PresignedGetUrl({
+        endpoint: s3Media.endpoint,
+        bucket: s3Media.bucket,
+        region: s3Media.region,
+        accessKeyId: s3Media.accessKeyId,
+        secretAccessKey: s3Media.secretAccessKey,
+        objectKey,
+        expiresSeconds: 3600,
+      });
+      return res.redirect(302, presigned);
+    }
+
+    return res.status(404).json({ error: 'Dosya bulunamadı' });
+  });
+
+  app.post('/api/admin/test-media-s3', requireAdmin, async (_req, res) => {
+    const sysCfg = context?.getSystemConfig?.();
+    const s3Media = resolveEffectiveMediaS3Config({
+      ...(sysCfg || ({} as SystemConfig)),
+      mediaS3Enabled: true,
+    });
+    if (!s3Media.enabled) {
+      return res.status(400).json({
+        ok: false,
+        error: 'S3/R2 medya yapılandırması eksik (endpoint, bucket, access key ve secret key gerekli).',
+      });
+    }
+    const probeKey = `${s3Media.prefix}_healthcheck_${Date.now()}.txt`;
+    const upRes = await uploadBufferToS3({
+      endpoint: s3Media.endpoint,
+      bucket: s3Media.bucket,
+      region: s3Media.region,
+      accessKeyId: s3Media.accessKeyId,
+      secretAccessKey: s3Media.secretAccessKey,
+      objectKey: probeKey,
+      body: Buffer.from(`cakma-media-s3-probe:${new Date().toISOString()}`, 'utf-8'),
+      contentType: 'text/plain; charset=utf-8',
+    });
+    if (!upRes.ok) {
+      return res.status(400).json({ ok: false, error: upRes.error || 'S3/R2 test yüklemesi başarısız.' });
+    }
+    const presignedUrl = buildAwsSigV4PresignedGetUrl({
+      endpoint: s3Media.endpoint,
+      bucket: s3Media.bucket,
+      region: s3Media.region,
+      accessKeyId: s3Media.accessKeyId,
+      secretAccessKey: s3Media.secretAccessKey,
+      objectKey: probeKey,
+      expiresSeconds: 300,
+    });
+    return res.json({
+      ok: true,
+      bucket: s3Media.bucket,
+      key: probeKey,
+      presignedSample: presignedUrl.slice(0, 90) + '...',
+    });
   });
 
   app.get('/api/storage/usage', requireAuth, (_req, res) => {

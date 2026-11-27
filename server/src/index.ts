@@ -98,6 +98,7 @@ import {
   loadServerBots, saveServerBots,
   loadServerAutomations, saveServerAutomations,
   loadContentReports, saveContentReports,
+  loadS3UploadsIndex, saveS3UploadsIndex, type S3UploadRecord,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   searchMessagesSmart, initStorageEngine, getStorageEngineInfo, sqliteStore, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
@@ -976,6 +977,16 @@ const defaultSystemConfig: SystemConfig = {
   backupS3SecretKey: '',
   backupS3Prefix: 'cakma-backups/',
   backupS3AutoPush: false,
+  mediaS3Enabled: false,
+  mediaS3UseBackupCredentials: true,
+  mediaS3Endpoint: '',
+  mediaS3Bucket: '',
+  mediaS3Region: 'auto',
+  mediaS3AccessKey: '',
+  mediaS3SecretKey: '',
+  mediaS3Prefix: 'uploads/',
+  mediaS3PublicBaseUrl: '',
+  mediaS3MinSizeKb: 0,
   webhookUrl: '',
   giphyApiKey: '',
   aiSummaryProvider: 'builtin',
@@ -998,6 +1009,7 @@ const defaultSystemConfig: SystemConfig = {
 };
 let systemConfig: SystemConfig = loadSystemConfig(defaultSystemConfig);
 let bannedIps: BannedIpRecord[] = loadBannedIps();
+const s3UploadsIndex: Record<string, S3UploadRecord> = loadS3UploadsIndex();
 
 async function sendAdminWebhook(
   eventType: 'security' | 'bans' | 'dedicated' | 'backups' | 'test',
@@ -3961,6 +3973,8 @@ io.on('connection', (socket: Socket) => {
         hasAiSummaryApiKey: Boolean(systemConfig.aiSummaryApiKey),
         backupS3SecretKey: systemConfig.backupS3SecretKey ? '********' : '',
         hasBackupS3SecretKey: Boolean(systemConfig.backupS3SecretKey),
+        mediaS3SecretKey: systemConfig.mediaS3SecretKey ? '********' : '',
+        hasMediaS3SecretKey: Boolean(systemConfig.mediaS3SecretKey),
       },
       bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
       storageStats: getStorageStats(),
@@ -4082,6 +4096,18 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.backupS3SecretKey === 'string' && nextCfg.backupS3SecretKey.trim() !== '********') {
       systemConfig.backupS3SecretKey = nextCfg.backupS3SecretKey.trim().slice(0, 240);
     }
+    if (typeof nextCfg.mediaS3Enabled === 'boolean') systemConfig.mediaS3Enabled = nextCfg.mediaS3Enabled;
+    if (typeof nextCfg.mediaS3UseBackupCredentials === 'boolean') systemConfig.mediaS3UseBackupCredentials = nextCfg.mediaS3UseBackupCredentials;
+    if (typeof nextCfg.mediaS3Endpoint === 'string') systemConfig.mediaS3Endpoint = nextCfg.mediaS3Endpoint.trim().slice(0, 300);
+    if (typeof nextCfg.mediaS3Bucket === 'string') systemConfig.mediaS3Bucket = nextCfg.mediaS3Bucket.trim().slice(0, 120);
+    if (typeof nextCfg.mediaS3Region === 'string') systemConfig.mediaS3Region = nextCfg.mediaS3Region.trim().slice(0, 64) || 'auto';
+    if (typeof nextCfg.mediaS3AccessKey === 'string') systemConfig.mediaS3AccessKey = nextCfg.mediaS3AccessKey.trim().slice(0, 160);
+    if (typeof nextCfg.mediaS3SecretKey === 'string' && nextCfg.mediaS3SecretKey.trim() !== '********') {
+      systemConfig.mediaS3SecretKey = nextCfg.mediaS3SecretKey.trim().slice(0, 240);
+    }
+    if (typeof nextCfg.mediaS3Prefix === 'string') systemConfig.mediaS3Prefix = nextCfg.mediaS3Prefix.trim().slice(0, 120);
+    if (typeof nextCfg.mediaS3PublicBaseUrl === 'string') systemConfig.mediaS3PublicBaseUrl = nextCfg.mediaS3PublicBaseUrl.trim().slice(0, 300);
+    if (typeof nextCfg.mediaS3MinSizeKb === 'number') systemConfig.mediaS3MinSizeKb = Math.min(Math.max(Math.floor(nextCfg.mediaS3MinSizeKb), 0), 25_000);
     if (typeof nextCfg.webhookUrl === 'string') systemConfig.webhookUrl = nextCfg.webhookUrl.trim().slice(0, 500);
     if (typeof nextCfg.giphyApiKey === 'string') {
       systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);
@@ -5056,6 +5082,9 @@ registerCloudSyncAndEvents(app, io, activeUsers, {
   }),
   addAuditLog,
   getMaxUploadSizeMb: () => systemConfig.maxUploadSizeMb || 5,
+  getSystemConfig: () => systemConfig,
+  getS3UploadsIndex: () => s3UploadsIndex,
+  saveS3UploadsIndex: () => saveS3UploadsIndex(s3UploadsIndex),
 });
 
 // Desktop Installer & Updater Manifest Serving (kept outside client/dist so Tauri never bundles it recursively)

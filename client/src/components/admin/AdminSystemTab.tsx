@@ -112,6 +112,9 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
   const [ipBanReason, setIpBanReason] = useState('Şüpheli trafik / kural ihlali');
   const [ipBanDuration, setIpBanDuration] = useState(0);
   const [showS3Secret, setShowS3Secret] = useState(false);
+  const [showMediaS3Secret, setShowMediaS3Secret] = useState(false);
+  const [mediaS3TestBusy, setMediaS3TestBusy] = useState(false);
+  const [mediaS3TestResult, setMediaS3TestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [scheduledBackupBusy, setScheduledBackupBusy] = useState<string | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
@@ -1119,6 +1122,233 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
                   <b>TURN:</b> {livekitTestResult.turn.message}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 6b. S3 / Cloudflare R2 Direct Media Storage (CDN Offload) */}
+      {isCardVisible(
+        'media',
+        's3 r2 cdn offload medya depolama dosya ek presigned url bucket pelican disk'
+      ) && (
+        <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                S3 / Cloudflare R2 Doğrudan Medya Depolama (CDN Offload)
+              </div>
+              <div className="text-[11px] text-white/45 mt-0.5">
+                Sohbet dosyalarını, ekran kliplerini ve videoları Pelican diskine yüklemek yerine özel S3/R2 bucket&apos;ına yükler; indirmelerde 1 saatlik imzalı Presigned URL veya opsiyonel CDN kullanır.
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={mediaS3TestBusy}
+                onClick={async () => {
+                  if (isSystemDirty) {
+                    onNotify('error', 'Lütfen önce sağ üstten/alttan sistem ayarlarını kaydedin, sonra test edin.');
+                    return;
+                  }
+                  setMediaS3TestBusy(true);
+                  setMediaS3TestResult(null);
+                  try {
+                    const resp = await authFetch(currentServerHost, '/api/admin/test-media-s3', { method: 'POST' });
+                    const data = await resp.json().catch(() => null);
+                    if (resp.ok && data?.ok) {
+                      setMediaS3TestResult({
+                        ok: true,
+                        message: `Test yükleme başarılı: ${data.bucket}/${data.key}`,
+                      });
+                    } else {
+                      setMediaS3TestResult({
+                        ok: false,
+                        message: data?.error || 'S3/R2 medya testi başarısız oldu.',
+                      });
+                    }
+                  } catch {
+                    setMediaS3TestResult({ ok: false, message: 'Sunucuya bağlanılamadı.' });
+                  } finally {
+                    setMediaS3TestBusy(false);
+                  }
+                }}
+                className="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 text-cyan-200 text-[11px] font-bold transition disabled:opacity-40"
+              >
+                {mediaS3TestBusy ? 'Test Ediliyor...' : 'Medya S3 Test Et'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  fields.setSysMediaS3Enabled(!fields.sysMediaS3Enabled);
+                  setIsSystemDirty(true);
+                }}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  fields.sysMediaS3Enabled ? 'bg-emerald-500' : 'bg-white/15'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    fields.sysMediaS3Enabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/25 border border-white/10 cursor-pointer select-none text-xs text-white/85">
+            <input
+              type="checkbox"
+              checked={fields.sysMediaS3UseBackupCredentials}
+              onChange={(e) => {
+                fields.setSysMediaS3UseBackupCredentials(e.target.checked);
+                setIsSystemDirty(true);
+              }}
+              className="rounded border-white/20 bg-black/40 text-cyan-500"
+            />
+            <span>Yedekleme S3 kimlik bilgilerini kullan (Endpoint, Region, Access Key ve Secret Key paylaşılır)</span>
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {!fields.sysMediaS3UseBackupCredentials && (
+              <>
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/50 mb-1">Medya S3 / R2 Endpoint URL</label>
+                  <input
+                    type="url"
+                    value={fields.sysMediaS3Endpoint}
+                    onChange={(e) => {
+                      fields.setSysMediaS3Endpoint(e.target.value);
+                      setIsSystemDirty(true);
+                    }}
+                    placeholder="https://<account-id>.r2.cloudflarestorage.com"
+                    className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/50 mb-1">Medya S3 Region</label>
+                  <input
+                    type="text"
+                    value={fields.sysMediaS3Region}
+                    onChange={(e) => {
+                      fields.setSysMediaS3Region(e.target.value);
+                      setIsSystemDirty(true);
+                    }}
+                    placeholder="auto"
+                    className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/50 mb-1">Medya Access Key ID</label>
+                  <input
+                    type="text"
+                    value={fields.sysMediaS3AccessKey}
+                    onChange={(e) => {
+                      fields.setSysMediaS3AccessKey(e.target.value);
+                      setIsSystemDirty(true);
+                    }}
+                    placeholder="AKIA..."
+                    className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                    Medya Secret Access Key {adminData?.systemConfig?.hasMediaS3SecretKey ? '(Kayıtlı)' : ''}
+                  </label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type={showMediaS3Secret ? 'text' : 'password'}
+                      value={fields.sysMediaS3SecretKey}
+                      onChange={(e) => {
+                        fields.setSysMediaS3SecretKey(e.target.value);
+                        setIsSystemDirty(true);
+                      }}
+                      placeholder="Secret key"
+                      className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowMediaS3Secret((v) => !v)}
+                      className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70"
+                    >
+                      {showMediaS3Secret ? 'Gizle' : 'Göster'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">Medya Bucket Adı (Boş ise yedekleme bucket&apos;ı)</label>
+              <input
+                type="text"
+                value={fields.sysMediaS3Bucket}
+                onChange={(e) => {
+                  fields.setSysMediaS3Bucket(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                placeholder="cakma-media"
+                className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-white/50 mb-1">Nesne Ön Eki (Prefix)</label>
+                <input
+                  type="text"
+                  value={fields.sysMediaS3Prefix}
+                  onChange={(e) => {
+                    fields.setSysMediaS3Prefix(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="uploads/"
+                  className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-white/50 mb-1">Min. Boyut (KB)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={25000}
+                  value={fields.sysMediaS3MinSizeKb}
+                  onChange={(e) => {
+                    fields.setSysMediaS3MinSizeKb(Number(e.target.value) || 0);
+                    setIsSystemDirty(true);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+                />
+              </div>
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                Opsiyonel Public CDN URL (Boş bırakılırsa 1 saatlik imzalı Presigned URL kullanılır)
+              </label>
+              <input
+                type="url"
+                value={fields.sysMediaS3PublicBaseUrl}
+                onChange={(e) => {
+                  fields.setSysMediaS3PublicBaseUrl(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                placeholder="https://cdn.alanadiniz.com"
+                className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-cyan-400"
+              />
+            </div>
+          </div>
+
+          {mediaS3TestResult && (
+            <div
+              className={`p-3 rounded-xl border text-xs ${
+                mediaS3TestResult.ok
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200'
+                  : 'bg-rose-500/15 border-rose-500/30 text-rose-200'
+              }`}
+            >
+              {mediaS3TestResult.ok ? '✅ ' : '❌ '}
+              {mediaS3TestResult.message}
             </div>
           )}
         </div>

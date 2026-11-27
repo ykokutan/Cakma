@@ -546,6 +546,16 @@ export interface SystemConfig {
   backupS3SecretKey?: string;
   backupS3Prefix?: string;
   backupS3AutoPush?: boolean;
+  mediaS3Enabled?: boolean;
+  mediaS3UseBackupCredentials?: boolean;
+  mediaS3Endpoint?: string;
+  mediaS3Bucket?: string;
+  mediaS3Region?: string;
+  mediaS3AccessKey?: string;
+  mediaS3SecretKey?: string;
+  mediaS3Prefix?: string;
+  mediaS3PublicBaseUrl?: string;
+  mediaS3MinSizeKb?: number;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
@@ -901,4 +911,19 @@ export function saveContentReports(reports: ContentReport[]): void {
   if (sqliteStore.isActive()) {
     sqliteStore.syncContentReports(bounded);
   }
+}
+
+export interface S3UploadRecord {
+  objectKey: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+}
+
+export function loadS3UploadsIndex(): Record<string, S3UploadRecord> {
+  return safeReadJson<Record<string, S3UploadRecord>>('s3_uploads_index.json', {});
+}
+
+export function saveS3UploadsIndex(index: Record<string, S3UploadRecord>): void {
+  scheduleWriteJson('s3_uploads_index.json', index);
 }

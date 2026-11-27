@@ -38,6 +38,16 @@ export interface SystemConfigUpdatePayload {
   backupS3SecretKey?: string;
   backupS3Prefix?: string;
   backupS3AutoPush?: boolean;
+  mediaS3Enabled?: boolean;
+  mediaS3UseBackupCredentials?: boolean;
+  mediaS3Endpoint?: string;
+  mediaS3Bucket?: string;
+  mediaS3Region?: string;
+  mediaS3AccessKey?: string;
+  mediaS3SecretKey?: string;
+  mediaS3Prefix?: string;
+  mediaS3PublicBaseUrl?: string;
+  mediaS3MinSizeKb?: number;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
@@ -89,6 +99,16 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
   const [sysBackupS3SecretKey, setSysBackupS3SecretKey] = useState<string>('');
   const [sysBackupS3Prefix, setSysBackupS3Prefix] = useState<string>('cakma-backups/');
   const [sysBackupS3AutoPush, setSysBackupS3AutoPush] = useState<boolean>(false);
+  const [sysMediaS3Enabled, setSysMediaS3Enabled] = useState<boolean>(false);
+  const [sysMediaS3UseBackupCredentials, setSysMediaS3UseBackupCredentials] = useState<boolean>(true);
+  const [sysMediaS3Endpoint, setSysMediaS3Endpoint] = useState<string>('');
+  const [sysMediaS3Bucket, setSysMediaS3Bucket] = useState<string>('');
+  const [sysMediaS3Region, setSysMediaS3Region] = useState<string>('auto');
+  const [sysMediaS3AccessKey, setSysMediaS3AccessKey] = useState<string>('');
+  const [sysMediaS3SecretKey, setSysMediaS3SecretKey] = useState<string>('');
+  const [sysMediaS3Prefix, setSysMediaS3Prefix] = useState<string>('uploads/');
+  const [sysMediaS3PublicBaseUrl, setSysMediaS3PublicBaseUrl] = useState<string>('');
+  const [sysMediaS3MinSizeKb, setSysMediaS3MinSizeKb] = useState<number>(0);
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
   const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
   const [sysAiProvider, setSysAiProvider] = useState<'builtin' | 'gemini' | 'openai'>('builtin');
@@ -154,6 +174,16 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     setSysBackupS3SecretKey(cfg.backupS3SecretKey || '');
     setSysBackupS3Prefix(cfg.backupS3Prefix || 'cakma-backups/');
     setSysBackupS3AutoPush(Boolean(cfg.backupS3AutoPush));
+    setSysMediaS3Enabled(Boolean(cfg.mediaS3Enabled));
+    setSysMediaS3UseBackupCredentials(cfg.mediaS3UseBackupCredentials !== false);
+    setSysMediaS3Endpoint(cfg.mediaS3Endpoint || '');
+    setSysMediaS3Bucket(cfg.mediaS3Bucket || '');
+    setSysMediaS3Region(cfg.mediaS3Region || 'auto');
+    setSysMediaS3AccessKey(cfg.mediaS3AccessKey || '');
+    setSysMediaS3SecretKey(cfg.mediaS3SecretKey || '');
+    setSysMediaS3Prefix(cfg.mediaS3Prefix || 'uploads/');
+    setSysMediaS3PublicBaseUrl(cfg.mediaS3PublicBaseUrl || '');
+    setSysMediaS3MinSizeKb(cfg.mediaS3MinSizeKb ?? 0);
     setSysWebhookUrl(cfg.webhookUrl || '');
     setSysGiphyApiKey(cfg.giphyApiKey || '');
     setSysAiProvider(cfg.aiSummaryProvider || 'builtin');
@@ -230,6 +260,16 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       backupS3SecretKey: sysBackupS3SecretKey,
       backupS3Prefix: sysBackupS3Prefix,
       backupS3AutoPush: sysBackupS3AutoPush,
+      mediaS3Enabled: sysMediaS3Enabled,
+      mediaS3UseBackupCredentials: sysMediaS3UseBackupCredentials,
+      mediaS3Endpoint: sysMediaS3Endpoint,
+      mediaS3Bucket: sysMediaS3Bucket,
+      mediaS3Region: sysMediaS3Region,
+      mediaS3AccessKey: sysMediaS3AccessKey,
+      mediaS3SecretKey: sysMediaS3SecretKey,
+      mediaS3Prefix: sysMediaS3Prefix,
+      mediaS3PublicBaseUrl: sysMediaS3PublicBaseUrl,
+      mediaS3MinSizeKb: sysMediaS3MinSizeKb,
       webhookUrl: sysWebhookUrl,
       giphyApiKey: sysGiphyApiKey,
       aiSummaryProvider: sysAiProvider,
@@ -282,6 +322,16 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     sysBackupS3SecretKey,
     sysBackupS3Prefix,
     sysBackupS3AutoPush,
+    sysMediaS3Enabled,
+    sysMediaS3UseBackupCredentials,
+    sysMediaS3Endpoint,
+    sysMediaS3Bucket,
+    sysMediaS3Region,
+    sysMediaS3AccessKey,
+    sysMediaS3SecretKey,
+    sysMediaS3Prefix,
+    sysMediaS3PublicBaseUrl,
+    sysMediaS3MinSizeKb,
     sysWebhookUrl,
     sysGiphyApiKey,
     sysAiProvider,
@@ -367,6 +417,26 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       setSysBackupS3Prefix,
       sysBackupS3AutoPush,
       setSysBackupS3AutoPush,
+      sysMediaS3Enabled,
+      setSysMediaS3Enabled,
+      sysMediaS3UseBackupCredentials,
+      setSysMediaS3UseBackupCredentials,
+      sysMediaS3Endpoint,
+      setSysMediaS3Endpoint,
+      sysMediaS3Bucket,
+      setSysMediaS3Bucket,
+      sysMediaS3Region,
+      setSysMediaS3Region,
+      sysMediaS3AccessKey,
+      setSysMediaS3AccessKey,
+      sysMediaS3SecretKey,
+      setSysMediaS3SecretKey,
+      sysMediaS3Prefix,
+      setSysMediaS3Prefix,
+      sysMediaS3PublicBaseUrl,
+      setSysMediaS3PublicBaseUrl,
+      sysMediaS3MinSizeKb,
+      setSysMediaS3MinSizeKb,
       sysWebhookUrl,
       setSysWebhookUrl,
       sysGiphyApiKey,

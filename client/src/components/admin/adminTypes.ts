@@ -79,6 +79,17 @@ export interface AdminSystemConfig {
   backupS3Prefix?: string;
   backupS3AutoPush?: boolean;
   hasBackupS3SecretKey?: boolean;
+  mediaS3Enabled?: boolean;
+  mediaS3UseBackupCredentials?: boolean;
+  mediaS3Endpoint?: string;
+  mediaS3Bucket?: string;
+  mediaS3Region?: string;
+  mediaS3AccessKey?: string;
+  mediaS3SecretKey?: string;
+  mediaS3Prefix?: string;
+  mediaS3PublicBaseUrl?: string;
+  mediaS3MinSizeKb?: number;
+  hasMediaS3SecretKey?: boolean;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
