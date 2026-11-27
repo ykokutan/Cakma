@@ -5,12 +5,40 @@ import {
   advanceWatchQueue,
   toggleSkipVoteAndAdvance,
 } from '../utils/watchTogetherQueue.js';
+import {
+  isCorrectDrawGuess,
+  maskDrawWord,
+  pickRandomDrawWord,
+  type DrawGuessPublicState,
+  type DrawGuessStroke,
+} from '../utils/drawGuessGame.js';
+
+export interface DrawGuessRoomInternal extends DrawGuessPublicState {
+  secretWord: string;
+}
+
+const sharedDrawGuessRooms = new Map<string, DrawGuessRoomInternal>();
+
+function toPublicDrawGuessState(room: DrawGuessRoomInternal): DrawGuessPublicState {
+  return {
+    channelId: room.channelId,
+    drawerSocketId: room.drawerSocketId,
+    drawerName: room.drawerName,
+    maskedWord: room.maskedWord,
+    revealedWord: room.revealedWord,
+    round: room.round,
+    scores: room.scores,
+    guesses: room.guesses,
+    winnerName: room.winnerName,
+  };
+}
 
 export interface WatchTogetherAndGamesDeps {
   io: Pick<SocketIOServer, 'to'>;
   activeUsers: Map<string, User>;
   watchTogetherRooms: Map<string, WatchTogetherState>;
   miniGameRooms: Map<string, MiniGameState>;
+  drawGuessRooms?: Map<string, DrawGuessRoomInternal>;
   addAuditLog: (action: string, details: string, type?: 'auth' | 'info' | 'warn' | 'voice') => void;
 }
 
@@ -19,6 +47,7 @@ export function registerWatchTogetherAndGamesHandlers(
   deps: WatchTogetherAndGamesDeps
 ): void {
   const { io, activeUsers, watchTogetherRooms, miniGameRooms, addAuditLog } = deps;
+  const drawGuessRooms = deps.drawGuessRooms || sharedDrawGuessRooms;
 
   // 1. Watch Together (YouTube Sineması - Scoped to active voice room)
   socket.on('watch_together_start', ({ channelId, videoId, title }: { channelId: string; videoId: string; title: string }) => {
@@ -181,5 +210,113 @@ export function registerWatchTogetherAndGamesHandlers(
   socket.on('minigame_stop', ({ channelId }: { channelId: string }) => {
     miniGameRooms.delete(channelId);
     io.to(channelId).emit('minigame_ended');
+  });
+
+  // 3. Draw & Guess (Çiz & Tahmin Et)
+  socket.on('drawguess_start', ({ channelId }: { channelId: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    if (!cleanChannelId) return;
+    const user = activeUsers.get(socket.id);
+    const secretWord = pickRandomDrawWord();
+    const room: DrawGuessRoomInternal = {
+      channelId: cleanChannelId,
+      drawerSocketId: socket.id,
+      drawerName: user?.username || 'Oyuncu',
+      secretWord,
+      maskedWord: maskDrawWord(secretWord, false),
+      round: 1,
+      scores: {},
+      guesses: [],
+      winnerName: null,
+    };
+    drawGuessRooms.set(cleanChannelId, room);
+    io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
+    io.to(cleanChannelId).emit('drawguess_state', toPublicDrawGuessState(room));
+    socket.emit('drawguess_secret', { channelId: cleanChannelId, word: secretWord });
+    addAuditLog('DRAW_GUESS', `${room.drawerName} ${cleanChannelId} odasinda Ciz & Tahmin Et baslatti.`);
+  });
+
+  socket.on('drawguess_get', ({ channelId }: { channelId: string }) => {
+    const room = drawGuessRooms.get(String(channelId || '').trim());
+    if (!room) return;
+    socket.emit('drawguess_state', toPublicDrawGuessState(room));
+    if (room.drawerSocketId === socket.id) {
+      socket.emit('drawguess_secret', { channelId: room.channelId, word: room.secretWord });
+    }
+  });
+
+  socket.on('drawguess_stroke', ({ channelId, stroke }: { channelId: string; stroke: DrawGuessStroke }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = drawGuessRooms.get(cleanChannelId);
+    if (!room || room.drawerSocketId !== socket.id || room.winnerName) return;
+    socket.to(cleanChannelId).emit('drawguess_stroke', { channelId: cleanChannelId, stroke });
+  });
+
+  socket.on('drawguess_clear', ({ channelId }: { channelId: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = drawGuessRooms.get(cleanChannelId);
+    if (!room || room.drawerSocketId !== socket.id) return;
+    io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
+  });
+
+  socket.on('drawguess_guess', ({ channelId, text }: { channelId: string; text: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = drawGuessRooms.get(cleanChannelId);
+    const cleanText = String(text || '').trim();
+    if (!room || !cleanText || room.winnerName) return;
+
+    const user = activeUsers.get(socket.id);
+    const authorName = user?.username || 'Oyuncu';
+    const isCorrect = socket.id !== room.drawerSocketId && isCorrectDrawGuess(cleanText, room.secretWord);
+
+    if (isCorrect) {
+      room.scores[authorName] = (room.scores[authorName] || 0) + 15;
+      room.scores[room.drawerName] = (room.scores[room.drawerName] || 0) + 10;
+      room.winnerName = authorName;
+      room.revealedWord = room.secretWord;
+      room.guesses = [...room.guesses.slice(-19), { author: authorName, text: '🎯 Doğru bildi!', correct: true }];
+    } else {
+      room.guesses = [
+        ...room.guesses.slice(-19),
+        { author: authorName, text: cleanText.slice(0, 80), correct: false },
+      ];
+    }
+
+    io.to(cleanChannelId).emit('drawguess_state', toPublicDrawGuessState(room));
+  });
+
+  socket.on('drawguess_next_round', ({ channelId }: { channelId: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = drawGuessRooms.get(cleanChannelId);
+    if (!room) return;
+
+    const participants = Array.from(activeUsers.entries())
+      .filter(([, u]) => u.currentVoiceChannelId === cleanChannelId)
+      .map(([sid, u]) => ({ sid, username: u.username }));
+
+    let nextDrawerSid = socket.id;
+    let nextDrawerName = activeUsers.get(socket.id)?.username || room.drawerName;
+
+    if (participants.length > 0) {
+      const currentIdx = participants.findIndex((p) => p.sid === room.drawerSocketId);
+      const nextIdx = currentIdx === -1 ? 0 : (currentIdx + 1) % participants.length;
+      nextDrawerSid = participants[nextIdx].sid;
+      nextDrawerName = participants[nextIdx].username;
+    }
+
+    const nextRound = room.round + 1;
+    const nextWord = pickRandomDrawWord(room.secretWord);
+    room.drawerSocketId = nextDrawerSid;
+    room.drawerName = nextDrawerName;
+    room.secretWord = nextWord;
+    room.round = nextRound;
+    room.maskedWord = maskDrawWord(nextWord, nextRound % 2 === 0);
+    room.revealedWord = undefined;
+    room.winnerName = null;
+    room.guesses = [];
+
+    io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
+    io.to(cleanChannelId).emit('drawguess_state', toPublicDrawGuessState(room));
+    io.to(nextDrawerSid).emit('drawguess_secret', { channelId: cleanChannelId, word: nextWord });
   });
 }

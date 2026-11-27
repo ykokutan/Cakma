@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X, Search, Inbox, AtSign, Hash, ArrowRight } from 'lucide-react';
+import { X, Search, Inbox, AtSign, Hash, ArrowRight, Bookmark, Trash2 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
 interface GlobalInboxModalProps {
@@ -8,8 +8,15 @@ interface GlobalInboxModalProps {
 }
 
 export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onClose }) => {
-  const { messagesMap, servers, currentUser, selectChannel } = useSocket();
-  const [tab, setTab] = useState<'mentions' | 'search'>('mentions');
+  const {
+    messagesMap,
+    servers,
+    currentUser,
+    selectChannel,
+    bookmarkedMessages,
+    toggleBookmarkMessage,
+  } = useSocket();
+  const [tab, setTab] = useState<'mentions' | 'search' | 'bookmarks'>('mentions');
   const [query, setQuery] = useState('');
 
   const channelLookup = useMemo(() => {
@@ -22,15 +29,17 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
     return map;
   }, [servers]);
 
-  const allMessages = useMemo(() => {
+  const { allMessages, msgChannelMap } = useMemo(() => {
     const list: Array<{ channelId: string; msg: any }> = [];
+    const chMap: Record<string, string> = {};
     for (const [channelId, msgs] of Object.entries(messagesMap || {})) {
       for (const msg of msgs) {
         list.push({ channelId, msg });
+        chMap[msg.id] = channelId;
       }
     }
     list.sort((a, b) => new Date(b.msg.timestamp).getTime() - new Date(a.msg.timestamp).getTime());
-    return list;
+    return { allMessages: list, msgChannelMap: chMap };
   }, [messagesMap]);
 
   const mentionItems = useMemo(() => {
@@ -53,9 +62,25 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
       .slice(0, 80);
   }, [allMessages, query]);
 
+  const bookmarkItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return bookmarkedMessages
+      .filter(
+        (bm) =>
+          !q ||
+          (bm.content || '').toLowerCase().includes(q) ||
+          (bm.author?.username || '').toLowerCase().includes(q)
+      )
+      .map((bm) => ({
+        channelId: bm.channelId || msgChannelMap[bm.id] || '',
+        msg: bm,
+      }));
+  }, [bookmarkedMessages, msgChannelMap, query]);
+
   if (!isOpen) return null;
 
-  const items = tab === 'mentions' ? mentionItems : searchResults;
+  const items =
+    tab === 'mentions' ? mentionItems : tab === 'bookmarks' ? bookmarkItems : searchResults;
 
   return (
     <div
@@ -69,7 +94,7 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
         <div className="px-5 py-3.5 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Inbox className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-sm font-bold text-white">Gelen Kutusu & Global Arama</h3>
+            <h3 className="text-sm font-bold text-white">Gelen Kutusu, Kaydedilenler &amp; Arama</h3>
           </div>
           <button
             type="button"
@@ -95,6 +120,18 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
           </button>
           <button
             type="button"
+            onClick={() => setTab('bookmarks')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
+              tab === 'bookmarks'
+                ? 'bg-cyan-500 text-black'
+                : 'bg-white/5 text-white/70 hover:bg-white/10'
+            }`}
+          >
+            <Bookmark className="w-3.5 h-3.5" />
+            <span>Kaydedilenler ({bookmarkedMessages.length})</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setTab('search')}
             className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition ${
               tab === 'search'
@@ -105,13 +142,17 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
             <Search className="w-3.5 h-3.5" />
             <span>Tüm Kanallarda Ara</span>
           </button>
-          {tab === 'search' && (
+          {(tab === 'search' || tab === 'bookmarks') && (
             <input
               type="text"
-              autoFocus
+              autoFocus={tab === 'search'}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Tüm sunucularda mesaj veya kullanıcı ara..."
+              placeholder={
+                tab === 'bookmarks'
+                  ? 'Kaydedilen mesajlarda filtrele...'
+                  : 'Tüm sunucularda mesaj veya kullanıcı ara...'
+              }
               className="flex-1 min-w-[200px] px-3 py-1.5 rounded-xl bg-black/40 border border-white/15 text-xs text-white placeholder:text-white/35 outline-none focus:border-cyan-400/60"
             />
           )}
@@ -122,13 +163,15 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
             <div className="py-12 text-center text-xs text-white/45">
               {tab === 'mentions'
                 ? 'Henüz sizi etiketleyen (@) bir mesaj bulunmuyor.'
+                : tab === 'bookmarks'
+                ? 'Henüz kaydedilmiş yer imi mesajı bulunmuyor.'
                 : query.trim()
                 ? 'Aramanızla eşleşen mesaj bulunamadı.'
                 : 'Aramak için yukarıya bir kelime yazın.'}
             </div>
           ) : (
             items.map(({ channelId, msg }) => {
-              const loc = channelLookup[channelId];
+              const loc = channelId ? channelLookup[channelId] : undefined;
               return (
                 <div
                   key={msg.id}
@@ -152,21 +195,35 @@ export const GlobalInboxModal: React.FC<GlobalInboxModalProps> = ({ isOpen, onCl
                         })}
                       </span>
                     </div>
-                    <p className="mt-1 text-xs text-white/85 break-words whitespace-pre-wrap">{msg.content}</p>
+                    <p className="mt-1 text-xs text-white/85 break-words whitespace-pre-wrap">
+                      {msg.content || '[Ekli Dosya]'}
+                    </p>
                   </div>
-                  {loc && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        selectChannel(channelId);
-                        onClose();
-                      }}
-                      className="px-2.5 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 text-[11px] font-semibold flex items-center gap-1 shrink-0 transition"
-                    >
-                      <span>Git</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {tab === 'bookmarks' && (
+                      <button
+                        type="button"
+                        onClick={() => toggleBookmarkMessage(msg)}
+                        className="p-1.5 rounded-lg hover:bg-rose-500/20 text-white/45 hover:text-rose-300 transition"
+                        title="Yer İminden Kaldır"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {loc && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          selectChannel(channelId);
+                          onClose();
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 text-[11px] font-semibold flex items-center gap-1 transition"
+                      >
+                        <span>Git</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })

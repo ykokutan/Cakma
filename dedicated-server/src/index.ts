@@ -655,6 +655,34 @@ app.get('/api/storage/usage', (_req, res) => {
 
 const dedicatedWatchRooms = new Map<string, any>();
 const dedicatedMiniGames = new Map<string, any>();
+const dedicatedDrawGuessRooms = new Map<string, any>();
+
+const DEDICATED_DRAW_WORDS = [
+  'araba', 'kedi', 'kopek', 'gunes', 'ev', 'agac', 'balik', 'roket',
+  'kulaklik', 'klavye', 'fare', 'mikrofon', 'gemi', 'ucak', 'dag', 'deniz',
+  'yildiz', 'kalp', 'elma', 'kahve', 'pizza', 'gitar', 'kitap', 'saat',
+];
+
+function normDrawGuess(input: string): string {
+  return String(input || '')
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'i')
+    .toLowerCase()
+    .replace(/ı/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function maskDrawGuessWord(word: string, revealFirst = false): string {
+  return Array.from(word)
+    .map((ch, idx) => (ch === ' ' ? ' ' : revealFirst && idx === 0 ? ch : '_'))
+    .join(' ');
+}
 
 // Socket Events
 io.on('connection', (socket: Socket) => {
@@ -1725,6 +1753,104 @@ io.on('connection', (socket: Socket) => {
   socket.on('minigame_stop', ({ channelId }: { channelId: string }) => {
     dedicatedMiniGames.delete(channelId);
     io.to(channelId).emit('minigame_ended');
+  });
+
+  socket.on('drawguess_start', ({ channelId }: { channelId: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    if (!cleanChannelId) return;
+    const secretWord = DEDICATED_DRAW_WORDS[Math.floor(Math.random() * DEDICATED_DRAW_WORDS.length)];
+    const room = {
+      channelId: cleanChannelId,
+      drawerSocketId: socket.id,
+      drawerName: user.username || 'Oyuncu',
+      secretWord,
+      maskedWord: maskDrawGuessWord(secretWord, false),
+      revealedWord: undefined as string | undefined,
+      round: 1,
+      scores: {} as Record<string, number>,
+      guesses: [] as Array<{ author: string; text: string; correct: boolean }>,
+      winnerName: null as string | null,
+    };
+    dedicatedDrawGuessRooms.set(cleanChannelId, room);
+    const { secretWord: _s, ...pub } = room;
+    io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
+    io.to(cleanChannelId).emit('drawguess_state', pub);
+    socket.emit('drawguess_secret', { channelId: cleanChannelId, word: secretWord });
+  });
+
+  socket.on('drawguess_get', ({ channelId }: { channelId: string }) => {
+    const room = dedicatedDrawGuessRooms.get(String(channelId || '').trim());
+    if (!room) return;
+    const { secretWord, ...pub } = room;
+    socket.emit('drawguess_state', pub);
+    if (room.drawerSocketId === socket.id) {
+      socket.emit('drawguess_secret', { channelId: room.channelId, word: secretWord });
+    }
+  });
+
+  socket.on('drawguess_stroke', ({ channelId, stroke }: { channelId: string; stroke: any }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = dedicatedDrawGuessRooms.get(cleanChannelId);
+    if (!room || room.drawerSocketId !== socket.id || room.winnerName) return;
+    socket.to(cleanChannelId).emit('drawguess_stroke', { channelId: cleanChannelId, stroke });
+  });
+
+  socket.on('drawguess_clear', ({ channelId }: { channelId: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = dedicatedDrawGuessRooms.get(cleanChannelId);
+    if (!room || room.drawerSocketId !== socket.id) return;
+    io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
+  });
+
+  socket.on('drawguess_guess', ({ channelId, text }: { channelId: string; text: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = dedicatedDrawGuessRooms.get(cleanChannelId);
+    const cleanText = String(text || '').trim();
+    if (!room || !cleanText || room.winnerName) return;
+    const authorName = user.username || 'Oyuncu';
+    const correct = socket.id !== room.drawerSocketId && normDrawGuess(cleanText) === normDrawGuess(room.secretWord);
+    if (correct) {
+      room.scores[authorName] = (room.scores[authorName] || 0) + 15;
+      room.scores[room.drawerName] = (room.scores[room.drawerName] || 0) + 10;
+      room.winnerName = authorName;
+      room.revealedWord = room.secretWord;
+      room.guesses = [...room.guesses.slice(-19), { author: authorName, text: '🎯 Doğru bildi!', correct: true }];
+    } else {
+      room.guesses = [...room.guesses.slice(-19), { author: authorName, text: cleanText.slice(0, 80), correct: false }];
+    }
+    const { secretWord: _s, ...pub } = room;
+    io.to(cleanChannelId).emit('drawguess_state', pub);
+  });
+
+  socket.on('drawguess_next_round', ({ channelId }: { channelId: string }) => {
+    const cleanChannelId = String(channelId || '').trim();
+    const room = dedicatedDrawGuessRooms.get(cleanChannelId);
+    if (!room) return;
+    const participants = Array.from(connectedUsers.entries())
+      .filter(([, u]) => u.currentVoiceChannelId === cleanChannelId)
+      .map(([sid, u]) => ({ sid, username: u.username }));
+    let nextSid = socket.id;
+    let nextName = user.username || room.drawerName;
+    if (participants.length > 0) {
+      const curIdx = participants.findIndex((p) => p.sid === room.drawerSocketId);
+      const nextIdx = curIdx === -1 ? 0 : (curIdx + 1) % participants.length;
+      nextSid = participants[nextIdx].sid;
+      nextName = participants[nextIdx].username;
+    }
+    const nextRound = room.round + 1;
+    const nextWord = DEDICATED_DRAW_WORDS[Math.floor(Math.random() * DEDICATED_DRAW_WORDS.length)];
+    room.drawerSocketId = nextSid;
+    room.drawerName = nextName;
+    room.secretWord = nextWord;
+    room.round = nextRound;
+    room.maskedWord = maskDrawGuessWord(nextWord, nextRound % 2 === 0);
+    room.revealedWord = undefined;
+    room.winnerName = null;
+    room.guesses = [];
+    const { secretWord: _s, ...pub } = room;
+    io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
+    io.to(cleanChannelId).emit('drawguess_state', pub);
+    io.to(nextSid).emit('drawguess_secret', { channelId: cleanChannelId, word: nextWord });
   });
 
   // Admin Request Data on Dedicated Server

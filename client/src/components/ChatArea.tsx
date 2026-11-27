@@ -7,6 +7,7 @@ import { VoiceNotePlayer } from './VoiceNotePlayer';
 import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
+import { findEmojiAutocompleteMatches, applyEmojiAutocomplete } from '../utils/customEmojiHelper';
 import { LinkPreviewCard } from './chat/LinkPreviewCard';
 import { OfflineQueueBanner } from './chat/OfflineQueueBanner';
 import { MessageSkeletonList } from './chat/MessageSkeletonList';
@@ -782,10 +783,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           }
           return <CodeBlock key={index} code={codeText} language={lang} />;
         }
-        return <InlineMarkdown key={index} text={part} />;
+        return <InlineMarkdown key={index} text={part} customEmojis={activeServer?.customEmojis} />;
       });
     }
-    return <InlineMarkdown text={content} />;
+    return <InlineMarkdown text={content} customEmojis={activeServer?.customEmojis} />;
   };
 
   const parsedSearchQuery = parseSmartSearchQuery(searchQuery);
@@ -3774,6 +3775,41 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 ))}
               </div>
             )}
+
+            {(() => {
+              const emojiCandidates = findEmojiAutocompleteMatches(
+                inputText,
+                activeServer?.customEmojis || [],
+                8
+              );
+              if (emojiCandidates.length === 0) return null;
+              return (
+                <div className="mb-2 rounded-2xl bg-[#131620]/95 border border-white/15 p-2 shadow-2xl backdrop-blur-xl space-y-0.5">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                    Özel Sunucu Emojileri
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                    {emojiCandidates.map((ce) => (
+                      <button
+                        key={ce.id}
+                        type="button"
+                        onClick={() => setInputText(applyEmojiAutocomplete(inputText, ce.name))}
+                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl hover:bg-white/10 text-left transition"
+                      >
+                        <img
+                          src={ce.url}
+                          alt={ce.name}
+                          className="w-5 h-5 object-contain rounded shrink-0"
+                        />
+                        <span className="text-xs font-mono text-amber-200 truncate">
+                          :{ce.name}:
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {inputText.startsWith('/') && !inputText.includes(' ') && (
               <div className="mb-2 rounded-2xl bg-[#131620]/95 border border-white/15 p-2 shadow-2xl backdrop-blur-xl space-y-0.5">

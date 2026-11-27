@@ -109,7 +109,44 @@ export const SpoilerText: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-function renderInlineTokens(raw: string): React.ReactNode {
+interface CustomEmojiLike {
+  id: string;
+  name: string;
+  url: string;
+}
+
+function renderTextWithCustomEmojis(
+  text: string,
+  customEmojis?: CustomEmojiLike[]
+): React.ReactNode {
+  if (!customEmojis || customEmojis.length === 0 || !text.includes(':')) {
+    return text;
+  }
+  const byName = new Map<string, CustomEmojiLike>();
+  for (const ce of customEmojis) {
+    byName.set(ce.name.toLowerCase(), ce);
+  }
+  const tokens = text.split(/(:[a-zA-Z0-9_-]{2,32}:)/g);
+  return tokens.map((tok, idx) => {
+    if (tok.startsWith(':') && tok.endsWith(':') && tok.length >= 4) {
+      const matched = byName.get(tok.slice(1, -1).toLowerCase());
+      if (matched) {
+        return (
+          <img
+            key={idx}
+            src={matched.url}
+            alt={`:${matched.name}:`}
+            title={`:${matched.name}:`}
+            className="inline-block w-5 h-5 object-contain align-text-bottom mx-0.5"
+          />
+        );
+      }
+    }
+    return tok;
+  });
+}
+
+function renderInlineTokens(raw: string, customEmojis?: CustomEmojiLike[]): React.ReactNode {
   if (!raw) return null;
   const parts = raw.split(
     /(`[^`\n]+`|\|\|[\s\S]*?\|\||\*\*[\s\S]*?\*\*|\*[\s\S]*?\*|~~[\s\S]*?~~)/g
@@ -149,11 +186,14 @@ function renderInlineTokens(raw: string): React.ReactNode {
         </del>
       );
     }
-    return <span key={pIdx}>{p}</span>;
+    return <span key={pIdx}>{renderTextWithCustomEmojis(p, customEmojis)}</span>;
   });
 }
 
-export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
+export const InlineMarkdown: React.FC<{
+  text: string;
+  customEmojis?: CustomEmojiLike[];
+}> = ({ text, customEmojis }) => {
   if (!text) return null;
   const blocks = parseMarkdownBlocks(text);
 
@@ -168,7 +208,7 @@ export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
                   <tr className="border-b border-white/15 bg-white/[0.05]">
                     {block.headers.map((h, hIdx) => (
                       <th key={hIdx} className="px-2.5 py-1.5 font-bold text-white">
-                        {renderInlineTokens(h)}
+                        {renderInlineTokens(h, customEmojis)}
                       </th>
                     ))}
                   </tr>
@@ -178,7 +218,7 @@ export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
                     <tr key={rIdx} className="border-b border-white/5 last:border-b-0">
                       {block.headers.map((_, cIdx) => (
                         <td key={cIdx} className="px-2.5 py-1 text-white/85">
-                          {renderInlineTokens(row[cIdx] || '')}
+                          {renderInlineTokens(row[cIdx] || '', customEmojis)}
                         </td>
                       ))}
                     </tr>
@@ -198,7 +238,7 @@ export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
               : 'text-xs font-bold uppercase tracking-wide text-cyan-200';
           return (
             <div key={bIdx} className={cls}>
-              {renderInlineTokens(block.text)}
+              {renderInlineTokens(block.text, customEmojis)}
             </div>
           );
         }
@@ -209,7 +249,7 @@ export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
               key={bIdx}
               className="block border-l-2 border-amber-400 pl-2.5 py-0.5 text-white/70 italic bg-white/[0.02] rounded-r"
             >
-              {renderInlineTokens(block.text)}
+              {renderInlineTokens(block.text, customEmojis)}
             </span>
           );
         }
@@ -218,7 +258,7 @@ export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
           return (
             <ul key={bIdx} className="list-disc list-inside space-y-0.5 pl-1 text-white/90">
               {block.items.map((item, itemIdx) => (
-                <li key={itemIdx}>{renderInlineTokens(item)}</li>
+                <li key={itemIdx}>{renderInlineTokens(item, customEmojis)}</li>
               ))}
             </ul>
           );
@@ -226,7 +266,7 @@ export const InlineMarkdown: React.FC<{ text: string }> = ({ text }) => {
 
         return (
           <span key={bIdx} className="block">
-            {renderInlineTokens(block.text)}
+            {renderInlineTokens(block.text, customEmojis)}
           </span>
         );
       })}
