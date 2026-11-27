@@ -15,11 +15,23 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.3.1 - Latest */}
+        {/* v1.4.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.3.1 — Son Sürüm (UI/UX Parlatma)</span>
+            <span className="text-xs font-bold text-emerald-300">v1.4.0 — Son Sürüm (TeamSpeak + Discord + AI Paketi)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">UI/UX &amp; Yönetici Konsolu:</strong> Sabit başlıklı, kapsamlı aramalı ve mobil yatay şeritli yeni <code className="text-emerald-200">SettingsModal</code>; rol sürükle-bırak sıralama + çıkış korumalı <code className="text-emerald-200">ServerSettingsModal</code>; üye listesi için hızlı <code className="text-emerald-200">UserPopoverCard</code>; Sistem Yönetim Konsolunda <code className="text-emerald-200">Ctrl+K</code> arama, otomatik yenileme ve çıkış koruması.</li>
+            <li><strong className="text-white">Whisper AI Ses Çözümleme &amp; Instant Replay:</strong> Çok dilli istemci içi Whisper AI canlı altyazı + sesli notları (<code className="text-emerald-200">VoiceNotePlayer</code>) tek tıkla yazıya dökme ve çevirme, <code className="text-emerald-200">Öncelikli Konuşmacı (Priority Speaker)</code> kontrolleri ve son 30 sn yayın/ses klibini <code className="text-emerald-200">Alt+C</code> ile indirme veya odaya gönderme.</li>
+            <li><strong className="text-white">Topluluk, Performans &amp; Oyunlar:</strong> İzole telemetri store&apos;u (<code className="text-emerald-200">NetworkMetricsContext</code>), <code className="text-emerald-200">:emoji:</code> otomatik tamamlama &amp; satır içi render, <code className="text-emerald-200">GlobalInboxModal</code> içinde Kaydedilenler sekmesi, çok oyunculu <code className="text-emerald-200">Çiz &amp; Tahmin Et</code> oyunu ve Dedicated Server oda eşitliği eklendi.</li>
+          </ul>
+        </div>
+
+        {/* v1.3.1 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v1.3.1 — Önceki Sürüm (UI/UX Parlatma)</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">Erişilebilir Durum İkonları &amp; Tipografi:</strong> <code className="text-emerald-200">StatusIndicator</code> bileşeni üye listesi, DM sohbetleri ve kullanıcı çubuğuna yayıldı; durum menüsü mikro metinleri okunabilir <code className="text-emerald-200">11px</code> düzeyine yükseltildi.</li>
