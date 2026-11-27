@@ -11,6 +11,7 @@ import {
   Search,
 } from 'lucide-react';
 import { authFetch } from '../../utils/authFetch';
+import { decodeAudioWaveformData, parseDurationHintSeconds } from '../../utils/audioWaveform';
 import { parseZipDirectory, type ZipEntryInfo } from '../../utils/zipInspector';
 import { parseCsvPreview, parseJsonPreview, type TabularPreviewData } from '../../utils/tabularPreviewParser';
 
@@ -22,7 +23,7 @@ interface RichAttachmentPreviewProps {
   isBlobUrl?: boolean;
 }
 
-const waveformCache = new Map<string, number[]>();
+const waveformCache = new Map<string, { peaks: number[]; duration: number }>();
 
 function formatBytes(bytes?: number): string {
   if (!bytes || !Number.isFinite(bytes)) return '';
@@ -44,53 +45,71 @@ export const WaveformAudioCard: React.FC<{ url: string; name: string; sizeBytes?
   sizeBytes,
 }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [peaks, setPeaks] = useState<number[]>(() => waveformCache.get(url) || Array.from({ length: 36 }, (_, i) => 0.25 + ((i * 7) % 11) / 16));
+  const rafRef = useRef<number | null>(null);
+  const isProbingRef = useRef(false);
+  const [peaks, setPeaks] = useState<number[]>(
+    () =>
+      waveformCache.get(url)?.peaks ||
+      Array.from({ length: 36 }, (_, i) => 0.25 + ((i * 7) % 11) / 16)
+  );
   const [playing, setPlaying] = useState(false);
   const [currentSec, setCurrentSec] = useState(0);
-  const [durationSec, setDurationSec] = useState(0);
+  const [durationSec, setDurationSec] = useState<number>(() => {
+    const cachedDur = waveformCache.get(url)?.duration || 0;
+    return cachedDur > 0 ? cachedDur : parseDurationHintSeconds(name);
+  });
   const [rate, setRate] = useState<1 | 1.5 | 2>(1);
+  const durationRef = useRef(durationSec);
 
   useEffect(() => {
-    if (waveformCache.has(url)) return;
+    durationRef.current = durationSec;
+  }, [durationSec]);
+
+  useEffect(() => {
+    const cached = waveformCache.get(url);
+    if (cached) {
+      setPeaks(cached.peaks);
+      if (cached.duration > 0) setDurationSec(cached.duration);
+      return;
+    }
     let cancelled = false;
-    const decode = async () => {
-      try {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (!AudioCtx) return;
-        const resp = await authFetch(url);
-        if (!resp.ok) return;
-        const arr = await resp.arrayBuffer();
-        const ctx = new AudioCtx();
-        const buf = await ctx.decodeAudioData(arr).finally(() => void ctx.close().catch(() => {}));
-        const ch = buf.getChannelData(0);
-        const bars = 36;
-        const step = Math.max(1, Math.floor(ch.length / bars));
-        const out: number[] = [];
-        let maxPeak = 0.01;
-        for (let b = 0; b < bars; b++) {
-          let sum = 0;
-          const start = b * step;
-          for (let j = 0; j < step && start + j < ch.length; j += 8) {
-            sum += Math.abs(ch[start + j]);
-          }
-          const avg = sum / Math.max(1, Math.floor(step / 8));
-          if (avg > maxPeak) maxPeak = avg;
-          out.push(avg);
-        }
-        const normalized = out.map((v) => Math.max(0.12, Math.min(1, v / maxPeak)));
-        waveformCache.set(url, normalized);
-        if (!cancelled) setPeaks(normalized);
-      } catch {
-        // Keep deterministic fallback bars
+    void decodeAudioWaveformData(url, 36).then((decoded) => {
+      if (cancelled || !decoded) return;
+      const normalized = decoded.peaks.map((p) => Math.max(0.14, Math.min(1, p / 100)));
+      waveformCache.set(url, { peaks: normalized, duration: decoded.duration });
+      setPeaks(normalized);
+      if (decoded.duration > 0) {
+        setDurationSec(decoded.duration);
       }
-    };
-    void decode();
+    });
     return () => {
       cancelled = true;
     };
   }, [url]);
 
-  const progressRatio = durationSec > 0 ? Math.min(1, currentSec / durationSec) : 0;
+  useEffect(() => {
+    if (!playing) {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      return;
+    }
+    const tick = () => {
+      const el = audioRef.current;
+      if (el) {
+        setCurrentSec(el.currentTime || 0);
+        if (Number.isFinite(el.duration) && el.duration > 0) {
+          setDurationSec(el.duration);
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [playing]);
+
+  const finiteDuration = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 0;
+  const progressRatio = finiteDuration > 0 ? Math.min(1, Math.max(0, currentSec / finiteDuration)) : 0;
 
   return (
     <div className="p-3 rounded-2xl bg-black/30 border border-white/10 max-w-md space-y-2">
@@ -98,9 +117,58 @@ export const WaveformAudioCard: React.FC<{ url: string; name: string; sizeBytes?
         ref={audioRef}
         src={url}
         preload="metadata"
-        onLoadedMetadata={() => setDurationSec(audioRef.current?.duration || 0)}
-        onTimeUpdate={() => setCurrentSec(audioRef.current?.currentTime || 0)}
-        onEnded={() => setPlaying(false)}
+        onLoadedMetadata={() => {
+          const el = audioRef.current;
+          if (!el) return;
+          if (Number.isFinite(el.duration) && el.duration > 0) {
+            setDurationSec(el.duration);
+          } else if (el.duration === Infinity && durationRef.current <= 0 && el.paused) {
+            isProbingRef.current = true;
+            el.currentTime = 1e7;
+          }
+        }}
+        onDurationChange={() => {
+          const el = audioRef.current;
+          if (!el) return;
+          if (Number.isFinite(el.duration) && el.duration > 0) {
+            setDurationSec(el.duration);
+            if (isProbingRef.current) {
+              isProbingRef.current = false;
+              el.currentTime = 0;
+              setCurrentSec(0);
+            }
+          }
+        }}
+        onTimeUpdate={() => {
+          const el = audioRef.current;
+          if (!el) return;
+          if (isProbingRef.current) {
+            if (Number.isFinite(el.duration) && el.duration > 0) {
+              isProbingRef.current = false;
+              setDurationSec(el.duration);
+              el.currentTime = 0;
+              setCurrentSec(0);
+            }
+            return;
+          }
+          setCurrentSec(el.currentTime || 0);
+        }}
+        onPlay={() => {
+          const el = audioRef.current;
+          if (el && isProbingRef.current) {
+            isProbingRef.current = false;
+            el.currentTime = 0;
+          }
+          setPlaying(true);
+        }}
+        onPause={() => {
+          if (!audioRef.current?.ended) setPlaying(false);
+        }}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrentSec(0);
+          if (audioRef.current) audioRef.current.currentTime = 0;
+        }}
       />
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-semibold text-white truncate">🎵 {name}</div>
@@ -124,8 +192,12 @@ export const WaveformAudioCard: React.FC<{ url: string; name: string; sizeBytes?
             const el = audioRef.current;
             if (!el) return;
             if (el.paused) {
-              void el.play();
-              setPlaying(true);
+              if (isProbingRef.current) {
+                isProbingRef.current = false;
+                el.currentTime = 0;
+              }
+              el.playbackRate = rate;
+              void el.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
             } else {
               el.pause();
               setPlaying(false);
@@ -140,15 +212,15 @@ export const WaveformAudioCard: React.FC<{ url: string; name: string; sizeBytes?
           className="flex-1 h-8 flex items-end gap-[2px] cursor-pointer"
           onClick={(e) => {
             const el = audioRef.current;
-            if (!el || !durationSec) return;
+            if (!el || finiteDuration <= 0) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-            el.currentTime = ratio * durationSec;
+            el.currentTime = ratio * finiteDuration;
             setCurrentSec(el.currentTime);
           }}
         >
           {peaks.map((amp, idx) => {
-            const active = idx / peaks.length <= progressRatio;
+            const active = progressRatio > 0 && idx / peaks.length < progressRatio;
             return (
               <div
                 key={idx}
@@ -176,7 +248,7 @@ export const WaveformAudioCard: React.FC<{ url: string; name: string; sizeBytes?
 
       <div className="flex justify-between text-[10px] font-mono text-white/45">
         <span>{formatSec(currentSec)}</span>
-        <span>{formatSec(durationSec)}</span>
+        <span>{formatSec(finiteDuration)}</span>
       </div>
     </div>
   );

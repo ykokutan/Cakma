@@ -4,6 +4,7 @@ import { useChat } from '../context/ChatContext';
 import { useTypingUsers, useDirectCallQuality } from '../context/PresenceStore';
 import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { VoiceNotePlayer } from './VoiceNotePlayer';
+import { isVoiceNoteFilename, parseDurationHintSeconds } from '../utils/audioWaveform';
 import { CodeBlock } from './CodeBlock';
 import { AvatarView } from './AvatarView';
 import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
@@ -3229,14 +3230,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           }
                           const resolvedUrl = resolveMediaUrl(att.url, currentServerHost);
                           const lowerAttName = att.name.toLowerCase();
-                          const isVoiceNoteAudio =
-                            lowerAttName.includes('ses-notu') ||
-                            lowerAttName.includes('voice-note') ||
-                            lowerAttName.includes('ses notu');
+                          const isVoiceNoteAudio = isVoiceNoteFilename(att.name, msg.content);
                           if (att.type.startsWith('audio/') && isVoiceNoteAudio) {
                             return (
                               <div key={att.id} className="pt-1">
-                                <VoiceNotePlayer url={resolvedUrl} authorName={msg.author.username} />
+                                <VoiceNotePlayer
+                                  url={resolvedUrl}
+                                  durationSeconds={parseDurationHintSeconds(att.name)}
+                                  authorName={msg.author.username}
+                                />
                               </div>
                             );
                           }

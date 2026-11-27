@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Mic, Download, Sparkles, Loader2, Languages } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
-import { decodeAudioWaveformPeaks } from '../utils/audioWaveform';
+import { decodeAudioWaveformData } from '../utils/audioWaveform';
 import {
   detectSpokenLangHint,
   translateCaptionClientSide,
@@ -32,13 +32,29 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
   const [transcriptError, setTranscriptError] = useState<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const isProbingRef = useRef(false);
+  const durationRef = useRef(duration);
+
+  useEffect(() => {
+    durationRef.current = duration;
+  }, [duration]);
+
+  useEffect(() => {
+    if (durationSeconds && Number.isFinite(durationSeconds) && durationSeconds > 0 && durationRef.current <= 0) {
+      setDuration(durationSeconds);
+    }
+  }, [durationSeconds]);
 
   useEffect(() => {
     let active = true;
     setWaveformHeights(DEFAULT_WAVEFORM);
-    void decodeAudioWaveformPeaks(url, 24).then((peaks) => {
-      if (active && peaks && peaks.length > 0) {
-        setWaveformHeights(peaks);
+    void decodeAudioWaveformData(url, 24).then((decoded) => {
+      if (!active || !decoded) return;
+      if (decoded.peaks.length > 0) {
+        setWaveformHeights(decoded.peaks);
+      }
+      if (decoded.duration > 0) {
+        setDuration(decoded.duration);
       }
     });
     return () => {
@@ -49,7 +65,7 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
   useEffect(() => {
     const audio = new Audio(url);
     audioRef.current = audio;
-    let isProbingDuration = false;
+    isProbingRef.current = false;
 
     const updateFiniteDuration = () => {
       if (Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -60,25 +76,25 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
     };
 
     audio.onloadedmetadata = () => {
-      if (!updateFiniteDuration() && audio.duration === Infinity) {
+      if (!updateFiniteDuration() && audio.duration === Infinity && durationRef.current <= 0 && audio.paused) {
         // Chromium MediaRecorder WebM blobs often report Infinity duration until seeked to end
-        isProbingDuration = true;
+        isProbingRef.current = true;
         audio.currentTime = 1e7;
       }
     };
 
     audio.ondurationchange = () => {
-      if (updateFiniteDuration() && isProbingDuration) {
-        isProbingDuration = false;
+      if (updateFiniteDuration() && isProbingRef.current) {
+        isProbingRef.current = false;
         audio.currentTime = 0;
         setCurrentTime(0);
       }
     };
 
     audio.ontimeupdate = () => {
-      if (isProbingDuration) {
+      if (isProbingRef.current) {
         if (updateFiniteDuration()) {
-          isProbingDuration = false;
+          isProbingRef.current = false;
           audio.currentTime = 0;
           setCurrentTime(0);
         }
@@ -87,9 +103,22 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
       setCurrentTime(audio.currentTime);
     };
 
+    audio.onplay = () => {
+      if (isProbingRef.current) {
+        isProbingRef.current = false;
+        audio.currentTime = 0;
+      }
+      setIsPlaying(true);
+    };
+
+    audio.onpause = () => {
+      if (!audio.ended) setIsPlaying(false);
+    };
+
     audio.onended = () => {
       setIsPlaying(false);
       setCurrentTime(0);
+      audio.currentTime = 0;
     };
 
     return () => {
@@ -122,13 +151,18 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
   }, [isPlaying]);
 
   const togglePlay = () => {
-    if (!audioRef.current) return;
+    const audio = audioRef.current;
+    if (!audio) return;
     if (isPlaying) {
-      audioRef.current.pause();
+      audio.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.playbackRate = playbackRate;
-      audioRef.current.play().then(() => {
+      if (isProbingRef.current) {
+        isProbingRef.current = false;
+        audio.currentTime = 0;
+      }
+      audio.playbackRate = playbackRate;
+      audio.play().then(() => {
         setIsPlaying(true);
       }).catch(() => {
         setIsPlaying(false);
@@ -261,8 +295,8 @@ export const VoiceNotePlayer: React.FC<VoiceNotePlayerProps> = ({ url, durationS
             title="İlerletmek için tıklayın"
           >
             {waveformHeights.map((h, i) => {
-              const barProgress = ((i + 0.5) / waveformHeights.length) * 100;
-              const isPlayed = progressPercent > 0 && barProgress <= progressPercent;
+              const barPercent = (i / waveformHeights.length) * 100;
+              const isPlayed = progressPercent > 0 && barPercent < progressPercent;
               return (
                 <span
                   key={i}

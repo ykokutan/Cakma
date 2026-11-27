@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractWaveformPeaksFromSamples } from '../audioWaveform';
+import {
+  extractWaveformPeaksFromSamples,
+  isVoiceNoteFilename,
+  parseDurationHintSeconds,
+} from '../audioWaveform';
 
 describe('audioWaveform', () => {
   it('returns flat low peaks for empty or silent Float32Array', () => {
@@ -27,5 +31,17 @@ describe('audioWaveform', () => {
   it('clamps requested bar counts to [4, 64]', () => {
     expect(extractWaveformPeaksFromSamples(new Float32Array([0.5, -0.5]), 1)).toHaveLength(4);
     expect(extractWaveformPeaksFromSamples(new Float32Array([0.5, -0.5]), 200)).toHaveLength(64);
+  });
+
+  it('detects voice note filenames across Turkish and English formats and parses duration hints', () => {
+    expect(isVoiceNoteFilename('Sesli Mesaj (4s).webm')).toBe(true);
+    expect(isVoiceNoteFilename('SESLİ MESAJ (12s).webm')).toBe(true);
+    expect(isVoiceNoteFilename('ses-notu.webm')).toBe(true);
+    expect(isVoiceNoteFilename('clip.webm', '🎙️ Sesli Mesaj')).toBe(true);
+    expect(isVoiceNoteFilename('muzik.mp3')).toBe(false);
+
+    expect(parseDurationHintSeconds('Sesli Mesaj (4s).webm')).toBe(4);
+    expect(parseDurationHintSeconds('Sesli Mesaj (12.5s).webm')).toBe(12.5);
+    expect(parseDurationHintSeconds('muzik.mp3')).toBe(0);
   });
 });

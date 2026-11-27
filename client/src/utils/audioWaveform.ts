@@ -1,3 +1,33 @@
+import { authFetch } from './authFetch';
+
+export function isVoiceNoteFilename(name: string, messageContent?: string): boolean {
+  const raw = String(name || '');
+  const lowerTr = raw.toLocaleLowerCase('tr-TR');
+  const lower = raw.toLowerCase();
+  const matchesName =
+    lowerTr.includes('sesli mesaj') ||
+    lowerTr.includes('sesli-mesaj') ||
+    lowerTr.includes('ses notu') ||
+    lowerTr.includes('ses-notu') ||
+    lower.includes('sesli mesaj') ||
+    lower.includes('sesli-mesaj') ||
+    lower.includes('ses notu') ||
+    lower.includes('ses-notu') ||
+    lower.includes('voice-note') ||
+    lower.includes('voice message') ||
+    lower.includes('voice-message');
+
+  if (matchesName) return true;
+  return typeof messageContent === 'string' && messageContent.includes('🎙️ Sesli Mesaj');
+}
+
+export function parseDurationHintSeconds(name: string): number {
+  const match = String(name || '').match(/\((\d+(?:\.\d+)?)s\)/i);
+  if (!match) return 0;
+  const val = Number(match[1]);
+  return Number.isFinite(val) && val > 0 ? val : 0;
+}
+
 export function extractWaveformPeaksFromSamples(
   samples: Float32Array,
   barCount = 24
@@ -32,10 +62,10 @@ export function extractWaveformPeaksFromSamples(
   });
 }
 
-export async function decodeAudioWaveformPeaks(
+export async function decodeAudioWaveformData(
   url: string,
   barCount = 24
-): Promise<number[] | null> {
+): Promise<{ peaks: number[]; duration: number } | null> {
   if (typeof window === 'undefined' || !url) return null;
   const AudioCtx =
     window.AudioContext ||
@@ -44,14 +74,22 @@ export async function decodeAudioWaveformPeaks(
 
   let ctx: AudioContext | null = null;
   try {
-    const res = await fetch(url);
+    const isLocalBlobOrData = url.startsWith('blob:') || url.startsWith('data:');
+    const res = isLocalBlobOrData ? await fetch(url) : await authFetch(url);
     if (!res.ok) return null;
     const buf = await res.arrayBuffer();
     if (!buf || buf.byteLength === 0) return null;
     ctx = new AudioCtx();
     const audioBuffer = await ctx.decodeAudioData(buf);
     const channelData = audioBuffer.getChannelData(0);
-    return extractWaveformPeaksFromSamples(channelData, barCount);
+    const duration =
+      Number.isFinite(audioBuffer.duration) && audioBuffer.duration > 0
+        ? audioBuffer.duration
+        : 0;
+    return {
+      peaks: extractWaveformPeaksFromSamples(channelData, barCount),
+      duration,
+    };
   } catch {
     return null;
   } finally {
@@ -59,4 +97,12 @@ export async function decodeAudioWaveformPeaks(
       ctx.close().catch(() => {});
     }
   }
+}
+
+export async function decodeAudioWaveformPeaks(
+  url: string,
+  barCount = 24
+): Promise<number[] | null> {
+  const decoded = await decodeAudioWaveformData(url, barCount);
+  return decoded ? decoded.peaks : null;
 }

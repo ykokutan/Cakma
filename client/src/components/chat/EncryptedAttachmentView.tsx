@@ -5,6 +5,8 @@ import { authFetch, resolveMediaUrl } from '../../utils/authFetch';
 import { decryptBinaryFromPeer } from '../../utils/e2ee';
 import { decryptGroupAttachmentBytes, getCachedGroupSenderKey } from '../../utils/groupE2ee';
 import { t, type AppLanguage } from '../../utils/i18n';
+import { isVoiceNoteFilename, parseDurationHintSeconds } from '../../utils/audioWaveform';
+import { VoiceNotePlayer } from '../VoiceNotePlayer';
 import { RichAttachmentPreview } from './RichAttachmentPreview';
 
 interface EncryptedAttachmentViewProps {
@@ -204,7 +206,11 @@ export const EncryptedAttachmentView: React.FC<EncryptedAttachmentViewProps> = (
           <Lock className="w-2.5 h-2.5" />
           E2EE ÇÖZÜLDÜ
         </div>
-        <RichAttachmentPreview url={blobUrl} name={origName} mimeType={origType} sizeBytes={origSize} isBlobUrl />
+        {isVoiceNoteFilename(origName) ? (
+          <VoiceNotePlayer url={blobUrl} durationSeconds={parseDurationHintSeconds(origName)} />
+        ) : (
+          <RichAttachmentPreview url={blobUrl} name={origName} mimeType={origType} sizeBytes={origSize} isBlobUrl />
+        )}
       </div>
     );
   }
