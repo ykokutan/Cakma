@@ -3724,14 +3724,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     newSocket.on('priority_speaker_active', ({ userId, username, active }: { userId: string; username: string; active: boolean }) => {
       setPrioritySpeakerUsername(active ? username : null);
       audioElementsRef.current.forEach((audio, pId) => {
+        const baseVol = Math.min(1, Math.max(0, ((userVolumesRef.current[pId] ?? 100) / 100) * (outputVolumeRef.current / 100)));
         if (active) {
-          if (pId !== userId) {
-            audio.volume = Math.max(0.05, ((userVolumes[pId] ?? 100) / 100) * 0.25);
-          } else {
-            audio.volume = Math.min(2, (userVolumes[pId] ?? 100) / 100);
-          }
+          audio.volume = pId !== userId ? Math.max(0.05, baseVol * 0.25) : baseVol;
         } else {
-          audio.volume = Math.min(2, (userVolumes[pId] ?? 100) / 100);
+          audio.volume = baseVol;
         }
       });
     });

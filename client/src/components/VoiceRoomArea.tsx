@@ -68,6 +68,7 @@ import {
   Check,
   Scissors,
   Download,
+  Crown,
 } from 'lucide-react';
 
 // Video component for displaying live WebRTC screen share stream
@@ -522,6 +523,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     sendScreenShareLaser,
     muteAllVoiceChannel,
     voiceTransportMode,
+    hasServerPermission,
   } = useSocket();
   const ping = useNetworkPing();
   const [isSpotlightMode, setIsSpotlightMode] = useState(false);
@@ -621,6 +623,7 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
   const [userContextMenu, setUserContextMenu] = useState<{ user: any; x: number; y: number } | null>(null);
   const [clipBufferEnabled, setClipBufferEnabled] = useState(false);
   const [clipBufferedSeconds, setClipBufferedSeconds] = useState(0);
+  const [isSharingClip, setIsSharingClip] = useState(false);
   const clipRecorderRef = useRef<StreamClipRecorderHandle | null>(null);
   const activeClipStream =
     isScreenSharing && screenStream
@@ -653,6 +656,43 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
       }
     };
   }, [clipBufferEnabled, activeClipStream]);
+
+  useEffect(() => {
+    if (!clipBufferEnabled || clipBufferedSeconds <= 0) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        const blob = clipRecorderRef.current?.captureBlob();
+        if (!blob) return;
+        downloadClipBlob(blob, 'cakma-stream-clip');
+        appToast('Anlık Tekrar (Alt+C) klibi indirildi!', 'success');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [clipBufferEnabled, clipBufferedSeconds]);
+
+  const handleShareClipToRoom = async () => {
+    if (isSharingClip) return;
+    const blob = clipRecorderRef.current?.captureBlob();
+    if (!blob) {
+      appToast('Henüz paylaşılacak klip tamponu oluşmadı.', 'info');
+      return;
+    }
+    setIsSharingClip(true);
+    try {
+      const file = new File([blob], `klip-${Date.now()}.webm`, {
+        type: blob.type || 'video/webm',
+      });
+      const attachment = await uploadAttachmentFile(currentServerHost, file);
+      sendMessage('🎬 Son 30 sn Anlık Tekrar Klibi', [attachment]);
+      appToast('30 saniyelik klip oda sohbetine gönderildi!', 'success');
+    } catch {
+      appToast('Klip yüklenemedi.', 'error');
+    } finally {
+      setIsSharingClip(false);
+    }
+  };
 
   const handleOpenUserContextMenu = (e: React.MouseEvent, user: any) => {
     e.preventDefault();
@@ -748,6 +788,31 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
               <MicOff className="w-3.5 h-3.5" />
               <span>Herkesi Sustur</span>
             </button>
+          )}
+          {/* Priority Speaker (TeamSpeak Ducking) */}
+          {isConnected &&
+            (isUserServerOwner(currentUser, activeServer) ||
+              currentUser?.role === 'admin' ||
+              hasServerPermission('priority_speaker')) && (
+              <button
+                type="button"
+                onClick={togglePrioritySpeaker}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium shrink-0 ${
+                  isPrioritySpeakerActive
+                    ? 'bg-amber-500/25 border-amber-400/60 text-amber-200 shadow-lg shadow-amber-500/20'
+                    : 'bg-white/5 border-white/10 hover:bg-white/10 text-white/80'
+                }`}
+                title="Öncelikli Konuşmacı: Konuştuğunuzda odadaki diğer herkesin sesini otomatik kısar"
+              >
+                <Crown className={`w-3.5 h-3.5 ${isPrioritySpeakerActive ? 'text-amber-300' : ''}`} />
+                <span>Öncelikli</span>
+              </button>
+            )}
+          {prioritySpeakerUsername && (
+            <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[11px] font-semibold shrink-0 animate-pulse">
+              <Crown className="w-3 h-3 text-amber-300" />
+              <span>{prioritySpeakerUsername} Öncelikli Konuşmacı Aktif</span>
+            </span>
           )}
           {/* Voice Room Audio Recorder */}
           {isConnected && (
@@ -1090,12 +1155,23 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                         return;
                       }
                       downloadClipBlob(blob, 'cakma-stream-clip');
-                      appToast('30 saniyelik yayın klibi indirildi!', 'success');
+                      appToast('30 saniyelik klip indirildi!', 'success');
                     }}
+                    title="Son 30 saniyeyi indir (Kısayol: Alt+C)"
                     className="px-2.5 py-1 rounded-lg font-semibold border border-amber-400/40 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1.5"
                   >
                     <Download className="w-3 h-3" />
-                    <span>{t(language, 'streamClipSave')}</span>
+                    <span>{t(language, 'streamClipSave')} (Alt+C)</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!clipBufferEnabled || clipBufferedSeconds <= 0 || isSharingClip}
+                    onClick={() => void handleShareClipToRoom()}
+                    className="px-2.5 py-1 rounded-lg font-semibold border border-cyan-400/40 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1.5"
+                    title="Yakalanan klibi doğrudan ses odası sohbetine yükle ve paylaş"
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>{isSharingClip ? 'Gönderiliyor...' : 'Odaya Gönder'}</span>
                   </button>
                 </div>
               </div>
