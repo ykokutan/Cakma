@@ -7,6 +7,7 @@ import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX, Search, X } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 import { formatElapsedPlaytime } from '../utils/gameDetectionRules';
+import { getNameGradientClass } from '../utils/cosmeticsCatalog';
 import { StatusIndicator } from './StatusIndicator';
 import { UserPopoverCard } from './UserPopoverCard';
 
@@ -345,9 +346,21 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                         </span>
                       )}
                       <span
-                        style={userRole?.color ? { color: userRole.color } : undefined}
+                        style={
+                          user.nameGradient && user.nameGradient !== 'none'
+                            ? undefined
+                            : userRole?.color
+                            ? { color: userRole.color }
+                            : undefined
+                        }
                         className={`text-xs font-bold truncate ${
-                          !userRole?.color ? (isMe ? 'text-blue-400' : 'text-white') : ''
+                          user.nameGradient && user.nameGradient !== 'none'
+                            ? getNameGradientClass(user.nameGradient)
+                            : !userRole?.color
+                            ? isMe
+                              ? 'text-blue-400'
+                              : 'text-white'
+                            : ''
                         }`}
                       >
                         {displayName}

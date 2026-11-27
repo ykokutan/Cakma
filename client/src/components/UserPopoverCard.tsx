@@ -20,6 +20,7 @@ import type { ServerRole, User } from '../types';
 import { AvatarView } from './AvatarView';
 import { StatusIndicator } from './StatusIndicator';
 import { formatElapsedPlaytime } from '../utils/gameDetectionRules';
+import { getNameGradientClass } from '../utils/cosmeticsCatalog';
 
 interface UserPopoverCardProps {
   user: User;
@@ -164,7 +165,9 @@ export const UserPopoverCard: React.FC<UserPopoverCardProps> = ({
       <div className="p-4 pt-2.5 space-y-3">
         <div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <h4 className="text-sm font-bold text-white truncate">{displayName}</h4>
+            <h4 className={`text-sm font-bold truncate ${user.nameGradient && user.nameGradient !== 'none' ? getNameGradientClass(user.nameGradient) : 'text-white'}`}>
+              {displayName}
+            </h4>
             {isOwner && (
               <span title="Sunucu Sahibi">
                 <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />

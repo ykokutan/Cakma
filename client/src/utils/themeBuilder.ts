@@ -40,3 +40,35 @@ export function applyCustomThemeVariables(root: HTMLElement, cfg: CustomThemeCon
   root.style.setProperty('--custom-accent', accent);
   root.style.setProperty('--custom-accent-rgb', hexToRgbTuple(accent));
 }
+
+export interface SharedThemeTokenData {
+  name: string;
+  config: CustomThemeConfig;
+}
+
+const SHARED_THEME_TOKEN_RE = /\[\[CAKMA_THEME:v1:([^:\]]+):(dark|light):(#[0-9a-fA-F]{6}):(#[0-9a-fA-F]{6})\]\]/;
+
+export function encodeShareableTheme(name: string, cfg: CustomThemeConfig): string {
+  const safeName =
+    String(name || 'Özel Tema')
+      .replace(/[:\]\[\r\n]/g, '')
+      .trim()
+      .slice(0, 32) || 'Özel Tema';
+  const mode = cfg.mode === 'light' ? 'light' : 'dark';
+  const bg = sanitizeHexColor(cfg.bgColor, DEFAULT_CUSTOM_THEME.bgColor);
+  const accent = sanitizeHexColor(cfg.accentColor, DEFAULT_CUSTOM_THEME.accentColor);
+  return `[[CAKMA_THEME:v1:${safeName}:${mode}:${bg}:${accent}]]`;
+}
+
+export function decodeShareableTheme(input: string): SharedThemeTokenData | null {
+  const match = String(input || '').match(SHARED_THEME_TOKEN_RE);
+  if (!match) return null;
+  return {
+    name: match[1].trim().slice(0, 32) || 'Özel Tema',
+    config: {
+      mode: match[2] === 'light' ? 'light' : 'dark',
+      bgColor: sanitizeHexColor(match[3], DEFAULT_CUSTOM_THEME.bgColor),
+      accentColor: sanitizeHexColor(match[4], DEFAULT_CUSTOM_THEME.accentColor),
+    },
+  };
+}

@@ -2007,6 +2007,145 @@ io.on('connection', (socket: Socket) => {
     io.to(nextSid).emit('drawguess_secret', { channelId: cleanChannelId, word: nextWord });
   });
 
+  // 4. Dedicated Trivia, Word Chain & Tournament Parity
+  const dedTriviaQ = [
+    { category: 'Oyun', question: 'CS serisindeki meşhur bomba haritası hangisidir?', options: ['de_dust2', 'de_portal', 'gm_construct', 'fy_snow'], correctIndex: 0 },
+    { category: 'Teknoloji', question: 'Opus kodeği ne için kullanılır?', options: ['Yüksek kaliteli düşük gecikmeli ses', '3D Model', 'SQL Sorgu', 'Görsel Sıkıştırma'], correctIndex: 0 },
+    { category: 'Bilim', question: 'Güneş sistemindeki en büyük gezegen hangisidir?', options: ['Satürn', 'Jüpiter', 'Mars', 'Neptün'], correctIndex: 1 },
+    { category: 'Genel', question: 'Satranç tahtasında kaç kare vardır?', options: ['48', '56', '64', '72'], correctIndex: 2 },
+  ];
+  const dedTour = (cid: string) => {
+    let t = (globalThis as any).__dedTours?.get(cid);
+    if (!t) {
+      if (!(globalThis as any).__dedTours) (globalThis as any).__dedTours = new Map();
+      t = { channelId: cid, scoreboard: {}, bracket: [], champion: null };
+      (globalThis as any).__dedTours.set(cid, t);
+    }
+    return t;
+  };
+  socket.on('trivia_start', ({ channelId }: { channelId: string }) => {
+    const cid = String(channelId || '').trim();
+    if (!cid) return;
+    if (!(globalThis as any).__dedTrivia) (globalThis as any).__dedTrivia = new Map();
+    const room = {
+      channelId: cid,
+      round: 1,
+      totalRounds: dedTriviaQ.length,
+      questions: [...dedTriviaQ],
+      answers: {} as Record<string, number>,
+      revealed: false,
+      scores: {} as Record<string, number>,
+      finished: false,
+      winnerName: null as string | null,
+    };
+    (globalThis as any).__dedTrivia.set(cid, room);
+    const q = room.questions[0];
+    io.to(cid).emit('trivia_state', {
+      channelId: cid, round: 1, totalRounds: room.totalRounds, category: q.category, question: q.question, options: q.options, revealed: false, answeredUsers: [], scores: {}, finished: false, winnerName: null,
+    });
+  });
+  socket.on('trivia_get', ({ channelId }: { channelId: string }) => {
+    const r = (globalThis as any).__dedTrivia?.get(String(channelId || '').trim());
+    if (!r) return;
+    const q = r.questions[r.round - 1];
+    socket.emit('trivia_state', {
+      channelId: r.channelId, round: r.round, totalRounds: r.totalRounds, category: q.category, question: q.question, options: q.options, revealed: r.revealed, ...(r.revealed ? { correctIndex: q.correctIndex } : {}), answeredUsers: Object.keys(r.answers), scores: r.scores, finished: r.finished, winnerName: r.winnerName,
+    });
+  });
+  socket.on('trivia_answer', ({ channelId, optionIndex }: { channelId: string; optionIndex: number }) => {
+    const cid = String(channelId || '').trim();
+    const r = (globalThis as any).__dedTrivia?.get(cid);
+    if (!r || r.finished || r.revealed || user.username in r.answers) return;
+    const q = r.questions[r.round - 1];
+    r.answers[user.username] = Number(optionIndex);
+    if (Number(optionIndex) === q.correctIndex) {
+      r.scores[user.username] = (r.scores[user.username] || 0) + 10;
+      const t = dedTour(cid);
+      const cur = t.scoreboard[user.username] || { points: 0, wins: 0 };
+      cur.points += 10;
+      t.scoreboard[user.username] = cur;
+      io.to(cid).emit('tournament_state', t);
+    } else if (!(user.username in r.scores)) {
+      r.scores[user.username] = 0;
+    }
+    io.to(cid).emit('trivia_state', {
+      channelId: cid, round: r.round, totalRounds: r.totalRounds, category: q.category, question: q.question, options: q.options, revealed: r.revealed, answeredUsers: Object.keys(r.answers), scores: r.scores, finished: r.finished, winnerName: r.winnerName,
+    });
+  });
+  socket.on('trivia_next', ({ channelId }: { channelId: string }) => {
+    const cid = String(channelId || '').trim();
+    const r = (globalThis as any).__dedTrivia?.get(cid);
+    if (!r) return;
+    if (!r.revealed) {
+      r.revealed = true;
+    } else if (r.round >= r.totalRounds) {
+      r.finished = true;
+      const sorted = Object.entries(r.scores as Record<string, number>).sort((a, b) => b[1] - a[1]);
+      r.winnerName = sorted.length > 0 && sorted[0][1] > 0 ? sorted[0][0] : null;
+    } else {
+      r.round += 1;
+      r.answers = {};
+      r.revealed = false;
+    }
+    const q = r.questions[r.round - 1];
+    io.to(cid).emit('trivia_state', {
+      channelId: cid, round: r.round, totalRounds: r.totalRounds, category: q.category, question: q.question, options: q.options, revealed: r.revealed, ...(r.revealed ? { correctIndex: q.correctIndex } : {}), answeredUsers: Object.keys(r.answers), scores: r.scores, finished: r.finished, winnerName: r.winnerName,
+    });
+  });
+  socket.on('wordchain_start', ({ channelId }: { channelId: string }) => {
+    const cid = String(channelId || '').trim();
+    if (!cid) return;
+    if (!(globalThis as any).__dedWordChain) (globalThis as any).__dedWordChain = new Map();
+    const st = { channelId: cid, currentWord: 'elma', requiredChar: 'a', lastAuthor: user.username, usedWords: ['elma'], scores: { [user.username]: 0 } };
+    (globalThis as any).__dedWordChain.set(cid, st);
+    io.to(cid).emit('wordchain_state', st);
+  });
+  socket.on('wordchain_get', ({ channelId }: { channelId: string }) => {
+    const st = (globalThis as any).__dedWordChain?.get(String(channelId || '').trim());
+    if (st) socket.emit('wordchain_state', st);
+  });
+  socket.on('wordchain_submit', ({ channelId, word }: { channelId: string; word: string }) => {
+    const cid = String(channelId || '').trim();
+    const st = (globalThis as any).__dedWordChain?.get(cid);
+    if (!st) return;
+    const clean = String(word || '').trim().toLocaleLowerCase('tr-TR').replace(/[^a-zçğıöşü]/g, '');
+    if (clean.length < 2) return socket.emit('wordchain_error', { channelId: cid, error: 'En az 2 harf girin.' });
+    if (!clean.startsWith(st.requiredChar)) return socket.emit('wordchain_error', { channelId: cid, error: `"${st.requiredChar}" ile başlamalı!` });
+    if (st.usedWords.includes(clean)) return socket.emit('wordchain_error', { channelId: cid, error: 'Bu kelime kullanıldı!' });
+    const lastCh = clean[clean.length - 1];
+    st.currentWord = clean;
+    st.requiredChar = lastCh === 'ğ' ? 'g' : lastCh;
+    st.lastAuthor = user.username;
+    st.usedWords.push(clean);
+    st.scores[user.username] = (st.scores[user.username] || 0) + clean.length;
+    io.to(cid).emit('wordchain_state', st);
+  });
+  socket.on('tournament_get', ({ channelId }: { channelId: string }) => {
+    const cid = String(channelId || '').trim();
+    if (cid) socket.emit('tournament_state', dedTour(cid));
+  });
+  socket.on('tournament_create_bracket', ({ channelId }: { channelId: string }) => {
+    const cid = String(channelId || '').trim();
+    if (!cid) return;
+    const t = dedTour(cid);
+    const list = Array.from(connectedUsers.values()).filter((u) => u.currentVoiceChannelId === cid).map((u) => u.username);
+    const bracket: any[] = [];
+    for (let i = 0; i < list.length; i += 2) {
+      bracket.push({ id: `m-r1-${i / 2 + 1}`, round: 1, playerA: list[i] || null, playerB: list[i + 1] || null, winner: list[i] && !list[i + 1] ? list[i] : null });
+    }
+    t.bracket = bracket;
+    t.champion = null;
+    io.to(cid).emit('tournament_state', t);
+  });
+  socket.on('tournament_report_winner', ({ channelId, matchId, winner }: { channelId: string; matchId: string; winner: string }) => {
+    const cid = String(channelId || '').trim();
+    if (!cid) return;
+    const t = dedTour(cid);
+    const m = t.bracket.find((x: any) => x.id === matchId);
+    if (m) m.winner = winner;
+    io.to(cid).emit('tournament_state', t);
+  });
+
   // Admin Request Data on Dedicated Server
   socket.on('admin_request_data', async () => {
     let masterDedicatedServers: any[] = [];

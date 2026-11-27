@@ -12,6 +12,12 @@ import {
 import { User } from '../types';
 import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
 import { appConfirm, appToast } from '../utils/appDialogs';
+import {
+  AVATAR_FRAME_CATALOG,
+  NAME_GRADIENT_CATALOG,
+  getNameGradientClass,
+  isClientCosmeticUnlocked,
+} from '../utils/cosmeticsCatalog';
 import { ActivitySelectorModal } from './ActivitySelectorModal';
 import { ReportContentModal } from './ReportContentModal';
 import {
@@ -76,44 +82,7 @@ const STATUS_PRESETS = [
 
 const AVATAR_PRESETS = ['🛡️', '👑', '🚀', '💎', '⚡', '🎮', '🎧', '🤖', '🦊', '🐱', '🔥', '🌟'];
 
-const AVATAR_FRAMES: {
-  id: NonNullable<User['avatarFrame']>;
-  label: string;
-  ringClass: string;
-  swatch: string;
-}[] = [
-  { id: 'none', label: 'Yok', ringClass: 'border-neutral-900', swatch: 'bg-white/10' },
-  {
-    id: 'gold',
-    label: 'Altın',
-    ringClass: 'border-amber-400 ring-2 ring-amber-400/40 shadow-[0_0_20px_rgba(251,191,36,0.35)]',
-    swatch: 'bg-gradient-to-tr from-amber-500 to-yellow-300',
-  },
-  {
-    id: 'neon',
-    label: 'Neon Mor',
-    ringClass: 'border-fuchsia-400 ring-2 ring-purple-500/50 shadow-[0_0_20px_rgba(192,132,252,0.45)]',
-    swatch: 'bg-gradient-to-tr from-purple-600 to-fuchsia-400',
-  },
-  {
-    id: 'emerald',
-    label: 'Zümrüt',
-    ringClass: 'border-emerald-400 ring-2 ring-emerald-500/45 shadow-[0_0_20px_rgba(52,211,153,0.4)]',
-    swatch: 'bg-gradient-to-tr from-emerald-500 to-teal-300',
-  },
-  {
-    id: 'crimson',
-    label: 'Kızıl',
-    ringClass: 'border-rose-500 ring-2 ring-rose-500/45 shadow-[0_0_20px_rgba(244,63,94,0.4)]',
-    swatch: 'bg-gradient-to-tr from-rose-600 to-orange-400',
-  },
-  {
-    id: 'rainbow',
-    label: 'Prizma',
-    ringClass: 'border-cyan-300 ring-2 ring-pink-500/50 shadow-[0_0_22px_rgba(56,189,248,0.45)]',
-    swatch: 'bg-gradient-to-tr from-cyan-400 via-purple-500 to-pink-500',
-  },
-];
+const AVATAR_FRAMES = AVATAR_FRAME_CATALOG;
 
 function renderRichBio(text: string): React.ReactNode {
   const urlRegex = /(https?:\/\/[^\s<]+)/g;
@@ -140,6 +109,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, true, onClose);
   const {
+    socket,
     currentUser,
     onlineUsers,
     openDirectMessage,
@@ -192,6 +162,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
   const [editAvatarFrame, setEditAvatarFrame] = useState<NonNullable<User['avatarFrame']>>(
     user.avatarFrame || 'none'
   );
+  const [editNameGradient, setEditNameGradient] = useState<NonNullable<User['nameGradient']>>(
+    user.nameGradient || 'none'
+  );
   const [editPinnedBadgeId, setEditPinnedBadgeId] = useState(user.pinnedBadgeId || '');
   const [editSocialLinks, setEditSocialLinks] = useState<{ steam?: string; github?: string; website?: string }>(
     user.socialLinks || {}
@@ -226,6 +199,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     setEditBannerPosition(user.bannerPosition || 'center');
     setEditAvatar(user.avatar || '🎮');
     setEditAvatarFrame(user.avatarFrame || 'none');
+    setEditNameGradient(user.nameGradient || 'none');
     setEditPinnedBadgeId(user.pinnedBadgeId || '');
     setEditSocialLinks(user.socialLinks || {});
     if (user.status === 'online' || user.status === 'idle' || user.status === 'dnd' || user.status === 'offline') {
@@ -272,6 +246,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
       bannerImage: finalBannerImage,
       bannerPosition: editBannerPosition,
       avatarFrame: editAvatarFrame,
+      nameGradient: editNameGradient,
       pinnedBadgeId: editPinnedBadgeId,
       socialLinks: editSocialLinks,
       avatar: finalAvatar,
@@ -646,7 +621,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
           <div className="space-y-3">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-xl font-bold tracking-tight text-white select-text">{user.username}</h3>
+                <h3
+                  className={`text-xl font-bold tracking-tight select-text ${
+                    user.nameGradient && user.nameGradient !== 'none'
+                      ? getNameGradientClass(user.nameGradient)
+                      : 'text-white'
+                  }`}
+                >
+                  {user.username}
+                </h3>
                 {user.role === 'admin' ? (
                   <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
                     <Shield className="w-3 h-3" />
@@ -1306,27 +1289,96 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                   )}
                 </div>
 
-                {/* Avatar Frame Picker */}
+                {/* Avatar Frame Picker (Hibrit XP / Cüzdan) */}
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider block">
-                    Avatar Çerçevesi
+                    Avatar Çerçevesi (Seviye veya Cüzdan ile Aç)
                   </label>
-                  <div className="grid grid-cols-6 gap-1.5">
-                    {AVATAR_FRAMES.map((fr) => (
-                      <button
-                        key={fr.id}
-                        type="button"
-                        onClick={() => setEditAvatarFrame(fr.id)}
-                        className={`py-1.5 px-1 rounded-xl border text-[10px] font-semibold flex flex-col items-center gap-1 transition ${
-                          editAvatarFrame === fr.id
-                            ? 'bg-white/15 border-white text-white'
-                            : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
-                        }`}
-                      >
-                        <span className={`w-4 h-4 rounded-full border border-white/30 ${fr.swatch}`} />
-                        <span>{fr.label}</span>
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {AVATAR_FRAMES.map((fr) => {
+                      const unlocked = isClientCosmeticUnlocked(
+                        `frame:${fr.id}`,
+                        user.level || 1,
+                        user.unlockedCosmetics || []
+                      );
+                      return (
+                        <button
+                          key={fr.id}
+                          type="button"
+                          onClick={() => {
+                            if (unlocked) {
+                              setEditAvatarFrame(fr.id);
+                            } else if (socket) {
+                              socket.emit('unlock_cosmetic', { cosmeticId: `frame:${fr.id}` });
+                            }
+                          }}
+                          title={
+                            unlocked
+                              ? fr.label
+                              : `Seviye ${fr.requiredLevel} veya ₺${fr.walletPrice} ile hemen aç`
+                          }
+                          className={`py-1.5 px-1 rounded-xl border text-[10px] font-semibold flex flex-col items-center gap-0.5 transition ${
+                            editAvatarFrame === fr.id
+                              ? 'bg-white/15 border-white text-white'
+                              : unlocked
+                              ? 'bg-white/5 border-white/10 text-white/75 hover:text-white'
+                              : 'bg-black/40 border-amber-500/25 text-amber-200/80 hover:border-amber-400'
+                          }`}
+                        >
+                          <span className={`w-4 h-4 rounded-full border border-white/30 ${fr.swatch}`} />
+                          <span className="truncate max-w-full">{fr.label}</span>
+                          {!unlocked && (
+                            <span className="text-[9px] text-amber-300 font-mono">
+                              Lv.{fr.requiredLevel}/₺{fr.walletPrice}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Name Gradient Picker */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-white/50 uppercase tracking-wider block">
+                    İsim Rengi &amp; Gradyanı
+                  </label>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                    {NAME_GRADIENT_CATALOG.map((gr) => {
+                      const unlocked = isClientCosmeticUnlocked(
+                        `grad:${gr.id}`,
+                        user.level || 1,
+                        user.unlockedCosmetics || []
+                      );
+                      return (
+                        <button
+                          key={gr.id}
+                          type="button"
+                          onClick={() => {
+                            if (unlocked) {
+                              setEditNameGradient(gr.id);
+                            } else if (socket) {
+                              socket.emit('unlock_cosmetic', { cosmeticId: `grad:${gr.id}` });
+                            }
+                          }}
+                          className={`py-1.5 px-1.5 rounded-xl border text-[10px] font-semibold flex flex-col items-center gap-0.5 transition ${
+                            editNameGradient === gr.id
+                              ? 'bg-white/15 border-white text-white'
+                              : unlocked
+                              ? 'bg-white/5 border-white/10 text-white/75 hover:text-white'
+                              : 'bg-black/40 border-amber-500/25 text-amber-200/80 hover:border-amber-400'
+                          }`}
+                        >
+                          <span className={`w-full h-2 rounded-full ${gr.swatch}`} />
+                          <span className="truncate max-w-full">{gr.label}</span>
+                          {!unlocked && (
+                            <span className="text-[9px] text-amber-300 font-mono">
+                              Lv.{gr.requiredLevel}/₺{gr.walletPrice}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

@@ -41,6 +41,20 @@ export interface FriendUser {
   e2eePublicKey?: string;
 }
 
+export type AvatarFrameId =
+  | 'none'
+  | 'gold'
+  | 'neon'
+  | 'emerald'
+  | 'crimson'
+  | 'rainbow'
+  | 'aurora'
+  | 'cyberpunk'
+  | 'phoenix'
+  | 'diamond';
+
+export type NameGradientId = 'none' | 'gold' | 'ocean' | 'sunset' | 'matrix' | 'royal';
+
 export interface ServerFolderEntry {
   id: string;
   name: string;
@@ -71,7 +85,9 @@ export interface User {
   bannerColor?: string;
   bannerImage?: string;
   bannerPosition?: 'top' | 'center' | 'bottom';
-  avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+  avatarFrame?: AvatarFrameId;
+  nameGradient?: NameGradientId;
+  unlockedCosmetics?: string[];
   pinnedBadgeId?: string;
   socialLinks?: { steam?: string; github?: string; website?: string };
   bio?: string;

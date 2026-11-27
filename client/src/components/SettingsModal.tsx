@@ -4,7 +4,7 @@ import { useVoice } from '../context/VoiceContext';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useMicVolumeLevel } from '../context/VoiceMetricsContext';
 import { playTeamSpeakChime, SoundPackType, playCallRingtone, RingtonePack } from '../utils/tsSoundEffects';
-import { DEFAULT_CUSTOM_THEME } from '../utils/themeBuilder';
+import { DEFAULT_CUSTOM_THEME, decodeShareableTheme, encodeShareableTheme } from '../utils/themeBuilder';
 import { AvatarView, processUploadedImage } from './AvatarView';
 import { LANGUAGE_OPTIONS, t } from '../utils/i18n';
 import { authFetch, resolveBackendBaseUrl } from '../utils/authFetch';
@@ -2528,6 +2528,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         <span className="text-xs font-mono text-white/75">{customTheme.accentColor}</span>
                       </div>
                     </div>
+                  </div>
+                  <div className="pt-2 border-t border-white/10 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const code = encodeShareableTheme(`${currentUser?.username || 'Özel'} Teması`, customTheme);
+                        navigator.clipboard?.writeText(code).catch(() => {});
+                        appToast('Tema paylaşım kodu panoya kopyalandı! Sohbete yapıştırabilirsiniz.', 'success');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/35 text-[11px] font-semibold text-indigo-200 transition"
+                    >
+                      🎨 Temayı Paylaşım Kodu Olarak Kopyala
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const clip = await navigator.clipboard?.readText();
+                          const parsed = clip ? decodeShareableTheme(clip) : null;
+                          if (!parsed) {
+                            appToast('Panoda geçerli bir [[CAKMA_THEME:...]] kodu bulunamadı.', 'warning');
+                            return;
+                          }
+                          setCustomTheme(parsed.config);
+                          setUiTheme('custom');
+                          appToast(`"${parsed.name}" teması içe aktarıldı!`, 'success');
+                        } catch {
+                          appToast('Pano okunamadı.', 'error');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-[11px] font-semibold text-white/80 transition"
+                    >
+                      Panodan Tema İçe Aktar
+                    </button>
                   </div>
                 </div>
 

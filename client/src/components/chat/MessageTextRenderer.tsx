@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { decodeShareableTheme } from '../../utils/themeBuilder';
 
 export const SLASH_COMMANDS = [
   { cmd: '/zar', desc: '1-6 arası rastgele zar atar' },
@@ -195,6 +196,43 @@ export const InlineMarkdown: React.FC<{
   customEmojis?: CustomEmojiLike[];
 }> = ({ text, customEmojis }) => {
   if (!text) return null;
+  const sharedTheme = decodeShareableTheme(text);
+  if (sharedTheme) {
+    return (
+      <div className="my-1 p-3 rounded-2xl bg-black/35 border border-white/15 max-w-xs space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs font-bold text-white flex items-center gap-1.5">
+            <span>🎨</span>
+            <span className="truncate">{sharedTheme.name}</span>
+          </div>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/75 uppercase">
+            {sharedTheme.config.mode === 'light' ? 'Açık' : 'Koyu'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-white/65 font-mono">
+          <span
+            className="w-4 h-4 rounded-full border border-white/25 inline-block"
+            style={{ backgroundColor: sharedTheme.config.bgColor }}
+          />
+          <span>{sharedTheme.config.bgColor}</span>
+          <span
+            className="w-4 h-4 rounded-full border border-white/25 inline-block ml-1"
+            style={{ backgroundColor: sharedTheme.config.accentColor }}
+          />
+          <span>{sharedTheme.config.accentColor}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent('cakma-apply-shared-theme', { detail: sharedTheme }))
+          }
+          className="w-full py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-[11px] font-bold transition"
+        >
+          Temayı Önizle &amp; Uygula
+        </button>
+      </div>
+    );
+  }
   const blocks = parseMarkdownBlocks(text);
 
   return (

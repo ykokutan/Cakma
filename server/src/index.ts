@@ -57,6 +57,13 @@ import { registerDedicatedAndMasterRoutes, notifyDedicatedLicenseRevoked } from 
 import { registerTranslateRoute } from './features/translateRoute.js';
 import { registerSummaryRoutes } from './features/summaryRoutes.js';
 import {
+  evaluateUserAchievements,
+  isCosmeticUnlocked,
+  unlockCosmeticWithWallet,
+  VALID_AVATAR_FRAMES,
+  VALID_NAME_GRADIENTS,
+} from './utils/cosmeticsAndBadges.js';
+import {
   generateBase32Secret,
   generateOtpAuthUri,
   verifyTotpCode,
@@ -2780,6 +2787,7 @@ io.on('connection', (socket: Socket) => {
       bannerImage,
       bannerPosition,
       avatarFrame,
+      nameGradient,
       pinnedBadgeId,
       socialLinks,
       avatar,
@@ -2790,7 +2798,8 @@ io.on('connection', (socket: Socket) => {
       bannerColor?: string;
       bannerImage?: string;
       bannerPosition?: 'top' | 'center' | 'bottom';
-      avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+      avatarFrame?: string;
+      nameGradient?: string;
       pinnedBadgeId?: string;
       socialLinks?: { steam?: string; github?: string; website?: string };
       avatar?: string;
@@ -2823,9 +2832,19 @@ io.on('connection', (socket: Socket) => {
       user.bannerPosition = bannerPosition;
       if (acc) acc.bannerPosition = bannerPosition;
     }
-    if (avatarFrame !== undefined && ['none', 'gold', 'neon', 'emerald', 'crimson', 'rainbow'].includes(avatarFrame)) {
-      user.avatarFrame = avatarFrame;
-      if (acc) acc.avatarFrame = avatarFrame;
+    if (avatarFrame !== undefined && VALID_AVATAR_FRAMES.has(avatarFrame)) {
+      const userLvl = user.level || 1;
+      if (isCosmeticUnlocked(`frame:${avatarFrame}`, userLvl, acc?.unlockedCosmetics)) {
+        user.avatarFrame = avatarFrame as User['avatarFrame'];
+        if (acc) acc.avatarFrame = user.avatarFrame;
+      }
+    }
+    if (nameGradient !== undefined && VALID_NAME_GRADIENTS.has(nameGradient)) {
+      const userLvl = user.level || 1;
+      if (isCosmeticUnlocked(`grad:${nameGradient}`, userLvl, acc?.unlockedCosmetics)) {
+        user.nameGradient = nameGradient as User['nameGradient'];
+        if (acc) acc.nameGradient = user.nameGradient;
+      }
     }
     if (pinnedBadgeId !== undefined && typeof pinnedBadgeId === 'string') {
       const cleanPinned = sanitizeText(pinnedBadgeId).trim().slice(0, 64);
@@ -2866,6 +2885,24 @@ io.on('connection', (socket: Socket) => {
     emitUserUpdated(user);
     socket.emit('profile_updated', user);
     addAuditLog('PROFIL_GUNCELLE', `${user.username} profil bilgilerini güncelledi.`, 'info');
+  });
+
+  socket.on('unlock_cosmetic', ({ cosmeticId }: { cosmeticId: string }) => {
+    const user = activeUsers.get(socket.id);
+    if (!user || !cosmeticId) return;
+    const acc = registeredAccounts.get(user.username.toLowerCase());
+    if (!acc) return;
+    const res = unlockCosmeticWithWallet(acc, String(cosmeticId), user.level || 1);
+    if (!res.ok) {
+      socket.emit('server_action_error', { message: res.error });
+      return;
+    }
+    user.walletBalance = res.newBalance;
+    user.unlockedCosmetics = res.unlockedCosmetics;
+    saveAccounts(registeredAccounts);
+    emitUserUpdated(user);
+    socket.emit('profile_updated', user);
+    socket.emit('admin_action_success', 'Yeni profil kozmetiği açıldı!');
   });
 
   // Wallet Balance Transfer between registered users
@@ -3548,6 +3585,22 @@ io.on('connection', (socket: Socket) => {
     watchTogetherRooms,
     miniGameRooms,
     addAuditLog,
+    onGameWin: (winnerUsername) => {
+      const acc = registeredAccounts.get(winnerUsername.toLowerCase());
+      if (!acc) return;
+      const updated = evaluateUserAchievements(acc.badges || getUserBadges(acc.role, acc.username), {
+        gameWins: 1,
+        level: acc.level || 1,
+      });
+      acc.badges = updated;
+      saveAccounts(registeredAccounts);
+      for (const activeU of activeUsers.values()) {
+        if (activeU.username.toLowerCase() === winnerUsername.toLowerCase()) {
+          activeU.badges = updated;
+          emitUserUpdated(activeU);
+        }
+      }
+    },
   });
 
   // 3. TeamSpeak Whisper (Fısıltı) Relay

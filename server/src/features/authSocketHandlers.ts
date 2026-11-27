@@ -94,6 +94,8 @@ export function buildSessionUser(
     bannerImage: acc.bannerImage || '',
     bannerPosition: acc.bannerPosition || 'center',
     avatarFrame: acc.avatarFrame || 'none',
+    nameGradient: acc.nameGradient || 'none',
+    unlockedCosmetics: acc.unlockedCosmetics || [],
     pinnedBadgeId: acc.pinnedBadgeId || '',
     socialLinks: acc.socialLinks || {},
     bio: acc.bio || opts?.defaultBio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',

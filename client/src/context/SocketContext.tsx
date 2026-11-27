@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { User, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, GroupDmRoom, ForumPostMeta, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
+import { User, AvatarFrameId, NameGradientId, Server, ServerCategory, DiscoverableServerSummary, ServerInvite, Channel, GroupDmRoom, ForumPostMeta, Message, ThreadMessage, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, MessageAttachment, DirectCallState, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, UserActivity, PollData, UserConnectionRecord, WatchTogetherState, MiniGameState, MemberLevelData, ServerAnalyticsData, ScreenShareSettings, ViewerStreamQuality, ScreenShareStats, ScreenShareLaserPoint, RemoteAssistPermissions, RemoteMonitorInfo, RemoteAssistAnnotationStroke, DirectScreenShareOptions, DirectCallQualityStats, DirectCallToast, RemoteAssistState } from '../types';
 import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
@@ -200,7 +200,8 @@ interface SocketContextType {
     bannerColor?: string;
     bannerImage?: string;
     bannerPosition?: 'top' | 'center' | 'bottom';
-    avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+    avatarFrame?: AvatarFrameId;
+    nameGradient?: NameGradientId;
     pinnedBadgeId?: string;
     socialLinks?: { steam?: string; github?: string; website?: string };
     avatar?: string;
@@ -1200,6 +1201,28 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setUiTheme = (theme: UiThemeId) => {
     setUiThemeState(theme);
   };
+
+  useEffect(() => {
+    const onSharedTheme = (e: Event) => {
+      const detail = (e as CustomEvent<{ name?: string; config?: CustomThemeConfig }>).detail;
+      if (detail?.config) {
+        setUiThemeState('custom');
+        try {
+          localStorage.setItem('dc_ui_theme', 'custom');
+        } catch {}
+        setCustomThemeState((prev) => {
+          const next = { ...prev, ...detail.config };
+          try {
+            localStorage.setItem('dc_custom_theme', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+        appToast(`"${detail.name || 'Özel Tema'}" teması uygulandı!`, 'success');
+      }
+    };
+    window.addEventListener('cakma-apply-shared-theme', onSharedTheme);
+    return () => window.removeEventListener('cakma-apply-shared-theme', onSharedTheme);
+  }, []);
 
   const setGlassIntensity = (v: 'low' | 'normal' | 'high') => setGlassIntensityState(v);
   const setMessageDensity = (v: 'cozy' | 'compact') => setMessageDensityState(v);
@@ -6134,7 +6157,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     bannerColor?: string;
     bannerImage?: string;
     bannerPosition?: 'top' | 'center' | 'bottom';
-    avatarFrame?: 'none' | 'gold' | 'neon' | 'emerald' | 'crimson' | 'rainbow';
+    avatarFrame?: AvatarFrameId;
+    nameGradient?: NameGradientId;
     pinnedBadgeId?: string;
     socialLinks?: { steam?: string; github?: string; website?: string };
     avatar?: string;

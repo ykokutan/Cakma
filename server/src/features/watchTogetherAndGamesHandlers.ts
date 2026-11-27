@@ -12,12 +12,30 @@ import {
   type DrawGuessPublicState,
   type DrawGuessStroke,
 } from '../utils/drawGuessGame.js';
+import {
+  advanceBracketMatch,
+  advanceTriviaQuestion,
+  buildTournamentBracket,
+  createTriviaRoom,
+  createWordChainRoom,
+  getOrCreateTournament,
+  recordTournamentPoints,
+  submitTriviaAnswer,
+  submitWordChainTurn,
+  toPublicTriviaState,
+  type RoomTournamentState,
+  type TriviaRoomInternal,
+  type WordChainRoomState,
+} from '../utils/triviaAndWordChain.js';
 
 export interface DrawGuessRoomInternal extends DrawGuessPublicState {
   secretWord: string;
 }
 
 const sharedDrawGuessRooms = new Map<string, DrawGuessRoomInternal>();
+const sharedTriviaRooms = new Map<string, TriviaRoomInternal>();
+const sharedWordChainRooms = new Map<string, WordChainRoomState>();
+const sharedTournaments = new Map<string, RoomTournamentState>();
 
 function toPublicDrawGuessState(room: DrawGuessRoomInternal): DrawGuessPublicState {
   return {
@@ -40,6 +58,7 @@ export interface WatchTogetherAndGamesDeps {
   miniGameRooms: Map<string, MiniGameState>;
   drawGuessRooms?: Map<string, DrawGuessRoomInternal>;
   addAuditLog: (action: string, details: string, type?: 'auth' | 'info' | 'warn' | 'voice') => void;
+  onGameWin?: (username: string) => void;
 }
 
 export function registerWatchTogetherAndGamesHandlers(
@@ -275,6 +294,11 @@ export function registerWatchTogetherAndGamesHandlers(
       room.winnerName = authorName;
       room.revealedWord = room.secretWord;
       room.guesses = [...room.guesses.slice(-19), { author: authorName, text: '🎯 Doğru bildi!', correct: true }];
+      const tour = getOrCreateTournament(sharedTournaments, cleanChannelId);
+      recordTournamentPoints(tour, authorName, 15, true);
+      recordTournamentPoints(tour, room.drawerName, 10, false);
+      io.to(cleanChannelId).emit('tournament_state', tour);
+      deps.onGameWin?.(authorName);
     } else {
       room.guesses = [
         ...room.guesses.slice(-19),
@@ -318,5 +342,109 @@ export function registerWatchTogetherAndGamesHandlers(
     io.to(cleanChannelId).emit('drawguess_clear', { channelId: cleanChannelId });
     io.to(cleanChannelId).emit('drawguess_state', toPublicDrawGuessState(room));
     io.to(nextDrawerSid).emit('drawguess_secret', { channelId: cleanChannelId, word: nextWord });
+  });
+
+  // 4. Live Trivia
+  socket.on('trivia_start', ({ channelId }: { channelId: string }) => {
+    const cleanId = String(channelId || '').trim();
+    if (!cleanId) return;
+    const room = createTriviaRoom(cleanId, 5);
+    sharedTriviaRooms.set(cleanId, room);
+    io.to(cleanId).emit('trivia_state', toPublicTriviaState(room));
+  });
+
+  socket.on('trivia_get', ({ channelId }: { channelId: string }) => {
+    const room = sharedTriviaRooms.get(String(channelId || '').trim());
+    if (room) socket.emit('trivia_state', toPublicTriviaState(room));
+  });
+
+  socket.on('trivia_answer', ({ channelId, optionIndex }: { channelId: string; optionIndex: number }) => {
+    const cleanId = String(channelId || '').trim();
+    const room = sharedTriviaRooms.get(cleanId);
+    const user = activeUsers.get(socket.id);
+    if (!room || !user) return;
+    const res = submitTriviaAnswer(room, user.username, Number(optionIndex));
+    if (!res.accepted) return;
+    if (res.correct) {
+      const tour = getOrCreateTournament(sharedTournaments, cleanId);
+      recordTournamentPoints(tour, user.username, 10, false);
+      io.to(cleanId).emit('tournament_state', tour);
+    }
+    io.to(cleanId).emit('trivia_state', toPublicTriviaState(room));
+  });
+
+  socket.on('trivia_next', ({ channelId }: { channelId: string }) => {
+    const cleanId = String(channelId || '').trim();
+    const room = sharedTriviaRooms.get(cleanId);
+    if (!room) return;
+    advanceTriviaQuestion(room);
+    if (room.finished && room.winnerName) {
+      const tour = getOrCreateTournament(sharedTournaments, cleanId);
+      recordTournamentPoints(tour, room.winnerName, 20, true);
+      io.to(cleanId).emit('tournament_state', tour);
+      deps.onGameWin?.(room.winnerName);
+    }
+    io.to(cleanId).emit('trivia_state', toPublicTriviaState(room));
+  });
+
+  // 5. Turkish Word Chain (Kelime Zinciri)
+  socket.on('wordchain_start', ({ channelId }: { channelId: string }) => {
+    const cleanId = String(channelId || '').trim();
+    if (!cleanId) return;
+    const user = activeUsers.get(socket.id);
+    const room = createWordChainRoom(cleanId, user?.username || 'Oyuncu');
+    sharedWordChainRooms.set(cleanId, room);
+    io.to(cleanId).emit('wordchain_state', room);
+  });
+
+  socket.on('wordchain_get', ({ channelId }: { channelId: string }) => {
+    const room = sharedWordChainRooms.get(String(channelId || '').trim());
+    if (room) socket.emit('wordchain_state', room);
+  });
+
+  socket.on('wordchain_submit', ({ channelId, word }: { channelId: string; word: string }) => {
+    const cleanId = String(channelId || '').trim();
+    const room = sharedWordChainRooms.get(cleanId);
+    const user = activeUsers.get(socket.id);
+    if (!room || !user) return;
+    const outcome = submitWordChainTurn(room, user.username, word);
+    if (!outcome.ok) {
+      socket.emit('wordchain_error', { channelId: cleanId, error: outcome.error });
+      return;
+    }
+    const tour = getOrCreateTournament(sharedTournaments, cleanId);
+    recordTournamentPoints(tour, user.username, Math.min(12, word.trim().length), false);
+    io.to(cleanId).emit('tournament_state', tour);
+    io.to(cleanId).emit('wordchain_state', outcome.state);
+  });
+
+  // 6. Room Tournament Scoreboard & Elimination Bracket
+  socket.on('tournament_get', ({ channelId }: { channelId: string }) => {
+    const cleanId = String(channelId || '').trim();
+    if (!cleanId) return;
+    socket.emit('tournament_state', getOrCreateTournament(sharedTournaments, cleanId));
+  });
+
+  socket.on('tournament_create_bracket', ({ channelId, participants }: { channelId: string; participants?: string[] }) => {
+    const cleanId = String(channelId || '').trim();
+    if (!cleanId) return;
+    const tour = getOrCreateTournament(sharedTournaments, cleanId);
+    const activeRoomUsers = Array.from(activeUsers.values())
+      .filter((u) => u.currentVoiceChannelId === cleanId)
+      .map((u) => u.username);
+    const list = Array.isArray(participants) && participants.length >= 2 ? participants : activeRoomUsers;
+    buildTournamentBracket(tour, list);
+    io.to(cleanId).emit('tournament_state', tour);
+  });
+
+  socket.on('tournament_report_winner', ({ channelId, matchId, winner }: { channelId: string; matchId: string; winner: string }) => {
+    const cleanId = String(channelId || '').trim();
+    if (!cleanId) return;
+    const tour = getOrCreateTournament(sharedTournaments, cleanId);
+    advanceBracketMatch(tour, String(matchId || ''), String(winner || ''));
+    if (tour.champion) {
+      deps.onGameWin?.(tour.champion);
+    }
+    io.to(cleanId).emit('tournament_state', tour);
   });
 }

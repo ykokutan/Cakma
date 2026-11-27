@@ -1,10 +1,41 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Gamepad2, Trophy, RotateCcw, Zap, UserCheck, Brush, Trash2, Send } from 'lucide-react';
+import { X, Gamepad2, Trophy, RotateCcw, Zap, UserCheck, Brush, Trash2, Send, HelpCircle, Type } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
 interface MiniGamesModalProps {
   channelId: string;
   onClose: () => void;
+}
+
+interface TriviaPublicState {
+  channelId: string;
+  round: number;
+  totalRounds: number;
+  category: string;
+  question: string;
+  options: [string, string, string, string];
+  revealed: boolean;
+  correctIndex?: number;
+  answeredUsers: string[];
+  scores: Record<string, number>;
+  finished: boolean;
+  winnerName: string | null;
+}
+
+interface WordChainRoomState {
+  channelId: string;
+  currentWord: string;
+  requiredChar: string;
+  lastAuthor: string;
+  usedWords: string[];
+  scores: Record<string, number>;
+}
+
+interface RoomTournamentState {
+  channelId: string;
+  scoreboard: Record<string, { points: number; wins: number }>;
+  bracket: Array<{ id: string; round: number; playerA: string | null; playerB: string | null; winner: string | null }>;
+  champion: string | null;
 }
 
 interface DrawStrokePoint {
@@ -68,7 +99,7 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({ channelId, onClo
     sendMiniGameMove,
     resetMiniGame,
   } = useSocket();
-  const [activeTab, setActiveTab] = useState<'xox' | 'typeracer' | 'drawguess'>('xox');
+  const [activeTab, setActiveTab] = useState<'xox' | 'typeracer' | 'drawguess' | 'trivia' | 'wordchain' | 'tournament'>('xox');
 
   // TypeRacer State
   const [currentPrompt, setCurrentPrompt] = useState(SAMPLE_TEXTS[0]);
@@ -86,6 +117,60 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({ channelId, onClo
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
   const currentStrokePointsRef = useRef<DrawStrokePoint[]>([]);
+
+  // Trivia, Word Chain, Tournament State
+  const [triviaState, setTriviaState] = useState<TriviaPublicState | null>(null);
+  const [selectedTriviaOpt, setSelectedTriviaOpt] = useState<number | null>(null);
+  const [wordChainState, setWordChainState] = useState<WordChainRoomState | null>(null);
+  const [wordChainInput, setWordChainInput] = useState('');
+  const [wordChainError, setWordChainError] = useState<string | null>(null);
+  const [tournamentState, setTournamentState] = useState<RoomTournamentState | null>(null);
+
+  useEffect(() => {
+    if (!socket) return;
+    if (activeTab === 'trivia') {
+      const onState = (st: TriviaPublicState) => {
+        if (st?.channelId !== channelId) return;
+        setTriviaState(st);
+        if (!st.answeredUsers.includes(currentUser?.username || '')) {
+          setSelectedTriviaOpt(null);
+        }
+      };
+      socket.on('trivia_state', onState);
+      socket.emit('trivia_get', { channelId });
+      return () => {
+        socket.off('trivia_state', onState);
+      };
+    }
+    if (activeTab === 'wordchain') {
+      const onWc = (st: WordChainRoomState) => {
+        if (st?.channelId !== channelId) return;
+        setWordChainState(st);
+        setWordChainError(null);
+      };
+      const onErr = (p: { channelId?: string; error?: string }) => {
+        if (p?.channelId !== channelId) return;
+        setWordChainError(p.error || 'Geçersiz kelime.');
+      };
+      socket.on('wordchain_state', onWc);
+      socket.on('wordchain_error', onErr);
+      socket.emit('wordchain_get', { channelId });
+      return () => {
+        socket.off('wordchain_state', onWc);
+        socket.off('wordchain_error', onErr);
+      };
+    }
+    if (activeTab === 'tournament') {
+      const onTour = (st: RoomTournamentState) => {
+        if (st?.channelId === channelId) setTournamentState(st);
+      };
+      socket.on('tournament_state', onTour);
+      socket.emit('tournament_get', { channelId });
+      return () => {
+        socket.off('tournament_state', onTour);
+      };
+    }
+  }, [socket, activeTab, channelId, currentUser?.username]);
 
   useEffect(() => {
     if (activeTab === 'xox' && !miniGameState) {
@@ -299,6 +384,42 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({ channelId, onClo
             <Brush className="w-3.5 h-3.5 text-emerald-400" />
             <span>🎨 Çiz &amp; Tahmin Et</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('trivia')}
+            className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'trivia'
+                ? 'border-cyan-400 text-cyan-300'
+                : 'border-transparent text-white/50 hover:text-white'
+            }`}
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+            <span>🧠 Bilgi Yarışması</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('wordchain')}
+            className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'wordchain'
+                ? 'border-amber-400 text-amber-300'
+                : 'border-transparent text-white/50 hover:text-white'
+            }`}
+          >
+            <Type className="w-3.5 h-3.5 text-amber-400" />
+            <span>🔤 Kelime Zinciri</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('tournament')}
+            className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'tournament'
+                ? 'border-yellow-400 text-yellow-300'
+                : 'border-transparent text-white/50 hover:text-white'
+            }`}
+          >
+            <Trophy className="w-3.5 h-3.5 text-yellow-400" />
+            <span>🏆 Turnuva</span>
+          </button>
         </div>
 
         {/* Content Body */}
@@ -436,6 +557,256 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({ channelId, onClo
                     <RotateCcw className="w-3 h-3" />
                     <span>Cümleyi Değiştir</span>
                   </button>
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'trivia' ? (
+            !triviaState ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300">
+                  <HelpCircle className="w-7 h-7" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Canlı Bilgi Yarışması (5 Tur)</h4>
+                  <p className="text-xs text-white/50 mt-1">
+                    Oyun, teknoloji ve genel kültür sorularını oda arkadaşlarınızla canlı yarışarak çözün.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => socket?.emit('trivia_start', { channelId })}
+                  className="px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold transition"
+                >
+                  Yarışmayı Başlat
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="px-2.5 py-1 rounded-full bg-cyan-500/20 border border-cyan-400/30 text-cyan-200 font-bold">
+                    Soru {triviaState.round} / {triviaState.totalRounds} · {triviaState.category}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => socket?.emit('trivia_next', { channelId })}
+                      className="px-3 py-1 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-bold"
+                    >
+                      {triviaState.finished
+                        ? 'Bitti'
+                        : triviaState.revealed
+                        ? triviaState.round >= triviaState.totalRounds
+                          ? 'Sonucu Gör'
+                          : 'Sonraki Soru'
+                        : 'Cevabı Aç'}
+                    </button>
+                    {triviaState.finished && (
+                      <button
+                        type="button"
+                        onClick={() => socket?.emit('trivia_start', { channelId })}
+                        className="px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-xs text-white font-semibold"
+                      >
+                        Yeni Oyun
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {triviaState.finished && (
+                  <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-200 text-xs font-bold">
+                    🏆 Şampiyon: {triviaState.winnerName ? `@${triviaState.winnerName}` : 'Berabere'}
+                  </div>
+                )}
+
+                <div className="p-4 rounded-2xl bg-black/35 border border-white/10 text-sm font-bold text-white">
+                  {triviaState.question}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {triviaState.options.map((opt, idx) => {
+                    const isCorrect = triviaState.revealed && triviaState.correctIndex === idx;
+                    const isPicked = selectedTriviaOpt === idx;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={triviaState.revealed || triviaState.finished}
+                        onClick={() => {
+                          setSelectedTriviaOpt(idx);
+                          socket?.emit('trivia_answer', { channelId, optionIndex: idx });
+                        }}
+                        className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                          isCorrect
+                            ? 'bg-emerald-500/25 border-emerald-400 text-emerald-200'
+                            : isPicked
+                            ? 'bg-cyan-500/25 border-cyan-400 text-cyan-100'
+                            : 'bg-white/5 border-white/10 text-white/85 hover:bg-white/10'
+                        }`}
+                      >
+                        {String.fromCharCode(65 + idx)}) {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  {Object.entries(triviaState.scores)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([player, score]) => (
+                      <span key={player} className="px-2.5 py-1 rounded-full bg-white/10 text-white/85">
+                        @{player}: {score}p
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )
+          ) : activeTab === 'wordchain' ? (
+            !wordChainState ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-300">
+                  <Type className="w-7 h-7" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Türkçe Kelime Zinciri</h4>
+                  <p className="text-xs text-white/50 mt-1">
+                    Son harfle başlayan yeni kelimeler türetin (örn. elma → armut → taş). &quot;ğ&quot; ile bitenler &quot;g&quot; ile devam eder.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => socket?.emit('wordchain_start', { channelId })}
+                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition"
+                >
+                  Zinciri Başlat
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-4 rounded-2xl bg-black/35 border border-white/10 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] text-white/45 uppercase">Son Kelime (@{wordChainState.lastAuthor})</div>
+                    <div className="text-xl font-extrabold text-white tracking-wide">{wordChainState.currentWord}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-amber-300 uppercase">Sıradaki Baş Harf</div>
+                    <div className="text-2xl font-black text-amber-400">
+                      {wordChainState.requiredChar.toLocaleUpperCase('tr-TR')}
+                    </div>
+                  </div>
+                </div>
+
+                {wordChainError && (
+                  <div className="px-3 py-2 rounded-xl bg-rose-500/20 border border-rose-400/35 text-xs text-rose-200">
+                    {wordChainError}
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!wordChainInput.trim()) return;
+                    socket?.emit('wordchain_submit', { channelId, word: wordChainInput.trim() });
+                    setWordChainInput('');
+                  }}
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    value={wordChainInput}
+                    onChange={(e) => setWordChainInput(e.target.value)}
+                    placeholder={`"${wordChainState.requiredChar.toLocaleUpperCase('tr-TR')}" harfi ile kelime yazın...`}
+                    className="flex-1 px-3 py-2 rounded-xl bg-white/5 border border-white/15 text-xs text-white outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold"
+                  >
+                    Gönder
+                  </button>
+                </form>
+
+                <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  {wordChainState.usedWords.slice(-12).map((w, idx) => (
+                    <span key={`${w}-${idx}`} className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-white/75">
+                      {w}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )
+          ) : activeTab === 'tournament' ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-bold text-white">Oda Turnuva Tablosu &amp; Eşleşme Ağacı</h4>
+                  <p className="text-[11px] text-white/50">Tüm mini oyunlardan kazanılan puanlar burada toplanır.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => socket?.emit('tournament_create_bracket', { channelId })}
+                  className="px-3 py-1.5 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black text-xs font-bold shrink-0"
+                >
+                  Eleme Ağacı Kur
+                </button>
+              </div>
+
+              {tournamentState?.champion && (
+                <div className="p-3 rounded-xl bg-yellow-500/20 border border-yellow-400/40 text-yellow-200 text-xs font-bold">
+                  👑 Turnuva Şampiyonu: @{tournamentState.champion}
+                </div>
+              )}
+
+              <div className="rounded-2xl bg-black/30 border border-white/10 p-3 space-y-2">
+                <div className="text-[11px] font-bold uppercase text-white/55">Oda Puan Sıralaması</div>
+                {!tournamentState || Object.keys(tournamentState.scoreboard).length === 0 ? (
+                  <div className="text-xs text-white/40">Henüz puan kaydı yok. Oyun oynayarak puan kazanın!</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {Object.entries(tournamentState.scoreboard)
+                      .sort((a, b) => b[1].points - a[1].points)
+                      .map(([player, st], idx) => (
+                        <div key={player} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg bg-white/[0.04]">
+                          <span className="font-semibold text-white">#{idx + 1} @{player}</span>
+                          <span className="font-mono text-amber-300">{st.points}p · {st.wins} galibiyet</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              {tournamentState && tournamentState.bracket.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-bold uppercase text-white/55">Eleme Maçları</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {tournamentState.bracket.map((m) => (
+                      <div key={m.id} className="p-2.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs space-y-1.5">
+                        <div className="text-[10px] text-white/45 font-mono">Tur {m.round}</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            disabled={!m.playerA || Boolean(m.winner)}
+                            onClick={() => m.playerA && socket?.emit('tournament_report_winner', { channelId, matchId: m.id, winner: m.playerA })}
+                            className={`flex-1 px-2 py-1 rounded-lg border text-left truncate ${
+                              m.winner === m.playerA ? 'bg-emerald-500/25 border-emerald-400 text-emerald-200 font-bold' : 'bg-black/30 border-white/10 text-white/80 hover:bg-white/10'
+                            }`}
+                          >
+                            {m.playerA || 'BAY'}
+                          </button>
+                          <span className="text-white/40 text-[10px]">vs</span>
+                          <button
+                            type="button"
+                            disabled={!m.playerB || Boolean(m.winner)}
+                            onClick={() => m.playerB && socket?.emit('tournament_report_winner', { channelId, matchId: m.id, winner: m.playerB })}
+                            className={`flex-1 px-2 py-1 rounded-lg border text-left truncate ${
+                              m.winner === m.playerB ? 'bg-emerald-500/25 border-emerald-400 text-emerald-200 font-bold' : 'bg-black/30 border-white/10 text-white/80 hover:bg-white/10'
+                            }`}
+                          >
+                            {m.playerB || 'BAY'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
