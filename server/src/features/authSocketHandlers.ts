@@ -98,6 +98,7 @@ export function buildSessionUser(
     unlockedCosmetics: acc.unlockedCosmetics || [],
     pinnedBadgeId: acc.pinnedBadgeId || '',
     socialLinks: acc.socialLinks || {},
+    verifiedConnections: acc.verifiedConnections || [],
     bio: acc.bio || opts?.defaultBio || 'Merhaba! Discord & TeamSpeak ses platformunu kullanıyorum.',
     badges: acc.badges || getUserBadges(acc.role, acc.username, acc.role === 'admin'),
     friends: acc.friends || [],

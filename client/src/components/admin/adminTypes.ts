@@ -90,6 +90,16 @@ export interface AdminSystemConfig {
   mediaS3PublicBaseUrl?: string;
   mediaS3MinSizeKb?: number;
   hasMediaS3SecretKey?: boolean;
+  steamAuthEnabled?: boolean;
+  steamWebApiKey?: string;
+  hasSteamWebApiKey?: boolean;
+  githubClientId?: string;
+  githubClientSecret?: string;
+  hasGithubClientSecret?: boolean;
+  googleClientId?: string;
+  googleClientSecret?: string;
+  hasGoogleClientSecret?: boolean;
+  oauthPublicBaseUrl?: string;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';

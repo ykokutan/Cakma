@@ -128,6 +128,7 @@ import { registerChatEnhancementsRoutes } from './features/chatEnhancementsRoute
 import { registerGroupDmSocketHandlers, getGroupDmsForUser } from './features/groupDmSocketHandlers.js';
 import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTemplatesRoutes.js';
 import { registerPasskeyRoutes } from './features/passkeyRoutes.js';
+import { registerOAuthAndConnectionsRoutes } from './features/oauthAndConnectionsRoutes.js';
 import { registerE2eePairingRoutes } from './features/e2eePairingRoutes.js';
 import { registerComplianceAndReportsRoutes } from './features/complianceAndReportsRoutes.js';
 import { registerAuthSocketHandlers } from './features/authSocketHandlers.js';
@@ -987,6 +988,13 @@ const defaultSystemConfig: SystemConfig = {
   mediaS3Prefix: 'uploads/',
   mediaS3PublicBaseUrl: '',
   mediaS3MinSizeKb: 0,
+  steamAuthEnabled: true,
+  steamWebApiKey: '',
+  githubClientId: '',
+  githubClientSecret: '',
+  googleClientId: '',
+  googleClientSecret: '',
+  oauthPublicBaseUrl: '',
   webhookUrl: '',
   giphyApiKey: '',
   aiSummaryProvider: 'builtin',
@@ -1756,6 +1764,21 @@ registerPasskeyRoutes(app, {
   recordFailedLogin,
   clearLoginRateLimit,
   getClientIp,
+});
+
+registerOAuthAndConnectionsRoutes(app, {
+  registeredAccounts,
+  activeUsers,
+  getSystemConfig: () => systemConfig,
+  saveSystemConfig,
+  saveAccounts,
+  verifySessionTokenWithMeta,
+  generateSessionToken,
+  generateMediaToken,
+  generatePending2faToken,
+  syncUserMembershipProfiles,
+  emitUserUpdated,
+  addAuditLog,
 });
 
 registerE2eePairingRoutes(app, {
@@ -3975,6 +3998,12 @@ io.on('connection', (socket: Socket) => {
         hasBackupS3SecretKey: Boolean(systemConfig.backupS3SecretKey),
         mediaS3SecretKey: systemConfig.mediaS3SecretKey ? '********' : '',
         hasMediaS3SecretKey: Boolean(systemConfig.mediaS3SecretKey),
+        steamWebApiKey: systemConfig.steamWebApiKey ? '********' : '',
+        hasSteamWebApiKey: Boolean(systemConfig.steamWebApiKey),
+        githubClientSecret: systemConfig.githubClientSecret ? '********' : '',
+        hasGithubClientSecret: Boolean(systemConfig.githubClientSecret),
+        googleClientSecret: systemConfig.googleClientSecret ? '********' : '',
+        hasGoogleClientSecret: Boolean(systemConfig.googleClientSecret),
       },
       bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
       storageStats: getStorageStats(),
@@ -4108,6 +4137,19 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.mediaS3Prefix === 'string') systemConfig.mediaS3Prefix = nextCfg.mediaS3Prefix.trim().slice(0, 120);
     if (typeof nextCfg.mediaS3PublicBaseUrl === 'string') systemConfig.mediaS3PublicBaseUrl = nextCfg.mediaS3PublicBaseUrl.trim().slice(0, 300);
     if (typeof nextCfg.mediaS3MinSizeKb === 'number') systemConfig.mediaS3MinSizeKb = Math.min(Math.max(Math.floor(nextCfg.mediaS3MinSizeKb), 0), 25_000);
+    if (typeof nextCfg.steamAuthEnabled === 'boolean') systemConfig.steamAuthEnabled = nextCfg.steamAuthEnabled;
+    if (typeof nextCfg.steamWebApiKey === 'string' && nextCfg.steamWebApiKey.trim() !== '********') {
+      systemConfig.steamWebApiKey = nextCfg.steamWebApiKey.trim().slice(0, 200);
+    }
+    if (typeof nextCfg.githubClientId === 'string') systemConfig.githubClientId = nextCfg.githubClientId.trim().slice(0, 160);
+    if (typeof nextCfg.githubClientSecret === 'string' && nextCfg.githubClientSecret.trim() !== '********') {
+      systemConfig.githubClientSecret = nextCfg.githubClientSecret.trim().slice(0, 240);
+    }
+    if (typeof nextCfg.googleClientId === 'string') systemConfig.googleClientId = nextCfg.googleClientId.trim().slice(0, 200);
+    if (typeof nextCfg.googleClientSecret === 'string' && nextCfg.googleClientSecret.trim() !== '********') {
+      systemConfig.googleClientSecret = nextCfg.googleClientSecret.trim().slice(0, 240);
+    }
+    if (typeof nextCfg.oauthPublicBaseUrl === 'string') systemConfig.oauthPublicBaseUrl = nextCfg.oauthPublicBaseUrl.trim().slice(0, 300);
     if (typeof nextCfg.webhookUrl === 'string') systemConfig.webhookUrl = nextCfg.webhookUrl.trim().slice(0, 500);
     if (typeof nextCfg.giphyApiKey === 'string') {
       systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);

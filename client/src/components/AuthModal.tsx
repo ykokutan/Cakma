@@ -41,6 +41,12 @@ import { OtpCodeInput } from './auth/OtpCodeInput';
 import { TwoFactorForm } from './auth/TwoFactorForm';
 import { ForgotPasswordForm } from './auth/ForgotPasswordForm';
 import { isWebAuthnSupported, loginWithPasskey } from '../utils/webauthn';
+import {
+  fetchOAuthProviders,
+  runOAuthPopupAndPoll,
+  type OAuthProvidersAvailability,
+} from '../utils/oauthClient';
+import type { VerifiedProviderId } from '../types';
 import { LegalDocumentsModal } from './LegalDocumentsModal';
 import { LEGAL_DOCUMENTS_VERSION, type LegalDocumentId } from '../data/legalDocuments';
 
@@ -130,6 +136,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
   const [showServerSwitch, setShowServerSwitch] = useState(false);
   const [customServerInput, setCustomServerInput] = useState('');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProvidersAvailability>({
+    steam: true,
+    github: false,
+    google: false,
+    registrationEnabled: true,
+    inviteOnly: false,
+  });
+  const [oauthLoading, setOauthLoading] = useState<VerifiedProviderId | null>(null);
+  const [oauthNeedsInvite, setOauthNeedsInvite] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void fetchOAuthProviders(currentServerHost).then((p) => {
+      if (active) setOauthProviders(p);
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentServerHost]);
 
   const isLightTheme = uiTheme !== 'custom' && LIGHT_THEMES.has(uiTheme);
   const usernameCheck = validateUsername(username);
@@ -214,6 +239,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
       return;
     }
     loginWithSessionToken(res.token, res.mediaToken);
+  };
+
+  const handleOAuthLogin = async (provider: VerifiedProviderId) => {
+    if (oauthLoading || loading || passkeyLoading || !isConnected) return;
+    setErrorMessage('');
+    setOauthNeedsInvite(false);
+    setOauthLoading(provider);
+    try {
+      const outcome = await runOAuthPopupAndPoll(currentServerHost, {
+        provider,
+        intent: 'login',
+        inviteCode: inviteCode.trim() || undefined,
+      });
+      if (!outcome.ok) {
+        if (outcome.code === 'INVITE_REQUIRED') {
+          setOauthNeedsInvite(true);
+        }
+        triggerError(outcome.error || `${provider.toUpperCase()} ile giriş yapılamadı.`);
+        return;
+      }
+      if (outcome.status === 'requires_2fa' && outcome.pending2faToken) {
+        setPending2faToken(outcome.pending2faToken);
+        setTwoFaMode('totp');
+        setTotpCode('');
+        return;
+      }
+      if (outcome.token) {
+        if (outcome.username) persistRememberedUser(outcome.username);
+        loginWithSessionToken(outcome.token, outcome.mediaToken);
+        onClose();
+      }
+    } finally {
+      setOauthLoading(null);
+    }
   };
 
   const handleSendResetCode = async () => {
@@ -1347,6 +1406,62 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, forced = false })
                           {passkeyLoading ? 'Passkey doğrulanıyor...' : t(language, 'loginWithPasskey')}
                         </span>
                       </button>
+                    )}
+
+                    {(oauthProviders.steam || oauthProviders.github || oauthProviders.google) && (
+                      <div className="pt-2 space-y-2">
+                        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold">
+                          <span className="flex-1 h-px bg-white/10" />
+                          <span>veya Bağlı Hesap ile Devam Et</span>
+                          <span className="flex-1 h-px bg-white/10" />
+                        </div>
+
+                        {(oauthNeedsInvite || (oauthProviders.inviteOnly && !isRegister)) && (
+                          <input
+                            type="text"
+                            value={inviteCode}
+                            onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                            placeholder="Davet kodu (yeni OAuth hesabı için gerekli)"
+                            className="w-full px-3 py-2 rounded-xl bg-black/40 border border-amber-500/35 text-xs text-white font-mono placeholder:text-white/35 outline-none focus:border-amber-400"
+                          />
+                        )}
+
+                        <div className="grid grid-cols-3 gap-2">
+                          {oauthProviders.steam && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOAuthLogin('steam')}
+                              disabled={Boolean(oauthLoading) || loading || !isConnected}
+                              className="py-2 px-2.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/30 text-sky-200 text-xs font-bold flex items-center justify-center gap-1.5 transition disabled:opacity-40"
+                            >
+                              {oauthLoading === 'steam' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🎮</span>}
+                              <span>Steam</span>
+                            </button>
+                          )}
+                          {oauthProviders.github && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOAuthLogin('github')}
+                              disabled={Boolean(oauthLoading) || loading || !isConnected}
+                              className="py-2 px-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/20 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition disabled:opacity-40"
+                            >
+                              {oauthLoading === 'github' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>💻</span>}
+                              <span>GitHub</span>
+                            </button>
+                          )}
+                          {oauthProviders.google && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOAuthLogin('google')}
+                              disabled={Boolean(oauthLoading) || loading || !isConnected}
+                              className="py-2 px-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/30 text-emerald-200 text-xs font-bold flex items-center justify-center gap-1.5 transition disabled:opacity-40"
+                            >
+                              {oauthLoading === 'google' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🌐</span>}
+                              <span>Google</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     )}
 
                     <div className="text-center pt-1">

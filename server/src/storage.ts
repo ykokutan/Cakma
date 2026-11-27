@@ -556,6 +556,13 @@ export interface SystemConfig {
   mediaS3Prefix?: string;
   mediaS3PublicBaseUrl?: string;
   mediaS3MinSizeKb?: number;
+  steamAuthEnabled?: boolean;
+  steamWebApiKey?: string;
+  githubClientId?: string;
+  githubClientSecret?: string;
+  googleClientId?: string;
+  googleClientSecret?: string;
+  oauthPublicBaseUrl?: string;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';

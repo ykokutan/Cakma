@@ -14,7 +14,13 @@ export function toPublicUser(user: User): User {
     bannedUntil: _bannedUntil,
     acceptedTermsAt: _acceptedTermsAt,
     acceptedTermsVersion: _acceptedTermsVersion,
+    verifiedConnections,
     ...publicProfile
   } = user;
-  return publicProfile;
+  return {
+    ...publicProfile,
+    ...(Array.isArray(verifiedConnections)
+      ? { verifiedConnections: verifiedConnections.filter((c) => c.showOnProfile !== false) }
+      : {}),
+  };
 }

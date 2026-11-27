@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  CheckCircle2,
   Crown,
   ExternalLink,
   Gamepad2,
@@ -21,6 +22,7 @@ import { AvatarView } from './AvatarView';
 import { StatusIndicator } from './StatusIndicator';
 import { formatElapsedPlaytime } from '../utils/gameDetectionRules';
 import { getNameGradientClass } from '../utils/cosmeticsCatalog';
+import { formatConnectionSummary, getProviderDisplayMeta } from '../utils/oauthClient';
 
 interface UserPopoverCardProps {
   user: User;
@@ -239,6 +241,27 @@ export const UserPopoverCard: React.FC<UserPopoverCardProps> = ({
                 <span className="truncate">Ses Odası: {voiceChannelName}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Verified External Connections */}
+        {user.verifiedConnections && user.verifiedConnections.some((c) => c.showOnProfile !== false) && (
+          <div className="flex flex-wrap gap-1.5">
+            {user.verifiedConnections
+              .filter((c) => c.showOnProfile !== false)
+              .map((conn) => {
+                const meta = getProviderDisplayMeta(conn.provider);
+                return (
+                  <span
+                    key={conn.provider}
+                    className={`px-2 py-0.5 rounded-lg border text-[10px] inline-flex items-center gap-1 ${meta.badgeColor}`}
+                  >
+                    <span>{meta.icon}</span>
+                    <span className="truncate max-w-[140px]">{formatConnectionSummary(conn)}</span>
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                  </span>
+                );
+              })}
           </div>
         )}
 

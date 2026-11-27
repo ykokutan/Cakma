@@ -9,7 +9,17 @@ import {
   StatusExpiryPreset,
   computeStatusExpiryTimestamp,
 } from '../utils/statusExpiry';
-import { User } from '../types';
+import { User, type VerifiedProviderId } from '../types';
+import {
+  fetchOAuthProviders,
+  formatConnectionSummary,
+  getProviderDisplayMeta,
+  refreshSteamConnection,
+  runOAuthPopupAndPoll,
+  unlinkVerifiedConnection,
+  updateVerifiedConnectionVisibility,
+  type OAuthProvidersAvailability,
+} from '../utils/oauthClient';
 import { AvatarView, processUploadedImage, isImageAvatar } from './AvatarView';
 import { appConfirm, appToast } from '../utils/appDialogs';
 import {
@@ -54,6 +64,10 @@ import {
   Send,
   Users,
   Layers,
+  CheckCircle2,
+  RefreshCw,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface UserProfileModalProps {
@@ -131,8 +145,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
     setUserNote: setGlobalUserNote,
     updateUserActivity,
     transferWalletBalance,
+    currentServerHost,
     language,
   } = useSocket();
+  const [oauthAvail, setOauthAvail] = useState<OAuthProvidersAvailability | null>(null);
+  const [connBusy, setConnBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchOAuthProviders(currentServerHost).then(setOauthAvail);
+  }, [currentServerHost]);
 
   const isMe = currentUser?.id === propUser.id || currentUser?.username.toLowerCase() === propUser.username.toLowerCase();
   const user = isMe && currentUser
@@ -943,6 +964,47 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                     <div className="text-xs text-white/75 leading-relaxed bg-white/[0.03] p-3 rounded-xl border border-white/5 whitespace-pre-wrap select-text">
                       {renderRichBio(user.bio || 'Bu kullanıcı henüz hakkında yazısı eklememiş.')}
                     </div>
+                    {(user.verifiedConnections && user.verifiedConnections.length > 0) && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Doğrulanmış Hesaplar</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {user.verifiedConnections
+                            .filter((c) => isMe || c.showOnProfile !== false)
+                            .map((conn) => {
+                              const meta = getProviderDisplayMeta(conn.provider);
+                              const summary = formatConnectionSummary(conn);
+                              const content = (
+                                <>
+                                  <span>{meta.icon}</span>
+                                  <span className="font-semibold">{summary}</span>
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                                </>
+                              );
+                              return conn.profileUrl ? (
+                                <a
+                                  key={conn.provider}
+                                  href={conn.profileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`px-2.5 py-1 rounded-xl border text-[11px] inline-flex items-center gap-1.5 transition hover:brightness-110 ${meta.badgeColor}`}
+                                >
+                                  {content}
+                                </a>
+                              ) : (
+                                <span
+                                  key={conn.provider}
+                                  className={`px-2.5 py-1 rounded-xl border text-[11px] inline-flex items-center gap-1.5 ${meta.badgeColor}`}
+                                >
+                                  {content}
+                                </span>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
                     {(user.socialLinks?.steam || user.socialLinks?.github || user.socialLinks?.website) && (
                       <div className="flex flex-wrap gap-1.5">
                         {user.socialLinks.steam && (
@@ -1377,6 +1439,128 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ user: propUs
                             </span>
                           )}
                         </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Verified OAuth / OpenID Connections Manager */}
+                <div className="space-y-2 p-3 rounded-xl bg-white/[0.03] border border-white/10">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Doğrulanmış Bağlı Hesaplar</span>
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {(['steam', 'github', 'google'] as VerifiedProviderId[]).map((prov) => {
+                      const existing = (user.verifiedConnections || []).find((c) => c.provider === prov);
+                      const meta = getProviderDisplayMeta(prov);
+                      const enabled = oauthAvail ? oauthAvail[prov] : prov === 'steam';
+                      return (
+                        <div
+                          key={prov}
+                          className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-black/30 border border-white/5 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span>{meta.icon}</span>
+                            <div className="min-w-0">
+                              <div className="font-semibold text-white flex items-center gap-1">
+                                <span>{meta.label}</span>
+                                {existing && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+                              </div>
+                              <div className="text-[10px] text-white/50 truncate">
+                                {existing
+                                  ? formatConnectionSummary(existing)
+                                  : enabled
+                                  ? 'Doğrulanmış hesap bağlı değil'
+                                  : 'Sunucuda yapılandırılmamış'}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {existing ? (
+                              <>
+                                {prov === 'steam' && (
+                                  <button
+                                    type="button"
+                                    disabled={connBusy !== null}
+                                    onClick={async () => {
+                                      setConnBusy('steam-refresh');
+                                      const res = await refreshSteamConnection(currentServerHost);
+                                      setConnBusy(null);
+                                      appToast(
+                                        res.ok ? 'Steam bilgisi güncellendi.' : res.error || 'Güncellenemedi.',
+                                        res.ok ? 'success' : 'error'
+                                      );
+                                    }}
+                                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-sky-300 transition disabled:opacity-40"
+                                    title="Steam oyun bilgisini yenile"
+                                  >
+                                    <RefreshCw className={`w-3.5 h-3.5 ${connBusy === 'steam-refresh' ? 'animate-spin' : ''}`} />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={connBusy !== null}
+                                  onClick={async () => {
+                                    setConnBusy(`vis-${prov}`);
+                                    const res = await updateVerifiedConnectionVisibility(
+                                      currentServerHost,
+                                      prov,
+                                      !(existing.showOnProfile !== false)
+                                    );
+                                    setConnBusy(null);
+                                    if (!res.ok) appToast(res.error || 'Güncellenemedi.', 'error');
+                                  }}
+                                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-white/75 transition disabled:opacity-40"
+                                  title={existing.showOnProfile !== false ? 'Profilden Gizle' : 'Profilde Göster'}
+                                >
+                                  {existing.showOnProfile !== false ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={connBusy !== null}
+                                  onClick={async () => {
+                                    setConnBusy(`del-${prov}`);
+                                    const res = await unlinkVerifiedConnection(currentServerHost, prov);
+                                    setConnBusy(null);
+                                    appToast(
+                                      res.ok ? `${meta.label} bağlantısı kaldırıldı.` : res.error || 'Kaldırılamadı.',
+                                      res.ok ? 'info' : 'error'
+                                    );
+                                  }}
+                                  className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 transition disabled:opacity-40"
+                                  title="Bağlantıyı Kaldır"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={!enabled || connBusy !== null}
+                                onClick={async () => {
+                                  setConnBusy(`link-${prov}`);
+                                  const out = await runOAuthPopupAndPoll(currentServerHost, {
+                                    provider: prov,
+                                    intent: 'link',
+                                  });
+                                  setConnBusy(null);
+                                  appToast(
+                                    out.ok
+                                      ? `${meta.label} hesabı doğrulandı!`
+                                      : out.error || `${meta.label} bağlanamadı.`,
+                                    out.ok ? 'success' : 'error'
+                                  );
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-200 text-[11px] font-bold transition disabled:opacity-40"
+                              >
+                                {connBusy === `link-${prov}` ? 'Bağlanıyor...' : 'Bağla'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>

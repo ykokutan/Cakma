@@ -113,6 +113,9 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
   const [ipBanDuration, setIpBanDuration] = useState(0);
   const [showS3Secret, setShowS3Secret] = useState(false);
   const [showMediaS3Secret, setShowMediaS3Secret] = useState(false);
+  const [showSteamKey, setShowSteamKey] = useState(false);
+  const [showGithubSecret, setShowGithubSecret] = useState(false);
+  const [showGoogleSecret, setShowGoogleSecret] = useState(false);
   const [mediaS3TestBusy, setMediaS3TestBusy] = useState(false);
   const [mediaS3TestResult, setMediaS3TestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [scheduledBackupBusy, setScheduledBackupBusy] = useState<string | null>(null);
@@ -858,6 +861,161 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
             </div>
           </div>
         </>
+      )}
+
+      {/* 4b. OAuth2 & Verified Connections (Steam / GitHub / Google) */}
+      {isCardVisible(
+        'security',
+        'oauth oauth2 steam github google giriş bağla doğrulanmış hesap openid client id secret callback'
+      ) && (
+        <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-sky-300">
+                OAuth2 &amp; Doğrulanmış Hesap Entegrasyonları (Steam / GitHub / Google)
+              </div>
+              <div className="text-[11px] text-white/45 mt-0.5">
+                Giriş ekranında tek tıkla oturum açma ve profil kartlarında doğrulanmış hesap rozeti sunar.
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-white/85 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={fields.sysSteamAuthEnabled}
+                onChange={(e) => {
+                  fields.setSysSteamAuthEnabled(e.target.checked);
+                  setIsSystemDirty(true);
+                }}
+                className="rounded border-white/20 bg-black/40 text-sky-500"
+              />
+              <span>Steam OpenID Aktif</span>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                OAuth Public Callback Base URL (Opsiyonel)
+              </label>
+              <input
+                type="url"
+                value={fields.sysOauthPublicBaseUrl}
+                onChange={(e) => {
+                  fields.setSysOauthPublicBaseUrl(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                placeholder="https://ses.yahyakemalokutan.com"
+                className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-sky-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                Steam Web API Key {adminData?.systemConfig?.hasSteamWebApiKey ? '(Kayıtlı)' : '(Opsiyonel, oyun sayısı için)'}
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type={showSteamKey ? 'text' : 'password'}
+                  value={fields.sysSteamWebApiKey}
+                  onChange={(e) => {
+                    fields.setSysSteamWebApiKey(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="Steam Web API Key"
+                  className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-sky-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSteamKey((v) => !v)}
+                  className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70"
+                >
+                  {showSteamKey ? 'Gizle' : 'Göster'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">GitHub OAuth Client ID</label>
+              <input
+                type="text"
+                value={fields.sysGithubClientId}
+                onChange={(e) => {
+                  fields.setSysGithubClientId(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                placeholder="Ov23li..."
+                className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-sky-400"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                GitHub Client Secret {adminData?.systemConfig?.hasGithubClientSecret ? '(Kayıtlı)' : ''}
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type={showGithubSecret ? 'text' : 'password'}
+                  value={fields.sysGithubClientSecret}
+                  onChange={(e) => {
+                    fields.setSysGithubClientSecret(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="GitHub Client Secret"
+                  className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-sky-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGithubSecret((v) => !v)}
+                  className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70"
+                >
+                  {showGithubSecret ? 'Gizle' : 'Göster'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">Google OAuth Client ID</label>
+              <input
+                type="text"
+                value={fields.sysGoogleClientId}
+                onChange={(e) => {
+                  fields.setSysGoogleClientId(e.target.value);
+                  setIsSystemDirty(true);
+                }}
+                placeholder="....apps.googleusercontent.com"
+                className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-sky-400"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                Google Client Secret {adminData?.systemConfig?.hasGoogleClientSecret ? '(Kayıtlı)' : ''}
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  type={showGoogleSecret ? 'text' : 'password'}
+                  value={fields.sysGoogleClientSecret}
+                  onChange={(e) => {
+                    fields.setSysGoogleClientSecret(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="Google Client Secret"
+                  className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-sky-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleSecret((v) => !v)}
+                  className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70"
+                >
+                  {showGoogleSecret ? 'Gizle' : 'Göster'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-black/25 border border-white/5 text-[11px] text-white/55 font-mono space-y-0.5">
+            <div>Callback URL (GitHub): /api/oauth/callback/github</div>
+            <div>Callback URL (Google): /api/oauth/callback/google</div>
+          </div>
+        </div>
       )}
 
       {/* 5. IP Ban Management */}

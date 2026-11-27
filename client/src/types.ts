@@ -63,6 +63,25 @@ export interface ServerFolderEntry {
   collapsed: boolean;
 }
 
+export type VerifiedProviderId = 'steam' | 'github' | 'google';
+
+export interface VerifiedConnection {
+  provider: VerifiedProviderId;
+  externalId: string;
+  username: string;
+  displayName?: string;
+  profileUrl?: string;
+  avatarUrl?: string;
+  metadata?: {
+    gameCount?: number;
+    currentGame?: string;
+    publicRepos?: number;
+    email?: string;
+  };
+  showOnProfile: boolean;
+  verifiedAt: string;
+}
+
 export interface User {
   id: string;
   accountId?: string;
@@ -90,6 +109,7 @@ export interface User {
   unlockedCosmetics?: string[];
   pinnedBadgeId?: string;
   socialLinks?: { steam?: string; github?: string; website?: string };
+  verifiedConnections?: VerifiedConnection[];
   bio?: string;
   badges?: UserBadge[];
   friends?: string[];

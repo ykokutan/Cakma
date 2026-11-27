@@ -48,6 +48,13 @@ export interface SystemConfigUpdatePayload {
   mediaS3Prefix?: string;
   mediaS3PublicBaseUrl?: string;
   mediaS3MinSizeKb?: number;
+  steamAuthEnabled?: boolean;
+  steamWebApiKey?: string;
+  githubClientId?: string;
+  githubClientSecret?: string;
+  googleClientId?: string;
+  googleClientSecret?: string;
+  oauthPublicBaseUrl?: string;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
@@ -109,6 +116,13 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
   const [sysMediaS3Prefix, setSysMediaS3Prefix] = useState<string>('uploads/');
   const [sysMediaS3PublicBaseUrl, setSysMediaS3PublicBaseUrl] = useState<string>('');
   const [sysMediaS3MinSizeKb, setSysMediaS3MinSizeKb] = useState<number>(0);
+  const [sysSteamAuthEnabled, setSysSteamAuthEnabled] = useState<boolean>(true);
+  const [sysSteamWebApiKey, setSysSteamWebApiKey] = useState<string>('');
+  const [sysGithubClientId, setSysGithubClientId] = useState<string>('');
+  const [sysGithubClientSecret, setSysGithubClientSecret] = useState<string>('');
+  const [sysGoogleClientId, setSysGoogleClientId] = useState<string>('');
+  const [sysGoogleClientSecret, setSysGoogleClientSecret] = useState<string>('');
+  const [sysOauthPublicBaseUrl, setSysOauthPublicBaseUrl] = useState<string>('');
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
   const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
   const [sysAiProvider, setSysAiProvider] = useState<'builtin' | 'gemini' | 'openai'>('builtin');
@@ -184,6 +198,13 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     setSysMediaS3Prefix(cfg.mediaS3Prefix || 'uploads/');
     setSysMediaS3PublicBaseUrl(cfg.mediaS3PublicBaseUrl || '');
     setSysMediaS3MinSizeKb(cfg.mediaS3MinSizeKb ?? 0);
+    setSysSteamAuthEnabled(cfg.steamAuthEnabled !== false);
+    setSysSteamWebApiKey(cfg.steamWebApiKey || '');
+    setSysGithubClientId(cfg.githubClientId || '');
+    setSysGithubClientSecret(cfg.githubClientSecret || '');
+    setSysGoogleClientId(cfg.googleClientId || '');
+    setSysGoogleClientSecret(cfg.googleClientSecret || '');
+    setSysOauthPublicBaseUrl(cfg.oauthPublicBaseUrl || '');
     setSysWebhookUrl(cfg.webhookUrl || '');
     setSysGiphyApiKey(cfg.giphyApiKey || '');
     setSysAiProvider(cfg.aiSummaryProvider || 'builtin');
@@ -270,6 +291,13 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       mediaS3Prefix: sysMediaS3Prefix,
       mediaS3PublicBaseUrl: sysMediaS3PublicBaseUrl,
       mediaS3MinSizeKb: sysMediaS3MinSizeKb,
+      steamAuthEnabled: sysSteamAuthEnabled,
+      steamWebApiKey: sysSteamWebApiKey,
+      githubClientId: sysGithubClientId,
+      githubClientSecret: sysGithubClientSecret,
+      googleClientId: sysGoogleClientId,
+      googleClientSecret: sysGoogleClientSecret,
+      oauthPublicBaseUrl: sysOauthPublicBaseUrl,
       webhookUrl: sysWebhookUrl,
       giphyApiKey: sysGiphyApiKey,
       aiSummaryProvider: sysAiProvider,
@@ -332,6 +360,13 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     sysMediaS3Prefix,
     sysMediaS3PublicBaseUrl,
     sysMediaS3MinSizeKb,
+    sysSteamAuthEnabled,
+    sysSteamWebApiKey,
+    sysGithubClientId,
+    sysGithubClientSecret,
+    sysGoogleClientId,
+    sysGoogleClientSecret,
+    sysOauthPublicBaseUrl,
     sysWebhookUrl,
     sysGiphyApiKey,
     sysAiProvider,
@@ -437,6 +472,20 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       setSysMediaS3PublicBaseUrl,
       sysMediaS3MinSizeKb,
       setSysMediaS3MinSizeKb,
+      sysSteamAuthEnabled,
+      setSysSteamAuthEnabled,
+      sysSteamWebApiKey,
+      setSysSteamWebApiKey,
+      sysGithubClientId,
+      setSysGithubClientId,
+      sysGithubClientSecret,
+      setSysGithubClientSecret,
+      sysGoogleClientId,
+      setSysGoogleClientId,
+      sysGoogleClientSecret,
+      setSysGoogleClientSecret,
+      sysOauthPublicBaseUrl,
+      setSysOauthPublicBaseUrl,
       sysWebhookUrl,
       setSysWebhookUrl,
       sysGiphyApiKey,
