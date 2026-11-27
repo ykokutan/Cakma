@@ -545,8 +545,10 @@ export interface MetricsHistoryPoint {
   ts: number;
   memoryRssMb: number;
   memoryHeapUsedMb: number;
+  cpuPercent?: number;
   onlineUsers: number;
   activeVoiceRooms: number;
+  voiceParticipantsCount?: number;
   messagesPerMin: number;
   eventLoopLagMs: number;
   pendingStorageWrites: number;

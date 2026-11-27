@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Database, FolderSearch, HardDriveDownload, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { CloudUpload, Database, Download, FolderSearch, HardDriveDownload, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
 import { authFetch } from '../../utils/authFetch';
 import { t } from '../../utils/i18n';
@@ -42,6 +42,8 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
   const [backups, setBackups] = useState<SqliteBackupEntry[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
+  const [downloadingName, setDownloadingName] = useState<string | null>(null);
+  const [pushingName, setPushingName] = useState<string | null>(null);
 
   const [minAgeHours, setMinAgeHours] = useState(24);
   const [scanResult, setScanResult] = useState<OrphanScanSummary | null>(null);
@@ -82,11 +84,62 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
         return;
       }
       setBackups(Array.isArray(data.backups) ? data.backups : []);
-      onNotify('success', `SQLite sıcak yedeği oluşturuldu: ${data.backup?.filename || ''}`);
+      const pushNote = data.s3Push?.ok ? ' + S3 bulutuna gönderildi' : '';
+      onNotify('success', `Anlık yedek oluşturuldu: ${data.backup?.filename || ''}${pushNote}`);
     } catch {
       onNotify('error', 'Yedek alınırken bağlantı hatası oluştu.');
     } finally {
       setCreatingBackup(false);
+    }
+  };
+
+  const handleDownloadBackup = async (filename: string) => {
+    setDownloadingName(filename);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/admin/backups/${encodeURIComponent(filename)}/download`
+      );
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => null);
+        onNotify('error', errData?.error || 'Yedek dosyası indirilemedi.');
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      onNotify('success', `Yedek indirildi: ${filename}`);
+    } catch {
+      onNotify('error', 'Yedek indirilirken ağ hatası oluştu.');
+    } finally {
+      setDownloadingName(null);
+    }
+  };
+
+  const handlePushBackupToS3 = async (filename: string) => {
+    setPushingName(filename);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/admin/backups/${encodeURIComponent(filename)}/push-remote`,
+        { method: 'POST' }
+      );
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        onNotify('error', data?.error || 'S3/R2 bulutuna yüklenemedi.');
+        return;
+      }
+      onNotify('success', `Yedek S3/R2 deposuna yüklendi: ${data.key || filename}`);
+    } catch {
+      onNotify('error', 'S3/R2 yükleme isteği başarısız.');
+    } finally {
+      setPushingName(null);
     }
   };
 
@@ -185,7 +238,9 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
                 {t(language, 'sqliteBackupsTitle')}
               </h4>
               <p className="text-[11px] text-white/45">
-                Canlı veritabanını kilitlemeden atomik SQLite yedeği alır (son 10 yedek saklanır).
+                {sqliteActive
+                  ? 'Canlı veritabanını kilitlemeden atomik SQLite yedeği alır (.sqlite, son 10 yedek).'
+                  : 'SQLite kapalı olduğu için tam sistem JSON anlık yedeği alır (.json).'}
               </p>
             </div>
           </div>
@@ -195,10 +250,10 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
               className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                 sqliteActive
                   ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300'
-                  : 'bg-white/5 border-white/15 text-white/50'
+                  : 'bg-amber-500/15 border-amber-400/35 text-amber-200'
               }`}
             >
-              {sqliteActive ? 'SQLite Aktif' : 'JSON Modu'}
+              {sqliteActive ? 'SQLite Aktif' : 'JSON Yedek Modu'}
             </span>
             <button
               type="button"
@@ -211,7 +266,7 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
             <button
               type="button"
               onClick={() => void handleCreateBackup()}
-              disabled={!sqliteActive || creatingBackup}
+              disabled={creatingBackup}
               className="px-3 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 disabled:opacity-40 transition"
             >
               {creatingBackup ? (
@@ -224,12 +279,8 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
           </div>
         </div>
 
-        {!sqliteActive && !loadingBackups ? (
-          <div className="text-[11px] text-amber-300/80 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-            SQLite sıcak yedekleme yalnızca `USE_SQLITE_STORAGE` aktifken kullanılabilir.
-          </div>
-        ) : backups.length === 0 ? (
-          <div className="text-xs text-white/40 py-2">Henüz SQLite yedeği oluşturulmamış.</div>
+        {backups.length === 0 ? (
+          <div className="text-xs text-white/40 py-2">Henüz anlık yedek oluşturulmamış.</div>
         ) : (
           <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
             {backups.map((b) => (
@@ -243,14 +294,42 @@ export const AdminMaintenanceCard: React.FC<AdminMaintenanceCardProps> = ({
                     {formatBytes(b.bytes)} · {new Date(b.createdAt).toLocaleString('tr-TR')}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteBackup(b.filename)}
-                  className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 transition shrink-0"
-                  title="Yedeği Sil"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadBackup(b.filename)}
+                    disabled={downloadingName === b.filename}
+                    className="p-1.5 rounded-lg hover:bg-sky-500/20 text-sky-300 transition disabled:opacity-40"
+                    title="Dosyayı İndir"
+                  >
+                    {downloadingName === b.filename ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handlePushBackupToS3(b.filename)}
+                    disabled={pushingName === b.filename}
+                    className="p-1.5 rounded-lg hover:bg-emerald-500/20 text-emerald-300 transition disabled:opacity-40"
+                    title="S3 / R2 Bulutuna Gönder"
+                  >
+                    {pushingName === b.filename ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CloudUpload className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteBackup(b.filename)}
+                    className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 transition"
+                    title="Yedeği Sil"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

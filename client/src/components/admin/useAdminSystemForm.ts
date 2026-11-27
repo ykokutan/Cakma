@@ -30,6 +30,14 @@ export interface SystemConfigUpdatePayload {
   autoBackupEnabled?: boolean;
   autoBackupIntervalHours?: number;
   maxBackupsToKeep?: number;
+  backupS3Enabled?: boolean;
+  backupS3Endpoint?: string;
+  backupS3Bucket?: string;
+  backupS3Region?: string;
+  backupS3AccessKey?: string;
+  backupS3SecretKey?: string;
+  backupS3Prefix?: string;
+  backupS3AutoPush?: boolean;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';
@@ -73,6 +81,14 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
   const [sysAutoBackupEnabled, setSysAutoBackupEnabled] = useState<boolean>(false);
   const [sysAutoBackupHours, setSysAutoBackupHours] = useState<number>(24);
   const [sysMaxBackups, setSysMaxBackups] = useState<number>(7);
+  const [sysBackupS3Enabled, setSysBackupS3Enabled] = useState<boolean>(false);
+  const [sysBackupS3Endpoint, setSysBackupS3Endpoint] = useState<string>('');
+  const [sysBackupS3Bucket, setSysBackupS3Bucket] = useState<string>('');
+  const [sysBackupS3Region, setSysBackupS3Region] = useState<string>('auto');
+  const [sysBackupS3AccessKey, setSysBackupS3AccessKey] = useState<string>('');
+  const [sysBackupS3SecretKey, setSysBackupS3SecretKey] = useState<string>('');
+  const [sysBackupS3Prefix, setSysBackupS3Prefix] = useState<string>('cakma-backups/');
+  const [sysBackupS3AutoPush, setSysBackupS3AutoPush] = useState<boolean>(false);
   const [sysWebhookUrl, setSysWebhookUrl] = useState<string>('');
   const [sysGiphyApiKey, setSysGiphyApiKey] = useState<string>('');
   const [sysAiProvider, setSysAiProvider] = useState<'builtin' | 'gemini' | 'openai'>('builtin');
@@ -130,6 +146,14 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     setSysAutoBackupEnabled(Boolean(cfg.autoBackupEnabled));
     setSysAutoBackupHours(cfg.autoBackupIntervalHours ?? 24);
     setSysMaxBackups(cfg.maxBackupsToKeep ?? 7);
+    setSysBackupS3Enabled(Boolean(cfg.backupS3Enabled));
+    setSysBackupS3Endpoint(cfg.backupS3Endpoint || '');
+    setSysBackupS3Bucket(cfg.backupS3Bucket || '');
+    setSysBackupS3Region(cfg.backupS3Region || 'auto');
+    setSysBackupS3AccessKey(cfg.backupS3AccessKey || '');
+    setSysBackupS3SecretKey(cfg.backupS3SecretKey || '');
+    setSysBackupS3Prefix(cfg.backupS3Prefix || 'cakma-backups/');
+    setSysBackupS3AutoPush(Boolean(cfg.backupS3AutoPush));
     setSysWebhookUrl(cfg.webhookUrl || '');
     setSysGiphyApiKey(cfg.giphyApiKey || '');
     setSysAiProvider(cfg.aiSummaryProvider || 'builtin');
@@ -198,6 +222,14 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       autoBackupEnabled: sysAutoBackupEnabled,
       autoBackupIntervalHours: sysAutoBackupHours,
       maxBackupsToKeep: sysMaxBackups,
+      backupS3Enabled: sysBackupS3Enabled,
+      backupS3Endpoint: sysBackupS3Endpoint,
+      backupS3Bucket: sysBackupS3Bucket,
+      backupS3Region: sysBackupS3Region,
+      backupS3AccessKey: sysBackupS3AccessKey,
+      backupS3SecretKey: sysBackupS3SecretKey,
+      backupS3Prefix: sysBackupS3Prefix,
+      backupS3AutoPush: sysBackupS3AutoPush,
       webhookUrl: sysWebhookUrl,
       giphyApiKey: sysGiphyApiKey,
       aiSummaryProvider: sysAiProvider,
@@ -242,6 +274,14 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
     sysAutoBackupEnabled,
     sysAutoBackupHours,
     sysMaxBackups,
+    sysBackupS3Enabled,
+    sysBackupS3Endpoint,
+    sysBackupS3Bucket,
+    sysBackupS3Region,
+    sysBackupS3AccessKey,
+    sysBackupS3SecretKey,
+    sysBackupS3Prefix,
+    sysBackupS3AutoPush,
     sysWebhookUrl,
     sysGiphyApiKey,
     sysAiProvider,
@@ -311,6 +351,22 @@ export function useAdminSystemForm(systemConfig?: AdminDashboardData['systemConf
       setSysAutoBackupHours,
       sysMaxBackups,
       setSysMaxBackups,
+      sysBackupS3Enabled,
+      setSysBackupS3Enabled,
+      sysBackupS3Endpoint,
+      setSysBackupS3Endpoint,
+      sysBackupS3Bucket,
+      setSysBackupS3Bucket,
+      sysBackupS3Region,
+      setSysBackupS3Region,
+      sysBackupS3AccessKey,
+      setSysBackupS3AccessKey,
+      sysBackupS3SecretKey,
+      setSysBackupS3SecretKey,
+      sysBackupS3Prefix,
+      setSysBackupS3Prefix,
+      sysBackupS3AutoPush,
+      setSysBackupS3AutoPush,
       sysWebhookUrl,
       setSysWebhookUrl,
       sysGiphyApiKey,

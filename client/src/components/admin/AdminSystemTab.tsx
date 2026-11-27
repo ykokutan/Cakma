@@ -111,7 +111,59 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
   const [ipBanInput, setIpBanInput] = useState('');
   const [ipBanReason, setIpBanReason] = useState('Şüpheli trafik / kural ihlali');
   const [ipBanDuration, setIpBanDuration] = useState(0);
+  const [showS3Secret, setShowS3Secret] = useState(false);
+  const [scheduledBackupBusy, setScheduledBackupBusy] = useState<string | null>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadScheduledBackup = async (filename: string) => {
+    setScheduledBackupBusy(`dl:${filename}`);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/admin/backups/${encodeURIComponent(filename)}/download`
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        onNotify('error', err?.error || 'Yedek dosyası indirilemedi.');
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      onNotify('success', `Yedek indirildi: ${filename}`);
+    } catch {
+      onNotify('error', 'Yedek indirme sırasında bağlantı hatası oluştu.');
+    } finally {
+      setScheduledBackupBusy(null);
+    }
+  };
+
+  const handlePushScheduledToS3 = async (filename: string) => {
+    setScheduledBackupBusy(`s3:${filename}`);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/admin/backups/${encodeURIComponent(filename)}/push-remote`,
+        { method: 'POST' }
+      );
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        onNotify('error', data?.error || 'S3/R2 bulutuna gönderilemedi.');
+        return;
+      }
+      onNotify('success', `Yedek S3/R2 deposuna gönderildi: ${data.key || filename}`);
+    } catch {
+      onNotify('error', 'Bulut gönderimi sırasında bağlantı hatası oluştu.');
+    } finally {
+      setScheduledBackupBusy(null);
+    }
+  };
 
   const { fields, isSystemDirty, setIsSystemDirty, discardChanges, buildPayload } = form;
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -1262,7 +1314,7 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
       {/* 8. Scheduled Auto-Backup + Webhook + Manual Import/Export */}
       {isCardVisible(
         'backup',
-        'otomatik yedekleme zamanlayıcı backup json geri yükle dışa aktar harici webhook uyarı bildirim'
+        'otomatik yedekleme zamanlayıcı backup json sqlite s3 cloudflare r2 minio bulut geri yükle dışa aktar harici webhook uyarı bildirim'
       ) && (
         <>
           <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
@@ -1348,6 +1400,22 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
+                        disabled={scheduledBackupBusy !== null}
+                        onClick={() => void handleDownloadScheduledBackup(bk.filename)}
+                        className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 text-[10px] font-bold transition disabled:opacity-40"
+                      >
+                        {scheduledBackupBusy === `dl:${bk.filename}` ? '...' : 'İndir'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={scheduledBackupBusy !== null}
+                        onClick={() => void handlePushScheduledToS3(bk.filename)}
+                        className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-[10px] font-bold transition disabled:opacity-40"
+                      >
+                        {scheduledBackupBusy === `s3:${bk.filename}` ? '...' : "S3'e Gönder"}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() =>
                           onRequestDialog({
                             type: 'confirm',
@@ -1383,6 +1451,144 @@ export const AdminSystemTab: React.FC<AdminSystemTabProps> = ({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* S3 / Cloudflare R2 / MinIO Cloud Backup Config */}
+          <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                  S3 / Cloudflare R2 / MinIO Bulut Yedekleme
+                </div>
+                <div className="text-[11px] text-white/45">
+                  SQLite ve JSON yedeklerini AWS SigV4 ile uzak S3 uyumlu nesne depolamaya gönderir.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  fields.setSysBackupS3Enabled(!fields.sysBackupS3Enabled);
+                  setIsSystemDirty(true);
+                }}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  fields.sysBackupS3Enabled ? 'bg-emerald-500' : 'bg-white/15'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    fields.sysBackupS3Enabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-white/50 mb-1">S3 / R2 Endpoint URL</label>
+                <input
+                  type="url"
+                  value={fields.sysBackupS3Endpoint}
+                  onChange={(e) => {
+                    fields.setSysBackupS3Endpoint(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="https://<account-id>.r2.cloudflarestorage.com"
+                  className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/50 mb-1">Bucket Adı</label>
+                  <input
+                    type="text"
+                    value={fields.sysBackupS3Bucket}
+                    onChange={(e) => {
+                      fields.setSysBackupS3Bucket(e.target.value);
+                      setIsSystemDirty(true);
+                    }}
+                    placeholder="cakma-backups"
+                    className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-white/50 mb-1">Region</label>
+                  <input
+                    type="text"
+                    value={fields.sysBackupS3Region}
+                    onChange={(e) => {
+                      fields.setSysBackupS3Region(e.target.value);
+                      setIsSystemDirty(true);
+                    }}
+                    placeholder="auto"
+                    className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-white/50 mb-1">Access Key ID</label>
+                <input
+                  type="text"
+                  value={fields.sysBackupS3AccessKey}
+                  onChange={(e) => {
+                    fields.setSysBackupS3AccessKey(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="AKIA..."
+                  className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-white/50 mb-1">
+                  Secret Access Key {adminData?.systemConfig?.hasBackupS3SecretKey ? '(Kayıtlı)' : ''}
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    type={showS3Secret ? 'text' : 'password'}
+                    value={fields.sysBackupS3SecretKey}
+                    onChange={(e) => {
+                      fields.setSysBackupS3SecretKey(e.target.value);
+                      setIsSystemDirty(true);
+                    }}
+                    placeholder="Secret key"
+                    className="flex-1 px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowS3Secret((v) => !v)}
+                    className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70"
+                  >
+                    {showS3Secret ? 'Gizle' : 'Göster'}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-white/50 mb-1">Nesne Ön Eki (Prefix)</label>
+                <input
+                  type="text"
+                  value={fields.sysBackupS3Prefix}
+                  onChange={(e) => {
+                    fields.setSysBackupS3Prefix(e.target.value);
+                    setIsSystemDirty(true);
+                  }}
+                  placeholder="cakma-backups/"
+                  className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-xs text-white font-mono outline-none focus:border-amber-400"
+                />
+              </div>
+              <div className="flex items-end">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/25 border border-white/10 cursor-pointer select-none text-xs text-white/85 w-full">
+                  <input
+                    type="checkbox"
+                    checked={fields.sysBackupS3AutoPush}
+                    onChange={(e) => {
+                      fields.setSysBackupS3AutoPush(e.target.checked);
+                      setIsSystemDirty(true);
+                    }}
+                    className="rounded border-white/20 bg-black/40 text-emerald-500"
+                  />
+                  <span>Yeni yedek alındığında S3&apos;e otomatik gönder</span>
+                </label>
+              </div>
+            </div>
           </div>
 
           <div className="p-5 rounded-2xl ios-glass-card border border-white/10 space-y-4">

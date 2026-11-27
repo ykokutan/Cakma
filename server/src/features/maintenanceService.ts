@@ -4,7 +4,8 @@ import type { Express, Request } from 'express';
 import type { Message, MetricsHistoryPoint, RegisteredAccount, Server } from '../types.js';
 import { extractSessionToken } from '../utils/adminAuth.js';
 import { collectReferencedMediaUrls, scanAndCleanOrphanUploads, type OrphanScanResult } from '../utils/uploadCleaner.js';
-import { sqliteStore } from '../storage.js';
+import { uploadFileToS3, type S3UploadResult } from '../utils/s3BackupUploader.js';
+import { exportAllDataBundle, sqliteStore, type SystemConfig } from '../storage.js';
 
 export interface MaintenanceSqliteAdapter {
   isActive: () => boolean;
@@ -16,6 +17,7 @@ export interface SqliteBackupFileInfo {
   filename: string;
   bytes: number;
   createdAt: string;
+  format?: 'sqlite' | 'json';
 }
 
 export interface MaintenanceServiceDeps {
@@ -25,6 +27,8 @@ export interface MaintenanceServiceDeps {
     onlineUsers: number;
     serverCount: number;
     activeVoiceRooms: number;
+    voiceParticipantsCount?: number;
+    cpuPercent?: number;
     memoryRssMb: number;
     memoryHeapUsedMb: number;
     pendingStorageWrites: number;
@@ -36,10 +40,14 @@ export interface MaintenanceServiceDeps {
   registeredAccounts: Map<string, RegisteredAccount>;
   servers: Server[];
   sqlite?: MaintenanceSqliteAdapter;
+  exportJsonBundle?: () => unknown;
+  getSystemConfig?: () => SystemConfig;
+  sendBackupWebhook?: (title: string, details: string) => Promise<boolean>;
   addAuditLog?: (action: string, details: string, type?: 'info' | 'warn' | 'voice' | 'auth') => void;
 }
 
-const BACKUP_NAME_RE = /^cakma-backup-[a-zA-Z0-9._-]+\.sqlite$/;
+const BACKUP_NAME_RE = /^cakma-backup-[a-zA-Z0-9._-]+\.(sqlite|json)$/;
+const DOWNLOADABLE_BACKUP_NAME_RE = /^(cakma-)?backup-[a-zA-Z0-9._-]+\.(sqlite|json)$/;
 
 export class MaintenanceService {
   private readonly history: MetricsHistoryPoint[] = [];
@@ -81,8 +89,10 @@ export class MaintenanceService {
       ts: now,
       memoryRssMb: m.memoryRssMb,
       memoryHeapUsedMb: m.memoryHeapUsedMb,
+      cpuPercent: typeof m.cpuPercent === 'number' ? m.cpuPercent : 0,
       onlineUsers: m.onlineUsers,
       activeVoiceRooms: m.activeVoiceRooms,
+      voiceParticipantsCount: typeof m.voiceParticipantsCount === 'number' ? m.voiceParticipantsCount : 0,
       messagesPerMin,
       eventLoopLagMs: lagMs,
       pendingStorageWrites: m.pendingStorageWrites,
@@ -114,6 +124,7 @@ export class MaintenanceService {
               filename: name,
               bytes: st.size,
               createdAt: st.mtime.toISOString(),
+              format: name.endsWith('.json') ? 'json' : 'sqlite',
             });
           }
         } catch {}
@@ -130,13 +141,25 @@ export class MaintenanceService {
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const safeLabel = label ? `-${label.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20)}` : '';
-    const filename = `cakma-backup-${stamp}${safeLabel}.sqlite`;
+    const sqlite = this.deps.sqlite ?? sqliteStore;
+    const isSqlite = sqlite.isActive();
+    const filename = isSqlite
+      ? `cakma-backup-${stamp}${safeLabel}.sqlite`
+      : `cakma-backup-${stamp}${safeLabel}.json`;
     const destPath = path.join(dir, filename);
 
-    const sqlite = this.deps.sqlite ?? sqliteStore;
-    const res = sqlite.backupToFile(destPath);
-    if (!res.ok) {
-      return { ok: false, error: res.error || 'SQLite yedeği alınamadı.' };
+    let bytes: number;
+    if (isSqlite) {
+      const res = sqlite.backupToFile(destPath);
+      if (!res.ok) {
+        return { ok: false, error: res.error || 'SQLite yedeği alınamadı.' };
+      }
+      bytes = res.bytes || 0;
+    } else {
+      const bundle = this.deps.exportJsonBundle ? this.deps.exportJsonBundle() : exportAllDataBundle();
+      const serialized = JSON.stringify(bundle, null, 2);
+      fs.writeFileSync(destPath, serialized, 'utf-8');
+      bytes = fs.statSync(destPath).size;
     }
 
     const all = this.listSqliteBackups();
@@ -149,13 +172,82 @@ export class MaintenanceService {
       }
     }
 
-    const created = {
+    const created: SqliteBackupFileInfo = {
       filename,
-      bytes: res.bytes || 0,
+      bytes,
       createdAt: new Date().toISOString(),
+      format: isSqlite ? 'sqlite' : 'json',
     };
-    this.deps.addAuditLog?.('SQLITE_YEDEK_ALINDI', `Sıcak SQLite yedeği oluşturuldu: ${filename} (${created.bytes} B)`, 'info');
+    this.deps.addAuditLog?.(
+      isSqlite ? 'SQLITE_YEDEK_ALINDI' : 'JSON_YEDEK_ALINDI',
+      `${isSqlite ? 'Sıcak SQLite' : 'JSON'} yedeği oluşturuldu: ${filename} (${created.bytes} B)`,
+      'info'
+    );
     return { ok: true, backup: created };
+  }
+
+  getBackupFile(filename: string): {
+    filename: string;
+    filePath: string;
+    bytes: number;
+    contentType: string;
+  } | null {
+    const safeName = path.basename(filename || '');
+    if (!DOWNLOADABLE_BACKUP_NAME_RE.test(safeName)) return null;
+    const dir = path.resolve(this.getBackupsDir());
+    const fullPath = path.resolve(dir, safeName);
+    if (!fullPath.startsWith(dir + path.sep) && fullPath !== dir) return null;
+    if (!fs.existsSync(fullPath)) return null;
+    const st = fs.statSync(fullPath);
+    if (!st.isFile()) return null;
+    return {
+      filename: safeName,
+      filePath: fullPath,
+      bytes: st.size,
+      contentType: safeName.endsWith('.json') ? 'application/json; charset=utf-8' : 'application/vnd.sqlite3',
+    };
+  }
+
+  async pushBackupToS3(filename: string, cfg?: SystemConfig): Promise<S3UploadResult> {
+    const config = cfg ?? this.deps.getSystemConfig?.();
+    if (!config || !config.backupS3Enabled) {
+      return { ok: false, error: 'Bulut S3/R2/MinIO yedekleme sistem ayarlarında etkin değil.' };
+    }
+    const fileInfo = this.getBackupFile(filename);
+    if (!fileInfo) {
+      return { ok: false, error: 'Yedek dosyası bulunamadı veya geçersiz dosya adı.' };
+    }
+    const rawPrefix = String(config.backupS3Prefix || 'cakma-backups/').trim().replace(/^\/+/, '');
+    const cleanPrefix = rawPrefix ? (rawPrefix.endsWith('/') ? rawPrefix : `${rawPrefix}/`) : '';
+    const objectKey = `${cleanPrefix}${fileInfo.filename}`;
+    const result = await uploadFileToS3({
+      endpoint: config.backupS3Endpoint || '',
+      bucket: config.backupS3Bucket || '',
+      region: config.backupS3Region || 'auto',
+      accessKeyId: config.backupS3AccessKey || '',
+      secretAccessKey: config.backupS3SecretKey || '',
+      objectKey,
+      filePath: fileInfo.filePath,
+      contentType: fileInfo.contentType,
+    });
+    if (result.ok) {
+      this.deps.addAuditLog?.(
+        'BULUT_YEDEK_YUKLENDI',
+        `Yedek S3/R2 deposuna yüklendi: ${fileInfo.filename} -> ${config.backupS3Bucket}/${objectKey}`,
+        'info'
+      );
+      void this.deps.sendBackupWebhook?.(
+        'Yedek Bulut Depoya Gönderildi',
+        `Dosya: ${fileInfo.filename} (${(fileInfo.bytes / 1024).toFixed(1)} KB) -> Bucket: ${config.backupS3Bucket}/${objectKey}`
+      );
+    } else {
+      this.deps.addAuditLog?.(
+        'BULUT_YEDEK_HATASI',
+        `S3/R2 yüklemesi başarısız (${fileInfo.filename}): ${result.error || 'Bilinmeyen hata'}`,
+        'warn'
+      );
+    }
+    return result;
   }
 
   deleteSqliteBackup(filename: string): boolean {
@@ -238,6 +330,8 @@ export interface MaintenanceRoutesDeps {
   verifySessionTokenWithMeta: (token: string) => { username: string; iat: number } | null;
   getAccount: (usernameLower: string) => RegisteredAccount | undefined;
   isMasterRequest: (req: Request) => boolean;
+  getSystemConfig?: () => SystemConfig;
+  sendBackupWebhook?: (title: string, details: string) => Promise<boolean>;
 }
 
 export function registerMaintenanceRoutes(app: Express, deps: MaintenanceRoutesDeps): void {
@@ -277,16 +371,57 @@ export function registerMaintenanceRoutes(app: Express, deps: MaintenanceRoutesD
     });
   });
 
-  app.post('/api/admin/backups/create', (req, res) => {
+  app.post('/api/admin/backups/create', async (req, res) => {
     if (!isAuthorizedAdmin(req)) {
       return res.status(401).json({ ok: false, error: 'Yönetici yetkisi gerekli.' });
     }
     const label = typeof req.body?.label === 'string' ? req.body.label : undefined;
-    const result = maintenance.createSqliteBackup(label);
+    const cfg = deps.getSystemConfig?.();
+    const result = maintenance.createSqliteBackup(label, cfg?.maxBackupsToKeep || 10);
     if (!result.ok) {
       return res.status(400).json({ ok: false, error: result.error });
     }
-    return res.json({ ok: true, backup: result.backup, backups: maintenance.listSqliteBackups() });
+    if (result.backup) {
+      void deps.sendBackupWebhook?.(
+        'Manuel Bakım Yedeği Oluşturuldu',
+        `Dosya: ${result.backup.filename} (${(result.backup.bytes / 1024).toFixed(1)} KB)`
+      );
+    }
+    let s3Push: S3UploadResult | undefined;
+    if (result.backup && cfg?.backupS3Enabled && cfg?.backupS3AutoPush) {
+      s3Push = await maintenance.pushBackupToS3(result.backup.filename, cfg);
+    }
+    return res.json({
+      ok: true,
+      backup: result.backup,
+      backups: maintenance.listSqliteBackups(),
+      s3Push,
+    });
+  });
+
+  app.get('/api/admin/backups/:filename/download', (req, res) => {
+    if (!isAuthorizedAdmin(req)) {
+      return res.status(401).json({ ok: false, error: 'Yönetici yetkisi gerekli.' });
+    }
+    const fileInfo = maintenance.getBackupFile(req.params.filename || '');
+    if (!fileInfo) {
+      return res.status(404).json({ ok: false, error: 'Yedek dosyası bulunamadı veya geçersiz ad.' });
+    }
+    res.setHeader('Content-Type', fileInfo.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileInfo.filename}"`);
+    return res.sendFile(fileInfo.filePath);
+  });
+
+  app.post('/api/admin/backups/:filename/push-remote', async (req, res) => {
+    if (!isAuthorizedAdmin(req)) {
+      return res.status(401).json({ ok: false, error: 'Yönetici yetkisi gerekli.' });
+    }
+    const cfg = deps.getSystemConfig?.();
+    const result = await maintenance.pushBackupToS3(req.params.filename || '', cfg);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.error || 'Uzak depoya yüklenemedi.' });
+    }
+    return res.json({ ok: true, url: result.url, key: result.key });
   });
 
   app.delete('/api/admin/backups/:filename', (req, res) => {

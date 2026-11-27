@@ -23,8 +23,10 @@ interface MetricSnapshot {
   ts: number;
   memoryHeapUsedMb: number;
   memoryRssMb: number;
+  cpuPercent?: number;
   onlineUsers: number;
   activeVoiceRooms: number;
+  voiceParticipantsCount?: number;
   messagesPerMin?: number;
   eventLoopLagMs?: number;
   storageEngine?: string;
@@ -48,25 +50,30 @@ const SparklineCard: React.FC<{
   subLabel: string;
   values: number[];
   secondaryValues?: number[];
+  timestamps?: number[];
   strokeColor: string;
   secondaryStrokeColor?: string;
   unit: string;
+  secondaryUnit?: string;
 }> = ({
   title,
   valueLabel,
   subLabel,
   values,
   secondaryValues,
+  timestamps,
   strokeColor,
   secondaryStrokeColor,
   unit,
+  secondaryUnit,
 }) => {
   const gradId = useId();
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const width = 260;
   const height = 64;
   const pad = 4;
 
-  const { linePath, areaPath, secondaryPath, minVal, maxVal } = useMemo(() => {
+  const { linePath, areaPath, secondaryPath, minVal, maxVal, primaryPts, secondaryPts } = useMemo(() => {
     const src = values.length > 0 ? values : [0];
     const combined = secondaryValues && secondaryValues.length > 0 ? [...src, ...secondaryValues] : src;
     const rawMin = Math.min(...combined);
@@ -77,14 +84,14 @@ const SparklineCard: React.FC<{
       if (series.length === 1) {
         const y = height - pad - ((series[0] - rawMin) / span) * (height - pad * 2);
         return [
-          { x: pad, y },
-          { x: width - pad, y },
+          { x: pad, y, val: series[0] },
+          { x: width - pad, y, val: series[0] },
         ];
       }
       return series.map((v, idx) => {
         const x = pad + (idx / (series.length - 1)) * (width - pad * 2);
         const y = height - pad - ((v - rawMin) / span) * (height - pad * 2);
-        return { x, y };
+        return { x, y, val: v };
       });
     };
 
@@ -93,8 +100,9 @@ const SparklineCard: React.FC<{
     const dArea = `${dLine} L ${pts[pts.length - 1].x.toFixed(1)} ${height} L ${pts[0].x.toFixed(1)} ${height} Z`;
 
     let secD = '';
+    let sPts: Array<{ x: number; y: number; val: number }> = [];
     if (secondaryValues && secondaryValues.length > 0) {
-      const sPts = buildPts(secondaryValues);
+      sPts = buildPts(secondaryValues);
       secD = sPts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
     }
 
@@ -104,8 +112,31 @@ const SparklineCard: React.FC<{
       secondaryPath: secD,
       minVal: rawMin,
       maxVal: rawMax,
+      primaryPts: pts,
+      secondaryPts: sPts,
     };
   }, [values, secondaryValues]);
+
+  const activePoint =
+    hoverIdx !== null && primaryPts.length > 0
+      ? primaryPts[Math.min(Math.max(0, hoverIdx), primaryPts.length - 1)]
+      : null;
+  const activeSecPoint =
+    hoverIdx !== null && secondaryPts.length > 0
+      ? secondaryPts[Math.min(Math.max(0, hoverIdx), secondaryPts.length - 1)]
+      : null;
+  const activeTs =
+    hoverIdx !== null && timestamps && timestamps.length > 0
+      ? timestamps[Math.min(Math.max(0, hoverIdx), timestamps.length - 1)]
+      : null;
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || primaryPts.length === 0) return;
+    const relX = Math.min(Math.max(0, e.clientX - rect.left), rect.width) / rect.width;
+    const idx = Math.round(relX * (primaryPts.length - 1));
+    setHoverIdx(idx);
+  };
 
   return (
     <div className="p-4 rounded-2xl ios-glass-card border border-white/10 space-y-2.5">
@@ -120,8 +151,26 @@ const SparklineCard: React.FC<{
         </div>
       </div>
 
-      <div className="rounded-xl bg-black/30 border border-white/5 p-2">
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-16 overflow-visible">
+      <div className="rounded-xl bg-black/30 border border-white/5 p-2 relative">
+        {activePoint && (
+          <div className="absolute right-2 top-1.5 z-10 px-2 py-0.5 rounded-md bg-slate-950/90 border border-white/15 text-[10px] font-mono text-white pointer-events-none shadow-lg">
+            {activeTs ? `${new Date(activeTs).toLocaleTimeString('tr-TR')} · ` : ''}
+            <span style={{ color: strokeColor }} className="font-bold">
+              {activePoint.val}{unit ? ` ${unit}` : ''}
+            </span>
+            {activeSecPoint !== null && (
+              <span style={{ color: secondaryStrokeColor || '#cbd5e1' }} className="ml-1.5">
+                / {activeSecPoint.val}{secondaryUnit !== undefined ? (secondaryUnit ? ` ${secondaryUnit}` : '') : (unit ? ` ${unit}` : '')}
+              </span>
+            )}
+          </div>
+        )}
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="w-full h-16 overflow-visible cursor-crosshair"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => setHoverIdx(null)}
+        >
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={strokeColor} stopOpacity="0.32" />
@@ -147,6 +196,37 @@ const SparklineCard: React.FC<{
             strokeLinecap="round"
             strokeLinejoin="round"
           />
+          {activePoint && (
+            <>
+              <line
+                x1={activePoint.x}
+                y1={0}
+                x2={activePoint.x}
+                y2={height}
+                stroke="rgba(255,255,255,0.35)"
+                strokeWidth="1"
+                strokeDasharray="2 2"
+              />
+              {activeSecPoint && (
+                <circle
+                  cx={activeSecPoint.x}
+                  cy={activeSecPoint.y}
+                  r={3}
+                  fill={secondaryStrokeColor || '#fff'}
+                  stroke="#020617"
+                  strokeWidth={1.2}
+                />
+              )}
+              <circle
+                cx={activePoint.x}
+                cy={activePoint.y}
+                r={3.5}
+                fill={strokeColor}
+                stroke="#020617"
+                strokeWidth={1.5}
+              />
+            </>
+          )}
         </svg>
       </div>
 
@@ -187,8 +267,10 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
             ts: Number(p.ts) || Date.now(),
             memoryHeapUsedMb: Number(p.memoryHeapUsedMb) || 0,
             memoryRssMb: Number(p.memoryRssMb) || 0,
+            cpuPercent: Number(p.cpuPercent) || 0,
             onlineUsers: Number(p.onlineUsers) || 0,
             activeVoiceRooms: Number(p.activeVoiceRooms) || 0,
+            voiceParticipantsCount: Number(p.voiceParticipantsCount) || 0,
             messagesPerMin: Number(p.messagesPerMin) || 0,
             eventLoopLagMs: Number(p.eventLoopLagMs) || 0,
           }))
@@ -208,8 +290,10 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
             ts: Date.now(),
             memoryHeapUsedMb: Number(data.memoryHeapUsedMb) || 0,
             memoryRssMb: Number(data.memoryRssMb) || 0,
+            cpuPercent: typeof data.cpuPercent === 'number' ? Number(data.cpuPercent) : 0,
             onlineUsers: Number(data.onlineUsers) || 0,
             activeVoiceRooms: Number(data.activeVoiceRooms) || 0,
+            voiceParticipantsCount: typeof data.voiceParticipantsCount === 'number' ? Number(data.voiceParticipantsCount) : 0,
             messagesPerMin: typeof data.messagesPerMin === 'number' ? data.messagesPerMin : undefined,
             eventLoopLagMs: typeof data.eventLoopLagMs === 'number' ? data.eventLoopLagMs : undefined,
             storageEngine: typeof data.storageEngine === 'string' ? data.storageEngine : undefined,
@@ -232,14 +316,22 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
   }, [currentServerHost]);
 
   const latestMetric = metricHistory[metricHistory.length - 1];
+  const tsSeries =
+    metricHistory.length > 0 ? metricHistory.map((m) => m.ts) : undefined;
   const heapSeries =
     metricHistory.length > 0 ? metricHistory.map((m) => m.memoryHeapUsedMb) : [stats?.memoryMB || 0];
   const rssSeries =
     metricHistory.length > 0 ? metricHistory.map((m) => m.memoryRssMb) : undefined;
+  const cpuSeries =
+    metricHistory.length > 0 ? metricHistory.map((m) => m.cpuPercent ?? 0) : [0];
   const usersSeries =
     metricHistory.length > 0 ? metricHistory.map((m) => m.onlineUsers) : [stats?.activeSocketsCount || 0];
   const voiceSeries =
     metricHistory.length > 0 ? metricHistory.map((m) => m.activeVoiceRooms) : [stats?.activeVoiceRoomsCount || 0];
+  const voiceParticipantsSeries =
+    metricHistory.length > 0
+      ? metricHistory.map((m) => m.voiceParticipantsCount ?? 0)
+      : [onlineUsers.filter((u) => Boolean(u.currentVoiceChannelId)).length];
   const msgRateSeries =
     metricHistory.length > 0 ? metricHistory.map((m) => m.messagesPerMin ?? 0) : [0];
   const lagSeries =
@@ -349,38 +441,57 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
       </div>
 
       {/* Live Rolling Metrics Sparklines */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <SparklineCard
           title="Bellek Kullanımı Trendi (Heap & RSS)"
           valueLabel={`${heapSeries[heapSeries.length - 1]} MB Heap`}
           subLabel={rssSeries ? `Kesikli çizgi: RSS (${rssSeries[rssSeries.length - 1]} MB)` : 'Canlı V8 Heap'}
           values={heapSeries}
           secondaryValues={rssSeries}
+          timestamps={tsSeries}
           strokeColor="#38bdf8"
           secondaryStrokeColor="#fbbf24"
           unit="MB"
+          secondaryUnit="MB"
         />
 
         <SparklineCard
-          title="Aktif Oturumlar & Ses Odaları"
-          valueLabel={`${usersSeries[usersSeries.length - 1]} Çevrimiçi`}
-          subLabel={`Kesikli çizgi: ${voiceSeries[voiceSeries.length - 1]} Aktif Ses Odası`}
-          values={usersSeries}
-          secondaryValues={voiceSeries}
-          strokeColor="#34d399"
-          secondaryStrokeColor="#a78bfa"
-          unit=""
-        />
-
-        <SparklineCard
-          title="Mesaj Hızı & Event Loop"
-          valueLabel={`${msgRateSeries[msgRateSeries.length - 1]} msg/dk`}
+          title="İşlemci (CPU %) & Event Loop Gecikmesi"
+          valueLabel={`%${cpuSeries[cpuSeries.length - 1]} CPU`}
           subLabel={`Kesikli çizgi: Event Loop ${lagSeries[lagSeries.length - 1]} ms`}
-          values={msgRateSeries}
+          values={cpuSeries}
           secondaryValues={lagSeries}
-          strokeColor="#a78bfa"
+          timestamps={tsSeries}
+          strokeColor="#f59e0b"
           secondaryStrokeColor="#fb7185"
+          unit="%"
+          secondaryUnit="ms"
+        />
+
+        <SparklineCard
+          title="Çevrimiçi Oturumlar & Aktif Ses Katılımcıları"
+          valueLabel={`${usersSeries[usersSeries.length - 1]} Çevrimiçi`}
+          subLabel={`Kesikli çizgi: ${voiceParticipantsSeries[voiceParticipantsSeries.length - 1]} Aktif Ses Katılımcısı`}
+          values={usersSeries}
+          secondaryValues={voiceParticipantsSeries}
+          timestamps={tsSeries}
+          strokeColor="#34d399"
+          secondaryStrokeColor="#22d3ee"
+          unit=""
+          secondaryUnit="kişi"
+        />
+
+        <SparklineCard
+          title="Mesaj Hızı & Aktif Ses Odaları"
+          valueLabel={`${msgRateSeries[msgRateSeries.length - 1]} msg/dk`}
+          subLabel={`Kesikli çizgi: ${voiceSeries[voiceSeries.length - 1]} Aktif Ses Odası`}
+          values={msgRateSeries}
+          secondaryValues={voiceSeries}
+          timestamps={tsSeries}
+          strokeColor="#a78bfa"
+          secondaryStrokeColor="#c084fc"
           unit="msg/dk"
+          secondaryUnit="oda"
         />
       </div>
 

@@ -538,6 +538,14 @@ export interface SystemConfig {
   autoBackupEnabled?: boolean;
   autoBackupIntervalHours?: number;
   maxBackupsToKeep?: number;
+  backupS3Enabled?: boolean;
+  backupS3Endpoint?: string;
+  backupS3Bucket?: string;
+  backupS3Region?: string;
+  backupS3AccessKey?: string;
+  backupS3SecretKey?: string;
+  backupS3Prefix?: string;
+  backupS3AutoPush?: boolean;
   webhookUrl?: string;
   giphyApiKey?: string;
   aiSummaryProvider?: 'builtin' | 'gemini' | 'openai';

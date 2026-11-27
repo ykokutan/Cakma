@@ -6,6 +6,7 @@ try {
 import express from 'express';
 import http from 'http';
 import net from 'net';
+import os from 'os';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { AccessToken } from 'livekit-server-sdk';
 import cors from 'cors';
@@ -967,6 +968,14 @@ const defaultSystemConfig: SystemConfig = {
   autoBackupEnabled: false,
   autoBackupIntervalHours: 24,
   maxBackupsToKeep: 7,
+  backupS3Enabled: false,
+  backupS3Endpoint: '',
+  backupS3Bucket: '',
+  backupS3Region: 'auto',
+  backupS3AccessKey: '',
+  backupS3SecretKey: '',
+  backupS3Prefix: 'cakma-backups/',
+  backupS3AutoPush: false,
   webhookUrl: '',
   giphyApiKey: '',
   aiSummaryProvider: 'builtin',
@@ -1034,6 +1043,9 @@ setInterval(() => {
       const info = createScheduledBackup(systemConfig.maxBackupsToKeep || 7);
       addAuditLog('OTOMATIK_YEDEK', `Zamanlanmış otomatik yedek oluşturuldu: ${info.filename}`, 'info');
       sendAdminWebhook('backups', 'Otomatik Yedek Oluşturuldu', `${info.filename} (${(info.bytes / 1024).toFixed(1)} KB)`);
+      if (systemConfig.backupS3Enabled && systemConfig.backupS3AutoPush) {
+        void maintenanceService.pushBackupToS3(info.filename, systemConfig);
+      }
     }
   } catch {}
 }, 15 * 60 * 1000);
@@ -1242,17 +1254,36 @@ function getSystemStats(): SystemStats {
 // REST Endpoints
 let pushSubscriptions = loadPushSubscriptions();
 
+let lastCpuUsage = process.cpuUsage();
+let lastCpuSampleAt = Date.now();
+
 function buildRuntimeMetrics() {
   const mem = process.memoryUsage();
+  const now = Date.now();
+  const elapsedMs = Math.max(100, now - lastCpuSampleAt);
+  const delta = process.cpuUsage(lastCpuUsage);
+  lastCpuUsage = process.cpuUsage();
+  lastCpuSampleAt = now;
+  const cpuCount = Math.max(1, os.cpus().length);
+  const cpuPercent = Number(
+    Math.min(100, Math.max(0, (((delta.user + delta.system) / 1000) / (elapsedMs * cpuCount)) * 100)).toFixed(1)
+  );
+
   const activeVoiceRooms = new Set<string>();
+  let voiceParticipantsCount = 0;
   activeUsers.forEach((u) => {
-    if (u.currentVoiceChannelId) activeVoiceRooms.add(u.currentVoiceChannelId);
+    if (u.currentVoiceChannelId) {
+      activeVoiceRooms.add(u.currentVoiceChannelId);
+      voiceParticipantsCount++;
+    }
   });
   return {
     uptimeSeconds: Math.floor(process.uptime()),
     onlineUsers: activeUsers.size,
     serverCount: servers.length,
     activeVoiceRooms: activeVoiceRooms.size,
+    voiceParticipantsCount,
+    cpuPercent,
     memoryRssMb: Math.round(mem.rss / 1048576),
     memoryHeapUsedMb: Math.round(mem.heapUsed / 1048576),
     pendingStorageWrites: getPendingWriteCount(),
@@ -1670,6 +1701,9 @@ const maintenanceService = new MaintenanceService({
   messages,
   registeredAccounts,
   servers,
+  exportJsonBundle: () => exportAllDataBundle(),
+  getSystemConfig: () => systemConfig,
+  sendBackupWebhook: (title, details) => sendAdminWebhook('backups', title, details),
   addAuditLog,
 });
 registerMaintenanceRoutes(app, {
@@ -1677,6 +1711,8 @@ registerMaintenanceRoutes(app, {
   verifySessionTokenWithMeta,
   getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
   isMasterRequest,
+  getSystemConfig: () => systemConfig,
+  sendBackupWebhook: (title, details) => sendAdminWebhook('backups', title, details),
 });
 registerWebhooksAndTemplatesRoutes(app, {
   verifySessionTokenWithMeta,
@@ -3923,6 +3959,8 @@ io.on('connection', (socket: Socket) => {
         ...systemConfig,
         aiSummaryApiKey: systemConfig.aiSummaryApiKey ? '********' : '',
         hasAiSummaryApiKey: Boolean(systemConfig.aiSummaryApiKey),
+        backupS3SecretKey: systemConfig.backupS3SecretKey ? '********' : '',
+        hasBackupS3SecretKey: Boolean(systemConfig.backupS3SecretKey),
       },
       bannedIps: bannedIps.filter((b) => !b.expiresAt || b.expiresAt > Date.now()),
       storageStats: getStorageStats(),
@@ -4034,6 +4072,16 @@ io.on('connection', (socket: Socket) => {
     if (typeof nextCfg.autoBackupEnabled === 'boolean') systemConfig.autoBackupEnabled = nextCfg.autoBackupEnabled;
     if (typeof nextCfg.autoBackupIntervalHours === 'number') systemConfig.autoBackupIntervalHours = Math.min(Math.max(nextCfg.autoBackupIntervalHours, 1), 168);
     if (typeof nextCfg.maxBackupsToKeep === 'number') systemConfig.maxBackupsToKeep = Math.min(Math.max(nextCfg.maxBackupsToKeep, 1), 50);
+    if (typeof nextCfg.backupS3Enabled === 'boolean') systemConfig.backupS3Enabled = nextCfg.backupS3Enabled;
+    if (typeof nextCfg.backupS3AutoPush === 'boolean') systemConfig.backupS3AutoPush = nextCfg.backupS3AutoPush;
+    if (typeof nextCfg.backupS3Endpoint === 'string') systemConfig.backupS3Endpoint = nextCfg.backupS3Endpoint.trim().slice(0, 300);
+    if (typeof nextCfg.backupS3Bucket === 'string') systemConfig.backupS3Bucket = nextCfg.backupS3Bucket.trim().slice(0, 120);
+    if (typeof nextCfg.backupS3Region === 'string') systemConfig.backupS3Region = nextCfg.backupS3Region.trim().slice(0, 64) || 'auto';
+    if (typeof nextCfg.backupS3Prefix === 'string') systemConfig.backupS3Prefix = nextCfg.backupS3Prefix.trim().slice(0, 120);
+    if (typeof nextCfg.backupS3AccessKey === 'string') systemConfig.backupS3AccessKey = nextCfg.backupS3AccessKey.trim().slice(0, 160);
+    if (typeof nextCfg.backupS3SecretKey === 'string' && nextCfg.backupS3SecretKey.trim() !== '********') {
+      systemConfig.backupS3SecretKey = nextCfg.backupS3SecretKey.trim().slice(0, 240);
+    }
     if (typeof nextCfg.webhookUrl === 'string') systemConfig.webhookUrl = nextCfg.webhookUrl.trim().slice(0, 500);
     if (typeof nextCfg.giphyApiKey === 'string') {
       systemConfig.giphyApiKey = nextCfg.giphyApiKey.trim().slice(0, 120);
@@ -4355,6 +4403,9 @@ io.on('connection', (socket: Socket) => {
       const info = createScheduledBackup(systemConfig.maxBackupsToKeep || 7);
       addAuditLog('MANUEL_YEDEK_ALINDI', `${requester.username} sunucu yedeği oluşturdu: ${info.filename}`, 'info');
       sendAdminWebhook('backups', 'Manuel Sunucu Yedeği Oluşturuldu', `Yetkili: ${requester.username} | Dosya: ${info.filename}`);
+      if (systemConfig.backupS3Enabled && systemConfig.backupS3AutoPush) {
+        void maintenanceService.pushBackupToS3(info.filename, systemConfig);
+      }
       socket.emit('admin_action_success', `Sunucu yedeği oluşturuldu: ${info.filename}`);
     } catch (err: any) {
       socket.emit('admin_action_error', err?.message || 'Yedek oluşturulamadı.');
