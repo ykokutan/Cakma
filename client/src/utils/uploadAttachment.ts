@@ -6,7 +6,7 @@ import { encryptGroupAttachmentBytes } from './groupE2ee';
 
 export interface UploadProgressOptions {
   maxMb?: number;
-  onProgress?: (percent: number) => void;
+  onProgress?: (percent: number, bytesPerSec?: number) => void;
   signal?: AbortSignal;
 }
 
@@ -148,9 +148,12 @@ export async function uploadBinaryWithProgress(
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       }
 
+      const uploadStartMs = Date.now();
       xhr.upload.onprogress = (ev) => {
         if (ev.lengthComputable && ev.total > 0) {
-          opts.onProgress?.(Math.min(99, Math.round((ev.loaded / ev.total) * 100)));
+          const elapsedSec = (Date.now() - uploadStartMs) / 1000;
+          const speed = elapsedSec > 0.15 ? ev.loaded / elapsedSec : undefined;
+          opts.onProgress?.(Math.min(99, Math.round((ev.loaded / ev.total) * 100)), speed);
         }
       };
 

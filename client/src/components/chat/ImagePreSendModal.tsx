@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useState } from 'react';
-import { Crop, X, Check } from 'lucide-react';
+import { Crop, X, Check, Sparkles } from 'lucide-react';
 import { AuthContext } from '../../context/AuthContext';
 import { t } from '../../utils/i18n';
 
@@ -12,6 +12,11 @@ interface ImagePreSendModalProps {
   onConfirm: (processedFile: File, caption: string) => void;
 }
 
+function formatKb(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
   file,
   initialCaption,
@@ -21,11 +26,21 @@ export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
   const language = useContext(AuthContext)?.language || 'tr';
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [aspect, setAspect] = useState<CropAspectRatio>('original');
+  const [webpOptimize, setWebpOptimize] = useState<boolean>(true);
+  const [webpQuality, setWebpQuality] = useState<number>(0.84);
   const [caption, setCaption] = useState(initialCaption);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const canOptimizeWebp =
+    Boolean(file) &&
+    file!.type.startsWith('image/') &&
+    file!.type !== 'image/gif' &&
+    file!.type !== 'image/svg+xml';
+
   useEffect(() => {
     setAspect('original');
+    setWebpOptimize(true);
+    setWebpQuality(0.84);
     setCaption(initialCaption);
     setIsProcessing(false);
     if (!file) {
@@ -42,7 +57,7 @@ export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
   if (!file || !objectUrl) return null;
 
   const handleConfirm = async () => {
-    if (aspect === 'original') {
+    if (aspect === 'original' && (!webpOptimize || !canOptimizeWebp)) {
       onConfirm(file, caption);
       return;
     }
@@ -63,12 +78,14 @@ export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
       let sy = 0;
       let sw = natW;
       let sh = natH;
-      if (sourceRatio > targetRatio) {
-        sw = Math.round(natH * targetRatio);
-        sx = Math.round((natW - sw) / 2);
-      } else if (sourceRatio < targetRatio) {
-        sh = Math.round(natW / targetRatio);
-        sy = Math.round((natH - sh) / 2);
+      if (aspect !== 'original') {
+        if (sourceRatio > targetRatio) {
+          sw = Math.round(natH * targetRatio);
+          sx = Math.round((natW - sw) / 2);
+        } else if (sourceRatio < targetRatio) {
+          sh = Math.round(natW / targetRatio);
+          sy = Math.round((natH - sh) / 2);
+        }
       }
 
       const maxDim = 1920;
@@ -86,16 +103,21 @@ export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
       }
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
 
-      const outType =
-        file.type === 'image/png' || file.type === 'image/webp' ? file.type : 'image/jpeg';
+      const outType = webpOptimize && canOptimizeWebp
+        ? 'image/webp'
+        : file.type === 'image/png' || file.type === 'image/webp'
+          ? file.type
+          : 'image/jpeg';
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, outType, 0.92)
+        canvas.toBlob(resolve, outType, webpOptimize ? webpQuality : 0.92)
       );
-      if (!blob) {
+      if (!blob || (aspect === 'original' && blob.size >= file.size)) {
         onConfirm(file, caption);
         return;
       }
-      const processed = new File([blob], file.name, { type: outType });
+      const nextName =
+        outType === 'image/webp' ? `${file.name.replace(/\.[^.]+$/, '')}.webp` : file.name;
+      const processed = new File([blob], nextName, { type: outType });
       onConfirm(processed, caption);
     } catch {
       onConfirm(file, caption);
@@ -114,11 +136,11 @@ export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="flex items-center gap-2 text-xs font-bold">
-            <Crop className="w-4 h-4 text-cyan-400" />
+          <div className="flex items-center gap-2 text-xs font-bold min-w-0">
+            <Crop className="w-4 h-4 text-cyan-400 shrink-0" />
             <span>{t(language, 'imagePreviewTitle')}</span>
-            <span className="text-[11px] font-normal text-white/45 truncate max-w-[200px]">
-              ({file.name})
+            <span className="text-[11px] font-normal text-white/45 truncate max-w-[180px]">
+              ({file.name} · {formatKb(file.size)})
             </span>
           </div>
           <button
@@ -179,6 +201,43 @@ export const ImagePreSendModal: React.FC<ImagePreSendModalProps> = ({
               ))}
             </div>
           </div>
+
+          {canOptimizeWebp && (
+            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white/[0.03] border border-white/10 text-[11px]">
+              <label className="flex items-center gap-2 cursor-pointer text-white/85 font-semibold">
+                <input
+                  type="checkbox"
+                  checked={webpOptimize}
+                  onChange={(e) => setWebpOptimize(e.target.checked)}
+                  className="rounded accent-cyan-400"
+                />
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>WebP Akıllı Sıkıştırma</span>
+              </label>
+              {webpOptimize && (
+                <div className="flex items-center gap-1">
+                  {[
+                    { q: 0.78, label: 'Hızlı (%78)' },
+                    { q: 0.84, label: 'Dengeli (%84)' },
+                    { q: 0.92, label: 'Yüksek (%92)' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.q}
+                      type="button"
+                      onClick={() => setWebpQuality(preset.q)}
+                      className={`px-2 py-0.5 rounded-lg border text-[10px] font-semibold transition ${
+                        webpQuality === preset.q
+                          ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                          : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] font-semibold text-white/60 mb-1">

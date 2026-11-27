@@ -717,6 +717,63 @@ export interface Server {
   serverSounds?: ServerSoundClip[];
   stickers?: ServerSticker[];
   boosts?: ServerBoostEntry[];
+  antiRaidConfig?: AntiRaidConfig;
+  raidLockdownUntil?: number | null;
+}
+
+export interface AntiRaidConfig {
+  enabled: boolean;
+  maxJoinsInWindow: number;
+  windowSeconds: number;
+  lockdownDurationMinutes: number;
+  pauseInvites: boolean;
+  autoSlowmodeSeconds: number;
+}
+
+export interface SupportTicket {
+  id: string;
+  number: number;
+  serverId: string;
+  channelId: string;
+  creatorUsername: string;
+  category: string;
+  subject: string;
+  status: 'open' | 'closed';
+  assignedTo?: string;
+  createdAt: string;
+  closedAt?: string;
+  closedBy?: string;
+  transcriptMarkdown?: string;
+}
+
+export interface ServerApplicationForm {
+  id: string;
+  serverId: string;
+  title: string;
+  description?: string;
+  questions: string[];
+  approveRoleId?: string | null;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface ServerApplicationSubmission {
+  id: string;
+  formId: string;
+  serverId: string;
+  applicantUsername: string;
+  answers: string[];
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+  createdAt: string;
+}
+
+export interface TicketsAndFormsStore {
+  tickets: SupportTicket[];
+  forms: ServerApplicationForm[];
+  submissions: ServerApplicationSubmission[];
 }
 
 export interface ServerBoostEntry {

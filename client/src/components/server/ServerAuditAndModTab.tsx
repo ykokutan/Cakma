@@ -39,6 +39,12 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
   const [reports, setReports] = useState<ContentReport[]>([]);
   const [reportBusyId, setReportBusyId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [raidEnabled, setRaidEnabled] = useState<boolean>(Boolean(server.antiRaidConfig?.enabled));
+  const [raidMaxJoins, setRaidMaxJoins] = useState<number>(server.antiRaidConfig?.maxJoinsInWindow ?? 6);
+  const [raidWindowSec, setRaidWindowSec] = useState<number>(server.antiRaidConfig?.windowSeconds ?? 30);
+  const [raidLockMins, setRaidLockMins] = useState<number>(server.antiRaidConfig?.lockdownDurationMinutes ?? 15);
+  const [raidSlowSec, setRaidSlowSec] = useState<number>(server.antiRaidConfig?.autoSlowmodeSeconds ?? 10);
+  const [raidBusy, setRaidBusy] = useState(false);
 
   // Create moderation case form
   const [targetUsername, setTargetUsername] = useState('');
@@ -173,6 +179,148 @@ export const ServerAuditAndModTab: React.FC<ServerAuditAndModTabProps> = ({
           <span>Yenile</span>
         </button>
       </div>
+
+      {/* Automatic Anti-Raid Shield Control Card */}
+      {canModerate && (() => {
+        const isLockedNow = typeof server.raidLockdownUntil === 'number' && server.raidLockdownUntil > Date.now();
+        const saveAntiRaid = async (manualLockdown?: boolean) => {
+          setRaidBusy(true);
+          try {
+            const res = await authFetch(currentServerHost, `/api/servers/${encodeURIComponent(server.id)}/anti-raid`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                config: {
+                  enabled: raidEnabled,
+                  maxJoinsInWindow: raidMaxJoins,
+                  windowSeconds: raidWindowSec,
+                  lockdownDurationMinutes: raidLockMins,
+                  pauseInvites: true,
+                  autoSlowmodeSeconds: raidSlowSec,
+                },
+                ...(typeof manualLockdown === 'boolean' ? { manualLockdown, lockdownDurationMinutes: raidLockMins } : {}),
+              }),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok || !json.ok) {
+              appToast(json.error || 'Raid kalkanı ayarları kaydedilemedi.', 'error');
+            } else {
+              appToast(
+                manualLockdown === true
+                  ? 'Raid Kalkanı Kilit Modu manuel olarak açıldı!'
+                  : manualLockdown === false
+                    ? 'Raid Kalkanı kilit modu kapatıldı.'
+                    : 'Raid Kalkanı yapılandırması kaydedildi.',
+                'success'
+              );
+              await loadData();
+            }
+          } finally {
+            setRaidBusy(false);
+          }
+        };
+
+        return (
+          <div className={`p-4 rounded-2xl border space-y-3 text-xs ${
+            isLockedNow
+              ? 'bg-rose-500/10 border-rose-500/40'
+              : 'bg-white/[0.03] border-white/10'
+          }`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className={`w-4 h-4 ${isLockedNow ? 'text-rose-400 animate-pulse' : 'text-cyan-400'}`} />
+                <span className="font-bold text-white">Otomatik Raid Kalkanı (Anti-Raid Lockdown)</span>
+                {isLockedNow && (
+                  <span className="px-2 py-0.5 rounded-full bg-rose-500/25 text-rose-200 border border-rose-400/40 text-[10px] font-bold">
+                    KİLİT MODU AKTİF
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-[11px] text-white/80 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={raidEnabled}
+                    onChange={(e) => setRaidEnabled(e.target.checked)}
+                    className="rounded accent-cyan-400"
+                  />
+                  <span>Otomatik Koruma</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={raidBusy}
+                  onClick={() => void saveAntiRaid(!isLockedNow)}
+                  className={`px-3 py-1 rounded-lg font-bold transition ${
+                    isLockedNow
+                      ? 'bg-emerald-500/25 hover:bg-emerald-500/35 text-emerald-200'
+                      : 'bg-rose-500/20 hover:bg-rose-500/35 text-rose-200'
+                  }`}
+                >
+                  {isLockedNow ? 'Kilidi Kaldır' : 'Şimdi Kilitle'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div>
+                <label className="block text-[10px] text-white/50 mb-0.5">Eşik Katılım</label>
+                <input
+                  type="number"
+                  min={2}
+                  max={100}
+                  value={raidMaxJoins}
+                  onChange={(e) => setRaidMaxJoins(Number(e.target.value) || 6)}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-white/50 mb-0.5">Pencere (sn)</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={600}
+                  value={raidWindowSec}
+                  onChange={(e) => setRaidWindowSec(Number(e.target.value) || 30)}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-white/50 mb-0.5">Kilit (dk)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={raidLockMins}
+                  onChange={(e) => setRaidLockMins(Number(e.target.value) || 15)}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-white/50 mb-0.5">Oto Yavaş Mod (sn)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={300}
+                  value={raidSlowSec}
+                  onChange={(e) => setRaidSlowSec(Number(e.target.value) || 0)}
+                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                disabled={raidBusy}
+                onClick={() => void saveAntiRaid()}
+                className="px-3.5 py-1 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/35 text-cyan-200 font-bold transition"
+              >
+                Raid Ayarlarını Kaydet
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Sub-navigation & filter */}
       <div className="flex flex-wrap items-center justify-between gap-2">

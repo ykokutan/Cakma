@@ -56,7 +56,7 @@ import { ChannelPasswordModal } from './ChannelPasswordModal';
 import { ServerAnalyticsModal } from './ServerAnalyticsModal';
 import { AvatarView, isImageAvatar } from './AvatarView';
 
-import { Radio as StageRadioIcon, Shield as ChannelShieldIcon, Sparkles as OnboardingSparklesIcon, BookOpen, LayoutGrid } from 'lucide-react';
+import { Radio as StageRadioIcon, Shield as ChannelShieldIcon, Sparkles as OnboardingSparklesIcon, BookOpen, LayoutGrid, FileText } from 'lucide-react';
 
 const ServerEventsModal = lazy(() =>
   import('./ServerEventsModal').then((m) => ({ default: m.ServerEventsModal }))
@@ -66,6 +66,9 @@ const CreateGroupDmModal = lazy(() =>
 );
 const ChannelPermissionsModal = lazy(() =>
   import('./server/ChannelPermissionsModal').then((m) => ({ default: m.ChannelPermissionsModal }))
+);
+const TicketsAndFormsModal = lazy(() =>
+  import('./server/TicketsAndFormsModal').then((m) => ({ default: m.TicketsAndFormsModal }))
 );
 const OnboardingModal = lazy(() =>
   import('./server/OnboardingModal').then((m) => ({ default: m.OnboardingModal }))
@@ -199,6 +202,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
 
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isEventsOpen, setIsEventsOpen] = useState(false);
+  const [isTicketsOpen, setIsTicketsOpen] = useState(false);
   const [permChannel, setPermChannel] = useState<Channel | null>(null);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
@@ -914,6 +918,21 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
               <span>Sunucu Analitiği</span>
             </div>
             <span className="text-[10px] text-emerald-400 font-mono">Canlı</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsDropdownOpen(false);
+              setIsTicketsOpen(true);
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            <div className="flex items-center gap-2">
+              <FileText className="w-3.5 h-3.5 text-amber-400" />
+              <span>Destek &amp; Başvurular</span>
+            </div>
+            <span className="text-[10px] text-amber-300/80">Ticket</span>
           </button>
 
           <button
@@ -1952,6 +1971,12 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
       {isEventsOpen && (
         <Suspense fallback={null}>
           <ServerEventsModal onClose={() => setIsEventsOpen(false)} />
+        </Suspense>
+      )}
+
+      {isTicketsOpen && activeServer && activeServer.id !== 'direct-messages' && (
+        <Suspense fallback={null}>
+          <TicketsAndFormsModal server={activeServer} onClose={() => setIsTicketsOpen(false)} />
         </Suspense>
       )}
 

@@ -17,6 +17,7 @@ import { sanitizePermissionOverrides } from '../utils/channelPermissions.js';
 import { findServerMember, isServerOwner } from '../utils/serverIdentity.js';
 import { validatePayload, type SocketEventRateLimiter } from '../utils/socketGuard.js';
 import { computeServerBoostSummary } from '../utils/serverBoosts.js';
+import { AntiRaidTracker, normalizeAntiRaidConfig } from '../utils/antiRaidShield.js';
 
 const PRIVILEGED_ROLE_PERMS: ReadonlySet<ServerPermission> = new Set([
   'manage_server',
@@ -44,6 +45,7 @@ export interface ServerGovernanceDeps {
   emitServerUpdatedToMembers: (srv: Server) => void;
   emitServersUpdatedForAll: () => void;
   emitToUserSockets: (username: string, event: string, payload: unknown) => void;
+  antiRaidTracker?: AntiRaidTracker;
 }
 
 export function createServerGovernanceHelpers(deps: {
@@ -243,6 +245,52 @@ export function registerServerGovernanceRoutes(
     });
 
     res.json({ success: true, caseItem: created });
+  });
+
+  app.post('/api/servers/:serverId/anti-raid', requireAuth, (req: Request, res) => {
+    const authReq = req as AuthenticatedRequest;
+    const srv = deps.servers.find((s) => s.id === req.params.serverId);
+    if (!srv) return res.status(404).json({ ok: false, error: 'Sunucu bulunamadı.' });
+    const u = toUser(authReq);
+    if (!deps.checkServerPermission(u, srv, 'manage_server')) {
+      return res.status(403).json({ ok: false, error: 'Raid kalkanı ayarları için Sunucu Yönetimi yetkisi gerekir.' });
+    }
+
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    if (body.config && typeof body.config === 'object') {
+      srv.antiRaidConfig = normalizeAntiRaidConfig(body.config as Record<string, unknown>);
+      helpers.recordServerAudit(
+        srv.id,
+        u.username,
+        'RAID_AYAR_GUNCELLENDI',
+        `Otomatik Raid Kalkanı ${srv.antiRaidConfig.enabled ? 'etkinleştirildi' : 'devre dışı bırakıldı'} (${srv.antiRaidConfig.maxJoinsInWindow} katılma/${srv.antiRaidConfig.windowSeconds}sn).`
+      );
+    }
+
+    if (typeof body.manualLockdown === 'boolean') {
+      const tracker = deps.antiRaidTracker ?? new AntiRaidTracker();
+      const mins = Number(body.lockdownDurationMinutes) || srv.antiRaidConfig?.lockdownDurationMinutes || 15;
+      const until = tracker.setManualLockdown(srv, body.manualLockdown, mins);
+      helpers.recordServerAudit(
+        srv.id,
+        u.username,
+        body.manualLockdown ? 'RAID_KALKANI_MANUEL_ACILDI' : 'RAID_KALKANI_KAPATILDI',
+        body.manualLockdown
+          ? `Sunucu ${mins} dakikalık Raid Kalkanı kilit moduna alındı.`
+          : 'Sunucu Raid Kalkanı kilit modu kaldırıldı.'
+      );
+      deps.saveServers(deps.servers);
+      deps.emitServerUpdatedToMembers(srv);
+      return res.json({ ok: true, antiRaidConfig: srv.antiRaidConfig, raidLockdownUntil: until });
+    }
+
+    deps.saveServers(deps.servers);
+    deps.emitServerUpdatedToMembers(srv);
+    return res.json({
+      ok: true,
+      antiRaidConfig: srv.antiRaidConfig,
+      raidLockdownUntil: srv.raidLockdownUntil ?? null,
+    });
   });
 }
 

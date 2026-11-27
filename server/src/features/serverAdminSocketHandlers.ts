@@ -22,6 +22,7 @@ import {
   BOOST_DURATION_DAYS,
   computeServerBoostSummary,
 } from '../utils/serverBoosts.js';
+import type { AntiRaidTracker } from '../utils/antiRaidShield.js';
 
 export interface ServerAdminHandlerDeps {
   io: Pick<SocketIOServer, 'to'>;
@@ -61,6 +62,8 @@ export interface ServerAdminHandlerDeps {
     serverId: string,
     entry: { targetUsername: string; moderatorUsername: string; action: 'kick' | 'timeout' | 'untimeout'; reason: string; durationMinutes?: number }
   ) => void;
+  antiRaidTracker?: AntiRaidTracker;
+  onAntiRaidTriggered?: (server: Server, slowmodeApplied: number) => void;
 }
 
 export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAdminHandlerDeps): void {
@@ -840,6 +843,16 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
       const inv = s.invites?.find((i) => i.code === cleanCode);
       const isVanityMatch = Boolean(s.vanityCode && s.vanityCode.toLowerCase() === lowerVanity);
       if (inv || isVanityMatch) {
+        if (
+          deps.antiRaidTracker?.isServerLockedDown(s) &&
+          s.antiRaidConfig?.pauseInvites !== false &&
+          user.role !== 'admin'
+        ) {
+          return socket.emit('join_invite_response', {
+            success: false,
+            error: 'Bu sunucuda şu anda Raid Kalkanı kilit modu aktif olduğu için yeni katılımlar geçici olarak duraklatıldı.',
+          });
+        }
         if (inv && inv.expiresAt && inv.expiresAt < Date.now()) {
           return socket.emit('join_invite_response', { success: false, error: 'Bu davet linkinin süresi dolmuş.' });
         }
@@ -850,7 +863,13 @@ export function registerServerAdminSocketHandlers(socket: Socket, deps: ServerAd
           });
         }
 
-        addUserToServer(user, s);
+        const wasAdded = addUserToServer(user, s);
+        if (wasAdded && deps.antiRaidTracker) {
+          const raidRes = deps.antiRaidTracker.recordJoinAndCheck(s);
+          if (raidRes.triggered) {
+            deps.onAntiRaidTriggered?.(s, raidRes.slowmodeApplied);
+          }
+        }
         if (inv) {
           inv.uses += 1;
           const joiners = Array.isArray(inv.recentJoiners) ? inv.recentJoiners : [];

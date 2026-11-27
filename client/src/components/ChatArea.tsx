@@ -10,6 +10,8 @@ import { AvatarView } from './AvatarView';
 import { InlineMarkdown, SLASH_COMMANDS } from './chat/MessageTextRenderer';
 import { findEmojiAutocompleteMatches, applyEmojiAutocomplete } from '../utils/customEmojiHelper';
 import { LinkPreviewCard } from './chat/LinkPreviewCard';
+import { SafeChatImage } from './chat/SafeChatImage';
+import { formatTransferSpeed } from '../utils/mediaHealth';
 import { OfflineQueueBanner } from './chat/OfflineQueueBanner';
 import { MessageSkeletonList } from './chat/MessageSkeletonList';
 import { extractMessageEpochMs, formatDateDividerLabel, getLocalDayKey } from '../utils/chatDateHelpers';
@@ -473,7 +475,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     messagePreview?: string;
   } | null>(null);
   const [activeUploads, setActiveUploads] = useState<
-    { id: string; name: string; progress: number; controller: AbortController }[]
+    { id: string; name: string; progress: number; speedText?: string; controller: AbortController }[]
   >([]);
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(new Set());
@@ -1203,9 +1205,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     const controller = new AbortController();
     setActiveUploads((prev) => [...prev, { id: uploadId, name: file.name, progress: 0, controller }]);
     const opts = {
-      onProgress: (progress: number) => {
+      onProgress: (progress: number, bytesPerSec?: number) => {
+        const speedText = bytesPerSec ? formatTransferSpeed(bytesPerSec) : undefined;
         setActiveUploads((prev) =>
-          prev.map((item) => (item.id === uploadId ? { ...item, progress } : item))
+          prev.map((item) => (item.id === uploadId ? { ...item, progress, speedText } : item))
         );
       },
       signal: controller.signal,
@@ -3325,7 +3328,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           if (isImage) {
                             return (
                               <div key={att.id} className="relative group/att overflow-hidden rounded-xl max-w-md">
-                                <img
+                                <SafeChatImage
                                   src={resolvedUrl}
                                   alt={att.name}
                                   onClick={() => setLightboxImage(resolvedUrl)}
@@ -3704,6 +3707,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   style={{ width: `${up.progress}%` }}
                 />
               </div>
+              {up.speedText && (
+                <span className="font-mono text-[10px] text-emerald-300 shrink-0">
+                  {up.speedText}
+                </span>
+              )}
               <span className="font-mono text-[11px] text-cyan-300 w-9 text-right">
                 %{up.progress}
               </span>

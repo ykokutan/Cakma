@@ -626,6 +626,7 @@ const BACKUP_FILENAMES = [
   'system_config.json',
   'banned_ips.json',
   'channel_bridges.json',
+  'tickets_and_forms.json',
 ] as const;
 
 export function getStorageStats(): {
@@ -942,4 +943,16 @@ export function loadChannelBridges(): import('./types.js').ChannelBridge[] {
 
 export function saveChannelBridges(bridges: import('./types.js').ChannelBridge[]): void {
   scheduleWriteJson('channel_bridges.json', bridges);
+}
+
+export function loadTicketsAndForms(): import('./types.js').TicketsAndFormsStore {
+  return safeReadJson<import('./types.js').TicketsAndFormsStore>('tickets_and_forms.json', {
+    tickets: [],
+    forms: [],
+    submissions: [],
+  });
+}
+
+export function saveTicketsAndForms(store: import('./types.js').TicketsAndFormsStore): void {
+  scheduleWriteJson('tickets_and_forms.json', store);
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { authFetch } from '../../utils/authFetch';
+import { SafeChatImage } from './SafeChatImage';
 
 export interface LinkPreviewMetadata {
   url: string;
@@ -80,14 +81,12 @@ export const LinkPreviewCard: React.FC<LinkPreviewCardProps> = ({ text, host, en
   const [preview, setPreview] = useState<LinkPreviewMetadata | null>(() =>
     targetUrl && clientPreviewCache.has(targetUrl) ? clientPreviewCache.get(targetUrl) ?? null : null
   );
-  const [imgFailed, setImgFailed] = useState(false);
 
   useEffect(() => {
     if (!targetUrl) {
       setPreview(null);
       return;
     }
-    setImgFailed(false);
     if (clientPreviewCache.has(targetUrl)) {
       setPreview(clientPreviewCache.get(targetUrl) ?? null);
       return;
@@ -132,13 +131,13 @@ export const LinkPreviewCard: React.FC<LinkPreviewCardProps> = ({ text, host, en
           </div>
         )}
       </div>
-      {preview.image && !imgFailed && (
-        <img
+      {preview.image && (
+        <SafeChatImage
           src={preview.image}
           alt={preview.title || 'Link Önizleme'}
           loading="lazy"
           referrerPolicy="no-referrer"
-          onError={() => setImgFailed(true)}
+          compact
           className="w-16 h-16 rounded-lg object-cover shrink-0 border border-white/10 bg-black/20"
         />
       )}

@@ -100,6 +100,7 @@ import {
   loadContentReports, saveContentReports,
   loadS3UploadsIndex, saveS3UploadsIndex, type S3UploadRecord,
   loadChannelBridges, saveChannelBridges,
+  loadTicketsAndForms, saveTicketsAndForms,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   searchMessagesSmart, initStorageEngine, getStorageEngineInfo, sqliteStore, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
@@ -116,6 +117,7 @@ import { createCorsOptionsDelegate, createSocketCorsOriginValidator } from './ut
 import { createSocketEventRateLimiter, validatePayload } from './utils/socketGuard.js';
 import { shouldMoveUserToAfk } from './utils/afkVoiceHelper.js';
 import { computeServerBoostSummary } from './utils/serverBoosts.js';
+import { AntiRaidTracker } from './utils/antiRaidShield.js';
 import { registerWatchTogetherAndGamesHandlers } from './features/watchTogetherAndGamesHandlers.js';
 import {
   createAccountSecurityManager,
@@ -132,6 +134,7 @@ import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTempla
 import { registerPasskeyRoutes } from './features/passkeyRoutes.js';
 import { registerOAuthAndConnectionsRoutes } from './features/oauthAndConnectionsRoutes.js';
 import { ChannelBridgeService, registerChannelBridgeRoutes } from './features/channelBridgeService.js';
+import { registerTicketsAndFormsRoutes } from './features/ticketsAndFormsRoutes.js';
 import { registerE2eePairingRoutes } from './features/e2eePairingRoutes.js';
 import { registerComplianceAndReportsRoutes } from './features/complianceAndReportsRoutes.js';
 import { registerAuthSocketHandlers } from './features/authSocketHandlers.js';
@@ -579,6 +582,8 @@ const messages: Record<string, Message[]> = loadMessages(initialMessages);
 const groupDms: GroupDmRoom[] = loadGroupDms();
 const webhooks: ServerWebhook[] = loadWebhooks();
 const channelBridges: ChannelBridge[] = loadChannelBridges();
+const ticketsAndFormsStore = loadTicketsAndForms();
+const antiRaidTracker = new AntiRaidTracker();
 const serverAuditLogs: Record<string, ServerAuditEntry[]> = loadServerAuditLogs();
 const serverCases: Record<string, ServerModerationCase[]> = loadServerModerationCases();
 const scheduledMessages: ScheduledMessage[] = loadScheduledMessages();
@@ -1851,8 +1856,26 @@ const governanceDeps: ServerGovernanceDeps = {
   emitServerUpdatedToMembers,
   emitServersUpdatedForAll,
   emitToUserSockets,
+  antiRaidTracker,
 };
 registerServerGovernanceRoutes(app, governanceDeps, governanceHelpers);
+registerTicketsAndFormsRoutes(app, {
+  store: ticketsAndFormsStore,
+  servers,
+  messages,
+  activeUsers,
+  registeredAccounts,
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
+  checkServerPermission: (u, s, p) => checkServerPermission(u, s, p),
+  sanitizeText,
+  saveStore: saveTicketsAndForms,
+  saveServers,
+  saveChannelMessageUpsert,
+  emitServerUpdatedToMembers,
+  emitToUserSockets,
+  recordServerAudit: governanceHelpers.recordServerAudit,
+});
 
 const scheduledMessagesService = new ScheduledMessagesService({
   scheduledMessages,
@@ -2449,6 +2472,16 @@ io.on('connection', (socket: Socket) => {
         `${entry.targetUsername}: ${entry.reason}`,
         entry.targetUsername
       );
+    },
+    antiRaidTracker,
+    onAntiRaidTriggered: (srv, slowmodeApplied) => {
+      governanceHelpers.recordServerAudit(
+        srv.id,
+        'Sistem',
+        'RAID_KALKANI_AKTIF',
+        `Ani katılım artışı tespit edildi; kilit modu ve ${slowmodeApplied} kanalda otomatik yavaş mod devreye alındı.`
+      );
+      emitServerUpdatedToMembers(srv);
     },
   });
   registerGroupDmSocketHandlers(socket, {
@@ -5005,10 +5038,30 @@ io.on('connection', (socket: Socket) => {
     if (srv.isPublic === false) {
       return socket.emit('join_public_server_response', { success: false, error: 'Bu sunucu herkese açık değil. Yalnızca davet kodu ile katılabilirsiniz.' });
     }
+    if (
+      antiRaidTracker.isServerLockedDown(srv) &&
+      srv.antiRaidConfig?.pauseInvites !== false &&
+      user.role !== 'admin'
+    ) {
+      return socket.emit('join_public_server_response', {
+        success: false,
+        error: 'Bu sunucuda Raid Kalkanı kilit modu aktif olduğu için yeni katılımlar geçici olarak durduruldu.',
+      });
+    }
 
     const added = addUserToServer(user, srv);
     if (added) {
       addAuditLog('SUNUCU_KATILIM', `${user.username}, "${srv.name}" sunucusuna keşfet üzerinden katıldı.`, 'info');
+      const raidRes = antiRaidTracker.recordJoinAndCheck(srv);
+      if (raidRes.triggered) {
+        saveServers(servers);
+        governanceHelpers.recordServerAudit(
+          srv.id,
+          'Sistem',
+          'RAID_KALKANI_AKTIF',
+          `Ani katılım artışı tespit edildi; kilit modu ve ${raidRes.slowmodeApplied} kanalda otomatik yavaş mod devreye alındı.`
+        );
+      }
     }
     emitServerUpdatedToMembers(srv);
     const srvMsgs = getInitialMessagesForServers([srv], user.username, user.id, user.role);
