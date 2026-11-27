@@ -15,11 +15,24 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.4.0 - Latest */}
+        {/* v1.4.1 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.4.0 — Son Sürüm (TeamSpeak + Discord + AI Paketi)</span>
+            <span className="text-xs font-bold text-emerald-300">v1.4.1 — Son Sürüm (Mobil Android APK, Wiki/Kanban &amp; Bulut Operasyonları)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
+            <li><strong className="text-white">Android Uygulaması (.APK) &amp; Arka Plan Sesi:</strong> Capacitor tabanlı imzalı <code className="text-emerald-200">Cakma.apk</code>, ekran kilitliyken sesi kesmeyen <code className="text-emerald-200">VoiceForegroundService</code> ve Bluetooth kulaklık <code className="text-emerald-200">MediaSession</code> kontrolleri eklendi.</li>
+            <li><strong className="text-white">Masaüstü Etkileşimli Overlay &amp; Klip Kırpıcı:</strong> Oyun içi <code className="text-emerald-200">Alt+Shift+O</code> 3 sekmeli etkileşimli overlay, özel <code className="text-emerald-200">.exe</code> oyun algılama kuralları + süre sayacı ve paylaşım öncesi <code className="text-emerald-200">ClipTrimModal</code> kırpma stüdyosu geldi.</li>
+            <li><strong className="text-white">Wiki, Kanban, Klasörler &amp; Yapay Zekâ Özeti:</strong> Sürüm geçmişli Wiki &amp; sürükle-bırak Kanban kanalları (<code className="text-emerald-200">collabMode</code>), hesaba senkronize sunucu klasörleri, hibrit AI kanal/toplantı özeti (E2EE odalarda tamamen yerel) ve PDF/ZIP/CSV/JSON/ses dalga formu önizlemeleri eklendi.</li>
+            <li><strong className="text-white">Kozmetik, Oyunlar &amp; Admin Bulut Yedekleme:</strong> Animasyonlu avatar çerçeveleri, isim gradyanları, otomatik başarı rozetleri, <code className="text-emerald-200">CAKMA_THEME</code> tema kartları, Canlı Trivia / Türkçe Kelime Zinciri / Oda Turnuvası, CPU % &amp; ses sparkline crosshair ipuçları ve AWS SigV4 S3/R2/MinIO bulut yedekleme eklendi.</li>
+          </ul>
+        </div>
+
+        {/* v1.4.0 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-white/90">v1.4.0 — Önceki Sürüm (TeamSpeak + Discord + AI Paketi)</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">UI/UX &amp; Yönetici Konsolu:</strong> Sabit başlıklı, kapsamlı aramalı ve mobil yatay şeritli yeni <code className="text-emerald-200">SettingsModal</code>; rol sürükle-bırak sıralama + çıkış korumalı <code className="text-emerald-200">ServerSettingsModal</code>; üye listesi için hızlı <code className="text-emerald-200">UserPopoverCard</code>; Sistem Yönetim Konsolunda <code className="text-emerald-200">Ctrl+K</code> arama, otomatik yenileme ve çıkış koruması.</li>

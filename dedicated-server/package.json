@@ -1,6 +1,6 @@
 {
   "name": "voice-dedicated-server",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "type": "module",
   "description": "Licensed Standalone Dedicated Voice & Chat Server (TeamSpeak-Style Self-Hosted)",
   "main": "src/index.ts",

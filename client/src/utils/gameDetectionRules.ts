@@ -8,7 +8,11 @@ export const INTERACTIVE_OVERLAY_HOTKEY_KEY = 'dc_interactive_overlay_hotkey';
 export const DEFAULT_INTERACTIVE_OVERLAY_HOTKEY = 'Alt+Shift+O';
 
 export function normalizeGameExeName(raw: string): string {
-  const cleaned = String(raw || '').trim().toLowerCase().replace(/^.*[/\\]/, '');
+  const cleaned = String(raw || '')
+    .trim()
+    .replace(/^["'\s]+|["'\s]+$/g, '')
+    .toLowerCase()
+    .replace(/^.*[/\\]/, '');
   if (!cleaned) return '';
   return cleaned.endsWith('.exe') || !cleaned.includes('.') ? (cleaned.endsWith('.exe') ? cleaned : `${cleaned}.exe`) : cleaned;
 }
