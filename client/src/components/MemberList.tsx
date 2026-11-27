@@ -7,6 +7,7 @@ import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX, Search, X } from 'lucide-react';
 import { AvatarView } from './AvatarView';
 import { StatusIndicator } from './StatusIndicator';
+import { UserPopoverCard } from './UserPopoverCard';
 
 interface MemberListProps {
   onOpenProfile: (user: User) => void;
@@ -25,6 +26,15 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
     language,
   } = useSocket();
   const [contextMenu, setContextMenu] = useState<{ user: User; x: number; y: number } | null>(null);
+  const [popoverState, setPopoverState] = useState<{
+    user: User;
+    x: number;
+    y: number;
+    role: ServerRole | null;
+    isOwner: boolean;
+    nickname?: string;
+    voiceChannelName?: string;
+  } | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
 
   useEffect(() => {
@@ -278,10 +288,24 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
               return (
                 <div
                   key={user.id}
-                  onClick={() => onOpenProfile(user)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setContextMenu(null);
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setPopoverState({
+                      user,
+                      x: rect.left,
+                      y: rect.top,
+                      role: userRole,
+                      isOwner,
+                      nickname,
+                      voiceChannelName: currentVoice?.name,
+                    });
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    setPopoverState(null);
                     setContextMenu({
                       user,
                       x: Math.max(8, Math.min(e.clientX, window.innerWidth - 230)),
@@ -490,6 +514,21 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
           </div>,
           document.body
         )}
+
+      {popoverState && (
+        <UserPopoverCard
+          user={popoverState.user}
+          x={popoverState.x}
+          y={popoverState.y}
+          role={popoverState.role}
+          isOwner={popoverState.isOwner}
+          isMe={isSameUser(popoverState.user, currentUser)}
+          nickname={popoverState.nickname}
+          voiceChannelName={popoverState.voiceChannelName}
+          onClose={() => setPopoverState(null)}
+          onOpenFullProfile={onOpenProfile}
+        />
+      )}
     </aside>
   );
 };

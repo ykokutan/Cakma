@@ -27,6 +27,8 @@ import {
   Bot,
   Image as ImageIcon,
   Webhook,
+  GripVertical,
+  RotateCcw,
 } from 'lucide-react';
 
 import {
@@ -189,8 +191,36 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
 
   // Members Tab Search
   const [memberSearch, setMemberSearch] = useState('');
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [draggingRoleId, setDraggingRoleId] = useState<string | null>(null);
+  const [dragOverRoleId, setDragOverRoleId] = useState<string | null>(null);
+
+  const isOverviewDirty =
+    name !== server.name ||
+    icon !== (server.icon || '💬') ||
+    bannerGradient !== (server.bannerGradient || BANNER_THEMES[0].class) ||
+    bannerImage !== (server.bannerImage || '') ||
+    description !== (server.description || '') ||
+    isPublic !== (server.isPublic !== false) ||
+    category !== (server.category || 'community') ||
+    bitrateKbps !== (server.bitrateKbps || 128) ||
+    sfuMode !== (server.sfuMode || 'auto') ||
+    afkChannelId !== (server.afkChannelId || '') ||
+    afkTimeoutMinutes !== (server.afkTimeoutMinutes || 15) ||
+    voiceRegion !== (server.voiceRegion || 'tr-istanbul') ||
+    verificationLevel !== (server.verificationLevel || 'low') ||
+    autoModEnabled !== (server.autoModEnabled ?? true);
+
+  const handleRequestClose = () => {
+    if (isOverviewDirty) {
+      setConfirmCloseOpen(true);
+    } else {
+      onClose();
+    }
+  };
+
   const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, true, onClose);
+  useFocusTrap(modalRef, true, handleRequestClose);
 
   const isOwner = isUserServerOwner(currentUser, server);
   const canManageServer = hasServerPermission('manage_server');
@@ -408,10 +438,47 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
     m.username.toLowerCase().includes(memberSearch.toLowerCase())
   );
 
+    const handleRoleReorderDrop = (targetRoleId: string) => {
+      if (!canManageRoles || !draggingRoleId || draggingRoleId === targetRoleId) {
+        setDraggingRoleId(null);
+        setDragOverRoleId(null);
+        return;
+      }
+      const nonDefaultRoles = (server.roles || [])
+        .filter((r) => !r.isDefault && r.id !== 'role-owner')
+        .sort((a, b) => a.position - b.position);
+      const fromIdx = nonDefaultRoles.findIndex((r) => r.id === draggingRoleId);
+      const toIdx = nonDefaultRoles.findIndex((r) => r.id === targetRoleId);
+      if (fromIdx === -1 || toIdx === -1) {
+        setDraggingRoleId(null);
+        setDragOverRoleId(null);
+        return;
+      }
+      const reordered = [...nonDefaultRoles];
+      const [moved] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+      reordered.forEach((role, idx) => {
+        const nextPos = idx + 1;
+        if (role.position !== nextPos) {
+          updateServerRole({
+            serverId: server.id,
+            roleId: role.id,
+            name: role.name,
+            color: role.color,
+            icon: role.icon,
+            permissions: role.permissions,
+            position: nextPos,
+          });
+        }
+      });
+      setDraggingRoleId(null);
+      setDragOverRoleId(null);
+    };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in"
-      onClick={onClose}
+      onClick={handleRequestClose}
     >
       <div
         ref={modalRef}
@@ -421,9 +488,35 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
         className="relative w-full max-w-4xl bg-[#121318]/95 border border-white/10 rounded-3xl shadow-2xl flex overflow-hidden h-[620px] text-white animate-scale-up"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Unsaved Changes Exit Guard */}
+        {confirmCloseOpen && (
+          <div className="absolute top-0 inset-x-0 z-30 px-5 py-3 bg-[#1b1710]/95 backdrop-blur-xl border-b border-amber-400/40 flex flex-wrap items-center justify-between gap-2 animate-fade-in">
+            <span className="text-xs font-semibold text-amber-200 flex items-center gap-2">
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>Kaydedilmemiş sunucu ayarları var. Kaydetmeden çıkmak istiyor musunuz?</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmCloseOpen(false)}
+                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold text-white transition"
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-1 rounded-lg bg-rose-500/80 hover:bg-rose-500 text-xs font-bold text-white transition"
+              >
+                Kaydetmeden Çık
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={handleRequestClose}
           className="absolute top-5 right-5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition z-20"
           title="Kapat"
         >
@@ -1322,27 +1415,61 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({ server
                     )}
                   </div>
 
-                  {server.roles?.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => handleSelectRole(r)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition ${
-                        selectedRoleId === r.id
-                          ? 'bg-white/10 text-white font-bold border border-white/20'
-                          : 'text-white/60 hover:text-white hover:bg-white/5'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 overflow-hidden">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
-                        {r.icon && <span className="text-xs shrink-0">{r.icon}</span>}
-                        <span className="truncate">{r.name}</span>
-                      </div>
-                      {r.isDefault && (
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-white/10 text-white/40 uppercase">Herkes</span>
-                      )}
-                    </button>
-                  ))}
+                  {[...(server.roles || [])]
+                    .sort((a, b) => a.position - b.position)
+                    .map((r) => {
+                      const canDragRole = canManageRoles && !r.isDefault && r.id !== 'role-owner';
+                      const isDragOver = dragOverRoleId === r.id && draggingRoleId !== r.id;
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          draggable={canDragRole}
+                          onDragStart={() => {
+                            if (canDragRole) setDraggingRoleId(r.id);
+                          }}
+                          onDragOver={(e) => {
+                            if (canDragRole && draggingRoleId && draggingRoleId !== r.id) {
+                              e.preventDefault();
+                              setDragOverRoleId(r.id);
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverRoleId === r.id) setDragOverRoleId(null);
+                          }}
+                          onDrop={(e) => {
+                            if (canDragRole) {
+                              e.preventDefault();
+                              handleRoleReorderDrop(r.id);
+                            }
+                          }}
+                          onDragEnd={() => {
+                            setDraggingRoleId(null);
+                            setDragOverRoleId(null);
+                          }}
+                          onClick={() => handleSelectRole(r)}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition ${
+                            isDragOver
+                              ? 'border-t-2 border-blue-400 bg-blue-500/15 text-white'
+                              : selectedRoleId === r.id
+                              ? 'bg-white/10 text-white font-bold border border-white/20'
+                              : 'text-white/60 hover:text-white hover:bg-white/5'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            {canDragRole && (
+                              <GripVertical className="w-3 h-3 text-white/30 shrink-0 cursor-grab" />
+                            )}
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                            {r.icon && <span className="text-xs shrink-0">{r.icon}</span>}
+                            <span className="truncate">{r.name}</span>
+                          </div>
+                          {r.isDefault && (
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-white/10 text-white/40 uppercase">Herkes</span>
+                          )}
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
 

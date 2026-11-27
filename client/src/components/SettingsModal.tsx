@@ -54,6 +54,7 @@ import {
   Volume2,
   Globe,
   Copy,
+  RotateCcw,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -694,8 +695,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveProfile = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!username.trim()) return;
     const trimmedUrl = avatarUrlInput.trim();
     const finalAvatar =
@@ -723,6 +724,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setTimeout(() => setSavedSuccess(false), 2000);
   };
 
+  const isProfileDirty = Boolean(
+    currentUser &&
+      (username !== (currentUser.username || '') ||
+        avatar !== (currentUser.avatar || '🎮') ||
+        profileStatus !== (currentUser.status || 'online') ||
+        profileStatusMessage !== (currentUser.statusMessage || 'Çevrimiçi') ||
+        profileBio !== (currentUser.bio || '') ||
+        profileBannerColor !==
+          (currentUser.bannerColor || 'from-indigo-600 via-purple-600 to-pink-600') ||
+        profileBannerImage !== (currentUser.bannerImage || '') ||
+        avatarUrlInput.trim().length > 0 ||
+        bannerUrlInput.trim().length > 0)
+  );
+
+  const handleResetProfileChanges = () => {
+    if (!currentUser) return;
+    setUsername(currentUser.username || '');
+    setAvatar(currentUser.avatar || '🎮');
+    setProfileStatus(currentUser.status || 'online');
+    setProfileStatusMessage(currentUser.statusMessage || 'Çevrimiçi');
+    setProfileBio(currentUser.bio || '');
+    setProfileBannerColor(
+      currentUser.bannerColor || 'from-indigo-600 via-purple-600 to-pink-600'
+    );
+    setProfileBannerImage(currentUser.bannerImage || '');
+    setAvatarUrlInput('');
+    setBannerUrlInput('');
+    setProfileUploadErr(null);
+  };
+
+  const SETTINGS_SEARCH_INDEX = [
+    { label: 'Profil & Durum', tab: 'profile' as const, kw: 'profil avatar durum bio rozet afiş banner' },
+    { label: '2FA & Aktif Oturumlar', tab: 'security' as const, kw: '2fa güvenlik şifre oturum gizlilik yedek' },
+    { label: 'Passkey & WebAuthn', tab: 'security' as const, kw: 'passkey webauthn parmak izi doğrulama biometric anahtar' },
+    { label: 'Tema, Dil & Cam Efekti', tab: 'appearance' as const, kw: 'tema görünüm dil cam font' },
+    { label: 'Erişilebilirlik & Kontrast', tab: 'appearance' as const, kw: 'erişilebilirlik yüksek kontrast renk körlüğü dar monitör motion' },
+    { label: 'Oyun İçi Overlay & Saydamlık', tab: 'overlay' as const, kw: 'overlay oyun saydamlık ping kilit köşe boyut' },
+    { label: 'Mikrofon & Hoparlör', tab: 'audio' as const, kw: 'ses mikrofon hoparlör cihaz test ses düzeyi yankı' },
+    { label: 'Stüdyo DSP, Ducking & Tampon', tab: 'voice_processing' as const, kw: 'dsp gürültü yankı agc ducking tampon 20ms hassasiyet' },
+    { label: 'Gürültü Profilleri & Noise Gate', tab: 'voice_processing' as const, kw: 'gürültü profili noise gate klavye izolasyon stüdyo dengeli' },
+    { label: 'Klip Tamponu & HDR Yayın', tab: 'video' as const, kw: 'video hdr av1 vp9 h264 codec kalite gpu klip tampon' },
+    { label: 'Kısayol Tuşları', tab: 'keybindings' as const, kw: 'kısayol ptt tuş bas konuş' },
+    { label: 'Sohbet & Fısıltı', tab: 'chats' as const, kw: 'sohbet fısıltı link gif' },
+    { label: 'Web Push Bildirimleri', tab: 'notifications' as const, kw: 'web push bildirim servis worker masaüstü' },
+    { label: 'Bildirimler & Ses Paketi', tab: 'notifications' as const, kw: 'bildirim zil ses paketi' },
+    { label: 'Hakkında & Güncelleme', tab: 'about' as const, kw: 'hakkında sürüm güncelleme' },
+    { label: 'Yasal Bilgiler & Sözleşmeler', tab: 'about' as const, kw: 'yasal sözleşme gizlilik kvkk çerez topluluk kuralları' },
+  ];
+  const normalizedSettingsSearch = settingsSearch.trim().toLowerCase();
+  const filteredSettingsIndex = normalizedSettingsSearch
+    ? SETTINGS_SEARCH_INDEX.filter(
+        (item) =>
+          item.label.toLowerCase().includes(normalizedSettingsSearch) ||
+          item.kw.includes(normalizedSettingsSearch)
+      )
+    : [];
+
+  const activeTabHeader: Record<
+    typeof activeTab,
+    { title: string; desc: string }
+  > = {
+    profile: { title: t(language, 'tabProfile'), desc: 'Profil kimliği, durum mesajı, avatar ve afişinizi düzenleyin.' },
+    security: { title: t(language, 'tabSecurity'), desc: '2FA, Passkey, şifre değiştirme ve aktif cihaz oturumları.' },
+    appearance: { title: t(language, 'tabAppearance'), desc: 'Tema, dil seçimi, cam efekti ve erişilebilirlik tercihleri.' },
+    overlay: { title: t(language, 'tabOverlay'), desc: 'Oyun içi katman konumu, saydamlık ve otomatik oyun algılama.' },
+    audio: { title: t(language, 'tabAudio'), desc: 'Giriş/çıkış cihazları, mikrofon testi ve ses düzeyleri.' },
+    voice_processing: { title: t(language, 'tabVoiceProcessing'), desc: 'Stüdyo DSP, noise gate, ses izolasyonu ve ducking ayarları.' },
+    video: { title: t(language, 'tabVideo'), desc: 'Ekran paylaşımı HDR, codec seçimi ve donanım hızlandırma.' },
+    keybindings: { title: t(language, 'tabKeybindings'), desc: 'Bas-konuş, sessize alma ve genel kısayol tuşları.' },
+    chats: { title: t(language, 'tabChats'), desc: 'Sohbet akışı, fısıltı izinleri, GIF ve bağlantı önizlemeleri.' },
+    notifications: { title: t(language, 'tabNotifications'), desc: 'Masaüstü bildirimleri, Web Push ve ses paketi seçimi.' },
+    about: { title: t(language, 'tabAbout'), desc: 'Sürüm notları, güncelleme denetimi ve yasal dokümanlar.' },
+  };
+
+  const MOBILE_TABS: Array<{ id: typeof activeTab; label: string }> = [
+    { id: 'profile', label: t(language, 'tabProfile') },
+    { id: 'security', label: t(language, 'tabSecurity') },
+    { id: 'appearance', label: t(language, 'tabAppearance') },
+    { id: 'overlay', label: t(language, 'tabOverlay') },
+    { id: 'audio', label: t(language, 'tabAudio') },
+    { id: 'voice_processing', label: t(language, 'tabVoiceProcessing') },
+    { id: 'video', label: t(language, 'tabVideo') },
+    { id: 'keybindings', label: t(language, 'tabKeybindings') },
+    { id: 'chats', label: t(language, 'tabChats') },
+    { id: 'notifications', label: t(language, 'tabNotifications') },
+    { id: 'about', label: t(language, 'tabAbout') },
+  ];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xl flex items-center justify-center p-0 sm:p-4">
       <div
@@ -730,10 +819,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         role="dialog"
         aria-modal="true"
         aria-label={t(language, 'settings')}
-        className="w-full max-w-5xl ios-glass rounded-none sm:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden border-0 sm:border border-white/10 h-[100dvh] sm:h-[660px] sm:max-h-[90vh]"
+        className="w-full max-w-6xl ios-glass rounded-none sm:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden border-0 sm:border border-white/10 h-[100dvh] sm:h-[720px] sm:max-h-[90vh]"
       >
-        {/* Left Settings Sidebar - TeamSpeak-style Categorized Panel */}
-        <div className="w-full md:w-60 max-h-44 md:max-h-none bg-white/[0.02] p-3 md:p-4 flex flex-col justify-between shrink-0 border-b md:border-b-0 md:border-r border-white/[0.06] overflow-y-auto">
+        {/* Mobile Horizontal Tab Bar + Search */}
+        <div className="md:hidden bg-white/[0.03] border-b border-white/[0.08] px-3 py-2.5 space-y-2 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-white/60">
+              {t(language, 'settings')}
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80"
+              title="Kapat"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            {MOBILE_TABS.map((tabItem) => (
+              <button
+                key={tabItem.id}
+                type="button"
+                onClick={() => setActiveTab(tabItem.id)}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-semibold whitespace-nowrap transition shrink-0 ${
+                  activeTab === tabItem.id
+                    ? 'ui-accent-bg text-white shadow'
+                    : 'bg-white/5 text-white/65 hover:text-white'
+                }`}
+              >
+                {tabItem.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Left Settings Sidebar - Desktop Categorized Panel */}
+        <div className="hidden md:flex md:w-60 bg-white/[0.02] p-4 flex-col justify-between shrink-0 border-r border-white/[0.06] overflow-y-auto">
           <div className="space-y-4">
             <div className="text-[11px] font-bold text-white/40 uppercase px-2 tracking-wider">
               {t(language, 'settings')}
@@ -744,30 +866,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 type="text"
                 value={settingsSearch}
                 onChange={(e) => setSettingsSearch(e.target.value)}
-                placeholder="Ayar ara (HDR, DSP, Overlay...)"
+                placeholder="Ayar ara (Passkey, DSP, HDR...)"
                 className="w-full px-2.5 py-1.5 rounded-xl bg-black/35 border border-white/10 text-xs text-white placeholder-white/35 outline-none focus:border-blue-400"
               />
-              {settingsSearch.trim() && (
-                <div className="mt-1.5 max-h-40 overflow-y-auto rounded-xl bg-black/60 border border-white/10 p-1 space-y-0.5">
-                  {[
-                    { label: 'Profil & Durum', tab: 'profile' as const, kw: 'profil avatar durum bio rozet' },
-                    { label: '2FA & Aktif Oturumlar', tab: 'security' as const, kw: '2fa güvenlik şifre oturum gizlilik' },
-                    { label: 'Tema, Dil & Cam Efekti', tab: 'appearance' as const, kw: 'tema görünüm dil cam font' },
-                    { label: 'Oyun İçi Overlay & Saydamlık', tab: 'overlay' as const, kw: 'overlay oyun saydamlık ping kilit köşe boyut' },
-                    { label: 'Mikrofon & Hoparlör', tab: 'audio' as const, kw: 'ses mikrofon hoparlör cihaz test ses düzeyi' },
-                    { label: 'Stüdyo DSP, Ducking & Tampon', tab: 'voice_processing' as const, kw: 'dsp gürültü yankı agc ducking tampon 20ms hassasiyet' },
-                    { label: 'HDR Yayın, Kalite & Codec', tab: 'video' as const, kw: 'video hdr av1 vp9 h264 codec kalite gpu' },
-                    { label: 'Kısayol Tuşları', tab: 'keybindings' as const, kw: 'kısayol ptt tuş bas konuş' },
-                    { label: 'Sohbet & Fısıltı', tab: 'chats' as const, kw: 'sohbet fısıltı link gif' },
-                    { label: 'Bildirimler & Ses Paketi', tab: 'notifications' as const, kw: 'bildirim zil ses paketi' },
-                    { label: 'Hakkında & Güncelleme', tab: 'about' as const, kw: 'hakkında sürüm güncelleme' },
-                    { label: 'Yasal Bilgiler & Sözleşmeler', tab: 'about' as const, kw: 'yasal sözleşme gizlilik kvkk çerez topluluk kuralları' },
-                  ]
-                    .filter((item) => {
-                      const q = settingsSearch.trim().toLowerCase();
-                      return item.label.toLowerCase().includes(q) || item.kw.includes(q);
-                    })
-                    .map((item) => (
+              {normalizedSettingsSearch && (
+                <div className="mt-1.5 max-h-44 overflow-y-auto rounded-xl bg-black/75 border border-white/10 p-1 space-y-0.5">
+                  {filteredSettingsIndex.length === 0 ? (
+                    <div className="px-2 py-2 text-[11px] text-white/45 text-center">
+                      Eşleşen ayar bulunamadı
+                    </div>
+                  ) : (
+                    filteredSettingsIndex.map((item) => (
                       <button
                         key={item.label}
                         type="button"
@@ -779,7 +888,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       >
                         {item.label}
                       </button>
-                    ))}
+                    ))
+                  )}
                 </div>
               )}
             </div>
@@ -951,13 +1061,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
         {/* Right Settings Content */}
         <div className="flex-1 p-4 sm:p-8 flex flex-col justify-between overflow-y-auto relative min-w-0">
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 sm:top-6 sm:right-6 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition shadow z-10"
-            title="Kapat"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="sticky top-0 z-10 -mx-4 sm:-mx-8 -mt-4 sm:-mt-8 mb-5 px-4 sm:px-8 py-3.5 bg-[#12141d]/90 backdrop-blur-xl border-b border-white/[0.08] flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-bold text-white truncate">
+                {activeTabHeader[activeTab].title}
+              </h2>
+              <p className="text-[11px] text-white/45 truncate hidden sm:block">
+                {activeTabHeader[activeTab].desc}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden sm:inline-block px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] font-mono text-white/40">
+                Esc
+              </span>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition shadow"
+                title="Kapat (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
           {/* TAB 1: Ses Aygıtları & Giriş */}
           {activeTab === 'audio' && (
@@ -3711,6 +3837,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               preferredCodec={advSettings.preferredCodec}
               onOpenLegalDoc={(docId) => setLegalModalDoc(docId)}
             />
+          )}
+          {/* Sticky Profile Unsaved Changes Bar */}
+          {activeTab === 'profile' && isProfileDirty && (
+            <div className="sticky bottom-0 z-20 mt-4 p-3 rounded-2xl bg-[#151822]/95 backdrop-blur-xl border border-amber-400/40 shadow-2xl flex flex-wrap items-center justify-between gap-2 animate-fade-in">
+              <div className="flex items-center gap-2 text-xs font-semibold text-amber-200">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                <span>Profilinizde kaydedilmemiş değişiklikler var</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetProfileChanges}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white/80 flex items-center gap-1.5 transition"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Vazgeç</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveProfile()}
+                  className="px-4 py-1.5 rounded-xl bg-blue-500 hover:bg-blue-600 text-xs font-bold text-white flex items-center gap-1.5 shadow-lg shadow-blue-500/25 transition"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Kaydet</span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
