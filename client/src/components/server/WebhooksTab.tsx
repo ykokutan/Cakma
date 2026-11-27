@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Loader2, Plus, Send, Trash2, Webhook } from 'lucide-react';
+import { ArrowLeftRight, Check, Copy, Loader2, Plus, Send, Trash2, Webhook } from 'lucide-react';
 import { useSocket } from '../../context/SocketContext';
-import type { Server, ServerWebhook } from '../../types';
+import type { BridgeDirection, BridgePlatform, PublicChannelBridgeView, Server, ServerWebhook } from '../../types';
 import { authFetch, resolveBackendBaseUrl } from '../../utils/authFetch';
 import { appConfirm, appToast } from '../../utils/appDialogs';
 import { t } from '../../utils/i18n';
@@ -26,6 +26,25 @@ export const WebhooksTab: React.FC<WebhooksTabProps> = ({ server, canManage }) =
   const [nameInput, setNameInput] = useState('');
   const [channelId, setChannelId] = useState<string>(nonVoiceChannels[0]?.id || '');
   const [avatar, setAvatar] = useState('🪝');
+
+  // Bidirectional Channel Bridges (Telegram & Discord)
+  const bridgeEligibleChannels = (server.channels || []).filter(
+    (c) => c.type === 'text' || c.type === 'announcement'
+  );
+  const [bridges, setBridges] = useState<PublicChannelBridgeView[]>([]);
+  const [loadingBridges, setLoadingBridges] = useState(true);
+  const [bridgePlatform, setBridgePlatform] = useState<BridgePlatform>('telegram');
+  const [bridgeDirection, setBridgeDirection] = useState<BridgeDirection>('both');
+  const [bridgeName, setBridgeName] = useState('');
+  const [bridgeChannelId, setBridgeChannelId] = useState<string>(bridgeEligibleChannels[0]?.id || '');
+  const [tgBotToken, setTgBotToken] = useState('');
+  const [tgChatId, setTgChatId] = useState('');
+  const [tgMode, setTgMode] = useState<'polling' | 'webhook'>('polling');
+  const [dcWebhookUrl, setDcWebhookUrl] = useState('');
+  const [dcBotToken, setDcBotToken] = useState('');
+  const [dcChannelId, setDcChannelId] = useState('');
+  const [creatingBridge, setCreatingBridge] = useState(false);
+  const [busyBridgeId, setBusyBridgeId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!channelId && nonVoiceChannels.length > 0) {
@@ -54,6 +73,146 @@ export const WebhooksTab: React.FC<WebhooksTabProps> = ({ server, canManage }) =
   useEffect(() => {
     void fetchWebhooks();
   }, [fetchWebhooks]);
+
+  useEffect(() => {
+    if (!bridgeChannelId && bridgeEligibleChannels.length > 0) {
+      setBridgeChannelId(bridgeEligibleChannels[0].id);
+    }
+  }, [bridgeChannelId, bridgeEligibleChannels]);
+
+  const fetchBridges = useCallback(async () => {
+    setLoadingBridges(true);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/servers/${encodeURIComponent(server.id)}/bridges`
+      );
+      const data = await resp.json().catch(() => null);
+      if (resp.ok && data?.ok && Array.isArray(data.bridges)) {
+        setBridges(data.bridges);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingBridges(false);
+    }
+  }, [currentServerHost, server.id]);
+
+  useEffect(() => {
+    void fetchBridges();
+  }, [fetchBridges]);
+
+  const handleCreateBridge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManage || !bridgeChannelId) return;
+    setCreatingBridge(true);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/servers/${encodeURIComponent(server.id)}/bridges`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform: bridgePlatform,
+            direction: bridgeDirection,
+            channelId: bridgeChannelId,
+            name: bridgeName.trim() || `${bridgePlatform.toUpperCase()} Köprüsü`,
+            telegramBotToken: tgBotToken.trim() || undefined,
+            telegramChatId: tgChatId.trim() || undefined,
+            telegramMode: tgMode,
+            discordWebhookUrl: dcWebhookUrl.trim() || undefined,
+            discordBotToken: dcBotToken.trim() || undefined,
+            discordChannelId: dcChannelId.trim() || undefined,
+          }),
+        }
+      );
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok || !data.bridge) {
+        appToast(data?.error || 'Kanal köprüsü oluşturulamadı.', 'error');
+        return;
+      }
+      setBridges((prev) => [...prev, data.bridge]);
+      setBridgeName('');
+      setTgBotToken('');
+      setTgChatId('');
+      setDcWebhookUrl('');
+      setDcBotToken('');
+      setDcChannelId('');
+      appToast('Çift yönlü kanal köprüsü oluşturuldu!', 'success');
+    } catch {
+      appToast('Köprü oluşturulurken ağ hatası oluştu.', 'error');
+    } finally {
+      setCreatingBridge(false);
+    }
+  };
+
+  const handleToggleBridge = async (b: PublicChannelBridgeView) => {
+    setBusyBridgeId(`toggle:${b.id}`);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/servers/${encodeURIComponent(server.id)}/bridges/${encodeURIComponent(b.id)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !b.enabled }),
+        }
+      );
+      const data = await resp.json().catch(() => null);
+      if (resp.ok && data?.ok && data.bridge) {
+        setBridges((prev) => prev.map((x) => (x.id === b.id ? data.bridge : x)));
+      }
+    } finally {
+      setBusyBridgeId(null);
+    }
+  };
+
+  const handleTestBridge = async (b: PublicChannelBridgeView) => {
+    setBusyBridgeId(`test:${b.id}`);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/servers/${encodeURIComponent(server.id)}/bridges/${encodeURIComponent(b.id)}/test`,
+        { method: 'POST' }
+      );
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        appToast(data?.error || 'Köprü testi başarısız.', 'error');
+        return;
+      }
+      if (data.bridge) {
+        setBridges((prev) => prev.map((x) => (x.id === b.id ? data.bridge : x)));
+      }
+      appToast('Test mesajı karşı platforma gönderildi!', 'success');
+    } finally {
+      setBusyBridgeId(null);
+    }
+  };
+
+  const handleDeleteBridge = async (b: PublicChannelBridgeView) => {
+    const ok = await appConfirm({
+      title: 'Köprüyü Sil',
+      message: `"${b.name}" kanal köprüsünü silmek istediğinize emin misiniz?`,
+      danger: true,
+      confirmLabel: 'Sil',
+    });
+    if (!ok) return;
+    setBusyBridgeId(`del:${b.id}`);
+    try {
+      const resp = await authFetch(
+        currentServerHost,
+        `/api/servers/${encodeURIComponent(server.id)}/bridges/${encodeURIComponent(b.id)}`,
+        { method: 'DELETE' }
+      );
+      if (resp.ok) {
+        setBridges((prev) => prev.filter((x) => x.id !== b.id));
+        appToast('Kanal köprüsü kaldırıldı.', 'info');
+      }
+    } finally {
+      setBusyBridgeId(null);
+    }
+  };
 
   const buildWebhookUrl = (wh: ServerWebhook): string => {
     const base = resolveBackendBaseUrl(currentServerHost) || window.location.origin;
@@ -315,6 +474,214 @@ export const WebhooksTab: React.FC<WebhooksTabProps> = ({ server, canManage }) =
           })}
         </div>
       )}
+
+      {/* Bidirectional Channel Bridges (Telegram & Discord) */}
+      <div className="pt-4 border-t border-white/10 space-y-4">
+        <div>
+          <h3 className="text-lg font-bold tracking-tight text-white mb-1 flex items-center gap-2">
+            <ArrowLeftRight className="w-5 h-5 text-emerald-400" />
+            <span>Çift Yönlü Kanal Köprüleri (Telegram &amp; Discord)</span>
+          </h3>
+          <p className="text-xs text-white/50">
+            Seçili metin veya duyuru kanallarını harici Telegram gruplarına veya Discord kanallarına çift yönlü bağlayın (E2EE kanallar güvenlik gereği kapsam dışıdır).
+          </p>
+        </div>
+
+        {canManage && bridgeEligibleChannels.length > 0 && (
+          <form
+            onSubmit={handleCreateBridge}
+            className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <select
+                value={bridgePlatform}
+                onChange={(e) => setBridgePlatform(e.target.value as BridgePlatform)}
+                className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-emerald-400"
+              >
+                <option value="telegram" className="bg-neutral-900">✈️ Telegram Grubu / Kanalı</option>
+                <option value="discord" className="bg-neutral-900">🎮 Discord Kanalı</option>
+              </select>
+              <select
+                value={bridgeChannelId}
+                onChange={(e) => setBridgeChannelId(e.target.value)}
+                className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-emerald-400"
+              >
+                {bridgeEligibleChannels.map((ch) => (
+                  <option key={ch.id} value={ch.id} className="bg-neutral-900">
+                    #{ch.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={bridgeDirection}
+                onChange={(e) => setBridgeDirection(e.target.value as BridgeDirection)}
+                className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-emerald-400"
+              >
+                <option value="both" className="bg-neutral-900">⇄ Çift Yönlü</option>
+                <option value="outbound" className="bg-neutral-900">→ Yalnızca Dışa Aktar</option>
+                <option value="inbound" className="bg-neutral-900">← Yalnızca İçe Aktar</option>
+              </select>
+            </div>
+
+            <input
+              type="text"
+              value={bridgeName}
+              onChange={(e) => setBridgeName(e.target.value)}
+              placeholder="Köprü adı (Örn: Genel Telegram Senkron)"
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/35 outline-none focus:border-emerald-400"
+            />
+
+            {bridgePlatform === 'telegram' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="password"
+                  value={tgBotToken}
+                  onChange={(e) => setTgBotToken(e.target.value)}
+                  placeholder="Telegram Bot Token"
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                />
+                <input
+                  type="text"
+                  value={tgChatId}
+                  onChange={(e) => setTgChatId(e.target.value)}
+                  placeholder="Chat ID (Örn: -1001234567890)"
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                />
+                <select
+                  value={tgMode}
+                  onChange={(e) => setTgMode(e.target.value === 'webhook' ? 'webhook' : 'polling')}
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-emerald-400"
+                >
+                  <option value="polling" className="bg-neutral-900">Otomatik Polling (Önerilen)</option>
+                  <option value="webhook" className="bg-neutral-900">Harici Webhook Modu</option>
+                </select>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="url"
+                  value={dcWebhookUrl}
+                  onChange={(e) => setDcWebhookUrl(e.target.value)}
+                  placeholder="Discord Webhook URL (Giden mesajlar için)"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="password"
+                    value={dcBotToken}
+                    onChange={(e) => setDcBotToken(e.target.value)}
+                    placeholder="Discord Bot Token (İsteğe bağlı, gelen mesajlar için)"
+                    className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                  />
+                  <input
+                    type="text"
+                    value={dcChannelId}
+                    onChange={(e) => setDcChannelId(e.target.value)}
+                    placeholder="Discord Kanal ID (Gelen polling için)"
+                    className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-emerald-400"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={creatingBridge || !bridgeChannelId}
+                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 disabled:opacity-40 transition"
+              >
+                {creatingBridge ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                <span>Köprü Oluştur</span>
+              </button>
+            </div>
+          </form>
+        )}
+
+        {loadingBridges ? (
+          <div className="py-6 text-center text-xs text-white/45">Köprüler yükleniyor...</div>
+        ) : bridges.length === 0 ? (
+          <div className="p-5 rounded-2xl bg-white/[0.02] border border-dashed border-white/10 text-center text-xs text-white/45">
+            Henüz tanımlanmış kanal köprüsü yok.
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {bridges.map((b) => {
+              const targetCh = bridgeEligibleChannels.find((c) => c.id === b.channelId);
+              const fullInboundUrl = `${resolveBackendBaseUrl(currentServerHost) || window.location.origin}${b.inboundPath}`;
+              return (
+                <div
+                  key={b.id}
+                  className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{b.platform === 'telegram' ? '✈️' : '🎮'}</span>
+                        <span className="text-xs font-bold text-white truncate">{b.name}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                            b.enabled
+                              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                              : 'bg-white/5 border-white/10 text-white/45'
+                          }`}
+                        >
+                          {b.enabled ? 'Aktif' : 'Duraklatıldı'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-white/50 mt-0.5">
+                        #{targetCh?.name || b.channelId} · Yön: {b.direction === 'both' ? 'Çift Yönlü' : b.direction === 'outbound' ? 'Dışa' : 'İçe'}
+                        {b.lastSyncAt && ` · Son: ${new Date(b.lastSyncAt).toLocaleTimeString('tr-TR')}`}
+                      </div>
+                      {b.lastError && (
+                        <div className="text-[10px] text-rose-300 mt-0.5 truncate">⚠️ {b.lastError}</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleBridge(b)}
+                        disabled={busyBridgeId !== null}
+                        className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-bold text-white transition"
+                      >
+                        {b.enabled ? 'Duraklat' : 'Etkinleştir'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleTestBridge(b)}
+                        disabled={busyBridgeId !== null}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-[10px] font-bold transition"
+                      >
+                        {busyBridgeId === `test:${b.id}` ? '...' : 'Test'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(fullInboundUrl).then(() => {
+                            appToast('Gelen köprü webhook URL kopyalandı.', 'success');
+                          });
+                        }}
+                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 transition"
+                        title="Gelen Webhook URL Kopyala"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteBridge(b)}
+                        disabled={busyBridgeId !== null}
+                        className="p-1.5 rounded-lg hover:bg-rose-500/20 text-rose-400 transition"
+                        title="Köprüyü Sil"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

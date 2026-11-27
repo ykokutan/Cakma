@@ -21,7 +21,7 @@ import {
 } from './utils/mailDelivery.js';
 import fs from 'fs';
 import { initialServers, initialMessages, getDefaultRoles } from './mockData.js';
-import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule, ContentReport } from './types.js';
+import { User, Message, Server, ServerCategory, Channel, AuditLog, SystemStats, DedicatedServerInfo, IssuedLicense, StoreSettings, UserBadge, MessageAttachment, FriendRequest, FriendUser, ServerRole, ServerMember, ServerPermission, RegisteredAccount, UserActivity, UserConnectionRecord, MemberLevelData, WatchTogetherState, MiniGameState, ServerAnalyticsData, GroupDmRoom, ServerWebhook, ChannelBridge, ServerAuditEntry, ServerModerationCase, ScheduledMessage, ServerBot, ServerAutomationRule, ContentReport } from './types.js';
 import { isUserMemberOfServer, filterServersForUser, buildDiscoverableServerSummaries } from './utils/serverDiscovery.js';
 import {
   buildPersistentDmChannelId,
@@ -99,6 +99,7 @@ import {
   loadServerAutomations, saveServerAutomations,
   loadContentReports, saveContentReports,
   loadS3UploadsIndex, saveS3UploadsIndex, type S3UploadRecord,
+  loadChannelBridges, saveChannelBridges,
   flushPendingWritesSync, getPendingWriteCount,
   getInitialMessagesSlice, getChannelMessagesPage, searchAllMessages,
   searchMessagesSmart, initStorageEngine, getStorageEngineInfo, sqliteStore, indexChannelMessage, removeIndexedMessage, closeStorageEngine,
@@ -129,6 +130,7 @@ import { registerGroupDmSocketHandlers, getGroupDmsForUser } from './features/gr
 import { registerWebhooksAndTemplatesRoutes } from './features/webhooksAndTemplatesRoutes.js';
 import { registerPasskeyRoutes } from './features/passkeyRoutes.js';
 import { registerOAuthAndConnectionsRoutes } from './features/oauthAndConnectionsRoutes.js';
+import { ChannelBridgeService, registerChannelBridgeRoutes } from './features/channelBridgeService.js';
 import { registerE2eePairingRoutes } from './features/e2eePairingRoutes.js';
 import { registerComplianceAndReportsRoutes } from './features/complianceAndReportsRoutes.js';
 import { registerAuthSocketHandlers } from './features/authSocketHandlers.js';
@@ -575,6 +577,7 @@ const servers: Server[] = loadServers(initialServers);
 const messages: Record<string, Message[]> = loadMessages(initialMessages);
 const groupDms: GroupDmRoom[] = loadGroupDms();
 const webhooks: ServerWebhook[] = loadWebhooks();
+const channelBridges: ChannelBridge[] = loadChannelBridges();
 const serverAuditLogs: Record<string, ServerAuditEntry[]> = loadServerAuditLogs();
 const serverCases: Record<string, ServerModerationCase[]> = loadServerModerationCases();
 const scheduledMessages: ScheduledMessage[] = loadScheduledMessages();
@@ -1781,6 +1784,25 @@ registerOAuthAndConnectionsRoutes(app, {
   addAuditLog,
 });
 
+const channelBridgeDeps = {
+  bridges: channelBridges,
+  servers,
+  messages,
+  activeUsers,
+  verifySessionTokenWithMeta,
+  getAccount: (usernameLower: string) => registeredAccounts.get(usernameLower),
+  sanitizeText,
+  checkServerPermission,
+  saveBridges: saveChannelBridges,
+  saveChannelMessageUpsert,
+  emitToChannelAudience,
+  addAuditLog,
+  onMessageCreated: () => maintenanceService.incrementMessageCount(),
+};
+const channelBridgeService = new ChannelBridgeService(channelBridgeDeps);
+registerChannelBridgeRoutes(app, channelBridgeService, channelBridgeDeps);
+channelBridgeService.start();
+
 registerE2eePairingRoutes(app, {
   verifySessionTokenWithMeta,
   getAccount: (usernameLower) => registeredAccounts.get(usernameLower),
@@ -2349,6 +2371,7 @@ io.on('connection', (socket: Socket) => {
         },
         serverBots
       );
+      void channelBridgeService.forwardMessageToBridges(targetSrv, message);
     },
     onReactionAdded: ({ user: reactor, serverId, channelId, messageId, emoji }) => {
       if (!serverId || serverId === 'direct-messages') return;

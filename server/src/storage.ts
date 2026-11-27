@@ -625,6 +625,7 @@ const BACKUP_FILENAMES = [
   'server_levels.json',
   'system_config.json',
   'banned_ips.json',
+  'channel_bridges.json',
 ] as const;
 
 export function getStorageStats(): {
@@ -933,4 +934,12 @@ export function loadS3UploadsIndex(): Record<string, S3UploadRecord> {
 
 export function saveS3UploadsIndex(index: Record<string, S3UploadRecord>): void {
   scheduleWriteJson('s3_uploads_index.json', index);
+}
+
+export function loadChannelBridges(): import('./types.js').ChannelBridge[] {
+  return safeReadJson<import('./types.js').ChannelBridge[]>('channel_bridges.json', []);
+}
+
+export function saveChannelBridges(bridges: import('./types.js').ChannelBridge[]): void {
+  scheduleWriteJson('channel_bridges.json', bridges);
 }

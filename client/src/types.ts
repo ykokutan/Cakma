@@ -495,6 +495,30 @@ export interface ServerWebhook {
   lastUsedAt?: string;
 }
 
+export type BridgePlatform = 'telegram' | 'discord';
+export type BridgeDirection = 'both' | 'inbound' | 'outbound';
+
+export interface PublicChannelBridgeView {
+  id: string;
+  serverId: string;
+  channelId: string;
+  platform: BridgePlatform;
+  name: string;
+  enabled: boolean;
+  direction: BridgeDirection;
+  inboundPath: string;
+  telegramChatId?: string;
+  telegramMode?: 'polling' | 'webhook';
+  hasTelegramBotToken: boolean;
+  discordChannelId?: string;
+  hasDiscordWebhook: boolean;
+  hasDiscordBotToken: boolean;
+  createdBy: string;
+  createdAt: string;
+  lastSyncAt?: string;
+  lastError?: string;
+}
+
 export interface GroupDmRoom {
   id: string;
   name: string;
