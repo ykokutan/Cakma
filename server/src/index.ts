@@ -3830,8 +3830,10 @@ io.on('connection', (socket: Socket) => {
       securityAudit: (() => {
         const admins = Array.from(registeredAccounts.values()).filter((a) => a.role === 'admin');
         const adminsWithout2fa = admins.filter((a) => !a.twoFactorEnabled).map((a) => a.username);
-        const usingDefaultMasterKey = !process.env.MASTER_API_KEY || MASTER_API_KEY === 'cakma_master_sec_2026';
-        const usingDefaultSessionSecret = !process.env.SESSION_SECRET;
+        const usingDefaultMasterKey =
+          !MASTER_API_KEY || MASTER_API_KEY === 'cakma_master_sec_2026' || MASTER_API_KEY.length < 24;
+        const usingDefaultSessionSecret =
+          !SESSION_SECRET || SESSION_SECRET === 'cakma_default_session_secret' || SESSION_SECRET.length < 24;
         const checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }> = [
           {
             id: 'master_key',
@@ -3839,7 +3841,9 @@ io.on('connection', (socket: Socket) => {
             status: usingDefaultMasterKey ? 'fail' : 'pass',
             detail: usingDefaultMasterKey
               ? 'Varsayılan MASTER_API_KEY kullanılıyor! .env içinde değiştirin.'
-              : 'Özel MASTER_API_KEY tanımlı.',
+              : process.env.MASTER_API_KEY
+              ? 'Özel MASTER_API_KEY (.env) tanımlı.'
+              : 'Kriptografik MASTER_API_KEY aktif (server-secrets.json).',
           },
           {
             id: 'session_secret',
@@ -3847,7 +3851,9 @@ io.on('connection', (socket: Socket) => {
             status: usingDefaultSessionSecret ? 'warn' : 'pass',
             detail: usingDefaultSessionSecret
               ? 'Özel SESSION_SECRET ortam değişkeni tanımlı değil.'
-              : 'Özel SESSION_SECRET aktif.',
+              : process.env.SESSION_SECRET
+              ? 'Özel SESSION_SECRET (.env) aktif.'
+              : 'Kriptografik SESSION_SECRET aktif (server-secrets.json).',
           },
           {
             id: 'admin_2fa',

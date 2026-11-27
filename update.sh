@@ -16,7 +16,20 @@ fi
 # 2. Bağımlılıkları kur
 echo "📦 Bağımlılıklar yükleniyor..."
 cd server && npm install --no-audit --no-fund && cd ..
-cd client && npm install --no-audit --no-fund && cd ..
+cd client && npm install --no-audit --no-fund
+if [ "$(uname -s)" = "Linux" ]; then
+  ARCH="$(uname -m)"
+  ROLLUP_PKG="@rollup/rollup-linux-x64-gnu"
+  ESBUILD_PKG="@esbuild/linux-x64"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ROLLUP_PKG="@rollup/rollup-linux-arm64-gnu"
+    ESBUILD_PKG="@esbuild/linux-arm64"
+  fi
+  if [ ! -d "node_modules/$ROLLUP_PKG" ] || [ ! -d "node_modules/$ESBUILD_PKG" ]; then
+    npm install --no-save --no-audit --no-fund "$ROLLUP_PKG" "$ESBUILD_PKG"
+  fi
+fi
+cd ..
 if [ -d "dedicated-server" ]; then
   cd dedicated-server && npm install --no-audit --no-fund && cd ..
 fi

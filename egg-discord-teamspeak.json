@@ -10,8 +10,8 @@
     "description": "Discord ve TeamSpeak hibrit ses ve mesajlasma platformu. WebRTC HD ses motoru, birebir ozel sohbetler, sesli aramalar, dosya ve resim paylasimi, lisans yonetim konsolu ve tek porttan sunulan React web arayuzunu barindirir.",
     "features": null,
     "docker_images": {
-        "NodeJS 20 (Yolks)": "ghcr.io/parkervcp/yolks:nodejs_20",
         "NodeJS 22 (Yolks)": "ghcr.io/parkervcp/yolks:nodejs_22",
+        "NodeJS 20 (Yolks)": "ghcr.io/parkervcp/yolks:nodejs_20",
         "NodeJS 18 (Yolks)": "ghcr.io/parkervcp/yolks:nodejs_18"
     },
     "file_denylist": [],
@@ -26,7 +26,7 @@
     "scripts": {
         "installation": {
             "script": "apt-get update\r\napt-get install -y git curl tar jq\r\n\r\nmkdir -p /mnt/server\r\ncd /mnt/server\r\n\r\nif [ -n \"${GIT_ADDRESS}\" ]; then\r\n    echo \"Cloning repository from ${GIT_ADDRESS}...\"\r\n    if [ -n \"${GIT_BRANCH}\" ]; then\r\n        git clone -b ${GIT_BRANCH} ${GIT_ADDRESS} .\r\n    else\r\n        git clone ${GIT_ADDRESS} .\r\n    fi\r\nfi\r\n\r\necho \"Installing project dependencies...\"\r\nnpm install\r\ncd server && npm install && npm run build && cd ..\r\ncd client && npm install && npm run build && cd ..\r\nif [ -d \"dedicated-server\" ]; then\r\n    cd dedicated-server && npm install && npm run build && cd ..\r\nfi\r\n\r\nchmod +x start.sh update.sh\r\necho \"Installation completed successfully!\"",
-            "container": "node:20-bookworm-slim",
+            "container": "node:22-bookworm-slim",
             "entrypoint": "bash"
         }
     },

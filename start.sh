@@ -8,6 +8,23 @@ echo "🚀 DISCORD & TEAMSPEAK PLATFORMU BAŞLATILIYOR..."
 echo "🌐 Port: $PORT | IP: 0.0.0.0"
 echo "=========================================================="
 
+ensure_linux_client_binaries() {
+  if [ "$(uname -s)" != "Linux" ]; then
+    return
+  fi
+  ARCH="$(uname -m)"
+  ROLLUP_PKG="@rollup/rollup-linux-x64-gnu"
+  ESBUILD_PKG="@esbuild/linux-x64"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ROLLUP_PKG="@rollup/rollup-linux-arm64-gnu"
+    ESBUILD_PKG="@esbuild/linux-arm64"
+  fi
+  if [ ! -d "$ROOT_DIR/client/node_modules/$ROLLUP_PKG" ] || [ ! -d "$ROOT_DIR/client/node_modules/$ESBUILD_PKG" ]; then
+    echo "🧩 Linux yerel derleme ikilileri kuruluyor ($ROLLUP_PKG, $ESBUILD_PKG)..."
+    (cd "$ROOT_DIR/client" && npm install --no-save --no-audit --no-fund "$ROLLUP_PKG" "$ESBUILD_PKG")
+  fi
+}
+
 # Otomatik Git Güncellemesi (Her zaman origin/main ile zorunlu senkronize eder ve disk şişmesini önler)
 if [ "$AUTO_UPDATE" = "1" ] && [ -d ".git" ]; then
   echo "🔄 Otomatik Git güncellemesi devrede (sığ çekme + temizlik)..."
@@ -16,11 +33,13 @@ if [ "$AUTO_UPDATE" = "1" ] && [ -d ".git" ]; then
   git reflog expire --expire=now --all 2>/dev/null || true
   git gc --prune=now 2>/dev/null || true
   if [ -d "$ROOT_DIR/server" ]; then
-    cd "$ROOT_DIR/server" && npm install --no-audit --no-fund --omit=optional && npm run build
+    cd "$ROOT_DIR/server" && npm install --no-audit --no-fund && npm run build
   fi
   npm cache clean --force 2>/dev/null || true
   if [ -d "$ROOT_DIR/client" ]; then
-    cd "$ROOT_DIR/client" && npm install --no-audit --no-fund --omit=optional && npm run build
+    cd "$ROOT_DIR/client" && npm install --no-audit --no-fund
+    ensure_linux_client_binaries
+    cd "$ROOT_DIR/client" && npm run build
   fi
   npm cache clean --force 2>/dev/null || true
   cd "$ROOT_DIR"
@@ -30,10 +49,12 @@ fi
 if [ ! -d "$ROOT_DIR/server/dist" ] || [ ! -d "$ROOT_DIR/client/dist" ]; then
   echo "🔨 İlk kurulum veya eksik dist tespit edildi, derleniyor..."
   if [ -d "$ROOT_DIR/server" ]; then
-    cd "$ROOT_DIR/server" && npm install && npm run build
+    cd "$ROOT_DIR/server" && npm install --no-audit --no-fund && npm run build
   fi
   if [ -d "$ROOT_DIR/client" ]; then
-    cd "$ROOT_DIR/client" && npm install && npm run build
+    cd "$ROOT_DIR/client" && npm install --no-audit --no-fund
+    ensure_linux_client_binaries
+    cd "$ROOT_DIR/client" && npm run build
   fi
   cd "$ROOT_DIR"
 fi
@@ -113,4 +134,8 @@ fi
 
 # Ana sunucuyu çalıştır (React web arayüzünü ve Socket.IO'yu tek porttan sunar)
 cd "$ROOT_DIR/server"
-exec node dist/index.js
+if node --help 2>&1 | grep -q -- '--disable-warning'; then
+  exec node --disable-warning=ExperimentalWarning dist/index.js
+else
+  exec node dist/index.js
+fi
