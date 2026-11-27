@@ -95,18 +95,41 @@ pub fn get_platform_capabilities() -> PlatformCapabilities {
 
 #[tauri::command]
 pub fn detect_running_game() -> Option<String> {
+    detect_running_game_with_rules(Vec::new())
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct CustomGameRule {
+    pub exe: String,
+    pub name: String,
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_tasklist_csv() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[tauri::command]
+pub fn detect_running_game_with_rules(custom_rules: Vec<CustomGameRule>) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        let output = std::process::Command::new("tasklist")
-            .args(["/FO", "CSV", "/NH"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        let raw = read_windows_tasklist_csv()?;
+        let stdout = raw.to_lowercase();
+        for rule in &custom_rules {
+            let exe = rule.exe.trim().to_ascii_lowercase();
+            let display = rule.name.trim();
+            if !exe.is_empty() && !display.is_empty() && stdout.contains(&exe) {
+                return Some(display.to_string());
+            }
+        }
         let known_apps: &[(&str, &str)] = &[
             ("valorant-win64-shipping.exe", "VALORANT"),
             ("valorant.exe", "VALORANT"),
@@ -215,6 +238,13 @@ pub fn detect_running_game() -> Option<String> {
             .ok()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        for rule in &custom_rules {
+            let exe = rule.exe.trim().to_ascii_lowercase();
+            let display = rule.name.trim();
+            if !exe.is_empty() && !display.is_empty() && stdout.contains(&exe) {
+                return Some(display.to_string());
+            }
+        }
         let known_apps: &[(&str, &str)] = &[
             ("league of legends", "League of Legends"),
             ("cs2", "Counter-Strike 2"),
@@ -232,7 +262,68 @@ pub fn detect_running_game() -> Option<String> {
             }
         }
     }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = &custom_rules;
     None
+}
+
+#[tauri::command]
+pub fn list_running_processes() -> Vec<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(raw) = read_windows_tasklist_csv() else {
+            return Vec::new();
+        };
+        let excluded = [
+            "svchost.exe",
+            "conhost.exe",
+            "explorer.exe",
+            "csrss.exe",
+            "wininit.exe",
+            "winlogon.exe",
+            "services.exe",
+            "lsass.exe",
+            "smss.exe",
+            "dwm.exe",
+            "taskhostw.exe",
+            "runtimebroker.exe",
+            "sihost.exe",
+            "fontdrvhost.exe",
+            "dllhost.exe",
+            "ctfmon.exe",
+            "searchhost.exe",
+            "startmenuexperiencehost.exe",
+            "system",
+            "system idle process",
+            "registry",
+            "memory compression",
+            "tasklist.exe",
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('"') {
+                continue;
+            }
+            if let Some(end_quote) = trimmed[1..].find('"') {
+                let proc_name = trimmed[1..1 + end_quote].trim().to_ascii_lowercase();
+                if proc_name.ends_with(".exe")
+                    && !excluded.contains(&proc_name.as_str())
+                    && !seen.contains(&proc_name)
+                {
+                    seen.insert(proc_name);
+                    if seen.len() >= 150 {
+                        break;
+                    }
+                }
+            }
+        }
+        return seen.into_iter().collect();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
 }
 
 #[tauri::command]

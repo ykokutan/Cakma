@@ -1,5 +1,5 @@
 #[cfg(desktop)]
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(desktop)]
 fn open_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
@@ -135,8 +135,8 @@ pub async fn resize_overlay_window(
 ) -> Result<(), String> {
     #[cfg(desktop)]
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let w = width.clamp(220.0, 460.0);
-        let h = height.clamp(140.0, 480.0);
+        let w = width.clamp(220.0, 520.0);
+        let h = height.clamp(130.0, 560.0);
         overlay
             .set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)))
             .map_err(|e| e.to_string())?;
@@ -144,4 +144,37 @@ pub async fn resize_overlay_window(
     #[cfg(not(desktop))]
     let _ = (app, width, height);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn set_overlay_interactive_mode(
+    app: tauri::AppHandle,
+    interactive: bool,
+    restore_ignore: Option<bool>,
+) -> Result<bool, String> {
+    #[cfg(desktop)]
+    {
+        if interactive {
+            open_overlay_window(&app)?;
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                let _ = overlay.set_ignore_cursor_events(false);
+                let _ = overlay.show();
+                let _ = overlay.set_focus();
+            }
+            let _ = app.emit("overlay-interactive-changed", true);
+            Ok(true)
+        } else {
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                let should_ignore = restore_ignore.unwrap_or(false);
+                let _ = overlay.set_ignore_cursor_events(should_ignore);
+            }
+            let _ = app.emit("overlay-interactive-changed", false);
+            Ok(false)
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, interactive, restore_ignore);
+        Ok(false)
+    }
 }

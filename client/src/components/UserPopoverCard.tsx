@@ -19,6 +19,7 @@ import { useSocket } from '../context/SocketContext';
 import type { ServerRole, User } from '../types';
 import { AvatarView } from './AvatarView';
 import { StatusIndicator } from './StatusIndicator';
+import { formatElapsedPlaytime } from '../utils/gameDetectionRules';
 
 interface UserPopoverCardProps {
   user: User;
@@ -222,6 +223,11 @@ export const UserPopoverCard: React.FC<UserPopoverCardProps> = ({
                   <Gamepad2 className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                 )}
                 <span className="truncate">{user.activity.name}</span>
+                {user.activity.startedAt && (
+                  <span className="ml-auto text-[10px] text-white/55 font-mono shrink-0">
+                    {formatElapsedPlaytime(user.activity.startedAt)}
+                  </span>
+                )}
               </div>
             )}
             {voiceChannelName && (

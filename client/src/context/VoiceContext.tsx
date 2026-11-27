@@ -46,6 +46,8 @@ export interface VoiceContextValue {
   setGlobalDeafenShortcut: (key: string) => void;
   soundboardShortcut: string;
   setSoundboardShortcut: (key: string) => void;
+  interactiveOverlayShortcut: string;
+  setInteractiveOverlayShortcut: (key: string) => void;
   joinVoiceChannel: (channelId: string, password?: string) => void;
   joinGroupDmVoice: (group: GroupDmRoom) => void;
   leaveVoiceChannel: () => void;

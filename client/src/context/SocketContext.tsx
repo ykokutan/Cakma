@@ -5,6 +5,11 @@ import { playSynthesizedSound } from '../utils/soundEffects';
 import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotificationPermission, SoundPackType } from '../utils/tsSoundEffects';
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
+import {
+  DEFAULT_INTERACTIVE_OVERLAY_HOTKEY,
+  INTERACTIVE_OVERLAY_HOTKEY_KEY,
+  loadCustomGameRules,
+} from '../utils/gameDetectionRules';
 import { setVoiceMicVolume, resetVoiceMetrics } from './VoiceMetricsContext';
 import {
   setNetworkPing,
@@ -667,6 +672,8 @@ interface SocketContextType {
   setGlobalDeafenShortcut: (key: string) => void;
   soundboardShortcut: string;
   setSoundboardShortcut: (key: string) => void;
+  interactiveOverlayShortcut: string;
+  setInteractiveOverlayShortcut: (key: string) => void;
   hasMoreMessages: Record<string, boolean>;
   isLoadingOlderMessages: boolean;
   requestOlderMessages: (channelId: string) => void;
@@ -1490,6 +1497,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const [soundboardShortcut, setSoundboardShortcutState] = useState<string>(() => {
     return (typeof window !== 'undefined' && localStorage.getItem('dc_soundboard_shortcut')) || 'Ctrl+Shift+B';
+  });
+  const [interactiveOverlayShortcut, setInteractiveOverlayShortcutState] = useState<string>(() => {
+    return (
+      (typeof window !== 'undefined' && localStorage.getItem(INTERACTIVE_OVERLAY_HOTKEY_KEY)) ||
+      DEFAULT_INTERACTIVE_OVERLAY_HOTKEY
+    );
   });
   const noiseWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   const noiseWorkletLoadedCtxRef = useRef<WeakSet<AudioContext>>(new WeakSet());
@@ -2942,6 +2955,11 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const setSoundboardShortcut = useCallback((key: string) => {
     setSoundboardShortcutState(key);
     try { localStorage.setItem('dc_soundboard_shortcut', key); } catch {}
+  }, []);
+
+  const setInteractiveOverlayShortcut = useCallback((key: string) => {
+    setInteractiveOverlayShortcutState(key);
+    try { localStorage.setItem(INTERACTIVE_OVERLAY_HOTKEY_KEY, key); } catch {}
   }, []);
 
   const setLowLatencyAudio = (val: boolean) => {
@@ -6418,6 +6436,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   });
   const [detectedGame, setDetectedGame] = useState<string | null>(null);
+  const detectedGameStartedAtRef = useRef<{ name: string; startedAt: number } | null>(null);
 
   const setOverlayEnabled = useCallback(async (enabled: boolean) => {
     setOverlayEnabledState(enabled);
@@ -6470,10 +6489,29 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!isTauri) return null;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const game = await invoke<string | null>('detect_running_game');
+      const customRules = loadCustomGameRules();
+      const game = await invoke<string | null>('detect_running_game_with_rules', {
+        customRules,
+      });
       setDetectedGame(game || null);
-      if (socket && isAuthenticated) {
-        socket.emit('user_update_activity', { activity: game ? { type: 'playing', name: game } : null });
+      if (game) {
+        if (detectedGameStartedAtRef.current?.name !== game) {
+          detectedGameStartedAtRef.current = { name: game, startedAt: Date.now() };
+        }
+        if (socket && isAuthenticated) {
+          socket.emit('user_update_activity', {
+            activity: {
+              type: 'playing',
+              name: game,
+              startedAt: detectedGameStartedAtRef.current.startedAt,
+            },
+          });
+        }
+      } else {
+        detectedGameStartedAtRef.current = null;
+        if (socket && isAuthenticated && currentUserRef.current?.activity?.type !== 'custom') {
+          socket.emit('user_update_activity', { activity: null });
+        }
       }
       return game || null;
     } catch {
@@ -7764,6 +7802,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const toggleMuteRef = useRef(toggleMute);
   const toggleDeafenRef = useRef(toggleDeafen);
   const leaveVoiceChannelRef = useRef(leaveVoiceChannel);
+  const joinVoiceChannelRef = useRef(joinVoiceChannel);
+  const sendMessageRef = useRef(sendMessage);
+  const setUserVolumeRef = useRef(setUserVolume);
   const updateProfileDetailsRef = useRef(updateProfileDetails);
   const joinServerByInviteRef = useRef(joinServerByInvite);
   const stopRemoteAssistRef = useRef(stopRemoteAssist);
@@ -7773,6 +7814,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     toggleMuteRef.current = toggleMute;
     toggleDeafenRef.current = toggleDeafen;
     leaveVoiceChannelRef.current = leaveVoiceChannel;
+    joinVoiceChannelRef.current = joinVoiceChannel;
+    sendMessageRef.current = sendMessage;
+    setUserVolumeRef.current = setUserVolume;
     updateProfileDetailsRef.current = updateProfileDetails;
     joinServerByInviteRef.current = joinServerByInvite;
     stopRemoteAssistRef.current = stopRemoteAssist;
@@ -7854,11 +7898,25 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const pollGame = async () => {
           if (!socket || !isAuthenticated) return;
           try {
-            const game = await invoke<string | null>('detect_running_game');
+            const customRules = loadCustomGameRules();
+            const game = await invoke<string | null>('detect_running_game_with_rules', {
+              customRules,
+            });
             setDetectedGame(game || null);
             if (game !== lastDetectedGame) {
               lastDetectedGame = game;
-              socket.emit('user_update_activity', { activity: game ? { type: 'playing', name: game } : null });
+              if (game) {
+                const startedAt = Date.now();
+                detectedGameStartedAtRef.current = { name: game, startedAt };
+                socket.emit('user_update_activity', {
+                  activity: { type: 'playing', name: game, startedAt },
+                });
+              } else {
+                detectedGameStartedAtRef.current = null;
+                if (currentUserRef.current?.activity?.type !== 'custom') {
+                  socket.emit('user_update_activity', { activity: null });
+                }
+              }
               if (autoGameDndRef.current) {
                 const currSt = currentUserRef.current?.status;
                 if (game && (currSt === 'online' || currSt === 'idle')) {
@@ -7913,6 +7971,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     globalMuteShortcut,
     globalDeafenShortcut,
     soundboardShortcut,
+    interactiveOverlayShortcut,
     onToggleMute: toggleMute,
     onToggleDeafen: toggleDeafen,
     onTriggerSoundboard: () => {
@@ -7945,14 +8004,35 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         isMuted: u.id === currentUser?.id ? isMuted : u.isMuted,
         isDeafened: u.id === currentUser?.id ? isDeafened : u.isDeafened,
         isHandRaised: u.isHandRaised,
+        volume: userVolumes[u.id] ?? 100,
       }));
+
+    const voiceChannels = (activeServer?.channels || [])
+      .filter((c) => c.type === 'voice' || c.type === 'stage')
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        userCount: onlineUsers.filter((u) => u.currentVoiceChannelId === c.id).length,
+      }));
+
+    const activeChatMsgs = activeChannel ? messagesMap[activeChannel.id] || [] : [];
+    const recentMessages = activeChatMsgs.slice(-15).map((m) => ({
+      id: m.id,
+      author: m.author.username,
+      content: m.content,
+      timestamp: m.timestamp,
+    }));
 
     const pushOverlay = () => {
       import('@tauri-apps/api/event')
         .then(({ emit }) =>
           emit('overlay-speakers-update', {
             speakers,
+            voiceChannels,
+            recentMessages,
+            activeChatName: activeChannel?.name || '',
             inVoice: Boolean(connectedVoiceChannelId),
+            channelId: connectedVoiceChannelId || '',
             channelName: currentVoiceCh?.name || '',
             ping: getNetworkMetricsSnapshot().ping,
             isMuted,
@@ -7964,7 +8044,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     emitOverlayStateRef.current = pushOverlay;
     pushOverlay();
-  }, [onlineUsers, connectedVoiceChannelId, isSpeaking, isMuted, isDeafened, ping, currentUser, servers]);
+  }, [onlineUsers, connectedVoiceChannelId, isSpeaking, isMuted, isDeafened, ping, currentUser, servers, userVolumes, activeServer, activeChannel, messagesMap]);
 
   useEffect(() => {
     const isTauri =
@@ -7983,7 +8063,22 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const u3 = await listen('overlay-toggle-mute', () => toggleMuteRef.current());
         const u4 = await listen('overlay-toggle-deafen', () => toggleDeafenRef.current());
         const u5 = await listen('overlay-leave-voice', () => leaveVoiceChannelRef.current());
-        unlisteners = [u1, u2, u3, u4, u5];
+        const u6 = await listen<{ userId?: string; volume?: number }>('overlay-set-user-volume', (ev) => {
+          const uid = ev.payload?.userId;
+          const vol = Number(ev.payload?.volume);
+          if (uid && Number.isFinite(vol)) {
+            setUserVolumeRef.current(uid, Math.max(0, Math.min(200, vol)));
+          }
+        });
+        const u7 = await listen<{ channelId?: string }>('overlay-switch-voice-channel', (ev) => {
+          const cid = ev.payload?.channelId;
+          if (cid) joinVoiceChannelRef.current(cid);
+        });
+        const u8 = await listen<{ text?: string }>('overlay-send-chat', (ev) => {
+          const text = String(ev.payload?.text || '').trim();
+          if (text) sendMessageRef.current(text);
+        });
+        unlisteners = [u1, u2, u3, u4, u5, u6, u7, u8];
       })
       .catch(() => {});
 
@@ -8494,6 +8589,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setOverlayCorner,
       overlayOpacity,
       setOverlayOpacity,
+      interactiveOverlayShortcut,
+      setInteractiveOverlayShortcut,
       ringtonePack,
       setRingtonePack,
       showLinkPreviews,
@@ -8686,6 +8783,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setGlobalDeafenShortcut,
       soundboardShortcut,
       setSoundboardShortcut,
+      interactiveOverlayShortcut,
+      setInteractiveOverlayShortcut,
       requestPasswordResetCode,
       confirmPasswordReset,
       requestEmailChangeCode,
@@ -8921,6 +9020,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setGlobalDeafenShortcut,
       soundboardShortcut,
       setSoundboardShortcut,
+      interactiveOverlayShortcut,
+      setInteractiveOverlayShortcut,
       joinVoiceChannel,
       joinGroupDmVoice,
       leaveVoiceChannel,
@@ -8981,6 +9082,8 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setGlobalDeafenShortcut,
       soundboardShortcut,
       setSoundboardShortcut,
+      interactiveOverlayShortcut,
+      setInteractiveOverlayShortcut,
       joinGroupDmVoice,
       pttReleaseDelayMs,
       setPttReleaseDelayMs,

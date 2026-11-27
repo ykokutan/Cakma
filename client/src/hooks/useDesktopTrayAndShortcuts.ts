@@ -59,6 +59,7 @@ interface DesktopTrayAndShortcutsParams {
   globalMuteShortcut: string;
   globalDeafenShortcut: string;
   soundboardShortcut: string;
+  interactiveOverlayShortcut?: string;
   onToggleMute: () => void;
   onToggleDeafen: () => void;
   onTriggerSoundboard: () => void;
@@ -77,6 +78,7 @@ export function useDesktopTrayAndShortcuts(params: DesktopTrayAndShortcutsParams
     globalMuteShortcut,
     globalDeafenShortcut,
     soundboardShortcut,
+    interactiveOverlayShortcut = 'Alt+Shift+O',
     onToggleMute,
     onToggleDeafen,
     onTriggerSoundboard,
@@ -153,25 +155,25 @@ export function useDesktopTrayAndShortcuts(params: DesktopTrayAndShortcutsParams
           }).catch(() => {});
         }
 
-        const interactiveOverlayAcc = 'Alt+O';
+        const interactiveOverlayAcc =
+          toTauriAccelerator(interactiveOverlayShortcut) || 'Alt+Shift+O';
         if (
           interactiveOverlayAcc !== muteAcc &&
           interactiveOverlayAcc !== deafenAcc &&
-          interactiveOverlayAcc !== soundboardAcc
+          interactiveOverlayAcc !== soundboardAcc &&
+          interactiveOverlayAcc !== overlayAcc
         ) {
+          let interactiveActive = false;
           await register(interactiveOverlayAcc, async (e) => {
             if (e.state === 'Pressed') {
               try {
-                const nextLocked = localStorage.getItem('dc_overlay_locked') !== '1';
-                localStorage.setItem('dc_overlay_locked', nextLocked ? '1' : '0');
+                interactiveActive = !interactiveActive;
+                const restoreIgnore = localStorage.getItem('dc_overlay_locked') === '1';
                 const { invoke } = await import('@tauri-apps/api/core');
-                const { emit } = await import('@tauri-apps/api/event');
-                if (!nextLocked) {
-                  await invoke('set_overlay_window', { enabled: true }).catch(() => {});
-                }
-                await invoke('set_overlay_ignore_cursor', { ignore: nextLocked });
-                await emit('overlay-lock-changed', nextLocked);
-                await emit('overlay-interactive-changed', !nextLocked);
+                await invoke('set_overlay_interactive_mode', {
+                  interactive: interactiveActive,
+                  restoreIgnore,
+                });
               } catch {}
             }
           }).catch(() => {});
@@ -187,5 +189,5 @@ export function useDesktopTrayAndShortcuts(params: DesktopTrayAndShortcutsParams
         .then(({ unregisterAll }) => unregisterAll())
         .catch(() => {});
     };
-  }, [isTauri, isAuthenticated, globalMuteShortcut, globalDeafenShortcut, soundboardShortcut]);
+  }, [isTauri, isAuthenticated, globalMuteShortcut, globalDeafenShortcut, soundboardShortcut, interactiveOverlayShortcut]);
 }

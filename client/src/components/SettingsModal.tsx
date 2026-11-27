@@ -26,6 +26,15 @@ import type { LegalDocumentId } from '../data/legalDocuments';
 import { downloadTwoFactorBackupCodes } from '../utils/sessionAndSecurityHelpers';
 import { AccessibilitySettingsSection } from './settings/AccessibilitySettingsSection';
 import {
+  loadCustomGameRules,
+  saveCustomGameRules,
+  addCustomGameRule,
+  removeCustomGameRule,
+  DEFAULT_INTERACTIVE_OVERLAY_HOTKEY,
+  type CustomGameRule,
+} from '../utils/gameDetectionRules';
+import { isTauriRuntime } from '../utils/authFetch';
+import {
   X,
   Download,
   Mic,
@@ -164,6 +173,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     setGlobalDeafenShortcut,
     soundboardShortcut,
     setSoundboardShortcut,
+    interactiveOverlayShortcut,
+    setInteractiveOverlayShortcut,
     globalLoudnessNormalize,
     setGlobalLoudnessNormalize,
     noiseProfile,
@@ -272,8 +283,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     null | 'muteShortcut' | 'deafenShortcut' | 'screenShareShortcut'
   >(null);
   const [recordingGlobalFor, setRecordingGlobalFor] = useState<
-    null | 'mute' | 'deafen' | 'soundboard'
+    null | 'mute' | 'deafen' | 'soundboard' | 'overlayInteractive'
   >(null);
+  const [customGameRules, setCustomGameRules] = useState<CustomGameRule[]>(() => loadCustomGameRules());
+  const [customGameExeInput, setCustomGameExeInput] = useState('');
+  const [customGameNameInput, setCustomGameNameInput] = useState('');
+  const [runningProcesses, setRunningProcesses] = useState<string[]>([]);
+  const [loadingProcesses, setLoadingProcesses] = useState(false);
 
   useEffect(() => {
     if (!recordingGlobalFor) return;
@@ -306,12 +322,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       const combo = [...mods, keyName].join('+');
       if (recordingGlobalFor === 'mute') setGlobalMuteShortcut(combo);
       else if (recordingGlobalFor === 'deafen') setGlobalDeafenShortcut(combo);
+      else if (recordingGlobalFor === 'overlayInteractive') setInteractiveOverlayShortcut(combo);
       else setSoundboardShortcut(combo);
       setRecordingGlobalFor(null);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [recordingGlobalFor, setGlobalMuteShortcut, setGlobalDeafenShortcut, setSoundboardShortcut]);
+  }, [recordingGlobalFor, setGlobalMuteShortcut, setGlobalDeafenShortcut, setSoundboardShortcut, setInteractiveOverlayShortcut]);
   const [isCameraTesting, setIsCameraTesting] = useState(false);
   const cameraVideoRef = React.useRef<HTMLVideoElement>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
@@ -761,11 +778,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     { label: 'Tema, Dil & Cam Efekti', tab: 'appearance' as const, kw: 'tema görünüm dil cam font' },
     { label: 'Erişilebilirlik & Kontrast', tab: 'appearance' as const, kw: 'erişilebilirlik yüksek kontrast renk körlüğü dar monitör motion' },
     { label: 'Oyun İçi Overlay & Saydamlık', tab: 'overlay' as const, kw: 'overlay oyun saydamlık ping kilit köşe boyut' },
+    { label: 'Özel Oyun .exe Algılama Kuralları', tab: 'overlay' as const, kw: 'oyun exe işlem ekle algılama kural' },
     { label: 'Mikrofon & Hoparlör', tab: 'audio' as const, kw: 'ses mikrofon hoparlör cihaz test ses düzeyi yankı' },
     { label: 'Stüdyo DSP, Ducking & Tampon', tab: 'voice_processing' as const, kw: 'dsp gürültü yankı agc ducking tampon 20ms hassasiyet' },
     { label: 'Gürültü Profilleri & Noise Gate', tab: 'voice_processing' as const, kw: 'gürültü profili noise gate klavye izolasyon stüdyo dengeli' },
     { label: 'Klip Tamponu & HDR Yayın', tab: 'video' as const, kw: 'video hdr av1 vp9 h264 codec kalite gpu klip tampon' },
-    { label: 'Kısayol Tuşları', tab: 'keybindings' as const, kw: 'kısayol ptt tuş bas konuş' },
+    { label: 'Kısayol Tuşları & Etkileşimli Overlay', tab: 'keybindings' as const, kw: 'kısayol ptt tuş bas konuş overlay alt+shift+o' },
     { label: 'Sohbet & Fısıltı', tab: 'chats' as const, kw: 'sohbet fısıltı link gif' },
     { label: 'Web Push Bildirimleri', tab: 'notifications' as const, kw: 'web push bildirim servis worker masaüstü' },
     { label: 'Bildirimler & Ses Paketi', tab: 'notifications' as const, kw: 'bildirim zil ses paketi' },
@@ -2913,6 +2931,123 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     />
                   </button>
                 </div>
+
+                {/* Custom Game EXE Detection Rules */}
+                <div className="pt-3 border-t border-white/10 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-white">Özel Oyun / Uygulama (.exe) Kuralları</div>
+                      <div className="text-[11px] text-white/45">
+                        Listede olmayan oyunları veya programları .exe adına göre otomatik algılatın.
+                      </div>
+                    </div>
+                    {isTauriRuntime() && (
+                      <button
+                        type="button"
+                        disabled={loadingProcesses}
+                        onClick={async () => {
+                          setLoadingProcesses(true);
+                          try {
+                            const { invoke } = await import('@tauri-apps/api/core');
+                            const procs = await invoke<string[]>('list_running_processes');
+                            setRunningProcesses(Array.isArray(procs) ? procs : []);
+                          } catch {
+                            setRunningProcesses([]);
+                          } finally {
+                            setLoadingProcesses(false);
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-white/80 transition shrink-0"
+                      >
+                        {loadingProcesses ? 'Taranıyor...' : 'Çalışan İşlemleri Listele'}
+                      </button>
+                    )}
+                  </div>
+
+                  {runningProcesses.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (!e.target.value) return;
+                          setCustomGameExeInput(e.target.value);
+                          if (!customGameNameInput.trim()) {
+                            setCustomGameNameInput(e.target.value.replace(/\.exe$/i, ''));
+                          }
+                        }}
+                        className="w-full bg-black/45 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white outline-none"
+                      >
+                        <option value="">Çalışan işlemlerden seçin ({runningProcesses.length})...</option>
+                        {runningProcesses.map((proc) => (
+                          <option key={proc} value={proc}>
+                            {proc}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                    <input
+                      type="text"
+                      value={customGameExeInput}
+                      onChange={(e) => setCustomGameExeInput(e.target.value)}
+                      placeholder="Süreç adı (örn: oyunum.exe)"
+                      className="bg-black/40 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                    <input
+                      type="text"
+                      value={customGameNameInput}
+                      onChange={(e) => setCustomGameNameInput(e.target.value)}
+                      placeholder="Görünen ad (örn: Silkroad)"
+                      className="bg-black/40 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = addCustomGameRule(customGameRules, customGameExeInput, customGameNameInput);
+                        if (next !== customGameRules) {
+                          setCustomGameRules(next);
+                          saveCustomGameRules(next);
+                          setCustomGameExeInput('');
+                          setCustomGameNameInput('');
+                          void refreshDetectedGame();
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-xs font-bold text-white transition"
+                    >
+                      Kural Ekle
+                    </button>
+                  </div>
+
+                  {customGameRules.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {customGameRules.map((rule) => (
+                        <span
+                          key={rule.exe}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/15 border border-purple-400/30 text-[11px] text-purple-200"
+                        >
+                          <span className="font-mono text-white/70">{rule.exe}</span>
+                          <span>→</span>
+                          <span className="font-semibold">{rule.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = removeCustomGameRule(customGameRules, rule.exe);
+                              setCustomGameRules(next);
+                              saveCustomGameRules(next);
+                              void refreshDetectedGame();
+                            }}
+                            className="text-white/50 hover:text-rose-300 ml-0.5"
+                            title="Kuralı Sil"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Live Mini Overlay Preview */}
@@ -3425,6 +3560,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       setGlobalMuteShortcut('Ctrl+Shift+M');
                       setGlobalDeafenShortcut('Ctrl+Shift+D');
                       setSoundboardShortcut('Ctrl+Shift+B');
+                      setInteractiveOverlayShortcut(DEFAULT_INTERACTIVE_OVERLAY_HOTKEY);
                       setRecordingGlobalFor(null);
                     }}
                     className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-white/60 hover:text-white transition shrink-0"
@@ -3439,6 +3575,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       { id: 'mute' as const, label: 'Global Mikrofon Sustur', value: globalMuteShortcut },
                       { id: 'deafen' as const, label: 'Global Sağırlaştır', value: globalDeafenShortcut },
                       { id: 'soundboard' as const, label: 'Global Soundboard Aç/Kapat', value: soundboardShortcut },
+                      { id: 'overlayInteractive' as const, label: 'Etkileşimli Oyun İçi Overlay (Steam ile çakışmaz)', value: interactiveOverlayShortcut },
                     ]
                   ).map((item) => {
                     const isRecording = recordingGlobalFor === item.id;

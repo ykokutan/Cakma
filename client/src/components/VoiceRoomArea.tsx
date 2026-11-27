@@ -17,6 +17,7 @@ import { AvatarView } from './AvatarView';
 import { StageChannelView } from './voice/StageChannelView';
 import { ScreenAnnotationOverlay } from './voice/ScreenAnnotationOverlay';
 import { LiveCaptionsOverlay } from './voice/LiveCaptionsOverlay';
+import { ClipTrimModal } from './voice/ClipTrimModal';
 import { InlineMarkdown } from './chat/MessageTextRenderer';
 import { uploadAttachmentFile } from '../utils/uploadAttachment';
 import { resolveMediaUrl } from '../utils/authFetch';
@@ -672,23 +673,27 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [clipBufferEnabled, clipBufferedSeconds]);
 
-  const handleShareClipToRoom = async () => {
+  const handleShareClipToRoom = () => {
     if (isSharingClip) return;
     const blob = clipRecorderRef.current?.captureBlob();
     if (!blob) {
       appToast('Henüz paylaşılacak klip tamponu oluşmadı.', 'info');
       return;
     }
+    setPendingClipTrimBlob(blob);
+  };
+
+  const [pendingClipTrimBlob, setPendingClipTrimBlob] = useState<Blob | null>(null);
+
+  const handleUploadAndShareTrimmedClip = async (finalBlob: Blob, caption: string) => {
     setIsSharingClip(true);
     try {
-      const file = new File([blob], `klip-${Date.now()}.webm`, {
-        type: blob.type || 'video/webm',
+      const file = new File([finalBlob], `klip-${Date.now()}.webm`, {
+        type: finalBlob.type || 'video/webm',
       });
       const attachment = await uploadAttachmentFile(currentServerHost, file);
-      sendMessage('🎬 Son 30 sn Anlık Tekrar Klibi', [attachment]);
-      appToast('30 saniyelik klip oda sohbetine gönderildi!', 'success');
-    } catch {
-      appToast('Klip yüklenemedi.', 'error');
+      sendMessage(caption || '🎬 Anlık Tekrar Klibi', [attachment]);
+      appToast('Klip oda sohbetine gönderildi!', 'success');
     } finally {
       setIsSharingClip(false);
     }
@@ -1166,12 +1171,12 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
                   <button
                     type="button"
                     disabled={!clipBufferEnabled || clipBufferedSeconds <= 0 || isSharingClip}
-                    onClick={() => void handleShareClipToRoom()}
+                    onClick={() => handleShareClipToRoom()}
                     className="px-2.5 py-1 rounded-lg font-semibold border border-cyan-400/40 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1.5"
-                    title="Yakalanan klibi doğrudan ses odası sohbetine yükle ve paylaş"
+                    title="Klibi kırp, başlık ekle ve doğrudan ses odası sohbetinde paylaş"
                   >
                     <Send className="w-3 h-3" />
-                    <span>{isSharingClip ? 'Gönderiliyor...' : 'Odaya Gönder'}</span>
+                    <span>{isSharingClip ? 'Gönderiliyor...' : 'Kırp & Paylaş'}</span>
                   </button>
                 </div>
               </div>
@@ -2118,6 +2123,13 @@ export const VoiceRoomArea: React.FC<VoiceRoomAreaProps> = ({ onOpenMobileNav })
         }
         onClose={() => setLiveCaptionsEnabled(false)}
       />
+      {pendingClipTrimBlob && (
+        <ClipTrimModal
+          blob={pendingClipTrimBlob}
+          onClose={() => setPendingClipTrimBlob(null)}
+          onShareToRoom={handleUploadAndShareTrimmedClip}
+        />
+      )}
     </div>
   );
 };

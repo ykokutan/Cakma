@@ -20,11 +20,15 @@
         height: 100%;
         display: flex;
         flex-direction: column;
-        background: rgba(11, 13, 20, 0.72);
+        background: rgba(11, 13, 20, 0.78);
         border: 1px solid rgba(255, 255, 255, 0.16);
         border-radius: 14px;
         overflow: hidden;
         transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .shell.interactive {
+        border-color: rgba(34, 211, 238, 0.55);
+        box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25) inset;
       }
       .shell.compact .header { padding: 6px 8px; }
       .shell.compact .body { padding: 6px; gap: 4px; }
@@ -83,6 +87,17 @@
         border: 1px solid rgba(16, 185, 129, 0.35);
         display: none;
       }
+      .mode-pill {
+        font-size: 9px;
+        font-weight: 700;
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: rgba(34, 211, 238, 0.2);
+        color: #67e8f9;
+        border: 1px solid rgba(34, 211, 238, 0.4);
+        display: none;
+      }
+      .shell.interactive .mode-pill { display: inline-block; }
       .count {
         font-size: 10px;
         font-family: ui-monospace, monospace;
@@ -105,6 +120,36 @@
       }
       .icon-btn:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
       .icon-btn.locked { background: rgba(245, 158, 11, 0.28); color: #fcd34d; }
+
+      .tab-bar {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 8px;
+        background: rgba(0, 0, 0, 0.24);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        flex-shrink: 0;
+      }
+      .shell.compact .tab-bar { display: none; }
+      .tab-btn {
+        flex: 1;
+        border: none;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 4px 6px;
+        border-radius: 7px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .tab-btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+      .tab-btn.active {
+        background: rgba(59, 130, 246, 0.26);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.4);
+      }
+
       .body {
         flex: 1;
         overflow-y: auto;
@@ -128,9 +173,8 @@
       }
       .speaker {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
+        flex-direction: column;
+        gap: 5px;
         padding: 6px 8px;
         border-radius: 10px;
         background: rgba(255, 255, 255, 0.06);
@@ -141,6 +185,12 @@
         background: rgba(16, 185, 129, 0.22);
         border-color: rgba(52, 211, 153, 0.7);
         box-shadow: 0 0 12px rgba(16, 185, 129, 0.25);
+      }
+      .sp-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
       }
       .sp-left {
         display: flex;
@@ -178,6 +228,77 @@
         align-items: center;
         gap: 4px;
       }
+      .vol-wrap {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.65);
+      }
+      .shell.interactive .vol-wrap { display: flex; }
+      .vol-wrap input[type="range"] {
+        flex: 1;
+        height: 4px;
+        accent-color: #38bdf8;
+      }
+
+      .room-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 7px 9px;
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        color: #f8fafc;
+        font-size: 11px;
+        cursor: pointer;
+        text-align: left;
+        transition: background 0.15s;
+      }
+      .room-item:hover { background: rgba(255, 255, 255, 0.14); }
+      .room-item.current {
+        background: rgba(16, 185, 129, 0.22);
+        border-color: rgba(52, 211, 153, 0.5);
+        font-weight: 700;
+      }
+
+      .chat-list {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        overflow-y: auto;
+      }
+      .chat-msg {
+        font-size: 11px;
+        line-height: 1.35;
+        padding: 5px 7px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        word-break: break-word;
+      }
+      .chat-author { color: #7dd3fc; font-weight: 700; margin-right: 5px; }
+      .chat-form {
+        display: flex;
+        gap: 5px;
+        padding-top: 4px;
+        flex-shrink: 0;
+      }
+      .chat-input {
+        flex: 1;
+        min-width: 0;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(0, 0, 0, 0.45);
+        color: #fff;
+        font-size: 11px;
+        padding: 5px 8px;
+        border-radius: 7px;
+        outline: none;
+      }
+      .chat-input:focus { border-color: #38bdf8; }
+
       .footer {
         display: flex;
         align-items: center;
@@ -189,7 +310,7 @@
         flex-shrink: 0;
       }
       .footer-label { font-size: 10px; color: rgba(255, 255, 255, 0.5); }
-      .footer-btns { display: flex; align-items: center; gap: 6px; }
+      .footer-btns { display: flex; align-items: center; gap: 5px; }
       .ctrl-btn {
         border: none;
         padding: 4px 8px;
@@ -213,11 +334,18 @@
           <span id="channelTitle" class="title" data-tauri-drag-region>Çakma Overlay</span>
         </div>
         <div class="header-actions">
+          <span id="modePill" class="mode-pill">ETKİLEŞİM</span>
           <span id="pingBadge" class="ping"></span>
           <span id="speakerCount" class="count">0</span>
           <button id="lockBtn" class="icon-btn" title="Tıklama Geçirgenliği (Ctrl+Shift+O)">🔓</button>
           <button id="closeBtn" class="icon-btn" title="Overlay'i Kapat">✕</button>
         </div>
+      </div>
+
+      <div class="tab-bar">
+        <button id="tabSpeakers" class="tab-btn active" type="button">🎙️ Konuşanlar</button>
+        <button id="tabRooms" class="tab-btn" type="button">🔊 Odalar</button>
+        <button id="tabChat" class="tab-btn" type="button">💬 Sohbet</button>
       </div>
 
       <div id="speakersBody" class="body">
@@ -228,10 +356,11 @@
       </div>
 
       <div id="footerBar" class="footer">
-        <span class="footer-label">Hızlı Kontrol</span>
+        <span class="footer-label" id="hotkeyHint">Alt+Shift+O</span>
         <div class="footer-btns">
-          <button id="muteBtn" class="ctrl-btn">🎤 Mikrofon</button>
+          <button id="muteBtn" class="ctrl-btn">🎤</button>
           <button id="deafenBtn" class="ctrl-btn">🎧</button>
+          <button id="leaveBtn" class="ctrl-btn danger" style="display:none;" title="Odadan Ayrıl">📞</button>
         </div>
       </div>
     </div>
@@ -249,9 +378,16 @@
         const closeBtn = document.getElementById('closeBtn');
         const muteBtn = document.getElementById('muteBtn');
         const deafenBtn = document.getElementById('deafenBtn');
+        const leaveBtn = document.getElementById('leaveBtn');
+        const tabSpeakers = document.getElementById('tabSpeakers');
+        const tabRooms = document.getElementById('tabRooms');
+        const tabChat = document.getElementById('tabChat');
 
         let isLocked = localStorage.getItem('dc_overlay_locked') === '1';
+        let isInteractive = false;
+        let activeTab = 'speakers';
         let lastPayload = null;
+        let tauriRef = null;
         let overlayCfg = {
           onlySpeaking: false,
           showControls: true,
@@ -271,8 +407,22 @@
           const bgAlpha = (clamped / 100) * 0.92;
           const borderAlpha = Math.max(0.08, (clamped / 100) * 0.22);
           shell.style.background = `rgba(11, 13, 20, ${bgAlpha.toFixed(2)})`;
-          shell.style.borderColor = `rgba(255, 255, 255, ${borderAlpha.toFixed(2)})`;
+          if (!isInteractive) {
+            shell.style.borderColor = `rgba(255, 255, 255, ${borderAlpha.toFixed(2)})`;
+          }
         }
+
+        function setTab(nextTab) {
+          activeTab = nextTab;
+          tabSpeakers.classList.toggle('active', nextTab === 'speakers');
+          tabRooms.classList.toggle('active', nextTab === 'rooms');
+          tabChat.classList.toggle('active', nextTab === 'chat');
+          if (lastPayload) renderState(lastPayload);
+        }
+
+        tabSpeakers.addEventListener('click', () => setTab('speakers'));
+        tabRooms.addEventListener('click', () => setTab('rooms'));
+        tabChat.addEventListener('click', () => setTab('chat'));
 
         function applyConfig(cfg) {
           if (cfg && typeof cfg === 'object') {
@@ -289,13 +439,28 @@
           lockBtn.classList.toggle('locked', isLocked);
         }
 
+        function applyInteractiveUi(active) {
+          isInteractive = Boolean(active);
+          shell.classList.toggle('interactive', isInteractive);
+          if (isInteractive && overlayCfg.size === 'compact') {
+            shell.classList.remove('compact');
+          }
+          if (tauriRef && tauriRef.core) {
+            const dims = isInteractive ? { width: 340, height: 380 } : getSizeDims(overlayCfg.size);
+            tauriRef.core.invoke('resize_overlay_window', dims).catch(() => {});
+          }
+        }
+
         function renderState(payload) {
           lastPayload = payload;
           const allSpeakers = Array.isArray(payload?.speakers) ? payload.speakers : [];
           const speakers = overlayCfg.onlySpeaking
             ? allSpeakers.filter((s) => s.isSpeaking)
             : allSpeakers;
+          const voiceChannels = Array.isArray(payload?.voiceChannels) ? payload.voiceChannels : [];
+          const recentMessages = Array.isArray(payload?.recentMessages) ? payload.recentMessages : [];
           const inVoice = Boolean(payload?.inVoice);
+          const chId = payload?.channelId || '';
           const chName = payload?.channelName || '';
           const ping = Number(payload?.ping || 0);
           const isMuted = Boolean(payload?.isMuted);
@@ -304,6 +469,7 @@
           channelTitle.textContent = inVoice && chName ? chName : 'Çakma Overlay';
           dot.classList.toggle('idle', !inVoice);
           speakerCount.textContent = String(allSpeakers.length);
+          leaveBtn.style.display = inVoice ? 'inline-block' : 'none';
 
           if (overlayCfg.showPing && inVoice) {
             pingBadge.style.display = 'inline-block';
@@ -312,9 +478,81 @@
             pingBadge.style.display = 'none';
           }
 
-          muteBtn.textContent = isMuted ? '🔇 Susturuldu' : '🎤 Mikrofon';
+          muteBtn.textContent = isMuted ? '🔇' : '🎤';
           muteBtn.classList.toggle('danger', isMuted);
           deafenBtn.classList.toggle('danger', isDeafened);
+
+          if (activeTab === 'rooms') {
+            speakersBody.innerHTML = '';
+            if (voiceChannels.length === 0) {
+              speakersBody.innerHTML = '<div class="empty"><div>Aktif ses odası bulunamadı.</div></div>';
+              return;
+            }
+            for (const vc of voiceChannels) {
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'room-item' + (vc.id === chId ? ' current' : '');
+              const left = document.createElement('span');
+              left.textContent = '🔊 ' + (vc.name || 'Ses Odası');
+              const right = document.createElement('span');
+              right.textContent = String(vc.userCount || 0) + ' kişi';
+              right.style.opacity = '0.7';
+              btn.appendChild(left);
+              btn.appendChild(right);
+              btn.addEventListener('click', () => {
+                if (tauriRef?.event) {
+                  tauriRef.event.emit('overlay-switch-voice-channel', { channelId: vc.id }).catch(() => {});
+                }
+              });
+              speakersBody.appendChild(btn);
+            }
+            return;
+          }
+
+          if (activeTab === 'chat') {
+            speakersBody.innerHTML = '';
+            const list = document.createElement('div');
+            list.className = 'chat-list';
+            if (recentMessages.length === 0) {
+              list.innerHTML = '<div class="empty"><div>Bu kanalda henüz mesaj yok.</div></div>';
+            } else {
+              for (const m of recentMessages) {
+                const div = document.createElement('div');
+                div.className = 'chat-msg';
+                const au = document.createElement('span');
+                au.className = 'chat-author';
+                au.textContent = (m.author || 'Kullanıcı') + ':';
+                const tx = document.createElement('span');
+                tx.textContent = m.content || '';
+                div.appendChild(au);
+                div.appendChild(tx);
+                list.appendChild(div);
+              }
+            }
+            const form = document.createElement('form');
+            form.className = 'chat-form';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'chat-input';
+            input.placeholder = '#' + (payload?.activeChatName || 'sohbet') + ' kanalına yaz...';
+            const sendBtn = document.createElement('button');
+            sendBtn.type = 'submit';
+            sendBtn.className = 'ctrl-btn';
+            sendBtn.textContent = 'Gönder';
+            form.appendChild(input);
+            form.appendChild(sendBtn);
+            form.addEventListener('submit', (ev) => {
+              ev.preventDefault();
+              const txt = input.value.trim();
+              if (!txt || !tauriRef?.event) return;
+              tauriRef.event.emit('overlay-send-chat', { text: txt }).catch(() => {});
+              input.value = '';
+            });
+            speakersBody.appendChild(list);
+            speakersBody.appendChild(form);
+            list.scrollTop = list.scrollHeight;
+            return;
+          }
 
           if (!inVoice) {
             speakersBody.innerHTML =
@@ -334,6 +572,9 @@
           for (const s of speakers) {
             const row = document.createElement('div');
             row.className = 'speaker' + (s.isSpeaking ? ' speaking' : '');
+
+            const spRow = document.createElement('div');
+            spRow.className = 'sp-row';
 
             const left = document.createElement('div');
             left.className = 'sp-left';
@@ -365,8 +606,31 @@
             else statusIcons += s.isSpeaking ? '🔊' : '🎤';
             right.textContent = statusIcons;
 
-            row.appendChild(left);
-            row.appendChild(right);
+            spRow.appendChild(left);
+            spRow.appendChild(right);
+            row.appendChild(spRow);
+
+            const volWrap = document.createElement('div');
+            volWrap.className = 'vol-wrap';
+            const volLabel = document.createElement('span');
+            const initialVol = Number.isFinite(Number(s.volume)) ? Number(s.volume) : 100;
+            volLabel.textContent = '%' + initialVol;
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.min = '0';
+            slider.max = '200';
+            slider.value = String(initialVol);
+            slider.addEventListener('input', (ev) => {
+              const val = Number(ev.target.value);
+              volLabel.textContent = '%' + val;
+              if (tauriRef?.event && s.id) {
+                tauriRef.event.emit('overlay-set-user-volume', { userId: s.id, volume: val }).catch(() => {});
+              }
+            });
+            volWrap.appendChild(slider);
+            volWrap.appendChild(volLabel);
+            row.appendChild(volWrap);
+
             speakersBody.appendChild(row);
           }
         }
@@ -384,8 +648,8 @@
 
         function getSizeDims(sz) {
           if (sz === 'compact') return { width: 240, height: 200 };
-          if (sz === 'wide') return { width: 350, height: 320 };
-          return { width: 290, height: 260 };
+          if (sz === 'wide') return { width: 350, height: 340 };
+          return { width: 300, height: 290 };
         }
 
         function initTauri() {
@@ -394,6 +658,7 @@
             setTimeout(initTauri, 100);
             return;
           }
+          tauriRef = tauri;
 
           const dims = getSizeDims(overlayCfg.size);
           tauri.core.invoke('resize_overlay_window', dims).catch(() => {});
@@ -406,6 +671,7 @@
           tauri.event.listen('overlay-speakers-update', (ev) => renderState(ev.payload)).catch(() => {});
           tauri.event.listen('overlay-opacity-changed', (ev) => applyOpacity(ev.payload)).catch(() => {});
           tauri.event.listen('overlay-lock-changed', (ev) => applyLockUi(ev.payload)).catch(() => {});
+          tauri.event.listen('overlay-interactive-changed', (ev) => applyInteractiveUi(ev.payload)).catch(() => {});
           tauri.event.listen('overlay-config-changed', (ev) => {
             applyConfig(ev.payload);
             const nextDims = getSizeDims(overlayCfg.size);
@@ -428,6 +694,9 @@
           });
           deafenBtn.addEventListener('click', () => {
             tauri.event.emit('overlay-toggle-deafen').catch(() => {});
+          });
+          leaveBtn.addEventListener('click', () => {
+            tauri.event.emit('overlay-leave-voice').catch(() => {});
           });
         }
 

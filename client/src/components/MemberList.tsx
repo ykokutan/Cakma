@@ -6,6 +6,7 @@ import { isSameUser, isUserServerOwner } from '../utils/serverIdentity';
 import { User, ServerRole } from '../types';
 import { Volume2, Crown, Tv, Shield, Radio, Gamepad2, Headphones, Sparkles, MessageSquare, Phone, User as UserIcon, ArrowRightLeft, UserX, Search, X } from 'lucide-react';
 import { AvatarView } from './AvatarView';
+import { formatElapsedPlaytime } from '../utils/gameDetectionRules';
 import { StatusIndicator } from './StatusIndicator';
 import { UserPopoverCard } from './UserPopoverCard';
 
@@ -397,6 +398,11 @@ export const MemberList: React.FC<MemberListProps> = ({ onOpenProfile }) => {
                           <Gamepad2 className="w-3 h-3 shrink-0 text-purple-400" />
                         )}
                         <span className="truncate">{user.activity.name}</span>
+                        {user.activity.startedAt && (
+                          <span className="shrink-0 text-[9px] text-white/50 font-mono">
+                            · {formatElapsedPlaytime(user.activity.startedAt)}
+                          </span>
+                        )}
                       </div>
                     ) : currentVoice ? (
                       <div className="text-[10px] text-emerald-400 flex items-center gap-1 truncate">

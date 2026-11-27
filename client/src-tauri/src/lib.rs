@@ -66,6 +66,8 @@ pub fn run() {
             .plugin(tauri_plugin_process::init())
             .invoke_handler(tauri::generate_handler![
                 platform::detect_running_game,
+                platform::detect_running_game_with_rules,
+                platform::list_running_processes,
                 platform::request_window_attention,
                 platform::get_autostart,
                 platform::set_autostart,
@@ -82,6 +84,7 @@ pub fn run() {
                 overlay::position_overlay_window,
                 overlay::set_overlay_ignore_cursor,
                 overlay::resize_overlay_window,
+                overlay::set_overlay_interactive_mode,
                 remote_assist::simulate_remote_input,
                 remote_assist::get_display_monitors,
                 remote_assist::set_remote_assist_killswitch,
