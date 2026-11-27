@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { useNetworkPing } from '../context/NetworkMetricsContext';
 import { isUserServerOwner } from '../utils/serverIdentity';
 import { AvatarView } from './AvatarView';
 import { appPrompt } from '../utils/appDialogs';
@@ -37,7 +38,6 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
     toggleMute,
     toggleDeafen,
     toggleRaiseHand,
-    ping,
     openDiagnostics,
     userVolumes,
     setUserVolume,
@@ -51,6 +51,7 @@ export const VoiceUserContextMenu: React.FC<VoiceUserContextMenuProps> = ({
     userAudioEq,
     setUserAudioEq,
   } = useSocket();
+  const ping = useNetworkPing();
 
   useEffect(() => {
     if (!menu) return;

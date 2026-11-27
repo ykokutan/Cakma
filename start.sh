@@ -28,8 +28,15 @@ ensure_linux_client_binaries() {
 # Otomatik Git Güncellemesi (Her zaman origin/main ile zorunlu senkronize eder ve disk şişmesini önler)
 if [ "$AUTO_UPDATE" = "1" ] && [ -d ".git" ]; then
   echo "🔄 Otomatik Git güncellemesi devrede (sığ çekme + temizlik)..."
+  BEFORE_START_SUM="$(cksum "$ROOT_DIR/start.sh" 2>/dev/null || echo '')"
   git fetch --depth 1 origin main
   git reset --hard origin/main
+  AFTER_START_SUM="$(cksum "$ROOT_DIR/start.sh" 2>/dev/null || echo '')"
+  if [ -z "${START_SH_REEXEC:-}" ] && [ -n "$BEFORE_START_SUM" ] && [ "$BEFORE_START_SUM" != "$AFTER_START_SUM" ]; then
+    echo "♻️ start.sh güncellendi, yeni betik baştan çalıştırılıyor..."
+    export START_SH_REEXEC=1
+    exec bash "$ROOT_DIR/start.sh"
+  fi
   git reflog expire --expire=now --all 2>/dev/null || true
   git gc --prune=now 2>/dev/null || true
   if [ -d "$ROOT_DIR/server" ]; then

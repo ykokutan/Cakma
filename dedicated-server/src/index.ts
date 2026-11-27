@@ -653,6 +653,9 @@ app.get('/api/storage/usage', (_req, res) => {
   res.json({ ok: true, totalBytes, fileCount, quotaBytes, usagePercent });
 });
 
+const dedicatedWatchRooms = new Map<string, any>();
+const dedicatedMiniGames = new Map<string, any>();
+
 // Socket Events
 io.on('connection', (socket: Socket) => {
   const auth = socket.handshake.auth || {};
@@ -1500,6 +1503,228 @@ io.on('connection', (socket: Socket) => {
     if (user.currentVoiceChannelId) {
       io.to(user.currentVoiceChannelId).emit('screen_share_change', { userId: socket.id, isSharing });
     }
+  });
+
+  // Priority Speaker, Live Captions, Whiteboard, Watch Together & Mini Games (v1.4.0 Parity)
+  socket.on('priority_speaker_toggle', ({ active }: { active: boolean }) => {
+    if (!user.currentVoiceChannelId) return;
+    io.to(user.currentVoiceChannelId).emit('priority_speaker_active', {
+      userId: socket.id,
+      username: user.username,
+      active: Boolean(active),
+    });
+  });
+
+  socket.on('voice_caption_emit', (payload: any) => {
+    if (!user.currentVoiceChannelId) return;
+    const channelId = String(payload?.channelId || '').trim();
+    if (!channelId || user.currentVoiceChannelId !== channelId) return;
+    const text = String(payload?.text || '').trim().slice(0, 400);
+    if (!text) return;
+    const translatedText =
+      typeof payload?.translatedText === 'string' && payload.translatedText.trim()
+        ? payload.translatedText.trim().slice(0, 500)
+        : undefined;
+    const source = payload?.source === 'stream' ? 'stream' : 'user';
+    const sourceLabel =
+      typeof payload?.sourceLabel === 'string' && payload.sourceLabel.trim()
+        ? payload.sourceLabel.trim().slice(0, 80)
+        : undefined;
+    socket.to(channelId).emit('voice_caption_received', {
+      id: String(payload?.id || `cap-${Date.now()}`),
+      channelId,
+      author: user.username,
+      source,
+      sourceLabel,
+      text,
+      translatedText,
+      sourceLang: typeof payload?.sourceLang === 'string' ? payload.sourceLang : 'auto',
+      targetLang: typeof payload?.targetLang === 'string' ? payload.targetLang : null,
+      time: typeof payload?.time === 'string' ? payload.time : new Date().toLocaleTimeString(),
+    });
+  });
+
+  socket.on('whiteboard_draw', (data: any) => {
+    if (!user.currentVoiceChannelId) return;
+    socket.to(user.currentVoiceChannelId).emit('whiteboard_draw', data);
+  });
+
+  socket.on('whiteboard_clear', () => {
+    if (!user.currentVoiceChannelId) return;
+    socket.to(user.currentVoiceChannelId).emit('whiteboard_clear');
+  });
+
+  socket.on('watch_together_start', ({ channelId, videoId, title }: { channelId: string; videoId: string; title: string }) => {
+    if (user.currentVoiceChannelId !== channelId) return;
+    const roomState = {
+      channelId,
+      active: true,
+      videoId,
+      title: title || 'YouTube Video',
+      isPlaying: true,
+      currentTime: 0,
+      startedBy: user.username,
+      queue: [] as any[],
+      skipVotes: [] as string[],
+    };
+    dedicatedWatchRooms.set(channelId, roomState);
+    io.to(channelId).emit('watch_together_update', roomState);
+  });
+
+  socket.on('watch_together_enqueue', ({ channelId, videoId, title }: { channelId: string; videoId: string; title?: string }) => {
+    if (user.currentVoiceChannelId !== channelId) return;
+    const roomState = dedicatedWatchRooms.get(channelId);
+    if (!roomState || !roomState.active) return;
+    const queue = Array.isArray(roomState.queue) ? roomState.queue : [];
+    const lastVideoId = queue.length > 0 ? queue[queue.length - 1]?.videoId : roomState.videoId;
+    if (queue.length < 25 && lastVideoId !== videoId) {
+      roomState.queue = [
+        ...queue,
+        {
+          id: `wtq-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          videoId,
+          title: title || 'Sıradaki Video',
+          addedBy: user.username,
+        },
+      ];
+      io.to(channelId).emit('watch_together_update', roomState);
+    }
+  });
+
+  socket.on('watch_together_skip_vote', ({ channelId }: { channelId: string }) => {
+    if (user.currentVoiceChannelId !== channelId) return;
+    const roomState = dedicatedWatchRooms.get(channelId);
+    if (!roomState || !roomState.active) return;
+    const existingVotes: string[] = Array.isArray(roomState.skipVotes) ? roomState.skipVotes : [];
+    const nextVotes = existingVotes.includes(user.username)
+      ? existingVotes.filter((v) => v !== user.username)
+      : [...existingVotes, user.username];
+    roomState.skipVotes = nextVotes;
+    const participantCount = Array.from(connectedUsers.values()).filter(
+      (u) => u.currentVoiceChannelId === channelId
+    ).length;
+    const threshold = Math.max(1, Math.ceil(participantCount / 2));
+    if (nextVotes.length >= threshold) {
+      const [nextItem, ...restQueue] = roomState.queue || [];
+      if (!nextItem) {
+        dedicatedWatchRooms.delete(channelId);
+        io.to(channelId).emit('watch_together_ended');
+        return;
+      }
+      roomState.videoId = nextItem.videoId;
+      roomState.title = nextItem.title;
+      roomState.currentTime = 0;
+      roomState.isPlaying = true;
+      roomState.queue = restQueue;
+      roomState.skipVotes = [];
+    }
+    io.to(channelId).emit('watch_together_update', roomState);
+  });
+
+  socket.on('watch_together_next', ({ channelId }: { channelId: string }) => {
+    if (user.currentVoiceChannelId !== channelId) return;
+    const roomState = dedicatedWatchRooms.get(channelId);
+    if (!roomState || !roomState.active) return;
+    const [nextItem, ...restQueue] = roomState.queue || [];
+    if (!nextItem) {
+      dedicatedWatchRooms.delete(channelId);
+      io.to(channelId).emit('watch_together_ended');
+      return;
+    }
+    roomState.videoId = nextItem.videoId;
+    roomState.title = nextItem.title;
+    roomState.currentTime = 0;
+    roomState.isPlaying = true;
+    roomState.queue = restQueue;
+    roomState.skipVotes = [];
+    io.to(channelId).emit('watch_together_update', roomState);
+  });
+
+  socket.on('watch_together_action', ({ channelId, action, currentTime }: { channelId: string; action: 'play' | 'pause' | 'seek'; currentTime: number }) => {
+    if (user.currentVoiceChannelId !== channelId) return;
+    const roomState = dedicatedWatchRooms.get(channelId);
+    if (!roomState) return;
+    if (action === 'play') roomState.isPlaying = true;
+    if (action === 'pause') roomState.isPlaying = false;
+    roomState.currentTime = currentTime;
+    socket.to(channelId).emit('watch_together_sync', { action, currentTime, isPlaying: roomState.isPlaying });
+  });
+
+  socket.on('watch_together_stop', ({ channelId }: { channelId: string }) => {
+    if (user.currentVoiceChannelId !== channelId) return;
+    dedicatedWatchRooms.delete(channelId);
+    io.to(channelId).emit('watch_together_ended');
+  });
+
+  socket.on('watch_together_get', ({ channelId }: { channelId: string }) => {
+    const roomState = dedicatedWatchRooms.get(channelId);
+    if (roomState) {
+      socket.emit('watch_together_update', roomState);
+    }
+  });
+
+  socket.on('minigame_start', ({ channelId, game }: { channelId: string; game: 'xox' | 'typeracer' }) => {
+    const state = {
+      channelId,
+      game,
+      board: Array(9).fill(null),
+      turn: 'X',
+      winner: null as string | null,
+      players: { X: socket.id, O: '' },
+      playerNames: { X: user.username || 'Oyuncu 1', O: 'Bekleniyor...' },
+    };
+    dedicatedMiniGames.set(channelId, state);
+    io.to(channelId).emit('minigame_update', state);
+  });
+
+  socket.on('minigame_join', ({ channelId }: { channelId: string }) => {
+    const state = dedicatedMiniGames.get(channelId);
+    if (state && !state.players?.O && state.players?.X !== socket.id) {
+      state.players.O = socket.id;
+      state.playerNames.O = user.username || 'Oyuncu 2';
+      io.to(channelId).emit('minigame_update', state);
+    }
+  });
+
+  socket.on('minigame_move', ({ channelId, index }: { channelId: string; index: number }) => {
+    const state = dedicatedMiniGames.get(channelId);
+    if (!state || state.winner || !state.board) return;
+    const currentSymbol = state.turn || 'X';
+    if (state.board[index] !== null) return;
+    state.board[index] = currentSymbol;
+    const lines = [
+      [0, 1, 2], [3, 4, 5], [6, 7, 8],
+      [0, 3, 6], [1, 4, 7], [2, 5, 8],
+      [0, 4, 8], [2, 4, 6],
+    ];
+    let won = false;
+    for (const [a, b, c] of lines) {
+      if (state.board[a] && state.board[a] === state.board[b] && state.board[a] === state.board[c]) {
+        state.winner = currentSymbol;
+        won = true;
+        break;
+      }
+    }
+    if (!won && state.board.every((cell: any) => cell !== null)) {
+      state.winner = 'draw';
+    } else if (!won) {
+      state.turn = currentSymbol === 'X' ? 'O' : 'X';
+    }
+    io.to(channelId).emit('minigame_update', state);
+  });
+
+  socket.on('minigame_reset', ({ channelId }: { channelId: string }) => {
+    const state = dedicatedMiniGames.get(channelId);
+    if (!state) return;
+    state.board = Array(9).fill(null);
+    state.turn = 'X';
+    state.winner = null;
+    io.to(channelId).emit('minigame_update', state);
+  });
+
+  socket.on('minigame_stop', ({ channelId }: { channelId: string }) => {
+    dedicatedMiniGames.delete(channelId);
+    io.to(channelId).emit('minigame_ended');
   });
 
   // Admin Request Data on Dedicated Server

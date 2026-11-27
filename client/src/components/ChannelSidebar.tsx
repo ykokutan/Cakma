@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useSocket } from '../context/SocketContext';
+import { useNetworkPing } from '../context/NetworkMetricsContext';
 import { t } from '../utils/i18n';
 import { appConfirm, appPrompt } from '../utils/appDialogs';
 import { isUserServerOwner } from '../utils/serverIdentity';
@@ -153,7 +154,6 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     unreadDMByUser,
     updateUserActivity,
     openDiagnostics,
-    ping,
     unlockedChannelIds,
     unlockChannel,
     voicePasswordError,
@@ -178,6 +178,7 @@ export const ChannelSidebar: React.FC<ChannelSidebarProps> = ({
     jumpToMessage,
     language,
   } = useSocket();
+  const ping = useNetworkPing();
   const drafts = useChannelDrafts();
 
   const canManageChannels = Boolean(

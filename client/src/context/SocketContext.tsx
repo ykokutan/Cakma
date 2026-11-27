@@ -6,7 +6,12 @@ import { playTeamSpeakChime, sendDesktopNotification, requestDesktopNotification
 import { getOrCreateE2eeKeyPair } from '../utils/e2ee';
 import { STATUS_EXPIRY_KEY, isStatusExpired } from '../utils/statusExpiry';
 import { setVoiceMicVolume, resetVoiceMetrics } from './VoiceMetricsContext';
-import { setNetworkPing, setNetworkConnectionState } from './NetworkMetricsContext';
+import {
+  setNetworkPing,
+  setNetworkConnectionState,
+  setNetworkTelemetry,
+  getNetworkMetricsSnapshot,
+} from './NetworkMetricsContext';
 import { setChannelTypingState, clearAllTypingUsers, setDirectCallQualitySnapshot } from './PresenceStore';
 import { isUserServerOwner } from '../utils/serverIdentity';
 import { CustomThemeConfig, DEFAULT_CUSTOM_THEME, applyCustomThemeVariables } from '../utils/themeBuilder';
@@ -2017,10 +2022,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [outgoingFriendRequests, setOutgoingFriendRequests] = useState<FriendRequest[]>([]);
 
   // Diagnostics & Network Telemetry State
-  const [ping, setPing] = useState<number>(0);
-  const [jitter, setJitter] = useState<number>(0);
-  const [packetLoss, setPacketLoss] = useState<number>(0);
-  const [pingHistory, setPingHistory] = useState<number[]>([]);
+  const ping = 0;
+  const jitter = 0;
+  const packetLoss = 0;
+  const pingHistory = useMemo<number[]>(() => [], []);
+  const pingRef = useRef<number>(0);
+  const jitterRef = useRef<number>(0);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
   const packetResultsRef = useRef<boolean[]>([]);
 
@@ -2032,7 +2039,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const next = [...packetResultsRef.current.slice(-29), ok];
     packetResultsRef.current = next;
     const lost = next.filter((v) => !v).length;
-    setPacketLoss(Number(((lost / next.length) * 100).toFixed(1)));
+    setNetworkTelemetry({
+      packetLoss: Number(((lost / next.length) * 100).toFixed(1)),
+    });
   }, []);
 
   const measurePing = useCallback((): Promise<number> => {
@@ -2057,15 +2066,18 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         clearTimeout(timeoutId);
         const roundTrip = Math.max(1, Math.round(performance.now() - start));
         recordPacketResult(true);
+        const prev = pingRef.current;
+        if (prev > 0) {
+          const diff = Math.abs(roundTrip - prev);
+          jitterRef.current = Number((jitterRef.current * 0.65 + diff * 0.35).toFixed(1));
+        }
+        pingRef.current = roundTrip;
         setNetworkPing(roundTrip);
-        setPing((prev) => {
-          if (prev > 0) {
-            const diff = Math.abs(roundTrip - prev);
-            setJitter((j) => Number((j * 0.65 + diff * 0.35).toFixed(1)));
-          }
-          return roundTrip;
+        setNetworkTelemetry({
+          ping: roundTrip,
+          jitter: jitterRef.current,
+          appendPing: roundTrip,
         });
-        setPingHistory((prev) => [...prev.slice(-29), roundTrip]);
         resolve(roundTrip);
       });
     });
@@ -7942,7 +7954,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             speakers,
             inVoice: Boolean(connectedVoiceChannelId),
             channelName: currentVoiceCh?.name || '',
-            ping,
+            ping: getNetworkMetricsSnapshot().ping,
             isMuted,
             isDeafened,
           })

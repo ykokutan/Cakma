@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSocket } from '../context/SocketContext';
 import { useMicVolumeLevel } from '../context/VoiceMetricsContext';
+import { useNetworkTelemetry } from '../context/NetworkMetricsContext';
 import {
   X,
   Activity,
@@ -25,10 +26,6 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
   onClose,
 }) => {
   const {
-    ping,
-    jitter,
-    packetLoss,
-    pingHistory,
     measurePing,
     currentServerHost,
     isDedicatedServer,
@@ -37,6 +34,7 @@ export const ConnectionDiagnosticsModal: React.FC<ConnectionDiagnosticsModalProp
     connectedVoiceChannelId,
     activeServer,
   } = useSocket();
+  const { ping, jitter, packetLoss, pingHistory } = useNetworkTelemetry();
   const micVolumeLevel = useMicVolumeLevel();
 
   const connectedVoiceChannel = activeServer?.channels.find(
