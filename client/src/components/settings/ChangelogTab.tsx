@@ -15,11 +15,24 @@ export const ChangelogTab: React.FC<ChangelogTabProps> = ({ appVersion }) => {
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-        {/* v1.4.1 - Latest */}
+        {/* v1.5.0 - Latest */}
         <div className="p-3.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-emerald-300">v1.4.1 — Son Sürüm (Mobil Android APK, Wiki/Kanban &amp; Bulut Operasyonları)</span>
+            <span className="text-xs font-bold text-emerald-300">v1.5.0 — Son Sürüm (Entegrasyon &amp; Altyapı Ölçekleme Paketi)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">Yeni</span>
+          </div>
+          <ul className="text-[11px] text-zinc-300 space-y-1 list-disc list-inside leading-relaxed">
+            <li><span className="text-white font-semibold">S3 / Cloudflare R2 Medya &amp; CDN Aktarımı:</span> Yüklenen dosya ve eklerin otomatik S3/R2 nesne depolamaya aktarımı, 1 saatlik AWS SigV4 imzalı yönlendirme (CORS gerektiren istekler için proxy akışı), isteğe bağlı özel CDN alan adı, boyut eşiği ve yedekleme S3 kimlik bilgilerini tek tıkla paylaşma.</li>
+            <li><span className="text-white font-semibold">Steam, GitHub &amp; Google OAuth2 + Doğrulanmış Bağlantılar:</span> Giriş/kayıt ekranında tek tıkla OAuth2 / Steam OpenID oturumu açma (davet kodu ve 2FA desteğiyle) ve profil kartlarında doğrulanmış hesap rozetleri, Steam profil yenileme ve görünürlük ayarları.</li>
+            <li><span className="text-white font-semibold">Çift Yönlü Telegram &amp; Discord Kanal Köprüleri:</span> Sunucu ayarlarından Telegram Bot + Sohbet ID veya Discord Webhook/Bot ile şifrelenmemiş metin/duyuru kanallarında döngü korumalı çift yönlü mesaj köprüleme.</li>
+          </ul>
+        </div>
+
+        {/* v1.4.1 */}
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-zinc-200">v1.4.1 — Mobil Android APK, Wiki/Kanban &amp; Bulut Operasyonları</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-400 font-medium">Önceki</span>
           </div>
           <ul className="text-[11px] text-white/75 space-y-1 list-disc list-inside leading-relaxed">
             <li><strong className="text-white">Android Uygulaması (.APK) &amp; Arka Plan Sesi:</strong> Capacitor tabanlı imzalı <code className="text-emerald-200">Cakma.apk</code>, ekran kilitliyken sesi kesmeyen <code className="text-emerald-200">VoiceForegroundService</code> ve Bluetooth kulaklık <code className="text-emerald-200">MediaSession</code> kontrolleri eklendi.</li>

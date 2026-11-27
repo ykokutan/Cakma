@@ -212,7 +212,17 @@ export function buildAwsSigV4PresignedGetUrl(params: {
   return `${targetUrl.origin}${targetUrl.pathname}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
-export async function uploadBufferToS3(opts: S3BufferUploadOptions): Promise<S3UploadResult> {
+async function validateS3TargetConfig(opts: {
+  endpoint: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+  skipDns?: boolean;
+}): Promise<
+  | { ok: true; endpointUrl: string; bucket: string; accessKeyId: string; secretAccessKey: string; region: string }
+  | { ok: false; error: string }
+> {
   const endpointRaw = String(opts.endpoint || '').trim().replace(/\/+$/, '');
   const bucket = String(opts.bucket || '').trim().replace(/^\/+|\/+$/g, '');
   const accessKeyId = String(opts.accessKeyId || '').trim();
@@ -231,9 +241,19 @@ export async function uploadBufferToS3(opts: S3BufferUploadOptions): Promise<S3U
     return { ok: false, error: check.error || 'S3 endpoint adresi güvenlik doğrulamasından geçemedi.' };
   }
 
+  return { ok: true, endpointUrl: check.normalizedUrl, bucket, accessKeyId, secretAccessKey, region };
+}
+
+export async function uploadBufferToS3(opts: S3BufferUploadOptions): Promise<S3UploadResult> {
+  const target = await validateS3TargetConfig(opts);
+  if (!target.ok) {
+    return { ok: false, error: target.error };
+  }
+  const { endpointUrl, bucket, accessKeyId, secretAccessKey, region } = target;
+
   try {
     const payloadHash = sha256Hex(opts.body);
-    const baseUrl = new URL(check.normalizedUrl);
+    const baseUrl = new URL(endpointUrl);
     const basePath = baseUrl.pathname.replace(/\/+$/, '');
     const encodedKey = encodeS3PathSegments(opts.objectKey);
     baseUrl.pathname = `${basePath}/${encodeURIComponent(bucket)}/${encodedKey}`;
@@ -282,6 +302,10 @@ export async function uploadBufferToS3(opts: S3BufferUploadOptions): Promise<S3U
 }
 
 export async function uploadFileToS3(opts: S3UploadOptions): Promise<S3UploadResult> {
+  const target = await validateS3TargetConfig(opts);
+  if (!target.ok) {
+    return { ok: false, error: target.error };
+  }
   if (!fs.existsSync(opts.filePath)) {
     return { ok: false, error: 'Yüklenecek yedek dosyası bulunamadı.' };
   }
